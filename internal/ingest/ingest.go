@@ -344,8 +344,8 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 		fingerprint, err := targetFingerprint(target)
 		if err != nil {
 			metadata, metadataErr := incrementality.MetadataFingerprint(target.Path)
-			isDatabase := target.Kind == parsers.KindOpenCodeDB || target.Kind == parsers.KindHermesDB ||
-				target.Kind == parsers.KindLegacyStoreDB
+			isDatabase := target.Kind == parsers.KindOpenCodeDB || target.Kind == parsers.KindZCodeDB ||
+				target.Kind == parsers.KindHermesDB || target.Kind == parsers.KindLegacyStoreDB
 			if metadataErr == nil && !isDatabase && incrementality.UnchangedMetadata(state, target.Path, metadata) {
 				result.FilesSkipped++
 				result.categorizeFile("skipped", "unchanged fingerprint")
@@ -551,7 +551,7 @@ func (r *Result) categorizeFile(status, reason string) {
 // the operator needs is the session id, and the complaint already carries it.
 func foreignDiscard(complaint string) parsers.Discard {
 	category := complaint
-	for _, source := range []string{"Hermes session ", "OpenCode session "} {
+	for _, source := range []string{"Hermes session ", "OpenCode session ", "ZCode session "} {
 		if tail, found := strings.CutPrefix(complaint, source); found {
 			if _, reason, separated := strings.Cut(tail, ": "); separated {
 				category = strings.TrimSuffix(source, " ") + ": " + reason
@@ -723,6 +723,8 @@ func read(ctx context.Context, opts Options, target Target, previous incremental
 	switch target.Kind {
 	case parsers.KindOpenCodeDB:
 		databaseReader = ReadOpenCode
+	case parsers.KindZCodeDB:
+		databaseReader = ReadZCode
 	case parsers.KindHermesDB:
 		databaseReader = ReadHermes
 	case parsers.KindLegacyStoreDB:
@@ -1317,6 +1319,7 @@ func declaredRoots(roots Roots) map[string]string {
 		"codex_sessions":             roots.CodexSessions,
 		"opencode_db":                roots.OpenCodeDB,
 		"opencode_telegram_bot_logs": roots.OpenCodeTelegramLogs,
+		"zcode_db":                   roots.ZCodeDB,
 		"pi_root":                    roots.PiRoot,
 		"pi_sessions":                roots.PiSessions,
 		"hermes_home":                roots.HermesHome,

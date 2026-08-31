@@ -54,11 +54,12 @@ const (
 	KindQwenCode Kind = "qwen_code"
 	// KindGLMSkill is a user skill stored by GLM.
 	KindGLMSkill Kind = "glm_skill"
-	// KindOpenCodeDB, KindHermesDB, and KindLegacyStoreDB are read by
-	// internal/ingest, which opens their databases read-only. They are declared
-	// here so that one enumeration names every source the ingest state table can
-	// hold.
+	// KindOpenCodeDB, KindZCodeDB, KindHermesDB, and KindLegacyStoreDB are read
+	// by internal/ingest, which opens their databases read-only. They are
+	// declared here so that one enumeration names every source the ingest state
+	// table can hold.
 	KindOpenCodeDB    Kind = "opencode_database"
+	KindZCodeDB       Kind = "zcode_database"
 	KindHermesDB      Kind = "hermes_database"
 	KindLegacyStoreDB Kind = "legacy_store_database"
 	// KindHermesMemory is Hermes's curated MEMORY.md, split at § into one

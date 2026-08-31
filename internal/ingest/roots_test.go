@@ -20,6 +20,7 @@ func TestRootsOnMacOS(t *testing.T) {
 		"codex sessions":  "/Users/op/.codex/sessions",
 		"opencode":        "/Users/op/.local/share/opencode/opencode.db",
 		"opencode bot":    "/Users/op/Library/Application Support/opencode-telegram-bot/logs",
+		"zcode":           "/Users/op/.zcode/cli/db/db.sqlite",
 		"pi root":         "/Users/op/.pi",
 		"pi":              "/Users/op/.pi/agent/sessions",
 		"hermes":          "/Users/op/.hermes/state.db",
@@ -37,6 +38,7 @@ func TestRootsOnMacOS(t *testing.T) {
 		"codex sessions":  roots.CodexSessions,
 		"opencode":        roots.OpenCodeDB,
 		"opencode bot":    roots.OpenCodeTelegramLogs,
+		"zcode":           roots.ZCodeDB,
 		"pi root":         roots.PiRoot,
 		"pi":              roots.PiSessions,
 		"hermes":          roots.HermesDB,
@@ -81,6 +83,39 @@ func TestRootsOnLinuxFollowTheXDGDirectories(t *testing.T) {
 	}
 	if moved.OpenCodeTelegramLogs != "/home/op/cfg/opencode-telegram-bot/logs" {
 		t.Errorf("opencode Telegram logs = %q", moved.OpenCodeTelegramLogs)
+	}
+}
+
+func TestZCodeDatabasePathPrecedence(t *testing.T) {
+	tests := []struct {
+		name     string
+		env      map[string]string
+		settings Settings
+		want     string
+	}{
+		{
+			name: "ZCode storage directory moves the default",
+			env:  map[string]string{"ZCODE_STORAGE_DIR": "/Volumes/synthetic/zcode"},
+			want: "/Volumes/synthetic/zcode/cli/db/db.sqlite",
+		},
+		{
+			name: "declared database wins",
+			env: map[string]string{
+				"ZCODE_STORAGE_DIR": "/Volumes/synthetic/zcode",
+				"ZCODE_DB_PATH":     "/from/the/environment.sqlite",
+			},
+			settings: Settings{ZCodeDB: "/declared/by/the/operator.sqlite"},
+			want:     "/declared/by/the/operator.sqlite",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			roots := ResolveRoots(Environment{GOOS: "darwin", Home: "/Users/op",
+				Getenv: environmentOf(test.env)}, test.settings)
+			if roots.ZCodeDB != test.want {
+				t.Errorf("ZCode database = %q, want %q", roots.ZCodeDB, test.want)
+			}
+		})
 	}
 }
 

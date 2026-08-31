@@ -45,7 +45,7 @@ type ingestAcceptanceWorld struct {
 }
 
 var supportedIngestFamilies = []string{
-	"claude", "claude-desktop", "cowork", "codex", "opencode", "pi", "hermes", "grok",
+	"claude", "claude-desktop", "cowork", "codex", "opencode", "zcode", "pi", "hermes", "grok",
 }
 
 func (w *ingestAcceptanceWorld) registerLifecycle(ctx *godog.ScenarioContext) {

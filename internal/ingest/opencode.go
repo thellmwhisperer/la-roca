@@ -2,14 +2,10 @@ package ingest
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
-	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -30,11 +26,6 @@ import (
 // renumber exchanges that already landed and duplicate the lot.
 const openCodeScope = "opencode"
 
-const (
-	openCodeParamsBudget = 500
-	openCodeErrorBudget  = 1000
-)
-
 // openCodeSchema is the shape this build reads.
 var openCodeSchema = []foreignTable{
 	{"project", []string{"id", "worktree"}},
@@ -52,87 +43,13 @@ type openCodeMessage struct {
 		Created   *float64 `json:"created"`
 		Completed *float64 `json:"completed"`
 	} `json:"time"`
-	ModelID    string          `json:"modelID"`
-	ProviderID string          `json:"providerID"`
-	Cost       *float64        `json:"cost"`
-	Tokens     *openCodeTokens `json:"tokens"`
+	ModelID    string                `json:"modelID"`
+	ProviderID string                `json:"providerID"`
+	Cost       *float64              `json:"cost"`
+	Tokens     *durableMessageTokens `json:"tokens"`
 }
 
-// openCodeTokens is what OpenCode counted for one assistant message. The cache
-// tiers are prompt tokens like the rest, and they are added to it.
-type openCodeTokens struct {
-	Input     *float64 `json:"input"`
-	Output    *float64 `json:"output"`
-	Reasoning *float64 `json:"reasoning"`
-	Cache     *struct {
-		Read  *float64 `json:"read"`
-		Write *float64 `json:"write"`
-	} `json:"cache"`
-}
-
-// openCodePart is the `data` document of a part row.
-type openCodePart struct {
-	Type  string          `json:"type"`
-	Text  string          `json:"text"`
-	Tool  string          `json:"tool"`
-	Hash  string          `json:"hash"`
-	Files []string        `json:"files"`
-	State json.RawMessage `json:"state"`
-}
-
-// status is the tool's state, which OpenCode writes either as an object with a
-// status or as the bare status.
-func (p openCodePart) status() string {
-	if len(p.State) == 0 {
-		return ""
-	}
-	var object struct {
-		Status string `json:"status"`
-	}
-	if err := json.Unmarshal(p.State, &object); err == nil && object.Status != "" {
-		return object.Status
-	}
-	var text string
-	if err := json.Unmarshal(p.State, &text); err == nil {
-		return text
-	}
-	return ""
-}
-
-func (p openCodePart) toolState() (input, failure string) {
-	var state struct {
-		Input json.RawMessage `json:"input"`
-		Error json.RawMessage `json:"error"`
-	}
-	if json.Unmarshal(p.State, &state) != nil {
-		return "", ""
-	}
-	if len(state.Input) > 0 && string(state.Input) != "null" {
-		var compact bytes.Buffer
-		if json.Compact(&compact, state.Input) == nil {
-			input = compact.String()
-		}
-	}
-	if len(state.Error) > 0 && string(state.Error) != "null" {
-		if json.Unmarshal(state.Error, &failure) != nil {
-			var compact bytes.Buffer
-			if json.Compact(&compact, state.Error) == nil {
-				failure = compact.String()
-			}
-		}
-	}
-	return parsers.Clip(input, openCodeParamsBudget), parsers.Clip(failure, openCodeErrorBudget)
-}
-
-type openCodeRow struct {
-	id        string
-	sessionID string
-	messageID string
-	created   *float64
-	updated   *float64
-	message   openCodeMessage
-	part      openCodePart
-}
+type openCodeRow = durableMessageRow[openCodeMessage]
 
 // ReadOpenCode projects an OpenCode database onto normalized records.
 //
@@ -162,13 +79,13 @@ func ReadOpenCode(ctx context.Context, path string) (parsers.Records, []string, 
 		return parsers.Records{}, nil, err
 	}
 	sessions, duplicateComplaints := uniqueOpenCodeSessions(sessions)
-	messages, malformedMessages, err := openCodeDocuments(ctx, db,
+	messages, malformedMessages, err := readDurableMessageDocuments[openCodeMessage](ctx, db,
 		`SELECT id, session_id, time_created, time_updated, data FROM message
 		 ORDER BY time_created, id`, true)
 	if err != nil {
 		return parsers.Records{}, nil, err
 	}
-	parts, malformedParts, err := openCodeDocuments(ctx, db,
+	parts, malformedParts, err := readDurableMessageDocuments[openCodeMessage](ctx, db,
 		`SELECT id, message_id, session_id, time_created, time_updated, data FROM part
 		 ORDER BY time_created, id`, false)
 	if err != nil {
@@ -182,53 +99,20 @@ func ReadOpenCode(ctx context.Context, path string) (parsers.Records, []string, 
 	// A session with one unreadable row is left alone whole. Ingesting the rest of
 	// it would produce a conversation with a hole in it that nothing later can
 	// tell from a complete one. The message's reason wins over the part's.
-	malformed := malformedParts
-	maps.Copy(malformed, malformedMessages)
-
-	messagesBySession := map[string][]openCodeRow{}
-	for _, message := range messages {
-		messagesBySession[message.sessionID] = append(messagesBySession[message.sessionID], message)
-	}
-	partsBySession := map[string][]openCodeRow{}
-	for _, part := range parts {
-		partsBySession[part.sessionID] = append(partsBySession[part.sessionID], part)
-	}
-
+	store := prepareDurableMessageStore(messages, parts, malformedMessages, malformedParts)
 	records := parsers.Records{MessageCoverage: &parsers.MessageCoverage{
 		Seen: len(messages), Skipped: map[string]int{},
 	}}
-	complaints := duplicateComplaints
-	for _, id := range slices.Sorted(maps.Keys(malformed)) {
-		complaints = append(complaints, fmt.Sprintf("OpenCode session %s: %s", id, malformed[id]))
-	}
-
-	seenSessions := map[string]bool{}
-	for _, source := range sessions {
+	project := func(source row, messages, parts []openCodeRow) (parsers.Session, int, []parsers.Discard) {
 		native := source.text("id")
-		seenSessions[native] = true
-		if _, broken := malformed[native]; broken {
-			records.MessageCoverage.Skipped["session contains malformed JSON"] +=
-				len(messagesBySession[native])
-			continue
-		}
-		if !source.has("time_created") || !source.has("time_updated") {
-			complaints = append(complaints,
-				fmt.Sprintf("OpenCode session %s: it declares no timestamps", native))
-			records.MessageCoverage.Skipped["session declares no timestamps"] +=
-				len(messagesBySession[native])
-			continue
-		}
-		session, deferred := openCodeSession(path, source, worktrees,
-			messagesBySession[native], partsBySession[native], todosBySession[native],
-			records.MessageCoverage)
-		records.Sessions = append(records.Sessions, session)
-		records.Deferred += deferred
+		session, deferred := openCodeSession(path, source, worktrees, messages, parts,
+			todosBySession[native], records.MessageCoverage)
+		return session, deferred, nil
 	}
-	for sessionID, unseen := range messagesBySession {
-		if !seenSessions[sessionID] {
-			records.MessageCoverage.Skipped["message references a missing session"] += len(unseen)
-		}
-	}
+	projected, deferred, discards, readComplaints :=
+		projectDurableSessions("OpenCode", sessions, store, records.MessageCoverage, project)
+	records.Sessions, records.Deferred, records.Discards = projected, deferred, discards
+	complaints := append(duplicateComplaints, readComplaints...)
 	for _, part := range parts {
 		switch part.part.Type {
 		case "step-start", "step-finish":
@@ -254,42 +138,6 @@ func uniqueOpenCodeSessions(sessions []row) ([]row, []string) {
 		unique = append(unique, session)
 	}
 	return unique, complaints
-}
-
-// openCodeDocuments reads one table and decodes its JSON payload. A row whose
-// document does not parse marks its whole session.
-func openCodeDocuments(ctx context.Context, db *sql.DB, statement string, isMessage bool) (
-	[]openCodeRow, map[string]string, error) {
-	rows, err := queryRows(ctx, db, statement)
-	if err != nil {
-		return nil, nil, err
-	}
-	malformed := map[string]string{}
-	out := make([]openCodeRow, 0, len(rows))
-	for _, record := range rows {
-		item := openCodeRow{
-			id:        record.text("id"),
-			sessionID: record.text("session_id"),
-			messageID: record.text("message_id"),
-		}
-		if value, ok := record.number("time_created"); ok {
-			item.created = &value
-		}
-		if value, ok := record.number("time_updated"); ok {
-			item.updated = &value
-		}
-		document := any(&item.part)
-		if isMessage {
-			document = &item.message
-		}
-		if err := json.Unmarshal([]byte(record.text("data")), document); err != nil {
-			malformed[item.sessionID] = "malformed_json"
-			out = append(out, item)
-			continue
-		}
-		out = append(out, item)
-	}
-	return out, malformed, nil
 }
 
 // openCodeTodos reads the optional task-list table. Older OpenCode databases
@@ -393,7 +241,7 @@ func openCodeExchanges(messages, parts []openCodeRow,
 			coverage.Skipped["unsupported message role: "+role]++
 			continue
 		}
-		if role == "assistant" && (message.message.Time.Completed == nil || anyLiveTool(messageParts)) {
+		if role == "assistant" && (message.message.Time.Completed == nil || durableMessageHasLiveTool(messageParts)) {
 			deferred++
 			coverage.Skipped["assistant message still being written"]++
 			continue
@@ -405,13 +253,10 @@ func openCodeExchanges(messages, parts []openCodeRow,
 			Fingerprint:       openCodeFingerprint(message, messageParts),
 			IsAfterCompaction: startedAfterACompaction(message, compactions),
 		}
-		if role == "user" {
-			exchange.HumanText = textOfParts(messageParts, "text")
-			exchange.HumanTimestamp = isoFromMS(completionOf(message.message.Time.Created, message.created))
-			exchange.RewriteOnIdentityChange = true
-		} else {
-			exchange.AgentText = assistantContent(messageParts)
-			exchange.AgentTimestamp = isoFromMS(completionOf(message.message.Time.Completed, message.updated))
+		populateDurableExchange(&exchange, role, durableTextOfParts(messageParts, "text"),
+			assistantContent(messageParts), message.message.Time.Created,
+			message.message.Time.Completed, message.created, message.updated)
+		if role == "assistant" {
 			exchange.Provenance = openCodeProvenance([]openCodeRow{message})
 		}
 		for _, part := range messageParts {
@@ -446,7 +291,7 @@ func openCodeExchanges(messages, parts []openCodeRow,
 
 func assistantContent(parts []openCodeRow) string {
 	var content []string
-	if text := textOfParts(parts, "text"); text != "" {
+	if text := durableTextOfParts(parts, "text"); text != "" {
 		content = append(content, text)
 	}
 	for _, part := range parts {
@@ -496,27 +341,7 @@ func openCodeProvenance(answers []openCodeRow) parsers.Provenance {
 		if provider == "" {
 			provider = message.ProviderID
 		}
-		if message.Cost != nil {
-			tally.AddCost(*message.Cost)
-		}
-		tokens := message.Tokens
-		if tokens == nil {
-			continue
-		}
-		if tokens.Input != nil || tokens.Cache != nil &&
-			(tokens.Cache.Read != nil || tokens.Cache.Write != nil) {
-			prompt := roundToInt(tokens.Input)
-			if tokens.Cache != nil {
-				prompt += roundToInt(tokens.Cache.Read) + roundToInt(tokens.Cache.Write)
-			}
-			tally.AddInputTokens(prompt)
-		}
-		if tokens.Output != nil {
-			tally.AddOutputTokens(roundToInt(tokens.Output))
-		}
-		if tokens.Reasoning != nil {
-			tally.AddReasoningTokens(roundToInt(tokens.Reasoning))
-		}
+		addDurableMessageUsage(&tally, message.Cost, message.Tokens)
 	}
 	return tally.Provenance(model, provider)
 }
@@ -530,29 +355,12 @@ func roundToInt(value *float64) int {
 	return int(*value)
 }
 
-func anyLiveTool(parts []openCodeRow) bool {
-	return slices.ContainsFunc(parts, func(part openCodeRow) bool {
-		status := part.part.status()
-		return part.part.Type == "tool" && (status == "pending" || status == "running")
-	})
-}
-
 func startedAfterACompaction(user openCodeRow, compactions []float64) bool {
 	started := 0.0
 	if user.created != nil {
 		started = *user.created
 	}
 	return slices.ContainsFunc(compactions, func(at float64) bool { return at <= started })
-}
-
-func textOfParts(parts []openCodeRow, kind string) string {
-	var texts []string
-	for _, part := range parts {
-		if part.part.Type == kind && part.part.Text != "" {
-			texts = append(texts, part.part.Text)
-		}
-	}
-	return strings.Join(texts, "\n")
 }
 
 func completionOf(nested *float64, fallback *float64) float64 {
@@ -569,29 +377,17 @@ func completionOf(nested *float64, fallback *float64) float64 {
 // stored: the hash lives in the session metadata, and metadata is not where a
 // conversation's text belongs.
 func openCodeFingerprint(message openCodeRow, parts []openCodeRow) string {
-	projection := struct {
-		ID      string          `json:"id"`
-		Message openCodeMessage `json:"message"`
-		Parts   [][]string      `json:"parts"`
-	}{ID: message.id, Message: message.message}
-	for _, part := range parts {
-		text := ""
-		if part.part.Type == "text" || part.part.Type == "reasoning" || part.part.Type == "patch" {
-			text = part.part.Text
-			if part.part.Type == "patch" {
-				text = part.part.Hash + "\x00" + strings.Join(part.part.Files, "\x00")
-			}
+	projection := durablePartProjection(parts, func(part durableMessagePart) string {
+		switch part.Type {
+		case "text", "reasoning":
+			return part.Text
+		case "patch":
+			return part.Hash + "\x00" + strings.Join(part.Files, "\x00")
+		default:
+			return ""
 		}
-		params, failure := part.part.toolState()
-		projection.Parts = append(projection.Parts,
-			[]string{part.id, part.part.Type, text, part.part.Tool, part.part.status(), params, failure})
-	}
-	encoded, err := json.Marshal(projection)
-	if err != nil {
-		return ""
-	}
-	sum := sha256.Sum256(encoded)
-	return hex.EncodeToString(sum[:])
+	})
+	return durableMessageFingerprint(message.id, message.message, projection)
 }
 
 func openCodeSourceAgent(_ string) string {

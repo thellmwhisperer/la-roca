@@ -48,6 +48,7 @@ type Settings struct {
 	CodexStateDB          string
 	OpenCodeDB            string
 	OpenCodeTelegramLogs  string
+	ZCodeDB               string
 	PiRoot                string
 	PiSessions            string
 	HermesHome            string
@@ -86,8 +87,11 @@ type Roots struct {
 	// OpenCodeTelegramLogs is the companion bot's own log directory. Its
 	// session ids enrich matching OpenCode records; the logs are never corpus.
 	OpenCodeTelegramLogs string
-	PiRoot               string
-	PiSessions           string
+	// ZCodeDB is ZCode Desktop's durable session database below its private
+	// storage root.
+	ZCodeDB    string
+	PiRoot     string
+	PiSessions string
 	// HermesHome is the Hermes private tree. Memories, named exclusions, and
 	// the default state.db live under it; hermes_db_path can still point the
 	// database elsewhere.
@@ -116,6 +120,8 @@ const (
 	envCodexStateDB         = "CODEX_STATE_DB_PATH"
 	envOpenCodeDB           = "OPENCODE_DB_PATH"
 	envOpenCodeTelegramLogs = "OPENCODE_TELEGRAM_BOT_LOGS"
+	envZCodeDB              = "ZCODE_DB_PATH"
+	envZCodeStorage         = "ZCODE_STORAGE_DIR"
 	envPiRoot               = "PI_ROOT"
 	envPiSessions           = "PI_SESSIONS_ROOT"
 	envHermesHome           = "HERMES_HOME"
@@ -132,6 +138,7 @@ func ResolveRoots(env Environment, settings Settings) Roots {
 	claude := join(env, env.Home, ".claude")
 	codexRoot := pick(env, settings.CodexRoot, envCodexRoot, join(env, env.Home, ".codex"))
 	piRoot := pick(env, settings.PiRoot, envPiRoot, join(env, env.Home, ".pi"))
+	zcodeRoot := pick(env, "", envZCodeStorage, join(env, env.Home, ".zcode"))
 	hermesHome := pick(env, settings.HermesHome, envHermesHome, join(env, env.Home, ".hermes"))
 	appSupport := claudeAppSupport(env)
 
@@ -153,6 +160,8 @@ func ResolveRoots(env Environment, settings Settings) Roots {
 			join(env, openCodeDir(env), "opencode.db")),
 		OpenCodeTelegramLogs: pick(env, settings.OpenCodeTelegramLogs,
 			envOpenCodeTelegramLogs, openCodeTelegramLogsDir(env)),
+		ZCodeDB: pick(env, settings.ZCodeDB, envZCodeDB,
+			join(env, zcodeRoot, "cli", "db", "db.sqlite")),
 		PiRoot: piRoot,
 		PiSessions: pick(env, settings.PiSessions, envPiSessions,
 			join(env, piRoot, "agent", "sessions")),

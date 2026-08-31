@@ -142,8 +142,8 @@ leaves at all. [The full privacy contract.](docs/operations.md)
 
 ## What it reads
 
-Ten coding agents and counting, plus your ChatGPT and Claude data exports:
-incremental, idempotent, read-only against live stores.
+Your coding agents, plus your ChatGPT and Claude data exports: incremental,
+idempotent, read-only against live stores.
 [Every source in detail.](docs/ingest.md)
 
 ## How it works

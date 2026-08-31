@@ -21,6 +21,7 @@ const (
 	GLM           = "GLM"
 	Hermes        = "Hermes"
 	OpenCode      = "OpenCode"
+	ZCode         = "ZCode"
 	Pi            = "Pi"
 	QwenCode      = "Qwen Code"
 	LegacyStore   = "Legacy store"
@@ -47,6 +48,8 @@ func HarnessForSource(source string) string {
 		return Cursor
 	case source == "opencode" || strings.HasPrefix(source, "opencode-"):
 		return OpenCode
+	case source == "zcode" || strings.HasPrefix(source, "zcode-"):
+		return ZCode
 	case source == "pi" || strings.HasPrefix(source, "pi-"):
 		return Pi
 	case source == "hermes" || strings.HasPrefix(source, "hermes-"):
@@ -84,6 +87,7 @@ func Backfill(ctx context.Context, db execer) error {
 		{CodexCLI, "(source_agent = 'codex' OR source_agent LIKE 'codex-%')"},
 		{Cursor, "source_agent = 'cursor'"},
 		{OpenCode, "(source_agent = 'opencode' OR source_agent LIKE 'opencode-%')"},
+		{ZCode, "(source_agent = 'zcode' OR source_agent LIKE 'zcode-%')"},
 		{Pi, "(source_agent = 'pi' OR source_agent LIKE 'pi-%')"},
 		{Hermes, "(source_agent = 'hermes' OR source_agent LIKE 'hermes-%')"},
 		{GrokBuild, "(source_agent = 'grok' OR source_agent LIKE 'grok-%')"},

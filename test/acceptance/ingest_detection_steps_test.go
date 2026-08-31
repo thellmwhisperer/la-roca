@@ -78,6 +78,8 @@ func (w *ingestAcceptanceWorld) seedPresentFamily(family string) error {
 		path = filepath.Join(w.home, ".pi", "agent", "sessions")
 	case "opencode":
 		return writeFixture(filepath.Join(w.home, ".local", "share", "opencode", "opencode.db"), "route marker")
+	case "zcode":
+		return writeFixture(filepath.Join(w.home, ".zcode", "cli", "db", "db.sqlite"), "route marker")
 	case "hermes":
 		return writeFixture(filepath.Join(w.home, ".hermes", "state.db"), "route marker")
 	case "grok":

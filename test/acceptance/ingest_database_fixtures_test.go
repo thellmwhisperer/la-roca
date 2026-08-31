@@ -51,6 +51,67 @@ func (w *ingestAcceptanceWorld) seedOpenCodeSession() error {
 	return nil
 }
 
+func (w *ingestAcceptanceWorld) seedZCodeSession() error {
+	path := filepath.Join(w.home, ".zcode", "cli", "db", "db.sqlite")
+	db, err := openFixtureDB(path)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	cwd := filepath.Join(w.home, "workspace", "zcode-project")
+	statements := []struct {
+		query string
+		args  []any
+	}{
+		{`CREATE TABLE schema_migration (id TEXT PRIMARY KEY, checksum TEXT NOT NULL,
+		   app_version TEXT, time_applied INTEGER NOT NULL)`, nil},
+		{`CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, workspace_id TEXT,
+		   parent_id TEXT, slug TEXT NOT NULL, directory TEXT NOT NULL, path TEXT, title TEXT NOT NULL,
+		   version TEXT NOT NULL, task_type TEXT NOT NULL, time_created INTEGER NOT NULL,
+		   time_updated INTEGER NOT NULL)`, nil},
+		{`CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL,
+		   time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, data TEXT NOT NULL,
+		   sequence INTEGER)`, nil},
+		{`CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT NOT NULL, session_id TEXT NOT NULL,
+		   time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, data TEXT NOT NULL,
+		   sequence INTEGER)`, nil},
+		{`INSERT INTO schema_migration VALUES
+		   ('0018_session_input_failed_status','synthetic','0.15.2',1785542300000)`, nil},
+		{`INSERT INTO session VALUES
+		   ('zcode-acceptance-session','project-1','workspace-1',NULL,'zcode-acceptance-session',?,NULL,
+		    'Synthetic ZCode session','0.16.5','interactive',1785542400000,1785542460000)`, []any{cwd}},
+		{`INSERT INTO message VALUES
+		   ('z-user','zcode-acceptance-session',1785542400000,1785542400000,
+		    '{"role":"user","time":{"created":1785542400000},"model":{"providerID":"synthetic-zcode-provider","modelID":"synthetic-zcode-model"},"semantics":{"origin":"real_user","kind":"user_prompt","uiVisibility":"visible","transcriptVisibility":"visible"}}',0)`, nil},
+		{`INSERT INTO message VALUES
+		   ('z-assistant','zcode-acceptance-session',1785542401000,1785542402000,
+		    '{"role":"assistant","parentID":"z-user","time":{"created":1785542401000,"completed":1785542402000},"modelID":"synthetic-zcode-model","providerID":"synthetic-zcode-provider","semantics":{"origin":"agent_runtime","kind":"assistant_response","uiVisibility":"visible","transcriptVisibility":"visible"}}',1)`, nil},
+		{`INSERT INTO message VALUES
+		   ('z-reminder','zcode-acceptance-session',1785542401500,1785542401500,
+		    '{"role":"user","time":{"created":1785542401500},"model":{"providerID":"synthetic-zcode-provider","modelID":"synthetic-zcode-model"},"synthetic":true,"semantics":{"origin":"agent_runtime","kind":"todo_reminder","uiVisibility":"hidden","transcriptVisibility":"hidden"}}',2)`, nil},
+		{`INSERT INTO part VALUES
+		   ('z-p1','z-user','zcode-acceptance-session',1785542400000,1785542400000,
+		    '{"type":"text","text":"synthetic question"}',0)`, nil},
+		{`INSERT INTO part VALUES
+		   ('z-p2','z-assistant','zcode-acceptance-session',1785542401000,1785542401000,
+		    '{"type":"reasoning","text":"synthetic reasoning"}',0)`, nil},
+		{`INSERT INTO part VALUES
+		   ('z-p3','z-assistant','zcode-acceptance-session',1785542401100,1785542401100,
+		    '{"type":"text","text":"synthetic answer"}',1)`, nil},
+		{`INSERT INTO part VALUES
+		   ('z-p4','z-assistant','zcode-acceptance-session',1785542401200,1785542401200,
+		    '{"type":"tool","tool":"Read","state":{"status":"completed","input":{"file_path":"synthetic.txt"}}}',2)`, nil},
+		{`INSERT INTO part VALUES
+		   ('z-p5','z-reminder','zcode-acceptance-session',1785542401500,1785542401500,
+		    '{"type":"text","text":"ZCODE-HIDDEN-ACCEPTANCE-SENTINEL","synthetic":true}',0)`, nil},
+	}
+	if err := execFixtureSQL(db, statements); err != nil {
+		return err
+	}
+	w.sessionID, w.fixturePath = "zcode-acceptance-session", path
+	return nil
+}
+
 func (w *ingestAcceptanceWorld) seedHermesSession(model string) error {
 	path := filepath.Join(w.home, ".hermes", "state.db")
 	db, err := openFixtureDB(path)

@@ -32,6 +32,11 @@ Feature: Normalizing each family
     And the OpenCode report names its message coverage
     And no OpenCode telemetry entered the corpus
 
+  Scenario: ZCode keeps visible messages, tools, timestamps and model attribution
+    Given a ZCode desktop session is ready to ingest
+    When I run ingest
+    Then the ZCode session and every exchange carry their recorded provenance
+
   Scenario: An exchange carries the provenance its own source recorded
     Given a Codex rollout with runtime machinery is ready to ingest
     When I run ingest

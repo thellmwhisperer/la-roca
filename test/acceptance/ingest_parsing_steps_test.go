@@ -20,6 +20,7 @@ func registerIngestParsingSteps(ctx *godog.ScenarioContext, w *ingestAcceptanceW
 	ctx.Given(`^a Codex session is ready to ingest$`, func() error { return w.seedCodexSession("") })
 	ctx.Given(`^an OpenCode session with message content and telemetry is ready to ingest$`,
 		w.seedOpenCodeSession)
+	ctx.Given(`^a ZCode desktop session is ready to ingest$`, w.seedZCodeSession)
 	ctx.Given(`^a markdown memory with declared metadata is ready to ingest$`, func() error {
 		workspace := filepath.Join(w.home, "workspace")
 		if err := w.writeConfig(workspace); err != nil {
@@ -122,6 +123,39 @@ func registerIngestParsingSteps(ctx *godog.ScenarioContext, w *ingestAcceptanceW
 		}
 		if got != 0 {
 			return fmt.Errorf("OpenCode telemetry rows=%d, want zero", got)
+		}
+		return nil
+	})
+	ctx.Then(`^the ZCode session and every exchange carry their recorded provenance$`, func() error {
+		checks := []struct {
+			query string
+			want  int
+		}{
+			{`SELECT COUNT(*) FROM sessions WHERE session_id = 'zcode:zcode-acceptance-session'
+			  AND source_agent = 'zcode' AND source_surface = 'ZCode'`, 1},
+			{`SELECT COUNT(*) FROM exchanges WHERE session_id = 'zcode:zcode-acceptance-session'`, 2},
+			{`SELECT COUNT(*) FROM exchanges WHERE session_id = 'zcode:zcode-acceptance-session'
+			  AND model = 'synthetic-zcode-model' AND provider = 'synthetic-zcode-provider'`, 2},
+			{`SELECT COUNT(*) FROM exchanges WHERE session_id = 'zcode:zcode-acceptance-session'
+			  AND ((human_text IS NOT NULL AND human_timestamp IS NOT NULL)
+			    OR (agent_text IS NOT NULL AND agent_timestamp IS NOT NULL))`, 2},
+			{`SELECT COUNT(*) FROM thinking_blocks WHERE session_id = 'zcode:zcode-acceptance-session'`, 1},
+			{`SELECT COUNT(*) FROM tool_uses WHERE session_id = 'zcode:zcode-acceptance-session'
+			  AND tool_name = 'Read'`, 1},
+			{`SELECT COUNT(*) FROM ingest_file_state WHERE source_agent = 'zcode'
+			  AND source_kind = 'zcode_database'`, 1},
+			{`SELECT COUNT(*) FROM exchanges WHERE COALESCE(human_text, '')
+			  LIKE '%ZCODE-HIDDEN-ACCEPTANCE-SENTINEL%'`, 0},
+		}
+		for _, check := range checks {
+			got, err := w.queryInt(check.query)
+			if err != nil {
+				return err
+			}
+			if got != check.want {
+				return fmt.Errorf("ZCode content query returned %d, want %d: %s",
+					got, check.want, check.query)
+			}
 		}
 		return nil
 	})
