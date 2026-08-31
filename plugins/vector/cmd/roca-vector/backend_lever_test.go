@@ -15,18 +15,21 @@ func TestInstallForwardsTheAcceleratorLeverToTheWorker(t *testing.T) {
 	tests := []struct {
 		name string
 		args []string
+		env  string
 		want string
 	}{
 		{name: "no lever leaves the worker on its own default", args: []string{"install"}},
-		{name: "accelerate", args: []string{"install", "--accelerate"}, want: "ROCA_VECTOR_WRITER_GPU=1"},
-		{name: "forced cpu", args: []string{"install", "--accelerate=false"}, want: "ROCA_VECTOR_WRITER_GPU=0"},
+		{name: "accelerate flag beats cpu environment", args: []string{"install", "--accelerate"},
+			env: "0", want: "ROCA_VECTOR_WRITER_GPU=1"},
+		{name: "forced cpu flag beats accelerator environment", args: []string{"install", "--accelerate=false"},
+			env: "1", want: "ROCA_VECTOR_WRITER_GPU=0"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			home := t.TempDir()
 			t.Setenv("HOME", home)
 			t.Setenv("ROCA_VECTOR_PLUGIN_ROOT", "")
-			t.Setenv("ROCA_VECTOR_WRITER_GPU", "")
+			t.Setenv("ROCA_VECTOR_WRITER_GPU", test.env)
 			oldLaunch, oldExecutable := launchWorker, currentExecutable
 			t.Cleanup(func() { launchWorker, currentExecutable = oldLaunch, oldExecutable })
 			var request vector.LaunchRequest

@@ -109,19 +109,26 @@ on later.
 
 macOS and Linux run the embedding engine inside the vector companion. On
 macOS, live queries use hardware acceleration when available and fall back to
-CPU if it cannot start. Indexing picks its backend by occasion: a bulk build
-(`roca vector install`, `roca vector ingest --delta --reembed`) takes the
-accelerator, because it is a foreground job you are waiting on, while the
-background delta pass stays on CPU so it cannot contend with live search.
-`--accelerate` overrides either default in both directions, including
-`--accelerate=false` to keep a bulk build on the CPU; `ROCA_VECTOR_WRITER_GPU`
-(`1` or `0`) does the same for a worker started elsewhere, and the flag wins
-over the variable. Telemetry records the decision: `fallback_reason` reads
-`operator requested accelerator`, `operator requested cpu`, `bulk build
-default`, or `indexing leaves the accelerator for live search`, so a slow run
-is diagnosable from the log. Linux uses CPU for both paths. Windows keeps the
-previous local runtime path until its own native build lane ships; see the
-release notes.
+CPU if it cannot start. Indexing picks its backend by occasion: a full install
+and `roca vector ingest --delta --reembed` are bulk builds and take the
+accelerator by default, while an ordinary delta pass stays on CPU so it cannot
+contend with live search. A background worker started by a query that finds the
+model missing also counts as a bulk build and therefore accelerates by default.
+
+Both `install` and `ingest` accept a tri-state `--accelerate` lever. Omitting it
+keeps the occasion's default; `--accelerate` requests the accelerator, and
+`--accelerate=false` forces CPU. `ROCA_VECTOR_WRITER_GPU=1` or `0` supplies the
+same choice through the environment, including to a spawned worker, and an
+explicit flag wins over the variable. Set `ROCA_VECTOR_WRITER_GPU=0` if a
+query-triggered background build should remain on CPU.
+
+Engine telemetry records the selected backend and decision in
+`fallback_reason`: `operator requested accelerator`, `operator requested cpu`,
+`bulk build default`, or `indexing leaves the accelerator for live search`.
+An engine-level reason such as `accelerator init failed` takes precedence over
+the policy reason. Linux uses CPU for both paths. Windows keeps the previous
+local runtime path until its own native build lane ships; see the release
+notes.
 
 ## Index declared databases
 
