@@ -39,8 +39,10 @@ func mcpInstallCommand(env *cliEnv) *cobra.Command {
 		Use:   "install <runtime>",
 		Short: "Declare the stdio server in one runtime's configuration",
 		Long: "Writes one entry, `roca mcp serve` over stdio, into the runtime's own\n" +
-			"configuration file. Everything else in that file, comments included, is\n" +
-			"left exactly as it was, and the previous bytes are backed up first.\n\n" +
+			"configuration file. Neighbouring configuration is preserved, and the previous\n" +
+			"bytes are backed up first. Withdrawal is semantic rather than byte-exact: a\n" +
+			"pre-existing empty server map may be removed, and whitespace inside a\n" +
+			"pre-existing empty ZCode object may be normalized.\n\n" +
 			"Supported runtimes: " + listOfRuntimes(),
 		Args: cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
@@ -91,9 +93,11 @@ func mcpUninstallCommand(env *cliEnv) *cobra.Command {
 	var all bool
 	cmd := &cobra.Command{
 		Use:   "uninstall [runtime]",
-		Short: "Withdraw La Roca's entry, leaving the rest of the file as it was",
-		Long: "The reversion `roca uninstall` performs over every runtime, available on\n" +
-			"its own so an operator can undo one integration without touching their data.\n\n" +
+		Short: "Withdraw La Roca's entry while preserving neighbouring configuration",
+		Long: "The semantic withdrawal `roca uninstall` performs over every runtime,\n" +
+			"available on its own for one integration. It may remove a pre-existing empty\n" +
+			"server map or normalize whitespace inside a pre-existing empty ZCode object;\n" +
+			"other neighbouring configuration is preserved.\n\n" +
 			"Supported runtimes: " + listOfRuntimes(),
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
