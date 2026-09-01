@@ -69,6 +69,14 @@ file is left byte for byte as it is, and stderr names each affected ownership
 marker (`hooks run claude`, `hooks run claude-pills`, or `hooks run
 claude-handoff`) to delete by hand.
 
+`roca hooks install zcode` adds an opt-in `SessionStart` handoff hook under
+ZCode's required nested `hooks.events.SessionStart` shape. The command points
+to `~/.zcode/hooks/roca-handoff.sh`, an executable wrapper that emits
+`{"additionalContext":"..."}` JSON because ZCode discards plain-text hook
+stdout. Reinstalling is idempotent, and `roca hooks uninstall zcode` removes
+only that nested command and the wrapper while preserving neighbouring hooks.
+Neither init nor update installs or refreshes this integration.
+
 Other harnesses can use the same client-side pattern: intercept the shell tool,
 read identity only from a harness-owned session source, and inject both flags;
 no other hook installer ships yet.

@@ -117,7 +117,7 @@ answer the same, since there is nothing in the process to carry over.
 ## 2. `roca mcp`: declaring the server in an agent's config
 
 ```
-roca mcp install <runtime>     # codex, claude, opencode, hermes, pi
+roca mcp install <runtime>     # codex, claude, claude-desktop, opencode, hermes, pi, zcode
 roca mcp uninstall <runtime>   # or --all
 roca mcp status [runtime]
 ```
@@ -128,9 +128,11 @@ Where each runtime keeps its configuration, and what Roca writes into it:
 |---|---|---|---|
 | `codex` | `$CODEX_HOME`/`~/.codex/config.toml` | `mcp_servers` | `[mcp_servers.roca]` with `command` and `args` |
 | `claude` | `$CLAUDE_CONFIG_DIR`/`~/.claude.json` | `mcpServers` | `{"type": "stdio", ...}` |
+| `claude-desktop` | macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`; Windows: `%APPDATA%/Claude/claude_desktop_config.json` | `mcpServers` | `{"type": "stdio", ...}` |
 | `opencode` | `$OPENCODE_CONFIG`/`~/.config/opencode/opencode.json` | `mcp` | `{"type": "local", "command": [...]}` |
 | `hermes` | `$HERMES_HOME`/`~/.hermes/config.yaml` | `mcp_servers` | a nested mapping |
 | `pi` | `$PI_CODING_AGENT_DIR`/`~/.pi/agent/mcp.json` | `mcpServers` | `command` and `args` |
+| `zcode` | `$ZCODE_HOME`/`~/.zcode/cli/config.json` | `mcp.servers` | `{"type": "stdio", ...}` |
 
 **The file belongs to the operator.** Roca owns exactly one entry inside it and
 every other byte comes back untouched: comments, ordering, blank lines, the
@@ -190,8 +192,11 @@ runtime receives `skills/roca/SKILL.md`, `skills/roca-operations/SKILL.md`,
 | `hermes` | `$HERMES_HOME`/`~/.hermes` |
 | `pi` | `$PI_CODING_AGENT_DIR`/`~/.pi/agent` |
 | `qwen` | `$QWEN_HOME`/`~/.qwen` |
+| `zcode` | `$ZCODE_HOME`/`~/.zcode` |
 
-Only those files are created or refreshed. Explicit markers divide the shipped
+Only those files are created or refreshed. ZCode is explicit opt-in: init does
+not install its skills merely because `~/.zcode` exists; use `roca skill
+install zcode`. Explicit markers divide the shipped
 SYSTEM zone from the operator's USER zone. Re-running is a no-op when SYSTEM
 already matches; otherwise USER is transplanted verbatim and the previous file
 is backed up. An edited SYSTEM zone is left alone unless the operator passes
@@ -220,10 +225,10 @@ store. The measurements behind the current list:
 - **qwen** (Qwen Code): with `QWEN_HOME` pointed at a probe directory holding
   `skills/probe-skill/SKILL.md`, qwen's skill-manager debug log records
   "Loading user level skills from" that directory.
-- **glm**: not claimed. `~/.glm/skills/` holds skill files on this machine, but
-  no `glm` binary exists anywhere measured (PATH, npm globals, shell aliases),
-  so no reader can be verified; the GLM plan is used through Claude Code with
-  `CLAUDE_CONFIG_DIR`, which the `claude` seat already honors.
+- **zcode**: Z.ai ZCode discovers user skills under
+  `~/.zcode/skills/<name>/SKILL.md` and consumes the standard `name` and
+  `description` YAML frontmatter. This seat is opt-in and is never seeded by
+  init or update.
 - **cursor**: first-class skill seat. `cursor-agent` is installed at
   `~/.local/bin/cursor-agent` (symlink into `~/.local/share/cursor-agent/versions/`),
   verified by executing that path; a PATH miss alone is not "not installed".

@@ -48,8 +48,8 @@ rows[1]{rank,source,legs,consensus,snippet}:
 ```
 
 Init installs the skills into every runtime it detects. If your runtime was not
-detected, use `roca skill install codex` (or `claude`, `opencode`, `pi`, or
-`hermes`) as a fallback.
+detected, use `roca skill install codex` (or `claude`, `opencode`, `pi`,
+`hermes`, or the opt-in-only `zcode`) as a fallback.
 
 If an already signed-in agent CLI is on `PATH` (`claude`, `codex`, ...),
 no login of any kind is needed: La Roca borrows the plan you already pay
