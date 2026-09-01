@@ -202,6 +202,24 @@ thread records. `MEMORY.md` and `memory_summary.md` are downstream derived views
 they are counted and excluded rather than ingested as duplicate blobs. Ordinary
 Markdown memory files remain primary content.
 
+## Codex rollouts
+
+A `task_complete` event closes a Codex turn. Superseded, aborted, and still-open
+spans do not lend their tool calls to a replacement or recovered exchange;
+instead, those calls remain queryable as session-level `tool_uses` whose
+`exchange_number` is NULL. Completed spans keep their tools attached as before.
+If a later full reading unambiguously completes an open span, its existing tool
+rows move onto the matched exchange exactly once; a conflicting match leaves
+them at session level rather than dropping them. Incremental reads preserve
+previous session-level calls, and a late result for an earlier call triggers the
+full-rollout reading needed to update its verdict.
+
+Codex marks a tool failure only through an explicit non-zero exit code: either
+`metadata.exit_code` in JSON output or a standalone `Process exited with code N`
+status line. Exit code zero and other output without either verdict remain
+non-errors, even when the text contains the word `error`. A failed call keeps a
+clipped copy of its output as the error message.
+
 ## Codex legacy history
 
 The oldest Codex rollouts can contain only `session_meta`; their submitted
