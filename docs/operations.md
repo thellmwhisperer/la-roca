@@ -69,9 +69,18 @@ file is left byte for byte as it is, and stderr names each affected ownership
 marker (`hooks run claude`, `hooks run claude-pills`, or `hooks run
 claude-handoff`) to delete by hand.
 
+`roca hooks install zcode` writes `~/.zcode/hooks/roca-handoff.sh` and a nested
+`hooks.events.SessionStart` command in `~/.zcode/cli/config.json`. ZCode
+discards plain-text hook stdout, so the wrapper always emits JSON
+`{"additionalContext":"..."}` (or `{}` when there is no handoff). Install and
+uninstall are opt-in and idempotent; init and update never write this hook.
+Parent containers (`hooks`, `hooks.events`) created by this install are
+recorded beside the config and pruned on uninstall only when they remain empty.
+The command object carries `type`, `command`, and `timeoutMs`. Neighbouring
+operator hooks stay in place. Claude Desktop is not part of this installer.
+
 Other harnesses can use the same client-side pattern: intercept the shell tool,
-read identity only from a harness-owned session source, and inject both flags;
-no other hook installer ships yet.
+read identity only from a harness-owned session source, and inject both flags.
 
 ## Memory layers
 
