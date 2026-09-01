@@ -227,6 +227,10 @@ var registry = []Registration{
 		func(content []byte, meta FileMeta) (Records, error) {
 			return ParseChatGPTWebConversations(bytes.NewReader(content), meta)
 		}),
+	fileParser(KindChatGPTCodex, DestinationCorpus, ingestprovenance.CodexCLI, detectChatGPTCodex,
+		func(content []byte, meta FileMeta) (Records, error) {
+			return ParseChatGPTCodex(bytes.NewReader(content), meta)
+		}),
 	{
 		Name: string(KindGrokSession), SourceAgent: "grok",
 		CanonicalHarness: ingestprovenance.GrokBuild,

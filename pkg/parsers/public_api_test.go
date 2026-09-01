@@ -32,6 +32,7 @@ func TestPublicContract(t *testing.T) {
 	)
 
 	wantFamilies := []string{
+		"chatgpt_codex",
 		"chatgpt_web_conversations",
 		"claude_memory",
 		"claude_session",
