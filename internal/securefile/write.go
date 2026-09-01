@@ -161,7 +161,8 @@ func createCollisionError(path string) error {
 
 func requireSameRegularFile(path string, original os.FileInfo) error {
 	current, err := os.Lstat(path)
-	if err != nil || !current.Mode().IsRegular() || !os.SameFile(original, current) {
+	if err != nil || !current.Mode().IsRegular() || !os.SameFile(original, current) ||
+		current.Mode().Perm() != original.Mode().Perm() {
 		return changedFileError(path)
 	}
 	return nil

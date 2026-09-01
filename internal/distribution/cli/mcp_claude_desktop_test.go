@@ -2,6 +2,7 @@ package cli
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -15,7 +16,8 @@ func TestClaudeDesktopInstallWritesTheNativeConfig(t *testing.T) {
 	home := hermeticHome(t)
 	t.Setenv(EnvExecutable, "")
 	t.Setenv("XDG_CONFIG_HOME", "")
-	t.Setenv("APPDATA", "")
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("APPDATA", filepath.Join(home, "AppData", "Roaming"))
 
 	path, err := agentcfg.ConfigPath(agentcfg.RuntimeClaudeDesktop, home, os.Getenv)
 	if err != nil {
