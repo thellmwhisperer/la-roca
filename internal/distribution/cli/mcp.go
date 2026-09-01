@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/thellmwhisperer/la-roca/internal/artifact"
@@ -263,7 +264,18 @@ func ensureZcodeDirectory(path string) (bool, error) {
 	return false, nil
 }
 
+func (env *cliEnv) zcodeLockTimeout() time.Duration {
+	if env.zcodeLockWait > 0 {
+		return env.zcodeLockWait
+	}
+	return 5 * time.Second
+}
+
 func (env *cliEnv) lockManagedZcodeLifecycle() (func() error, error) {
+	return env.lockManagedZcodeLifecycleWithin(env.zcodeLockTimeout())
+}
+
+func (env *cliEnv) lockManagedZcodeLifecycleUnbounded() (func() error, error) {
 	if env.zcodeLifecycleLocked {
 		return func() error { return nil }, nil
 	}
@@ -456,12 +468,30 @@ func (env *cliEnv) uninstallZcodeMCP(path string, finalize ...func(artifact.Entr
 }
 
 func (env *cliEnv) uninstallZcodeMCPLocked(path string, finalize ...func(artifact.Entry, os.FileInfo) error) (outcome agentcfg.Outcome, err error) {
+	outcome = agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: path}
 	preimage := agentcfg.ZcodeMCPPreimageNone
 	entry, found, err := env.registeredArtifact(artifactKindMCP, agentcfg.RuntimeZcode, path)
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: path}, err
 	}
 	if found {
+		rootContinuous, _, continuityErr := zcodeRootContinuity(path, entry)
+		if continuityErr != nil {
+			return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: path}, continuityErr
+		}
+		if !rootContinuous {
+			configured, matchErr := zcodeMCPContinuity(path, entry)
+			if matchErr != nil {
+				return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: path}, matchErr
+			}
+			if configured {
+				outcome, err = agentcfg.UninstallZcodeMCP(path, agentcfg.ZcodeMCPPreimageNone)
+			}
+			if err == nil {
+				err = env.unregisterArtifactEntry(entry)
+			}
+			return outcome, err
+		}
 		preimage, err = zcodeMCPPreimageFromEntry(entry)
 		if err != nil {
 			return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: path}, err

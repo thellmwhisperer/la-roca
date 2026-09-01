@@ -76,6 +76,7 @@ type cliEnv struct {
 	features             config.FeaturesConfig
 	featuresLoaded       bool
 	zcodeLifecycleLocked bool
+	zcodeLockWait        time.Duration
 	omitCorpus           bool
 	forceReadOnly        bool
 	sshRunner            sshCommandRunner

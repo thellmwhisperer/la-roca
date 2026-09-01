@@ -284,11 +284,16 @@ func uninstallWithChecksum(name, path, systemSHA256 string, afterQuarantine func
 		return Outcome{}, unknown(name)
 	}
 	out := Outcome{Runtime: name, Path: path}
-	if _, err := os.Lstat(path); os.IsNotExist(err) {
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
 		out.Missing = true
 		return out, nil
-	} else if err != nil {
+	}
+	if err != nil {
 		return out, err
+	}
+	if !info.Mode().IsRegular() {
+		return out, nil
 	}
 	dir := filepath.Dir(path)
 	if !ownedDir(filepath.Base(dir)) {

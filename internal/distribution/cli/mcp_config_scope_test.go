@@ -265,6 +265,33 @@ func TestFullUninstallSkipsZcodeMCPWhenOwnershipStateIsUnreadable(t *testing.T) 
 	}
 }
 
+func TestFullUninstallRetainsBinaryWhenZcodeWithdrawalFails(t *testing.T) {
+	home := skillTestHome(t)
+	config := filepath.Join(home, ".zcode", "cli", "config.json")
+	installZcodeTestIntegration(t, "mcp", home)
+	registryPath := filepath.Join(home, ".roca", "artifacts.json")
+	if err := os.WriteFile(registryPath, []byte("{broken"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var output strings.Builder
+	env := &cliEnv{out: &output, errOut: &output}
+	if err := env.uninstall(uninstallCommand(env), strings.NewReader(""), false); err != nil {
+		t.Fatal(err)
+	}
+	running, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), running) ||
+		!strings.Contains(output.String(), "integration withdrawal failed") {
+		t.Fatalf("retained binary was not reported:\n%s", output.String())
+	}
+	matched, err := agentcfg.ZcodeMCPMatches(config, filepath.Join(home, "roca"))
+	if err != nil || !matched {
+		t.Fatalf("failed withdrawal changed active MCP: matched=%v err=%v", matched, err)
+	}
+}
+
 func TestZcodeMCPAndHooksShareLifecycleLock(t *testing.T) {
 	home := skillTestHome(t)
 	env := &cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}}
@@ -326,6 +353,38 @@ func TestFullUninstallTimesOutBeforeChangingZcodeState(t *testing.T) {
 	}
 	if err := release(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestExplicitZcodeCommandsTimeOutOnLifecycleLock(t *testing.T) {
+	for _, operation := range []string{"mcp", "hooks", "skill"} {
+		t.Run(operation, func(t *testing.T) {
+			home := skillTestHome(t)
+			holder := &cliEnv{out: io.Discard, errOut: io.Discard}
+			release, err := holder.lockManagedZcodeLifecycle()
+			if err != nil {
+				t.Fatal(err)
+			}
+			contender := &cliEnv{out: io.Discard, errOut: io.Discard,
+				build: Build{Version: "test"}, zcodeLockWait: 20 * time.Millisecond}
+			switch operation {
+			case "mcp":
+				_, err = contender.installZcodeMCP(filepath.Join(home, ".zcode", "cli", "config.json"), filepath.Join(home, "roca"))
+			case "hooks":
+				config, wrapper := zcodeTestConfigAndWrapper(home)
+				_, _, err = contender.installManagedZcodeHandoffHook(config, wrapper, filepath.Join(home, "roca"))
+			case "skill":
+				root := rootCommand(contender)
+				root.SetArgs([]string{"skill", "install", "zcode"})
+				err = root.Execute()
+			}
+			if releaseErr := release(); releaseErr != nil {
+				t.Fatal(releaseErr)
+			}
+			if err == nil || !strings.Contains(err.Error(), "timed out") {
+				t.Fatalf("contended %s error = %v", operation, err)
+			}
+		})
 	}
 }
 

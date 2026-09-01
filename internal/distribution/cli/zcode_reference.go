@@ -139,6 +139,9 @@ func sameZcodeFile(path string, wrapper zcodeFileIdentity, home string) (bool, e
 		return true, nil
 	}
 	resolved, err := filepath.EvalSymlinks(clean)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
 	if err != nil {
 		return false, err
 	}
@@ -147,6 +150,9 @@ func sameZcodeFile(path string, wrapper zcodeFileIdentity, home string) (bool, e
 		return true, nil
 	}
 	info, err := os.Stat(resolved)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
 	if err != nil {
 		return false, err
 	}
