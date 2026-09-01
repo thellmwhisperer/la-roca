@@ -632,8 +632,9 @@ func installZcodeHandoffHook(configPath, wrapperPath, executable string) (agentc
 	if err := writeZcodeWrapper(wrapperPath, wrapper); err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
+	command := shellQuote(wrapperPath)
 	outcome, err := agentcfg.Edit(agentcfg.RuntimeZcode, configPath, func(previous string) (string, error) {
-		return agentcfg.DeclareZcodeSessionStartHook(previous, wrapperPath, 15000)
+		return agentcfg.DeclareZcodeSessionStartHook(previous, command, 15000)
 	}, true)
 	if err != nil {
 		if restoreErr := restoreZcodeWrapper(wrapperPath, state, []byte(wrapper)); restoreErr != nil {
@@ -645,10 +646,11 @@ func installZcodeHandoffHook(configPath, wrapperPath, executable string) (agentc
 
 func uninstallZcodeHandoffHook(configPath, wrapperPath string) (agentcfg.Outcome, string, error) {
 	var warning string
+	command := shellQuote(wrapperPath)
 	outcome, err := agentcfg.Edit(agentcfg.RuntimeZcode, configPath, func(previous string) (string, error) {
-		next, editErr := agentcfg.RemoveZcodeSessionStartHook(previous, wrapperPath)
+		next, editErr := agentcfg.RemoveZcodeSessionStartHook(previous, command)
 		if editErr != nil {
-			warning = fmt.Sprintf("warning: %s is not readable as zcode settings; remove the nested hooks.events.SessionStart command %s by hand", configPath, wrapperPath)
+			warning = fmt.Sprintf("warning: %s is not readable as zcode settings; remove the nested hooks.events.SessionStart command %s by hand", configPath, command)
 			return previous, nil
 		}
 		return next, nil
@@ -690,10 +692,10 @@ func restoreZcodeWrapper(path string, state zcodeWrapperState, installed []byte)
 		}
 		return nil
 	}
-	if err := securefile.Replace(path, state.body, installed); err != nil {
+	if err := securefile.ReplaceExact(path, state.body, installed, state.mode); err != nil {
 		return fmt.Errorf("roll back %s: %w", path, err)
 	}
-	return os.Chmod(path, state.mode)
+	return nil
 }
 
 func zcodeHandoffContext(ctx context.Context, env *cliEnv) string {
@@ -703,7 +705,7 @@ func zcodeHandoffContext(ctx context.Context, env *cliEnv) string {
 	}
 	defer svc.Close()
 	result, err := svc.Exec(ctx, service.ExecRequest{
-		SQL:      "SELECT content FROM plugin_roca_ops.memories WHERE layer='handoff' AND status='active' ORDER BY created_at DESC LIMIT 1",
+		SQL:      "SELECT content FROM plugin_roca_ops.memories WHERE layer='handoff' AND status='active' ORDER BY created_at DESC, id DESC LIMIT 1",
 		MaxChars: 8000,
 	})
 	if err != nil || len(result.Rows) == 0 {

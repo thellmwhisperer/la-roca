@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
 	"io"
 	"os"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/thellmwhisperer/la-roca/internal/artifact"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/lifecycle"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 )
 
 func TestZcodeHookInstallerWritesNestedSessionStartAndJSONWrapper(t *testing.T) {
@@ -139,6 +142,47 @@ exit 1
 	}
 }
 
+func TestZcodeHookCommandExecutesWhenWrapperPathContainsSpaces(t *testing.T) {
+	home := t.TempDir()
+	config := filepath.Join(home, "config.json")
+	wrapper := filepath.Join(home, "ZCode Home", "hooks", "roca-handoff.sh")
+	binary := filepath.Join(home, "fake-roca")
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\nprintf '%s\\n' '{\"additionalContext\":\"space-safe\"}'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := installZcodeHandoffHook(config, wrapper, binary); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(body, &document); err != nil {
+		t.Fatal(err)
+	}
+	hooks := document["hooks"].(map[string]any)["events"].(map[string]any)["SessionStart"].([]any)
+	command := hooks[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)["command"].(string)
+	output, err := exec.Command("sh", "-c", command).Output()
+	if err != nil {
+		t.Fatalf("execute quoted ZCode hook command: %v", err)
+	}
+	var context map[string]string
+	if err := json.Unmarshal(output, &context); err != nil || context["additionalContext"] != "space-safe" {
+		t.Fatalf("hook command output = %q, err = %v", output, err)
+	}
+	if _, _, err := uninstallZcodeHandoffHook(config, wrapper); err != nil {
+		t.Fatal(err)
+	}
+	body, err = os.ReadFile(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), command) {
+		t.Fatalf("uninstall left quoted hook command in config: %s", body)
+	}
+}
+
 func TestZcodeHookRunnerAlwaysEmitsAdditionalContext(t *testing.T) {
 	home := skillTestHome(t)
 	var output strings.Builder
@@ -153,6 +197,27 @@ func TestZcodeHookRunnerAlwaysEmitsAdditionalContext(t *testing.T) {
 	}
 	if context["additionalContext"] != "" {
 		t.Fatalf("unexpected handoff from empty home %s: %#v", home, context)
+	}
+}
+
+func TestZcodeHandoffChoosesNewestIDWhenTimestampsTie(t *testing.T) {
+	fixture := fixtureInstallation(t)
+	database, err := sql.Open("sqlite", filepath.Join(fixture.home, ".roca", "plugins",
+		rocaops.Name, rocaops.DatabaseFilename))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`INSERT INTO memories (layer, content, origin, status, created_at)
+		VALUES ('handoff', 'older', 'agent', 'active', '9999-01-01 00:00:00'),
+		       ('handoff', 'newer', 'agent', 'active', '9999-01-01 00:00:00')`); err != nil {
+		database.Close()
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if got := zcodeHandoffContext(context.Background(), &cliEnv{build: Build{Version: "test"}}); got != "newer" {
+		t.Fatalf("handoff context = %q, want newest inserted row", got)
 	}
 }
 

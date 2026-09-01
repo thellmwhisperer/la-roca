@@ -51,6 +51,51 @@ func TestCreatePreservingParentModePreservesConcurrentTarget(t *testing.T) {
 	assertMode(t, dir, 0o750)
 }
 
+func TestRemoveExactPreservesAFileCreatedAfterIsolation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "roca-handoff.sh")
+	expected := []byte("installed wrapper")
+	concurrent := []byte("operator replacement")
+	if err := os.WriteFile(path, expected, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	realIsolate := isolateFile
+	isolateFile = func(source, held string) error {
+		if err := realIsolate(source, held); err != nil {
+			return err
+		}
+		return os.WriteFile(source, concurrent, 0o600)
+	}
+	t.Cleanup(func() { isolateFile = realIsolate })
+
+	if err := Remove(path, expected); err != nil {
+		t.Fatal(err)
+	}
+	assertFileContentAndMode(t, path, concurrent, 0o600)
+}
+
+func TestReplaceExactPreservesAFileCreatedAfterIsolation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "roca-handoff.sh")
+	expected := []byte("installed wrapper")
+	concurrent := []byte("operator replacement")
+	if err := os.WriteFile(path, expected, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	realIsolate := isolateFile
+	isolateFile = func(source, held string) error {
+		if err := realIsolate(source, held); err != nil {
+			return err
+		}
+		return os.WriteFile(source, concurrent, 0o640)
+	}
+	t.Cleanup(func() { isolateFile = realIsolate })
+
+	err := ReplaceExact(path, []byte("previous wrapper"), expected, 0o600)
+	if err == nil || !strings.Contains(err.Error(), "replacement preserved") {
+		t.Fatalf("replace error = %v, want preserved replacement", err)
+	}
+	assertFileContentAndMode(t, path, concurrent, 0o640)
+}
+
 func TestCreatePreservingParentModeFailsWithoutAtomicPrimitive(t *testing.T) {
 	realRename := renameNoReplaceFile
 	renameNoReplaceFile = func(_, _ string) error {
