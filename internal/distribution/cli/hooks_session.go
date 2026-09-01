@@ -183,6 +183,25 @@ func mergeHookOutcomes(base agentcfg.Outcome, extra agentcfg.Outcome) agentcfg.O
 }
 
 func installClaudeAuthorshipAndSessionHooks(env *cliEnv, path, declared string, force, pills, handoff bool) (agentcfg.Outcome, string, error) {
+	if pills || handoff {
+		outcome := agentcfg.Outcome{Runtime: "claude", Path: path}
+		if pills {
+			extra, err := installClaudeSessionHook(path, declared, "pills")
+			if err != nil {
+				return outcome, "", err
+			}
+			outcome = mergeHookOutcomes(outcome, extra)
+		}
+		if handoff {
+			extra, err := installClaudeSessionHook(path, declared, "handoff")
+			if err != nil {
+				return outcome, "", err
+			}
+			outcome = mergeHookOutcomes(outcome, extra)
+		}
+		return outcome, "", nil
+	}
+
 	entry, registered, err := env.registeredArtifact(artifactKindHook, "claude", path)
 	if err != nil {
 		return agentcfg.Outcome{Runtime: "claude", Path: path}, "", err
@@ -221,20 +240,6 @@ func installClaudeAuthorshipAndSessionHooks(env *cliEnv, path, declared string, 
 			return outcome, "", err
 		}
 	}
-	if pills {
-		extra, err := installClaudeSessionHook(path, declared, "pills")
-		if err != nil {
-			return outcome, "", err
-		}
-		outcome = mergeHookOutcomes(outcome, extra)
-	}
-	if handoff {
-		extra, err := installClaudeSessionHook(path, declared, "handoff")
-		if err != nil {
-			return outcome, "", err
-		}
-		outcome = mergeHookOutcomes(outcome, extra)
-	}
 	return outcome, warning, nil
 }
 
@@ -254,7 +259,7 @@ func uninstallClaudeAuthorshipAndSessionHooks(env *cliEnv, path string, pills, h
 			return extra, extraWarning, err
 		}
 		outcome = mergeHookOutcomes(outcome, extra)
-		warning = firstWarning(warning, extraWarning)
+		warning = combineWarnings(warning, extraWarning)
 	}
 	if handoff {
 		extra, extraWarning, err := uninstallClaudeSessionHook(path, "handoff")
@@ -262,14 +267,17 @@ func uninstallClaudeAuthorshipAndSessionHooks(env *cliEnv, path string, pills, h
 			return extra, extraWarning, err
 		}
 		outcome = mergeHookOutcomes(outcome, extra)
-		warning = firstWarning(warning, extraWarning)
+		warning = combineWarnings(warning, extraWarning)
 	}
 	return outcome, warning, nil
 }
 
-func firstWarning(existing, next string) string {
-	if existing != "" {
+func combineWarnings(existing, next string) string {
+	if existing == "" {
+		return next
+	}
+	if next == "" {
 		return existing
 	}
-	return next
+	return existing + "\n" + next
 }
