@@ -10,9 +10,9 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/agentcfg"
 )
 
-func TestUninstallPreservesReplacementPublishedAfterQuarantine(t *testing.T) {
-	home := t.TempDir()
-	path := filepath.Join(home, "skills", SkillName, "SKILL.md")
+func writeManagedSkill(t *testing.T) (string, string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "skills", SkillName, "SKILL.md")
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -20,6 +20,11 @@ func TestUninstallPreservesReplacementPublishedAfterQuarantine(t *testing.T) {
 	if err := os.WriteFile(path, []byte(managed), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	return path, managed
+}
+
+func TestUninstallPreservesReplacementPublishedAfterQuarantine(t *testing.T) {
+	path, managed := writeManagedSkill(t)
 	operator := []byte("operator replacement\n")
 	outcome, err := uninstallWithChecksum(agentcfg.RuntimeZcode, path, artifact.Checksum(managed), func() {
 		if err := os.WriteFile(path, operator, 0o600); err != nil {
@@ -44,15 +49,7 @@ func TestUninstallPreservesReplacementPublishedAfterQuarantine(t *testing.T) {
 }
 
 func TestUninstallRestoresQuarantineWhenRemovalFails(t *testing.T) {
-	home := t.TempDir()
-	path := filepath.Join(home, "skills", SkillName, "SKILL.md")
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	managed := Content()
-	if err := os.WriteFile(path, []byte(managed), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	path, managed := writeManagedSkill(t)
 	failure := errors.New("synthetic removal failure")
 	outcome, err := uninstallWithChecksum(agentcfg.RuntimeZcode, path, artifact.Checksum(managed), nil,
 		func(string) error { return failure })

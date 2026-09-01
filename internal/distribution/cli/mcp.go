@@ -185,7 +185,8 @@ func zcodeMCPPathPreimage(path string) (zcodeMCPPathState, error) {
 	return zcodeMCPPathState{createdRoot: missing[0], createdConfigDir: missing[1], createdConfig: missing[2]}, nil
 }
 
-func (env *cliEnv) installZcodeMCP(path, executable string) (outcome agentcfg.Outcome, err error) {
+func (env *cliEnv) withLockedZcodeMCP(path string,
+	operation func(string) (agentcfg.Outcome, error)) (outcome agentcfg.Outcome, err error) {
 	path, err = filepath.Abs(path)
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: path}, err
@@ -195,6 +196,16 @@ func (env *cliEnv) installZcodeMCP(path, executable string) (outcome agentcfg.Ou
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: path}, err
 	}
 	defer func() { err = errors.Join(err, release()) }()
+	return operation(path)
+}
+
+func (env *cliEnv) installZcodeMCP(path, executable string) (agentcfg.Outcome, error) {
+	return env.withLockedZcodeMCP(path, func(path string) (agentcfg.Outcome, error) {
+		return env.installZcodeMCPLocked(path, executable)
+	})
+}
+
+func (env *cliEnv) installZcodeMCPLocked(path, executable string) (outcome agentcfg.Outcome, err error) {
 	pathPreimage, err := zcodeMCPPathPreimage(path)
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: path}, err
@@ -264,20 +275,7 @@ func (env *cliEnv) recordZcodeMCPPreimage(path, preimage string, configured bool
 	if !changed {
 		return nil, nil
 	}
-	return func() error {
-		_, err := mutateArtifactRegistry(paths.Artifacts, func(registry *artifact.Registry) (bool, error) {
-			current, found := registry.Find(artifactKindMCP, agentcfg.RuntimeZcode, path)
-			if !found || current != transaction {
-				return false, nil
-			}
-			removeArtifactEntry(registry, transaction.Key())
-			if priorFound {
-				registry.Upsert(prior)
-			}
-			return true, nil
-		})
-		return err
-	}, nil
+	return artifactRegistryRollback(paths.Artifacts, transaction, prior, priorFound), nil
 }
 
 func lockArtifactRegistry(path string) (func() error, error) {
@@ -302,6 +300,23 @@ func mutateArtifactRegistry(path string, mutate func(*artifact.Registry) (bool, 
 		return changed, err
 	}
 	return true, artifact.SaveRegistry(path, registry)
+}
+
+func artifactRegistryRollback(path string, transaction, prior artifact.Entry, priorFound bool) func() error {
+	return func() error {
+		_, err := mutateArtifactRegistry(path, func(registry *artifact.Registry) (bool, error) {
+			current, found := registry.Find(transaction.Kind, transaction.Runtime, transaction.Path)
+			if !found || current != transaction {
+				return false, nil
+			}
+			removeArtifactEntry(registry, transaction.Key())
+			if priorFound {
+				registry.Upsert(prior)
+			}
+			return true, nil
+		})
+		return err
+	}
 }
 
 func (env *cliEnv) unregisterArtifactEntry(entry artifact.Entry) error {
@@ -349,16 +364,13 @@ func (env *cliEnv) uninstallMCP(runtime, path string) (agentcfg.Outcome, error) 
 	return env.uninstallZcodeMCP(path)
 }
 
-func (env *cliEnv) uninstallZcodeMCP(path string, finalize ...func(artifact.Entry) error) (outcome agentcfg.Outcome, err error) {
-	path, err = filepath.Abs(path)
-	if err != nil {
-		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: path}, err
-	}
-	release, err := env.lockManagedZcodeLifecycle()
-	if err != nil {
-		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: path}, err
-	}
-	defer func() { err = errors.Join(err, release()) }()
+func (env *cliEnv) uninstallZcodeMCP(path string, finalize ...func(artifact.Entry) error) (agentcfg.Outcome, error) {
+	return env.withLockedZcodeMCP(path, func(path string) (agentcfg.Outcome, error) {
+		return env.uninstallZcodeMCPLocked(path, finalize...)
+	})
+}
+
+func (env *cliEnv) uninstallZcodeMCPLocked(path string, finalize ...func(artifact.Entry) error) (outcome agentcfg.Outcome, err error) {
 	preimage := agentcfg.ZcodeMCPPreimageNone
 	entry, found, err := env.registeredArtifact(artifactKindMCP, agentcfg.RuntimeZcode, path)
 	if err != nil {

@@ -20,6 +20,131 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 )
 
+func executeZcodeTestCLI(args ...string) error {
+	root := rootCommand(&cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}})
+	root.SetArgs(args)
+	return root.Execute()
+}
+
+func runZcodeTestCLI(t *testing.T, args ...string) {
+	t.Helper()
+	if err := executeZcodeTestCLI(args...); err != nil {
+		t.Fatalf("roca %v: %v", args, err)
+	}
+}
+
+func installZcodeTestIntegration(t *testing.T, integration, home string) {
+	t.Helper()
+	runZcodeTestCLI(t, integration, "install", "zcode", "--executable", filepath.Join(home, "roca"))
+}
+
+func purgeZcodeTestIntegrations(purge bool) lifecycle.Report {
+	report := lifecycle.Report{Purged: true, Deleted: []string{}}
+	(&cliEnv{out: io.Discard, errOut: io.Discard}).withdrawTheIntegrations(&report, purge)
+	return report
+}
+
+func readZcodeTestJSON(t *testing.T, path string) ([]byte, map[string]any) {
+	t.Helper()
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(body, &document); err != nil {
+		t.Fatal(err)
+	}
+	return body, document
+}
+
+func writeZcodeTestJSON(t *testing.T, path string, document map[string]any) []byte {
+	t.Helper()
+	body, err := json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return body
+}
+
+func installZcodeTestHook(t *testing.T, config, wrapper, executable string) {
+	t.Helper()
+	if _, _, err := installZcodeHandoffHook(config, wrapper, executable); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func uninstallZcodeTestHook(t *testing.T, config, wrapper, executable string) string {
+	t.Helper()
+	_, warning, err := uninstallZcodeHandoffHook(config, wrapper, []byte(zcodeWrapper(executable)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return warning
+}
+
+func zcodeOperatorHookConfig(command string) string {
+	return fmt.Sprintf(`{"hooks":{"enabled":true,"events":{"SessionStart":[{"hooks":[{"type":"command","command":%q,"timeoutMs":4000}]}]}}}`, command)
+}
+
+func zcodeTestConfigAndWrapper(home string) (string, string) {
+	return filepath.Join(home, ".zcode", "cli", "config.json"),
+		filepath.Join(home, ".zcode", "hooks", "roca-handoff.sh")
+}
+
+func roundTripZcodeOperatorHook(t *testing.T, home, config, wrapper, command string) (string, string) {
+	t.Helper()
+	initial := zcodeOperatorHookConfig(command)
+	writeFile(t, config, initial)
+	executable := filepath.Join(home, "roca")
+	installZcodeTestHook(t, config, wrapper, executable)
+	return initial, uninstallZcodeTestHook(t, config, wrapper, executable)
+}
+
+func assertZcodeOwnershipExpiresWithoutContinuity(t *testing.T, integration string) {
+	t.Helper()
+	home := skillTestHome(t)
+	rootPath := filepath.Join(home, ".zcode")
+	config := filepath.Join(rootPath, "cli", "config.json")
+	installZcodeTestIntegration(t, integration, home)
+	if err := os.RemoveAll(rootPath); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, config, "{}")
+	installZcodeTestIntegration(t, integration, home)
+	report := purgeZcodeTestIntegrations(true)
+	if !strings.Contains(strings.Join(report.Errors, "\n"), config) {
+		t.Fatalf("operator-recreated config was not retained: %v", report.Errors)
+	}
+	if body, err := os.ReadFile(config); err != nil || strings.TrimSpace(string(body)) != "{}" {
+		t.Fatalf("operator-recreated config changed: body=%q err=%v", body, err)
+	}
+}
+
+func assertFreshZcodePurgeRemovesRuntimePaths(t *testing.T, integration string) {
+	t.Helper()
+	home := skillTestHome(t)
+	installZcodeTestIntegration(t, integration, home)
+	report := purgeZcodeTestIntegrations(true)
+	if len(report.Errors) != 0 {
+		t.Fatalf("purge errors = %v", report.Errors)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".zcode")); !os.IsNotExist(err) {
+		t.Fatalf("fresh %s runtime paths survived: %v", integration, err)
+	}
+}
+
+func prepareZcodeTestWrapperDir(t *testing.T, home string) string {
+	t.Helper()
+	_, wrapper := zcodeTestConfigAndWrapper(home)
+	if err := os.MkdirAll(filepath.Dir(wrapper), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return wrapper
+}
+
 func TestZcodeHookPlatformSupportRequiresBash(t *testing.T) {
 	for _, goos := range []string{"darwin", "linux"} {
 		if err := zcodeHookPlatformError(goos, os.Stat); err != nil {
@@ -232,20 +357,7 @@ exit 1
 }
 
 func TestZcodeFreshHookPurgeRemovesCreatedRuntimePaths(t *testing.T) {
-	home := skillTestHome(t)
-	root := rootCommand(&cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}})
-	root.SetArgs([]string{"hooks", "install", "zcode", "--executable", filepath.Join(home, "roca")})
-	if err := root.Execute(); err != nil {
-		t.Fatalf("fresh install error = %v", err)
-	}
-	report := lifecycle.Report{Purged: true, Deleted: []string{}}
-	(&cliEnv{out: io.Discard, errOut: io.Discard}).withdrawTheIntegrations(&report, true)
-	if len(report.Errors) != 0 {
-		t.Fatalf("purge errors = %v", report.Errors)
-	}
-	if _, err := os.Stat(filepath.Join(home, ".zcode")); !os.IsNotExist(err) {
-		t.Fatalf("fresh ZCode paths survived purge: %v", err)
-	}
+	assertFreshZcodePurgeRemovesRuntimePaths(t, "hooks")
 }
 
 func TestZcodeHookPurgeRetainsReplacedLifecycleLock(t *testing.T) {
@@ -292,17 +404,12 @@ func TestZcodeHookPurgeRetainsReplacedLifecycleLock(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			home := skillTestHome(t)
-			root := rootCommand(&cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}})
-			root.SetArgs([]string{"hooks", "install", "zcode", "--executable", filepath.Join(home, "roca")})
-			if err := root.Execute(); err != nil {
-				t.Fatal(err)
-			}
+			installZcodeTestIntegration(t, "hooks", home)
 			lockPath := filepath.Join(home, ".zcode", ".roca-hooks.lock")
 			if err := test.replace(lockPath); err != nil {
 				t.Fatal(err)
 			}
-			report := lifecycle.Report{Purged: true, Deleted: []string{}}
-			(&cliEnv{out: io.Discard, errOut: io.Discard}).withdrawTheIntegrations(&report, true)
+			report := purgeZcodeTestIntegrations(true)
 			if !strings.Contains(strings.Join(report.Errors, "\n"), lockPath) {
 				t.Fatalf("replaced lock was not reported: %v", report.Errors)
 			}
@@ -331,11 +438,7 @@ func TestZcodeFreshHookInstallEnablesHooksAndReportsIt(t *testing.T) {
 	if !strings.Contains(notices.String(), "enabled ZCode hooks by adding hooks.enabled: true") {
 		t.Fatalf("enablement notice = %q", notices.String())
 	}
-	root = rootCommand(&cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}})
-	root.SetArgs([]string{"hooks", "uninstall", "zcode"})
-	if err := root.Execute(); err != nil {
-		t.Fatal(err)
-	}
+	runZcodeTestCLI(t, "hooks", "uninstall", "zcode")
 	body, err = os.ReadFile(config)
 	if err != nil || strings.TrimSpace(string(body)) != "{}" {
 		t.Fatalf("created enablement survived uninstall: body=%q err=%v", body, err)
@@ -344,19 +447,10 @@ func TestZcodeFreshHookInstallEnablesHooksAndReportsIt(t *testing.T) {
 
 func TestZcodeCombinedMCPAndHookPurgeIsAggregated(t *testing.T) {
 	home := skillTestHome(t)
-	executable := filepath.Join(home, "roca")
-	for _, args := range [][]string{
-		{"mcp", "install", "zcode", "--executable", executable},
-		{"hooks", "install", "zcode", "--executable", executable},
-	} {
-		root := rootCommand(&cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}})
-		root.SetArgs(args)
-		if err := root.Execute(); err != nil {
-			t.Fatalf("install %v: %v", args, err)
-		}
+	for _, integration := range []string{"mcp", "hooks"} {
+		installZcodeTestIntegration(t, integration, home)
 	}
-	report := lifecycle.Report{Purged: true, Deleted: []string{}}
-	(&cliEnv{out: io.Discard, errOut: io.Discard}).withdrawTheIntegrations(&report, true)
+	report := purgeZcodeTestIntegrations(true)
 	if len(report.Errors) != 0 {
 		t.Fatalf("aggregated purge errors = %v", report.Errors)
 	}
@@ -376,46 +470,17 @@ func TestZcodeCombinedMCPAndHookPurgeIsAggregated(t *testing.T) {
 
 func TestZcodeHookUninstallKeepsActivationForNeighboringHooks(t *testing.T) {
 	home := skillTestHome(t)
-	executable := filepath.Join(home, "roca")
-	root := rootCommand(&cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}})
-	root.SetArgs([]string{"hooks", "install", "zcode", "--executable", executable})
-	if err := root.Execute(); err != nil {
-		t.Fatal(err)
-	}
+	installZcodeTestIntegration(t, "hooks", home)
 	config := filepath.Join(home, ".zcode", "cli", "config.json")
-	body, err := os.ReadFile(config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var document map[string]any
-	if err := json.Unmarshal(body, &document); err != nil {
-		t.Fatal(err)
-	}
+	body, document := readZcodeTestJSON(t, config)
 	hooks := document["hooks"].(map[string]any)
 	events := hooks["events"].(map[string]any)
 	events["Other"] = []any{map[string]any{"hooks": []any{map[string]any{
 		"type": "command", "command": "operator-hook", "timeoutMs": float64(5000),
 	}}}}
-	body, err = json.Marshal(document)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(config, body, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	root = rootCommand(&cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}})
-	root.SetArgs([]string{"hooks", "uninstall", "zcode"})
-	if err := root.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	body, err = os.ReadFile(config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	document = nil
-	if err := json.Unmarshal(body, &document); err != nil {
-		t.Fatal(err)
-	}
+	writeZcodeTestJSON(t, config, document)
+	runZcodeTestCLI(t, "hooks", "uninstall", "zcode")
+	body, document = readZcodeTestJSON(t, config)
 	hooks = document["hooks"].(map[string]any)
 	if hooks["enabled"] != true {
 		t.Fatalf("neighboring hook was disabled: %s", body)
@@ -428,30 +493,12 @@ func TestZcodeHookUninstallKeepsActivationForNeighboringHooks(t *testing.T) {
 
 func TestZcodeHookPurgeReportsRetainedCreatedConfig(t *testing.T) {
 	home := skillTestHome(t)
-	root := rootCommand(&cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}})
-	root.SetArgs([]string{"hooks", "install", "zcode", "--executable", filepath.Join(home, "roca")})
-	if err := root.Execute(); err != nil {
-		t.Fatal(err)
-	}
+	installZcodeTestIntegration(t, "hooks", home)
 	config := filepath.Join(home, ".zcode", "cli", "config.json")
-	body, err := os.ReadFile(config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var document map[string]any
-	if err := json.Unmarshal(body, &document); err != nil {
-		t.Fatal(err)
-	}
+	_, document := readZcodeTestJSON(t, config)
 	document["operator"] = true
-	body, err = json.Marshal(document)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(config, body, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	report := lifecycle.Report{Purged: true, Deleted: []string{}}
-	(&cliEnv{out: io.Discard, errOut: io.Discard}).withdrawTheIntegrations(&report, true)
+	writeZcodeTestJSON(t, config, document)
+	report := purgeZcodeTestIntegrations(true)
 	if !strings.Contains(strings.Join(report.Errors, "\n"), config) {
 		t.Fatalf("retained config was not reported: %v", report.Errors)
 	}
@@ -462,22 +509,10 @@ func TestZcodeHookPurgeReportsRetainedCreatedConfig(t *testing.T) {
 
 func TestZcodePurgeReportsUnprovenPathsAfterOrdinaryUninstall(t *testing.T) {
 	home := skillTestHome(t)
-	install := func() {
-		root := rootCommand(&cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}})
-		root.SetArgs([]string{"hooks", "install", "zcode", "--executable", filepath.Join(home, "roca")})
-		if err := root.Execute(); err != nil {
-			t.Fatalf("install error = %v", err)
-		}
-	}
-	install()
-	root := rootCommand(&cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}})
-	root.SetArgs([]string{"hooks", "uninstall", "zcode"})
-	if err := root.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	install()
-	report := lifecycle.Report{Purged: true, Deleted: []string{}}
-	(&cliEnv{out: io.Discard, errOut: io.Discard}).withdrawTheIntegrations(&report, true)
+	installZcodeTestIntegration(t, "hooks", home)
+	runZcodeTestCLI(t, "hooks", "uninstall", "zcode")
+	installZcodeTestIntegration(t, "hooks", home)
+	report := purgeZcodeTestIntegrations(true)
 	lockPath := filepath.Join(home, ".zcode", ".roca-hooks.lock")
 	if !slices.ContainsFunc(report.Errors, func(message string) bool { return strings.Contains(message, lockPath) }) {
 		t.Fatalf("unproven ZCode path was not reported: %v", report.Errors)
@@ -490,20 +525,10 @@ func TestZcodePurgeReportsUnprovenPathsAfterOrdinaryUninstall(t *testing.T) {
 func TestZcodeHookPurgePreservesPreexistingConfig(t *testing.T) {
 	home := skillTestHome(t)
 	config := filepath.Join(home, ".zcode", "cli", "config.json")
-	if err := os.MkdirAll(filepath.Dir(config), 0o700); err != nil {
-		t.Fatal(err)
-	}
 	initial := `{"operator":true,"hooks":{"enabled":true}}`
-	if err := os.WriteFile(config, []byte(initial), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	root := rootCommand(&cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}})
-	root.SetArgs([]string{"hooks", "install", "zcode", "--executable", filepath.Join(home, "roca")})
-	if err := root.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	report := lifecycle.Report{Purged: true, Deleted: []string{}}
-	(&cliEnv{out: io.Discard, errOut: io.Discard}).withdrawTheIntegrations(&report, true)
+	writeFile(t, config, initial)
+	installZcodeTestIntegration(t, "hooks", home)
+	report := purgeZcodeTestIntegrations(true)
 	if len(report.Errors) != 0 {
 		t.Fatalf("purge errors = %v", report.Errors)
 	}
@@ -523,11 +548,7 @@ func TestZcodeHookPurgePreservesPreexistingConfig(t *testing.T) {
 
 func TestZcodeHookUninstallWithoutInstallCreatesNoRuntimeDirectories(t *testing.T) {
 	home := skillTestHome(t)
-	root := rootCommand(&cliEnv{out: io.Discard, build: Build{Version: "test"}})
-	root.SetArgs([]string{"hooks", "uninstall", "zcode"})
-	if err := root.Execute(); err != nil {
-		t.Fatal(err)
-	}
+	runZcodeTestCLI(t, "hooks", "uninstall", "zcode")
 	if _, err := os.Stat(filepath.Join(home, ".zcode")); !os.IsNotExist(err) {
 		t.Fatalf("empty uninstall created ZCode directories: %v", err)
 	}
@@ -536,20 +557,11 @@ func TestZcodeHookUninstallWithoutInstallCreatesNoRuntimeDirectories(t *testing.
 func TestZcodeHookReinstallRepointsManagedWrapper(t *testing.T) {
 	home := skillTestHome(t)
 	config := filepath.Join(home, ".zcode", "cli", "config.json")
-	if err := os.MkdirAll(filepath.Dir(config), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(config, []byte(`{"hooks":{"enabled":true}}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeFile(t, config, `{"hooks":{"enabled":true}}`)
 	first := filepath.Join(home, "bin", "roca-v1")
 	second := filepath.Join(home, "bin", "roca-v2")
 	for _, executable := range []string{first, second} {
-		root := rootCommand(&cliEnv{out: io.Discard, build: Build{Version: "test"}})
-		root.SetArgs([]string{"hooks", "install", "zcode", "--executable", executable})
-		if err := root.Execute(); err != nil {
-			t.Fatalf("install %s: %v", executable, err)
-		}
+		runZcodeTestCLI(t, "hooks", "install", "zcode", "--executable", executable)
 	}
 	wrapper := filepath.Join(home, ".zcode", "hooks", "roca-handoff.sh")
 	if body, err := os.ReadFile(wrapper); err != nil || string(body) != zcodeWrapper(second) {
@@ -560,50 +572,14 @@ func TestZcodeHookReinstallRepointsManagedWrapper(t *testing.T) {
 func TestZcodeHookReinstallMergesNewEnablementOwnership(t *testing.T) {
 	home := skillTestHome(t)
 	config := filepath.Join(home, ".zcode", "cli", "config.json")
-	if err := os.MkdirAll(filepath.Dir(config), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(config, []byte(`{"hooks":{"enabled":true}}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	install := func() {
-		root := rootCommand(&cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}})
-		root.SetArgs([]string{"hooks", "install", "zcode", "--executable", filepath.Join(home, "roca")})
-		if err := root.Execute(); err != nil {
-			t.Fatal(err)
-		}
-	}
-	install()
-	body, err := os.ReadFile(config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var document map[string]any
-	if err := json.Unmarshal(body, &document); err != nil {
-		t.Fatal(err)
-	}
+	writeFile(t, config, `{"hooks":{"enabled":true}}`)
+	installZcodeTestIntegration(t, "hooks", home)
+	_, document := readZcodeTestJSON(t, config)
 	delete(document["hooks"].(map[string]any), "enabled")
-	body, err = json.Marshal(document)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(config, body, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	install()
-	root := rootCommand(&cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}})
-	root.SetArgs([]string{"hooks", "uninstall", "zcode"})
-	if err := root.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	body, err = os.ReadFile(config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	document = nil
-	if err := json.Unmarshal(body, &document); err != nil {
-		t.Fatal(err)
-	}
+	writeZcodeTestJSON(t, config, document)
+	installZcodeTestIntegration(t, "hooks", home)
+	runZcodeTestCLI(t, "hooks", "uninstall", "zcode")
+	body, document := readZcodeTestJSON(t, config)
 	hooks := document["hooks"].(map[string]any)
 	if _, found := hooks["enabled"]; found {
 		t.Fatalf("reinstall-owned hooks.enabled survived uninstall: %s", body)
@@ -614,42 +590,12 @@ func TestZcodeHookReinstallMergesNewEnablementOwnership(t *testing.T) {
 }
 
 func TestZcodeHookReinstallExpiresOwnershipWithoutManagedContinuity(t *testing.T) {
-	home := skillTestHome(t)
-	rootPath := filepath.Join(home, ".zcode")
-	config := filepath.Join(rootPath, "cli", "config.json")
-	install := func() {
-		root := rootCommand(&cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}})
-		root.SetArgs([]string{"hooks", "install", "zcode", "--executable", filepath.Join(home, "roca")})
-		if err := root.Execute(); err != nil {
-			t.Fatal(err)
-		}
-	}
-	install()
-	if err := os.RemoveAll(rootPath); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Dir(config), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(config, []byte("{}"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	install()
-	report := lifecycle.Report{Purged: true, Deleted: []string{}}
-	(&cliEnv{out: io.Discard, errOut: io.Discard}).withdrawTheIntegrations(&report, true)
-	if !strings.Contains(strings.Join(report.Errors, "\n"), config) {
-		t.Fatalf("operator-recreated config was not retained: %v", report.Errors)
-	}
-	if body, err := os.ReadFile(config); err != nil || strings.TrimSpace(string(body)) != "{}" {
-		t.Fatalf("operator-recreated config changed: body=%q err=%v", body, err)
-	}
+	assertZcodeOwnershipExpiresWithoutContinuity(t, "hooks")
 }
 
 func TestZcodeHooksRejectForce(t *testing.T) {
 	home := skillTestHome(t)
-	root := rootCommand(&cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}})
-	root.SetArgs([]string{"hooks", "install", "zcode", "--force", "--executable", filepath.Join(home, "roca")})
-	if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "--force is not supported") {
+	if err := executeZcodeTestCLI("hooks", "install", "zcode", "--force", "--executable", filepath.Join(home, "roca")); err == nil || !strings.Contains(err.Error(), "--force is not supported") {
 		t.Fatalf("ZCode --force error = %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(home, ".zcode")); !os.IsNotExist(err) {
@@ -663,24 +609,14 @@ func TestFullUninstallWithdrawsRegisteredZcodeHome(t *testing.T) {
 	custom := filepath.Join(home, "custom-zcode")
 	t.Setenv("ZCODE_HOME", "custom-zcode")
 	config := filepath.Join(custom, "cli", "config.json")
-	if err := os.MkdirAll(filepath.Dir(config), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(config, []byte(`{"hooks":{"enabled":true}}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	root := rootCommand(&cliEnv{out: io.Discard, build: Build{Version: "test"}})
-	root.SetArgs([]string{"hooks", "install", "zcode", "--executable", filepath.Join(home, "roca")})
-	if err := root.Execute(); err != nil {
-		t.Fatal(err)
-	}
+	writeFile(t, config, `{"hooks":{"enabled":true}}`)
+	installZcodeTestIntegration(t, "hooks", home)
 	var output strings.Builder
 	runSkill(t, &output, "skill", "install", "zcode")
 	wrapper := filepath.Join(custom, "hooks", "roca-handoff.sh")
 	skillPath := filepath.Join(custom, "skills", "roca", "SKILL.md")
 	t.Setenv("ZCODE_HOME", "")
-	report := lifecycle.Report{Purged: true, Deleted: []string{}}
-	(&cliEnv{out: io.Discard, errOut: io.Discard}).withdrawTheIntegrations(&report, false)
+	report := purgeZcodeTestIntegrations(false)
 	if len(report.Errors) != 0 {
 		t.Fatalf("full uninstall errors = %v", report.Errors)
 	}
@@ -701,25 +637,12 @@ func TestFullUninstallWithdrawsRegisteredZcodeHome(t *testing.T) {
 func TestZcodeUnreadableHookKeepsOwnershipForRetry(t *testing.T) {
 	home := skillTestHome(t)
 	config := filepath.Join(home, ".zcode", "cli", "config.json")
-	if err := os.MkdirAll(filepath.Dir(config), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(config, []byte(`{"hooks":{"enabled":true}}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	root := rootCommand(&cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}})
-	root.SetArgs([]string{"hooks", "install", "zcode", "--executable", filepath.Join(home, "roca")})
-	if err := root.Execute(); err != nil {
-		t.Fatal(err)
-	}
+	writeFile(t, config, `{"hooks":{"enabled":true}}`)
+	installZcodeTestIntegration(t, "hooks", home)
 	if err := os.WriteFile(config, []byte(`{broken`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	root = rootCommand(&cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}})
-	root.SetArgs([]string{"hooks", "uninstall", "zcode"})
-	if err := root.Execute(); err != nil {
-		t.Fatal(err)
-	}
+	runZcodeTestCLI(t, "hooks", "uninstall", "zcode")
 	wrapper := filepath.Join(home, ".zcode", "hooks", "roca-handoff.sh")
 	registry, err := artifact.LoadRegistry(filepath.Join(home, ".roca", "artifacts.json"))
 	if err != nil {
@@ -736,20 +659,13 @@ func TestZcodeUnreadableHookKeepsOwnershipForRetry(t *testing.T) {
 func TestFullUninstallDoesNotLockForeignZcodeWrapper(t *testing.T) {
 	home := skillTestHome(t)
 	wrapper := filepath.Join(home, ".zcode", "hooks", "roca-handoff.sh")
-	if err := os.MkdirAll(filepath.Dir(wrapper), 0o700); err != nil {
+	operator := "#!/bin/sh\nprintf 'operator\\n'\n"
+	writeFile(t, wrapper, operator)
+	if err := os.Chmod(wrapper, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	operator := []byte("#!/bin/sh\nprintf 'operator\\n'\n")
-	if err := os.WriteFile(wrapper, operator, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	root := rootCommand(&cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}})
-	root.SetArgs([]string{"hooks", "uninstall", "zcode"})
-	if err := root.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	report := lifecycle.Report{Purged: true, Deleted: []string{}}
-	(&cliEnv{out: io.Discard, errOut: io.Discard}).withdrawTheIntegrations(&report, false)
+	runZcodeTestCLI(t, "hooks", "uninstall", "zcode")
+	purgeZcodeTestIntegrations(false)
 	if body, err := os.ReadFile(wrapper); err != nil || string(body) != string(operator) {
 		t.Fatalf("foreign wrapper changed: body=%q err=%v", body, err)
 	}
@@ -761,14 +677,8 @@ func TestFullUninstallDoesNotLockForeignZcodeWrapper(t *testing.T) {
 func TestFullUninstallDoesNotCreateUnselectedZcodeLock(t *testing.T) {
 	home := skillTestHome(t)
 	config := filepath.Join(home, ".zcode", "cli", "config.json")
-	if err := os.MkdirAll(filepath.Dir(config), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(config, []byte(`{"theme":"operator"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	report := lifecycle.Report{Purged: true, Deleted: []string{}}
-	(&cliEnv{out: io.Discard, errOut: io.Discard}).withdrawTheIntegrations(&report, false)
+	writeFile(t, config, `{"theme":"operator"}`)
+	purgeZcodeTestIntegrations(false)
 	if _, err := os.Stat(filepath.Join(home, ".zcode", ".roca-hooks.lock")); !os.IsNotExist(err) {
 		t.Fatalf("unselected ZCode created a runtime lock: %v", err)
 	}
@@ -799,14 +709,7 @@ exit 1
 	} else if warning != "" {
 		t.Fatalf("fresh ZCode install warning = %q", warning)
 	}
-	body, err := os.ReadFile(config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var document map[string]any
-	if err := json.Unmarshal(body, &document); err != nil {
-		t.Fatal(err)
-	}
+	body, document := readZcodeTestJSON(t, config)
 	hooks := document["hooks"].(map[string]any)["events"].(map[string]any)["SessionStart"].([]any)
 	command := hooks[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)["command"].(string)
 	output, err := exec.Command("sh", "-c", command).Output()
@@ -834,21 +737,11 @@ func TestZcodeInstallPreservesOperatorHookUsingSameWrapper(t *testing.T) {
 	config := filepath.Join(home, "config.json")
 	wrapper := filepath.Join(home, "hooks", "roca-handoff.sh")
 	operatorCommand := zcodeOwnedHookCommand(wrapper)
-	initial := fmt.Sprintf(`{"hooks":{"enabled":true,"events":{"SessionStart":[{"hooks":[{"type":"command","command":%q,"timeoutMs":4000}]}]}}}`, operatorCommand)
-	if err := os.WriteFile(config, []byte(initial), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := installZcodeHandoffHook(config, wrapper, filepath.Join(home, "roca")); err != nil {
-		t.Fatal(err)
-	}
-	body, err := os.ReadFile(config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var document map[string]any
-	if err := json.Unmarshal(body, &document); err != nil {
-		t.Fatal(err)
-	}
+	initial := zcodeOperatorHookConfig(operatorCommand)
+	writeFile(t, config, initial)
+	executable := filepath.Join(home, "roca")
+	installZcodeTestHook(t, config, wrapper, executable)
+	body, document := readZcodeTestJSON(t, config)
 	entries := document["hooks"].(map[string]any)["events"].(map[string]any)["SessionStart"].([]any)
 	if len(entries) != 2 {
 		t.Fatalf("SessionStart entries = %d, want operator and managed hooks", len(entries))
@@ -865,7 +758,7 @@ func TestZcodeInstallPreservesOperatorHookUsingSameWrapper(t *testing.T) {
 	if err != nil {
 		t.Fatalf("operator-referenced wrapper was removed: %v", err)
 	}
-	if string(wrapperBody) != zcodeWrapper(filepath.Join(home, "roca")) {
+	if string(wrapperBody) != zcodeWrapper(executable) {
 		t.Fatalf("retained wrapper changed: %q", wrapperBody)
 	}
 	body, err = os.ReadFile(config)
@@ -908,27 +801,12 @@ func TestZcodeUninstallKeepsWrapperForEquivalentOperatorPaths(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			home := t.TempDir()
 			t.Setenv("HOME", home)
-			config := filepath.Join(home, ".zcode", "cli", "config.json")
-			wrapper := filepath.Join(home, ".zcode", "hooks", "roca-handoff.sh")
-			if err := os.MkdirAll(filepath.Dir(config), 0o700); err != nil {
-				t.Fatal(err)
-			}
+			config, wrapper := zcodeTestConfigAndWrapper(home)
 			operatorCommand, err := test.command(home, wrapper)
 			if err != nil {
 				t.Fatal(err)
 			}
-			initial := fmt.Sprintf(`{"hooks":{"enabled":true,"events":{"SessionStart":[{"hooks":[{"type":"command","command":%q,"timeoutMs":4000}]}]}}}`, operatorCommand)
-			if err := os.WriteFile(config, []byte(initial), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			if _, _, err := installZcodeHandoffHook(config, wrapper, filepath.Join(home, "roca")); err != nil {
-				t.Fatal(err)
-			}
-			_, warning, err := uninstallZcodeHandoffHook(config, wrapper,
-				[]byte(zcodeWrapper(filepath.Join(home, "roca"))))
-			if err != nil {
-				t.Fatal(err)
-			}
+			initial, warning := roundTripZcodeOperatorHook(t, home, config, wrapper, operatorCommand)
 			if !strings.Contains(warning, "remaining operator-owned hook references it") {
 				t.Fatalf("wrapper retention warning = %q", warning)
 			}
@@ -948,24 +826,9 @@ func TestZcodeUninstallKeepsWrapperForAmbiguousDoubleQuotedEscape(t *testing.T) 
 		t.Fatal(err)
 	}
 	t.Setenv("HOME", home)
-	config := filepath.Join(home, ".zcode", "cli", "config.json")
-	wrapper := filepath.Join(home, ".zcode", "hooks", "roca-handoff.sh")
-	if err := os.MkdirAll(filepath.Dir(config), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	config, wrapper := zcodeTestConfigAndWrapper(home)
 	operatorCommand := `"` + wrapper + `"`
-	initial := fmt.Sprintf(`{"hooks":{"enabled":true,"events":{"SessionStart":[{"hooks":[{"type":"command","command":%q,"timeoutMs":4000}]}]}}}`, operatorCommand)
-	if err := os.WriteFile(config, []byte(initial), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := installZcodeHandoffHook(config, wrapper, filepath.Join(home, "roca")); err != nil {
-		t.Fatal(err)
-	}
-	_, warning, err := uninstallZcodeHandoffHook(config, wrapper,
-		[]byte(zcodeWrapper(filepath.Join(home, "roca"))))
-	if err != nil {
-		t.Fatal(err)
-	}
+	initial, warning := roundTripZcodeOperatorHook(t, home, config, wrapper, operatorCommand)
 	if !strings.Contains(warning, "could not compare remaining ZCode hook paths") {
 		t.Fatalf("ambiguous escape warning = %q", warning)
 	}
@@ -979,16 +842,11 @@ func TestZcodeUninstallKeepsWrapperForAmbiguousDoubleQuotedEscape(t *testing.T) 
 
 func TestZcodeManagedHookFailureRemovesCreatedRuntimeLock(t *testing.T) {
 	home := skillTestHome(t)
-	wrapper := filepath.Join(home, ".zcode", "hooks", "roca-handoff.sh")
-	if err := os.MkdirAll(filepath.Dir(wrapper), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	wrapper := prepareZcodeTestWrapperDir(t, home)
 	if err := os.WriteFile(wrapper, []byte("operator wrapper\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	root := rootCommand(&cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}})
-	root.SetArgs([]string{"hooks", "install", "zcode", "--executable", filepath.Join(home, "roca")})
-	if err := root.Execute(); err == nil {
+	if err := executeZcodeTestCLI("hooks", "install", "zcode", "--executable", filepath.Join(home, "roca")); err == nil {
 		t.Fatal("foreign wrapper was accepted")
 	}
 	if _, err := os.Stat(filepath.Join(home, ".zcode", ".roca-hooks.lock")); !os.IsNotExist(err) {
@@ -1000,19 +858,14 @@ func TestZcodeHookRefusesSymlinkWrapper(t *testing.T) {
 	home := skillTestHome(t)
 	executable := filepath.Join(home, "roca")
 	target := filepath.Join(home, "operator-wrapper")
-	wrapper := filepath.Join(home, ".zcode", "hooks", "roca-handoff.sh")
-	if err := os.MkdirAll(filepath.Dir(wrapper), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	wrapper := prepareZcodeTestWrapperDir(t, home)
 	if err := os.WriteFile(target, []byte(zcodeWrapper(executable)), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(target, wrapper); err != nil {
 		t.Fatal(err)
 	}
-	root := rootCommand(&cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}})
-	root.SetArgs([]string{"hooks", "install", "zcode", "--executable", executable})
-	if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "non-regular") {
+	if err := executeZcodeTestCLI("hooks", "install", "zcode", "--executable", executable); err == nil || !strings.Contains(err.Error(), "non-regular") {
 		t.Fatalf("symlink install error = %v", err)
 	}
 	if info, err := os.Lstat(wrapper); err != nil || info.Mode()&os.ModeSymlink == 0 {

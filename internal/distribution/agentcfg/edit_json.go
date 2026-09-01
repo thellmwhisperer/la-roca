@@ -82,23 +82,10 @@ func withdrawZcodeMCP(r runtime, text, preimage string) (string, error) {
 }
 
 func cutJSONMemberIfEmpty(r runtime, text string, path []string, key string) (string, error) {
-	view, root, err := rootObject(r, text)
-	if err != nil {
-		return "", err
-	}
-	container, ok, err := objectAtPath(view, root, path)
-	if err != nil || !ok {
-		return text, err
-	}
-	index := container.find(key)
-	if index < 0 {
-		return text, nil
-	}
-	inside, err := objectAt(view, container.members[index].valueStart)
-	if err != nil || len(inside.members) != 0 {
-		return text, err
-	}
-	return container.cut(text, index), nil
+	return cutJSONMember(r, text, path, key, func(view string, valueStart int) (bool, error) {
+		inside, err := objectAt(view, valueStart)
+		return err == nil && len(inside.members) == 0, err
+	})
 }
 
 func jsonDeclare(r runtime, text string, entry fields) (string, error) {
@@ -213,6 +200,11 @@ func objectAtPath(view string, root object, path []string) (object, bool, error)
 }
 
 func cutJSONMemberAtPath(r runtime, text string, path []string, key string) (string, error) {
+	return cutJSONMember(r, text, path, key, nil)
+}
+
+func cutJSONMember(r runtime, text string, path []string, key string,
+	removable func(string, int) (bool, error)) (string, error) {
 	view, root, err := rootObject(r, text)
 	if err != nil {
 		return "", err
@@ -221,11 +213,17 @@ func cutJSONMemberAtPath(r runtime, text string, path []string, key string) (str
 	if err != nil || !ok {
 		return text, err
 	}
-	i := container.find(key)
-	if i < 0 {
+	index := container.find(key)
+	if index < 0 {
 		return text, nil
 	}
-	return container.cut(text, i), nil
+	if removable != nil {
+		ok, err = removable(view, container.members[index].valueStart)
+		if err != nil || !ok {
+			return text, err
+		}
+	}
+	return container.cut(text, index), nil
 }
 
 // jsonDecode reads the view and not the text: a JSONC comment would not survive
@@ -570,23 +568,10 @@ func parseZcodeHookMarker(marker, value string) (zcodeHookPreimage, bool) {
 }
 
 func cutJSONArrayMemberIfEmpty(r runtime, text string, path []string, key string) (string, error) {
-	view, root, err := rootObject(r, text)
-	if err != nil {
-		return "", err
-	}
-	container, ok, err := objectAtPath(view, root, path)
-	if err != nil || !ok {
-		return text, err
-	}
-	index := container.find(key)
-	if index < 0 {
-		return text, nil
-	}
-	inside, err := arrayAt(view, container.members[index].valueStart)
-	if err != nil || len(inside.values) != 0 {
-		return text, err
-	}
-	return container.cut(text, index), nil
+	return cutJSONMember(r, text, path, key, func(view string, valueStart int) (bool, error) {
+		inside, err := arrayAt(view, valueStart)
+		return err == nil && len(inside.values) == 0, err
+	})
 }
 
 type zcodeHookGroup struct {
