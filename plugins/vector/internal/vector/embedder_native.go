@@ -5,7 +5,10 @@ package vector
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
+	"sync/atomic"
+	"syscall"
 
 	"github.com/thellmwhisperer/la-roca-vector/internal/engine"
 	"github.com/thellmwhisperer/la-roca-vector/internal/llamacpp"
@@ -28,6 +31,20 @@ type Native struct {
 	engine        nativeEngine
 	backend       string
 	fallback      string
+	trapped       atomic.Bool
+}
+
+var (
+	errNativeTrapped       = fmt.Errorf("semantic search stalled while preparing embeddings")
+	restartAfterNativeTrap = restartTrappedWorker
+)
+
+func restartTrappedWorker() {
+	executable, err := os.Executable()
+	if err != nil {
+		return
+	}
+	_ = syscall.Exec(executable, os.Args, os.Environ())
 }
 
 type nativeEngine interface {
@@ -36,11 +53,18 @@ type nativeEngine interface {
 }
 
 func (n *Native) acquireNative(ctx context.Context) error {
+	if n.trapped.Load() {
+		return errNativeTrapped
+	}
 	n.ownershipOnce.Do(func() {
 		n.ownership = make(chan struct{}, 1)
 	})
 	select {
 	case n.ownership <- struct{}{}:
+		if n.trapped.Load() {
+			<-n.ownership
+			return errNativeTrapped
+		}
 		if err := ctx.Err(); err != nil {
 			<-n.ownership
 			return err
@@ -48,6 +72,12 @@ func (n *Native) acquireNative(ctx context.Context) error {
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
+	}
+}
+
+func (n *Native) markNativeTrapped() {
+	if n.trapped.CompareAndSwap(false, true) {
+		restartAfterNativeTrap()
 	}
 }
 

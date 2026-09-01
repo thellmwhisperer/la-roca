@@ -48,6 +48,10 @@ func (n *Native) Embed(ctx context.Context, requestedModel string, input []strin
 		}
 		return result.vectors, result.err
 	case <-ctx.Done():
+		llamacpp.RequestAbort()
+		if callerCtx.Err() == nil {
+			n.markNativeTrapped()
+		}
 		return nil, n.nativeContextError(callerCtx)
 	}
 }

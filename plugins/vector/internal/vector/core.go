@@ -9,9 +9,14 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const coreFieldBudget = 64 << 20
+
+// ingestPageTimeout bounds one roca exec page even when the SQL gate is
+// unbounded (--timeout-ms 0), so CommandContext can kill a child that never returns.
+var ingestPageTimeout = 2 * time.Minute
 
 type CommandRunner func(context.Context, string, ...string) ([]byte, error)
 
@@ -597,6 +602,8 @@ func (c CoreCLI) query(ctx context.Context, statement string) ([]map[string]any,
 }
 
 func (c CoreCLI) queryIngest(ctx context.Context, statement string) ([]map[string]any, error) {
+	ctx, cancel := boundContext(ctx, ingestPageTimeout)
+	defer cancel()
 	return c.queryWithTimeout(ctx, statement, "0")
 }
 
