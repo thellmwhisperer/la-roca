@@ -237,7 +237,7 @@ func failed(report *lifecycle.Report, format string, args ...any) {
 //
 // A runtime whose file is not there is not an error and not a line of output: a
 // machine where the operator never installed `hermes` is the normal case, and
-// five lines saying so on every uninstall is noise.
+// one such line for every supported runtime would be noise.
 func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool) []agentcfg.Outcome {
 	var outcomes []agentcfg.Outcome
 	if purge && !env.zcodeLifecycleLocked {

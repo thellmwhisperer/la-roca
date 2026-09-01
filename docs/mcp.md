@@ -134,17 +134,19 @@ Where each runtime keeps its configuration, and what Roca writes into it:
 | `pi` | `$PI_CODING_AGENT_DIR`/`~/.pi/agent/mcp.json` | `mcpServers` | `command` and `args` |
 | `zcode` | `$ZCODE_HOME`/`~/.zcode/cli/config.json` | `mcp.servers` | `{"type": "stdio", ...}` |
 
-**The file belongs to the operator.** Roca owns exactly one entry inside it and
-every other byte comes back untouched: comments, ordering, blank lines, the
-JSONC OpenCode tolerates and the neighbouring servers. That is why the edits are
-surgical text-range edits and not a parse-and-reserialize round trip, which is
-easy and eats comments. ZCode records the parent-container preimage in La
-Roca's artifact state, never in the runtime entry, so withdrawal removes only
+**The file belongs to the operator.** Roca edits exactly one entry inside it.
+Surgical text-range edits preserve comments, ordering, blank lines, the JSONC
+OpenCode tolerates, and neighbouring servers instead of parse-and-reserialize
+eating them. ZCode records the parent-container ownership preimage in La Roca's
+artifact state, never in the runtime entry, so withdrawal removes only
 containers that installation created rather than inferring ownership from an
-empty object. Claude and Claude Desktop do not yet record that container
-preimage: withdrawal may remove a pre-existing empty `mcpServers` map. Exact
-empty-container restoration for those runtimes remains follow-up ownership
-work. Other neighboring configuration remains untouched.
+empty object. Inserting the first child into a pre-existing empty ZCode JSON
+object currently normalizes the whitespace between that object's braces; exact
+whitespace restoration is tracked in [#294](https://github.com/thellmwhisperer/la-roca/issues/294).
+Flat JSON and JSONC runtimes other than ZCode do not yet record the container
+preimage: withdrawal may remove a pre-existing empty server map such as
+`mcpServers`. Exact empty-container restoration for those runtimes remains
+follow-up ownership work. Other neighbouring configuration remains untouched.
 
 Two more things the shared spine gives every edit: the previous bytes are backed
 up first (`<file>.roca.bak`, and an earlier copy is never overwritten), and a file

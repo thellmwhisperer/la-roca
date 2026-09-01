@@ -174,10 +174,10 @@ func jsonRemove(r runtime, text string, entries []string) (string, error) {
 			removed++
 		}
 	}
-	// When this operation emptied the servers object, remove the key from the
-	// root so that withdrawing from a file whose serversKey was created by the
-	// install gives back the exact previous bytes (not an empty object left
-	// behind where there was none before).
+	// When this operation empties a flat servers object, remove the key. This
+	// restores files where install created the map, but without persisted
+	// container provenance it also removes a pre-existing empty map; the public
+	// contract and follow-up ownership work are documented in docs/mcp.md.
 	if removed > 0 && removed == len(inside.members) && len(r.parents) == 0 {
 		text, err = cutJSONMemberAtPath(r, text, r.parents, r.serversKey)
 		if err != nil {
@@ -755,9 +755,9 @@ func (o object) insert(text, rendered, closePad string) string {
 }
 
 // cut removes the i-th member and the comma that joined it to its neighbours.
-// Which side the comma is taken from is what makes this reversible: a member
-// appended after the last one is removed together with the comma that was added
-// with it, so installing and withdrawing gives back the exact previous bytes.
+// Which side the comma is taken from makes non-empty-object insertion
+// reversible. Empty-object insertion deliberately normalizes the whitespace
+// between the braces; that bounded limitation is documented in docs/mcp.md.
 func (o object) cut(text string, i int) string {
 	switch {
 	case len(o.members) == 1:

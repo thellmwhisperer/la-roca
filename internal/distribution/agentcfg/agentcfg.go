@@ -1,13 +1,11 @@
 // Package agentcfg declares La Roca in an agent runtime's own configuration
-// file, and withdraws it again leaving every other byte where it was.
+// file and withdraws that declaration again.
 //
-// This package preserves operator-owned configuration:
-// **the file belongs to the operator**. Roca owns exactly one entry inside it,
-// and everything else — comments, ordering, blank lines, the JSONC the runtime
-// tolerates, the neighbouring servers — has to come back untouched. That is why
-// the edits here are surgical text-range edits over the bytes that are there
-// and not a parse-and-reserialize round trip: reserializing is easy and it
-// silently eats the operator's comments.
+// This package preserves operator-owned configuration: **the file belongs to
+// the operator**. Roca owns one entry and edits it with surgical text ranges
+// rather than parse-and-reserialize, preserving comments, ordering, blank
+// lines, JSONC, and neighbouring servers. The bounded empty-container and
+// ZCode empty-object whitespace exceptions are documented in docs/mcp.md.
 package agentcfg
 
 import (
@@ -54,8 +52,8 @@ const (
 	StateUnreadable    = "unreadable"
 )
 
-// The config formats. One per shape, not one per runtime: three runtimes speak
-// JSON and they differ only in which key holds their server map.
+// The config formats. One per syntax, not one per runtime; a runtime row below
+// supplies its server-map path and entry shape.
 const (
 	kindTOML  = "toml"
 	kindYAML  = "yaml"
@@ -63,9 +61,9 @@ const (
 	kindJSONC = "jsonc"
 )
 
-// runtime is everything that differs between the five: where its config lives,
-// what format it is in, which key holds its MCP servers, and the shape of the
-// entry inside that map. The name is the map key; adding a runtime is a row.
+// runtime is everything that differs between integrations: where a config
+// lives, its syntax and server-map path, and the entry shape. The runtime name
+// is the map key; adding a runtime is a row.
 type runtime struct {
 	kind string
 	// dirVar is the environment variable that moves the config directory, and
@@ -94,8 +92,8 @@ type field struct {
 	value any
 }
 
-// commandAndArgs is the entry three of the five runtimes take: the binary and
-// its arguments as two members of their own.
+// commandAndArgs is the shared entry fragment for runtimes that store the
+// binary and its arguments as separate members.
 func commandAndArgs(executable string) fields {
 	return fields{{"command", executable}, {"args", []string{"mcp", "serve"}}}
 }
@@ -265,9 +263,9 @@ func InstallZcodeMCP(path, executable string, recordPreimage func(string, bool) 
 	}, true)
 }
 
-// Uninstall withdraws Roca's entry and leaves the rest of the file exactly as
-// it was. A configuration that is not there is not created and a configuration
-// with no Roca in it is not written to.
+// Uninstall withdraws Roca's entry with the bounded empty-container behavior
+// documented at the package level. A configuration that is not there is not
+// created, and a configuration with no Roca entry is not written to.
 func Uninstall(name, path string) (Outcome, error) {
 	r, err := find(name)
 	if err != nil {
