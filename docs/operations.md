@@ -77,9 +77,10 @@ stdout. It does not change the operator-owned `hooks.enabled`; when that value
 is false or absent, install warns that the hook is inactive and says to set it
 to true. A pre-existing unrecognized wrapper is left untouched and blocks the
 install with a clear remedy. Reinstalling is idempotent, and `roca hooks
-uninstall zcode` removes only that marked entry and the managed wrapper while
-preserving neighbouring hooks. Neither init nor update installs or refreshes
-this integration.
+uninstall zcode` removes only that marked entry. It removes the managed wrapper
+unless a remaining operator-owned hook references it; in that case it keeps the
+wrapper and reports why. Neither init nor update installs or refreshes this
+integration.
 
 Other harnesses can use the same client-side pattern: intercept the shell tool,
 read identity only from a harness-owned session source, and inject both flags;

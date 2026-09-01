@@ -253,6 +253,53 @@ func ZcodeHooksEnabled(text string) (bool, bool, error) {
 	return declared, enabled, nil
 }
 
+func ZcodeHookReferences(text string, references ...string) (bool, error) {
+	if strings.TrimSpace(text) == "" {
+		return false, nil
+	}
+	view, root, err := rootObject(runtime{kind: kindJSON}, text)
+	if err != nil {
+		return false, err
+	}
+	events, ok, err := objectAtPath(view, root, []string{"hooks", "events"})
+	if err != nil || !ok {
+		return false, err
+	}
+	for _, event := range events.members {
+		entries, err := arrayAt(view, event.valueStart)
+		if err != nil {
+			return false, fmt.Errorf("%s must be an array: %w", event.key, err)
+		}
+		for _, entry := range entries.values {
+			group, err := objectAt(view, entry.start)
+			if err != nil {
+				continue
+			}
+			hooksIndex := group.find("hooks")
+			if hooksIndex < 0 {
+				continue
+			}
+			hooks, err := arrayAt(view, group.members[hooksIndex].valueStart)
+			if err != nil {
+				continue
+			}
+			for _, candidate := range hooks.values {
+				hook, err := objectAt(view, candidate.start)
+				if err != nil {
+					continue
+				}
+				command := jsonStringMember(view, hook, "command")
+				for _, reference := range references {
+					if reference != "" && strings.Contains(command, reference) {
+						return true, nil
+					}
+				}
+			}
+		}
+	}
+	return false, nil
+}
+
 func RemoveZcodeSessionStartHook(text, marker string) (string, error) {
 	if marker == "" {
 		return "", fmt.Errorf("ZCode SessionStart marker must not be empty")
