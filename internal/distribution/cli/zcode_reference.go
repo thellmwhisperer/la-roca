@@ -200,7 +200,7 @@ func simpleShellWords(command string) ([]string, bool) {
 			}
 			word.WriteRune(runes[index])
 			started = true
-		case strings.ContainsRune(";&|<>()`", current):
+		case strings.ContainsRune(";&|<>()`*?[", current):
 			return nil, false
 		default:
 			word.WriteRune(current)

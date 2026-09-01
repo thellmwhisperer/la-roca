@@ -481,6 +481,9 @@ func TestZcodeUninstallKeepsWrapperForEquivalentOperatorPaths(t *testing.T) {
 		{name: "multiline after comment", command: func(_, wrapper string) (string, error) {
 			return "echo ok # note\n" + shellQuote(wrapper), nil
 		}},
+		{name: "ambiguous glob", command: func(_, _ string) (string, error) {
+			return "roca-*.sh", nil
+		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			home := t.TempDir()

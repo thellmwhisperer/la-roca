@@ -276,10 +276,10 @@ func pathOf(name, home string, env func(string) string, skillName string) (strin
 // behind: os.Remove is the whole guard, since another skill's directory keeps
 // it from being empty.
 func UninstallWithChecksum(name, path, systemSHA256 string) (Outcome, error) {
-	return uninstallWithChecksum(name, path, systemSHA256, nil)
+	return uninstallWithChecksum(name, path, systemSHA256, nil, os.Remove)
 }
 
-func uninstallWithChecksum(name, path, systemSHA256 string, afterQuarantine func()) (Outcome, error) {
+func uninstallWithChecksum(name, path, systemSHA256 string, afterQuarantine func(), removeQuarantine func(string) error) (Outcome, error) {
 	if _, ok := rootOf[name]; !ok {
 		return Outcome{}, unknown(name)
 	}
@@ -344,11 +344,13 @@ func uninstallWithChecksum(name, path, systemSHA256 string, afterQuarantine func
 		}
 		out.Backup = backup
 	}
-	if err := os.Remove(quarantine); err != nil {
-		return out, fmt.Errorf("remove %s: %w", quarantine, err)
+	if err := removeQuarantine(quarantine); err != nil {
+		return out, restore(fmt.Errorf("remove %s: %w", quarantine, err))
 	}
 	out.Changed = true
-	out.Removed = []string{path}
+	if _, err := os.Lstat(path); os.IsNotExist(err) {
+		out.Removed = []string{path}
+	}
 	if err := os.Remove(dir); err != nil {
 		return out, nil
 	}
