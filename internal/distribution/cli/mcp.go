@@ -298,14 +298,16 @@ func (env *cliEnv) recordZcodeMCPPreimage(path, executable, preimage string, con
 	var priorFound bool
 	changed, err := mutateArtifactRegistry(paths.Artifacts, func(registry *artifact.Registry) (bool, error) {
 		prior, priorFound = registry.Find(artifactKindMCP, agentcfg.RuntimeZcode, path)
-		if priorFound && configured && continuousZcodeOwnership(prior, transaction) {
-			if _, err := zcodeMCPPreimageFromEntry(prior); err != nil {
-				return false, err
-			}
-			transaction.Format = prior.Format
+		if priorFound && continuousZcodeOwnership(prior, transaction) {
 			transaction.CreatedRoot = transaction.CreatedRoot || prior.CreatedRoot
 			transaction.CreatedConfigDir = transaction.CreatedConfigDir || prior.CreatedConfigDir
 			transaction.CreatedConfig = transaction.CreatedConfig || prior.CreatedConfig
+			if configured {
+				if _, err := zcodeMCPPreimageFromEntry(prior); err != nil {
+					return false, err
+				}
+				transaction.Format = prior.Format
+			}
 			if transaction == prior {
 				return false, nil
 			}
