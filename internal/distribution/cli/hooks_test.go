@@ -578,6 +578,36 @@ func TestZcodePurgeExpiresOwnershipAfterRuntimeReplacement(t *testing.T) {
 	}
 }
 
+func TestZcodePurgeReconcilesArtifactsWhenConfigIsMissing(t *testing.T) {
+	for _, integration := range []string{"mcp", "hooks"} {
+		t.Run(integration, func(t *testing.T) {
+			home := skillTestHome(t)
+			installZcodeTestIntegration(t, integration, home)
+			config := filepath.Join(home, ".zcode", "cli", "config.json")
+			if err := os.Remove(config); err != nil {
+				t.Fatal(err)
+			}
+			report := purgeZcodeTestIntegrations(true)
+			if len(report.Errors) != 0 {
+				t.Fatalf("missing config purge errors = %v", report.Errors)
+			}
+			if _, err := os.Stat(filepath.Join(home, ".zcode")); !os.IsNotExist(err) {
+				t.Fatalf("registered %s artifacts survived missing config purge: %v", integration, err)
+			}
+			registry, err := artifact.LoadRegistry(filepath.Join(home, ".roca", "artifacts.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, entry := range registry.Entries {
+				if entry.Runtime == agentcfg.RuntimeZcode &&
+					(entry.Kind == artifactKindMCP || entry.Kind == artifactKindHook) {
+					t.Fatalf("reconciled ownership survived: %#v", entry)
+				}
+			}
+		})
+	}
+}
+
 func TestZcodeCombinedMCPAndHookPurgeIsAggregated(t *testing.T) {
 	home := skillTestHome(t)
 	for _, integration := range []string{"mcp", "hooks"} {
