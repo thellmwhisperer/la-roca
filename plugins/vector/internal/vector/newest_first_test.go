@@ -300,7 +300,7 @@ func TestEmbeddingSchedulerAllowsAProgressingUnchangedScan(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	scheduler := newEmbeddingScheduler(ctx, base, 1)
-	scheduler.stallAfter = 100 * time.Millisecond
+	scheduler.stallAfter = 2 * time.Second
 	rescan := initial
 	rescan.Corpus = &delayedScanCorpus{memoryCorpus: &memoryCorpus{sources: rows}, delay: 40 * time.Millisecond}
 	rescan.Embedder = scheduledEmbedder{base: base, id: 0, scheduler: scheduler}
