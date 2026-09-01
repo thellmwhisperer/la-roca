@@ -139,20 +139,6 @@ func parseChatGPTCodexConversation(payload chatGPTCodexConversation, record int,
 		exchanges = append(exchanges, exchange)
 	}
 	started, ended := chatGPTInstant(payload.CreateTime), chatGPTInstant(payload.UpdateTime)
-	if started == "" {
-		for _, exchange := range exchanges {
-			if exchange.HumanTimestamp != "" && (started == "" || exchange.HumanTimestamp < started) {
-				started = exchange.HumanTimestamp
-			}
-		}
-	}
-	if ended == "" {
-		for _, exchange := range exchanges {
-			if exchange.AgentTimestamp != "" && exchange.AgentTimestamp > ended {
-				ended = exchange.AgentTimestamp
-			}
-		}
-	}
 	metadata := WithoutEmpty(map[string]any{
 		"archived": payload.Archived,
 	})

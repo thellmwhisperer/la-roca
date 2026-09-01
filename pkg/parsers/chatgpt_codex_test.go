@@ -156,6 +156,9 @@ func TestChatGPTCodexUsesOptionalTimestampsWhenTheSourceStatesThem(t *testing.T)
 	if session.StartedAt != "2026-01-01T00:00:00.125Z" {
 		t.Fatalf("session start = %q", session.StartedAt)
 	}
+	if session.EndedAt != "" || session.DurationMinutes != nil {
+		t.Fatalf("inferred session end = %q, duration = %v", session.EndedAt, session.DurationMinutes)
+	}
 	exchange := session.Exchanges[0]
 	if exchange.HumanTimestamp != "2026-01-01T00:00:01.125Z" ||
 		exchange.AgentTimestamp != "2026-01-01T00:00:02.625Z" {
