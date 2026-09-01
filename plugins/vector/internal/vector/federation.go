@@ -708,7 +708,7 @@ func (f Federation) Ingest(ctx context.Context, sourceKind string) (FederationDe
 			defer workers.Done()
 			index := f.index(job.database, job.reader, job.sidecar)
 			index.BatchSize = 1
-			index.scanProgress = scheduler.heartbeat
+			index.liveness = scheduler.heartbeat
 			index.Embedder = scheduledEmbedder{base: f.Embedder, id: id, scheduler: scheduler}
 			if sourceKind == "" {
 				job.delta, job.err = index.Ingest(orderedCtx)

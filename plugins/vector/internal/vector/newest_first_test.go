@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -303,7 +304,11 @@ func TestEmbeddingSchedulerAllowsAProgressingUnchangedScan(t *testing.T) {
 	rescan := initial
 	rescan.Corpus = &delayedScanCorpus{memoryCorpus: &memoryCorpus{sources: rows}, delay: 40 * time.Millisecond}
 	rescan.Embedder = scheduledEmbedder{base: base, id: 0, scheduler: scheduler}
-	rescan.scanProgress = scheduler.heartbeat
+	var progress atomic.Int64
+	rescan.liveness = func() {
+		progress.Add(1)
+		scheduler.heartbeat()
+	}
 	type ingestResult struct {
 		delta Delta
 		err   error
@@ -324,6 +329,9 @@ func TestEmbeddingSchedulerAllowsAProgressingUnchangedScan(t *testing.T) {
 	}
 	if result.delta.Unchanged != len(rows) {
 		t.Fatalf("unchanged scan = %+v, want %d unchanged", result.delta, len(rows))
+	}
+	if progress.Load() <= int64(len(rows)*4) {
+		t.Fatalf("liveness updates = %d, want scan and reconciliation progress", progress.Load())
 	}
 }
 
