@@ -113,7 +113,51 @@ func TestZcodeMCPReinstallPreservesOwnershipAfterDeclarationRemoval(t *testing.T
 	}
 }
 
-func TestZcodeMCPUninstallReconcilesAbsentRoot(t *testing.T) {
+func TestZcodeMCPUninstallReconcilesBrokenRootIdentity(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		recreateRoot  bool
+		expectWarning bool
+	}{
+		{name: "absent", expectWarning: true},
+		{name: "recreated", recreateRoot: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			home := skillTestHome(t)
+			rootPath := filepath.Join(home, ".zcode")
+			config := filepath.Join(rootPath, "cli", "config.json")
+			installZcodeTestIntegration(t, "mcp", home)
+			if err := os.RemoveAll(rootPath); err != nil {
+				t.Fatal(err)
+			}
+			if test.recreateRoot {
+				if err := os.Mkdir(rootPath, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var errOut strings.Builder
+			env := &cliEnv{out: io.Discard, errOut: &errOut}
+			root := rootCommand(env)
+			root.SetArgs([]string{"mcp", "uninstall", "zcode"})
+			if err := root.Execute(); err != nil {
+				t.Fatal(err)
+			}
+			warned := strings.Contains(errOut.String(), "root is absent")
+			if warned != test.expectWarning {
+				t.Fatalf("root warning = %q", errOut.String())
+			}
+			registry, err := artifact.LoadRegistry(filepath.Join(home, ".roca", "artifacts.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, found := registry.Find(artifactKindMCP, agentcfg.RuntimeZcode, config); found {
+				t.Fatal("broken root identity retained stale MCP ownership")
+			}
+		})
+	}
+}
+
+func TestZcodeMCPPurgeDropsOwnershipOnRecreatedRoot(t *testing.T) {
 	home := skillTestHome(t)
 	rootPath := filepath.Join(home, ".zcode")
 	config := filepath.Join(rootPath, "cli", "config.json")
@@ -121,22 +165,22 @@ func TestZcodeMCPUninstallReconcilesAbsentRoot(t *testing.T) {
 	if err := os.RemoveAll(rootPath); err != nil {
 		t.Fatal(err)
 	}
-	var errOut strings.Builder
-	env := &cliEnv{out: io.Discard, errOut: &errOut}
-	root := rootCommand(env)
-	root.SetArgs([]string{"mcp", "uninstall", "zcode"})
-	if err := root.Execute(); err != nil {
+	if err := os.Mkdir(rootPath, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(errOut.String(), "root is absent") {
-		t.Fatalf("absent root warning = %q", errOut.String())
+	report := purgeZcodeTestIntegrations(true)
+	if len(report.Errors) != 0 {
+		t.Fatalf("recreated root produced purge errors: %v", report.Errors)
 	}
 	registry, err := artifact.LoadRegistry(filepath.Join(home, ".roca", "artifacts.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, found := registry.Find(artifactKindMCP, agentcfg.RuntimeZcode, config); found {
-		t.Fatal("absent root retained stale MCP ownership")
+		t.Fatal("recreated root retained stale MCP ownership")
+	}
+	if info, err := os.Stat(rootPath); err != nil || !info.IsDir() {
+		t.Fatalf("replacement root was not preserved: info=%v err=%v", info, err)
 	}
 }
 

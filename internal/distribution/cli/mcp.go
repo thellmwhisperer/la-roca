@@ -491,23 +491,10 @@ func (env *cliEnv) uninstallZcodeMCPLocked(path string, finalize ...func(artifac
 			return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: path}, continuityErr
 		}
 		if !rootContinuous {
-			if !rootExists {
-				if env.errOut != nil {
-					fmt.Fprintf(env.errOut, "warning: ZCode MCP root is absent; removed stale ownership for %s\n", path)
-				}
-				err = env.unregisterArtifactEntry(entry)
-				return outcome, err
+			if !rootExists && env.errOut != nil {
+				fmt.Fprintf(env.errOut, "warning: ZCode MCP root is absent; removed stale ownership for %s\n", path)
 			}
-			configured, matchErr := zcodeMCPContinuity(path, entry)
-			if matchErr != nil {
-				return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: path}, matchErr
-			}
-			if configured {
-				outcome, err = agentcfg.UninstallZcodeMCP(path, agentcfg.ZcodeMCPPreimageNone)
-			}
-			if err == nil {
-				err = env.unregisterArtifactEntry(entry)
-			}
+			err = env.unregisterArtifactEntry(entry)
 			return outcome, err
 		}
 		preimage, err = zcodeMCPPreimageFromEntry(entry)

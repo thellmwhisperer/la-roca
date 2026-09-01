@@ -873,22 +873,8 @@ func (env *cliEnv) purgeRegisteredZcodeIntegrations(report *lifecycle.Report, re
 					return rootErr
 				}
 				if !rootContinuous {
-					reportReplacement(rootExists)
-					if !configMissing {
-						configured, continuityErr := zcodeMCPContinuity(config, entry)
-						if continuityErr != nil {
-							return continuityErr
-						}
-						if configured {
-							outcome, uninstallErr := agentcfg.UninstallZcodeMCP(config, agentcfg.ZcodeMCPPreimageNone)
-							if uninstallErr != nil {
-								return fmt.Errorf("withdraw roca from zcode at %s: %w", config, uninstallErr)
-							}
-							if outcome.Changed {
-								outcomes = append(outcomes, outcome)
-							}
-							removeRecoveryBackups(report, config)
-						}
+					if !rootExists && env.errOut != nil {
+						fmt.Fprintf(env.errOut, "warning: ZCode MCP root is absent; removed stale ownership for %s\n", config)
 					}
 					if unregisterErr := env.unregisterArtifactEntry(entry); unregisterErr != nil {
 						return unregisterErr
