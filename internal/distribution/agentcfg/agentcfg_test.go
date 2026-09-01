@@ -203,6 +203,27 @@ func TestZcodeRejectsDuplicateConfigurationMembers(t *testing.T) {
 	}
 }
 
+func TestZcodeStatusRejectsDuplicateConfigurationMembers(t *testing.T) {
+	entry := `{"type":"stdio","command":"roca","args":["mcp","serve"]}`
+	for _, document := range []string{
+		`{"mcp":{"servers":{"roca":` + entry + `}},"mcp":{"servers":{}}}`,
+		`{"mcp":{"servers":{"roca":` + entry + `},"servers":{}}}`,
+		`{"mcp":{"servers":{"roca":{"type":"stdio","command":"roca","command":"other","args":["mcp","serve"]}}}}`,
+	} {
+		path := filepath.Join(t.TempDir(), "config.json")
+		if err := os.WriteFile(path, []byte(document), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		report, err := agentcfg.Status(agentcfg.RuntimeZcode, path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if report.State != agentcfg.StateInvalid || !strings.Contains(report.Error, "duplicate object member") {
+			t.Fatalf("duplicate status = %#v", report)
+		}
+	}
+}
+
 func TestZcodeHookRoundTripPreservesEmptySessionStartWhitespace(t *testing.T) {
 	before := "{\n  \"neighbor\": 9007199254740993,\n  \"hooks\": {\n    \"events\": {\n      \"SessionStart\": [\n        \n      ]\n    }\n  }\n}\n"
 	command := "/home/operator/.zcode/hooks/roca-handoff.sh"

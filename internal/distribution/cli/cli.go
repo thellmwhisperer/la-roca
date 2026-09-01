@@ -75,6 +75,7 @@ type cliEnv struct {
 	initChooserElapsed   time.Duration
 	features             config.FeaturesConfig
 	featuresLoaded       bool
+	zcodeLifecycleLocked bool
 	omitCorpus           bool
 	forceReadOnly        bool
 	sshRunner            sshCommandRunner

@@ -240,6 +240,20 @@ func failed(report *lifecycle.Report, format string, args ...any) {
 // five lines saying so on every uninstall is noise.
 func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool) []agentcfg.Outcome {
 	var outcomes []agentcfg.Outcome
+	if purge && !env.zcodeLifecycleLocked {
+		release, err := env.lockManagedZcodeLifecycle()
+		if err != nil {
+			failed(report, "lock ZCode lifecycle: %v", err)
+			return outcomes
+		}
+		env.zcodeLifecycleLocked = true
+		defer func() {
+			env.zcodeLifecycleLocked = false
+			if err := release(); err != nil {
+				failed(report, "release ZCode lifecycle lock: %v", err)
+			}
+		}()
+	}
 	registryPath, registry, registryErr := env.artifactRegistry()
 	registryExists := false
 	if registryErr != nil {

@@ -278,6 +278,27 @@ func Uninstall(name, path string) (Outcome, error) {
 	}, false)
 }
 
+func validateZcodeMCPDocument(text string) error {
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+	r := runtimes[RuntimeZcode]
+	view, root, err := rootObject(r, text)
+	if err != nil {
+		return err
+	}
+	servers, found, err := objectAtPath(view, root, []string{"mcp", "servers"})
+	if err != nil || !found {
+		return err
+	}
+	index := servers.find(ServerName)
+	if index < 0 {
+		return nil
+	}
+	_, err = objectAt(view, servers.members[index].valueStart)
+	return err
+}
+
 func ZcodeMCPMatches(path, executable string) (bool, error) {
 	body, err := os.ReadFile(path)
 	if err != nil {
@@ -342,6 +363,12 @@ func Status(name, path string) (Report, error) {
 	case err != nil:
 		report.State, report.Error = StateUnreadable, err.Error()
 	default:
+		if name == RuntimeZcode {
+			if validationErr := validateZcodeMCPDocument(string(text)); validationErr != nil {
+				report.State, report.Error = StateInvalid, validationErr.Error()
+				break
+			}
+		}
 		instance, found, err := installed(r, string(text))
 		switch {
 		case err != nil:
