@@ -78,13 +78,7 @@ func TestAPrefixThatExistsAndIsNotWritableIsRefusedBeforeTheDownload(t *testing.
 // for a network problem. The fake `uname` is how the case is reached from a
 // machine that is one of the three.
 func TestAPlatformTheChannelDoesNotBuildForIsNamed(t *testing.T) {
-	fake := t.TempDir()
-	uname := "#!/bin/sh\ncase \"$1\" in -s) echo SunOS;; -m) echo sparc;; esac\n"
-	if err := os.WriteFile(filepath.Join(fake, "uname"), []byte(uname), 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	output, err := runTheInstaller(t, []string{"PATH=" + fake + ":" + os.Getenv("PATH")},
+	output, err := runTheInstaller(t, environmentWithFakeUname(t, "SunOS", "sparc"),
 		"--repo", "owner/name")
 	if err == nil {
 		t.Fatal("an unbuilt platform was installed for")
@@ -101,13 +95,7 @@ func TestAPlatformTheChannelDoesNotBuildForIsNamed(t *testing.T) {
 // private. What the installer owes here is to name the request that failed and
 // to leave the prefix exactly as it found it.
 func TestWindowsRecommendsWSLAndNamesNativeLimitations(t *testing.T) {
-	fake := t.TempDir()
-	uname := "#!/bin/sh\ncase \"$1\" in -s) echo Windows_NT;; -m) echo x86_64;; esac\n"
-	if err := os.WriteFile(filepath.Join(fake, "uname"), []byte(uname), 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	output, err := runTheInstaller(t, []string{"PATH=" + fake + ":" + os.Getenv("PATH")},
+	output, err := runTheInstaller(t, environmentWithFakeUname(t, "Windows_NT", "x86_64"),
 		"--repo", "owner/name")
 	if err == nil {
 		t.Fatal("the native Windows installer unexpectedly succeeded")
@@ -327,6 +315,16 @@ mkdir "$out" && printf '%s\n' "$out"
 }
 
 // --- helpers ---
+
+func environmentWithFakeUname(t *testing.T, operatingSystem, architecture string) []string {
+	t.Helper()
+	fake := t.TempDir()
+	uname := "#!/bin/sh\ncase \"$1\" in -s) echo " + operatingSystem + ";; -m) echo " + architecture + ";; esac\n"
+	if err := os.WriteFile(filepath.Join(fake, "uname"), []byte(uname), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return []string{"PATH=" + fake + ":" + os.Getenv("PATH")}
+}
 
 // runTheInstaller runs the real script with a real shell and hands back
 // everything it said. The environment is the caller's plus whatever the case
