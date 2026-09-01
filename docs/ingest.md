@@ -323,10 +323,12 @@ overlapping child row that does not land is therefore absent from its inserted
 count rather than reported by a separate overlap counter. Duplicate source
 exchange numbers and thinking positions are disambiguated deterministically so
 each distinct source row can land. `source_surface` is `Legacy store`, while
-`source_agent` stays what the source stored. Tool rows whose source exchange
-number is absent from that session are discarded when the file is read. That
-count is source projection, not write-time overlap, and it is unchanged when
-the session itself is later skipped as already present.
+`source_agent` stays what the source stored. A tool row whose source exchange
+number is NULL lands as a session-level tool use because its ownership is
+unknown. A row whose present coordinate is unreadable, or names no exchange in
+that session, is discarded when the file is read. That count is source
+projection, not write-time overlap, and it is unchanged when the session itself
+is later skipped as already present.
 
 Memories land in ops and keep the layer, status, `created_at`, source
 coordinates, and supersession relationship the source recorded: a handoff stays
