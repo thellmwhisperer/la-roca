@@ -293,10 +293,7 @@ func (env *cliEnv) recordZcodeMCPPreimage(path, executable, preimage string, con
 			if _, err := zcodeMCPPreimageFromEntry(prior); err != nil {
 				return false, err
 			}
-			transaction = prior
-			transaction.Executable = executable
-			transaction.InstalledVersion = env.build.Version
-			transaction.AvailableVersion = env.build.Version
+			transaction.Format = prior.Format
 			if transaction == prior {
 				return false, nil
 			}

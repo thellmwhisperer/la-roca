@@ -88,6 +88,34 @@ func TestZcodeMCPReinstallExpiresOwnershipWithoutManagedContinuity(t *testing.T)
 	assertZcodeOwnershipExpiresWithoutContinuity(t, "mcp")
 }
 
+func TestZcodeMCPReinstallDropsOwnershipOnRecreatedManagedTree(t *testing.T) {
+	home := skillTestHome(t)
+	rootPath := filepath.Join(home, ".zcode")
+	config := filepath.Join(rootPath, "cli", "config.json")
+	installZcodeTestIntegration(t, "mcp", home)
+	managed, err := os.ReadFile(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(rootPath); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, config, string(managed))
+	installZcodeTestIntegration(t, "mcp", home)
+	registry, err := artifact.LoadRegistry(filepath.Join(home, ".roca", "artifacts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, found := registry.Find(artifactKindMCP, agentcfg.RuntimeZcode, config)
+	if !found || entry.CreatedRoot || entry.CreatedConfigDir || entry.CreatedConfig {
+		t.Fatalf("recreated MCP path ownership = %#v, found=%v", entry, found)
+	}
+	purgeZcodeTestIntegrations(true)
+	if body, err := os.ReadFile(config); err != nil || strings.TrimSpace(string(body)) != "{}" {
+		t.Fatalf("operator-recreated MCP config changed: body=%q err=%v", body, err)
+	}
+}
+
 func TestZcodeMCPPersistsAbsoluteConfigPath(t *testing.T) {
 	home := skillTestHome(t)
 	first := t.TempDir()
@@ -299,15 +327,15 @@ func TestZcodeMCPReinstallRefreshesExecutableProvenance(t *testing.T) {
 		t.Fatal(err)
 	}
 	entry, found := registry.Find(artifactKindMCP, agentcfg.RuntimeZcode, config)
-	if !found || entry.Executable != second || !entry.CreatedConfig || !entry.CreatedConfigDir || !entry.CreatedRoot {
+	if !found || entry.Executable != second || entry.CreatedConfig || entry.CreatedConfigDir || entry.CreatedRoot {
 		t.Fatalf("refreshed MCP provenance = %#v, found=%v", entry, found)
 	}
 	report := purgeZcodeTestIntegrations(true)
-	if len(report.Errors) != 0 {
-		t.Fatalf("purge errors = %v", report.Errors)
+	if !strings.Contains(strings.Join(report.Errors, "\n"), config) {
+		t.Fatalf("unproven reinstalled config was not reported: %v", report.Errors)
 	}
-	if _, err := os.Stat(filepath.Join(home, ".zcode")); !os.IsNotExist(err) {
-		t.Fatalf("reinstalled MCP runtime survived purge: %v", err)
+	if body, err := os.ReadFile(config); err != nil || strings.TrimSpace(string(body)) != "{}" {
+		t.Fatalf("unproven reinstalled config changed: body=%q err=%v", body, err)
 	}
 }
 

@@ -10,12 +10,46 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/artifact"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/skill"
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
+
+func TestZcodeSkillInstallUsesLifecycleLock(t *testing.T) {
+	home := skillTestHome(t)
+	env := &cliEnv{out: io.Discard}
+	release, err := env.lockManagedZcodeLifecycle()
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		root := rootCommand(env)
+		root.SetArgs([]string{"skill", "install", "zcode"})
+		done <- root.Execute()
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("ZCode skill install bypassed lifecycle lock: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	if err := release(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	path, err := skill.NamedPath("zcode", "roca", home, os.Getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("locked ZCode skill install did not publish: %v", err)
+	}
+}
 
 func TestSkillBareListsEveryRuntimePath(t *testing.T) {
 	home := skillTestHome(t)
