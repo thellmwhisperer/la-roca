@@ -113,6 +113,33 @@ func TestZcodeMCPReinstallPreservesOwnershipAfterDeclarationRemoval(t *testing.T
 	}
 }
 
+func TestZcodeMCPUninstallReconcilesAbsentRoot(t *testing.T) {
+	home := skillTestHome(t)
+	rootPath := filepath.Join(home, ".zcode")
+	config := filepath.Join(rootPath, "cli", "config.json")
+	installZcodeTestIntegration(t, "mcp", home)
+	if err := os.RemoveAll(rootPath); err != nil {
+		t.Fatal(err)
+	}
+	var errOut strings.Builder
+	env := &cliEnv{out: io.Discard, errOut: &errOut}
+	root := rootCommand(env)
+	root.SetArgs([]string{"mcp", "uninstall", "zcode"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(errOut.String(), "root is absent") {
+		t.Fatalf("absent root warning = %q", errOut.String())
+	}
+	registry, err := artifact.LoadRegistry(filepath.Join(home, ".roca", "artifacts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, found := registry.Find(artifactKindMCP, agentcfg.RuntimeZcode, config); found {
+		t.Fatal("absent root retained stale MCP ownership")
+	}
+}
+
 func TestZcodeMCPReinstallDropsOwnershipOnRecreatedManagedTree(t *testing.T) {
 	home := skillTestHome(t)
 	rootPath := filepath.Join(home, ".zcode")
@@ -329,6 +356,31 @@ func TestZcodeMCPAndHooksShareLifecycleLock(t *testing.T) {
 	}
 }
 
+func TestZcodeLifecycleLockSerializesRegistryWrites(t *testing.T) {
+	home := skillTestHome(t)
+	holder := &cliEnv{out: io.Discard, errOut: io.Discard}
+	release, err := holder.lockManagedZcodeLifecycle()
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		contender := &cliEnv{build: Build{Version: "test"}, zcodeLockWait: time.Second}
+		done <- contender.registerHook(filepath.Join(home, "hook.json"), "claude", "managed")
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("registry write bypassed ZCode lifecycle lock: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	if err := release(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestFullUninstallTimesOutBeforeChangingZcodeState(t *testing.T) {
 	home := skillTestHome(t)
 	config := filepath.Join(home, ".zcode", "cli", "config.json")
@@ -507,7 +559,7 @@ func TestManagedArtifactLocksRejectSymlinksWithoutChangingTargets(t *testing.T) 
 		{
 			name: "ZCode lifecycle",
 			lockPath: func(home string) string {
-				return filepath.Join(home, ".roca", "artifacts.json.zcode.lock")
+				return filepath.Join(home, ".roca", "artifacts.json.lock")
 			},
 			acquire: func(env *cliEnv, _ string) (func() error, error) {
 				return env.lockManagedZcodeLifecycle()

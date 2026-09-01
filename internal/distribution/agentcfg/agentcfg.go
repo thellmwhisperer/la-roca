@@ -443,7 +443,11 @@ func EditWithBackup(name, path string, transform, backupTransform func(string) (
 // returning a reportable Outcome. A missing file and an unchanged transform
 // are both no-ops.
 func Rewrite(path string, transform func(string) (string, error)) error {
-	previous, err := os.ReadFile(path)
+	target, err := configMutationPath(path)
+	if err != nil {
+		return err
+	}
+	previous, err := os.ReadFile(target)
 	if os.IsNotExist(err) {
 		return nil
 	}
@@ -457,14 +461,46 @@ func Rewrite(path string, transform func(string) (string, error)) error {
 	if next == string(previous) {
 		return nil
 	}
-	return securefile.Replace(path, []byte(next), previous)
+	return securefile.Replace(target, []byte(next), previous)
+}
+
+func configMutationPath(path string) (string, error) {
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return path, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if info.Mode().IsRegular() {
+		return path, nil
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		return "", fmt.Errorf("refuse non-regular configuration path %s", path)
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve configuration symlink %s: %w", path, err)
+	}
+	target, err := os.Lstat(resolved)
+	if err != nil {
+		return "", fmt.Errorf("inspect configuration symlink target %s: %w", path, err)
+	}
+	if !target.Mode().IsRegular() {
+		return "", fmt.Errorf("refuse non-regular configuration symlink target %s", resolved)
+	}
+	return resolved, nil
 }
 
 func edit(name, path string, transform func(string, bool) (string, error),
 	backupTransform func(string) (string, error), createMissing bool) (Outcome, error) {
 	outcome := Outcome{Runtime: name, Path: path}
+	target, err := configMutationPath(path)
+	if err != nil {
+		return outcome, err
+	}
 
-	previous, err := os.ReadFile(path)
+	previous, err := os.ReadFile(target)
 	switch {
 	case os.IsNotExist(err) && !createMissing:
 		return outcome, nil
@@ -491,20 +527,20 @@ func edit(name, path string, transform func(string, bool) (string, error),
 			}
 			backupContent = []byte(content)
 		}
-		backup, err := securefile.BackUp(path, backupContent)
+		backup, err := securefile.BackUp(target, backupContent)
 		if err != nil {
 			return outcome, err
 		}
 		outcome.Backup = backup
 	}
 	if previous == nil {
-		if err := securefile.CreatePreservingParentMode(path, []byte(next), 0o600, 0o700); err != nil {
+		if err := securefile.CreatePreservingParentMode(target, []byte(next), 0o600, 0o700); err != nil {
 			return outcome, err
 		}
-	} else if err := securefile.Replace(path, []byte(next), previous); err != nil {
+	} else if err := securefile.Replace(target, []byte(next), previous); err != nil {
 		return outcome, err
 	}
-	identity, err := os.Lstat(path)
+	identity, err := os.Lstat(target)
 	if err != nil {
 		return outcome, err
 	}

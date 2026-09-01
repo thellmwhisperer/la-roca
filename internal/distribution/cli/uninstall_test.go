@@ -231,7 +231,7 @@ func TestFullPurgeRetainsZcodeLifecycleLock(t *testing.T) {
 	if err := env.uninstall(uninstallCommand(env), strings.NewReader(""), true); err != nil {
 		t.Fatal(err)
 	}
-	lockPath := paths.Artifacts + ".zcode.lock"
+	lockPath := paths.Artifacts + ".lock"
 	if info, err := os.Lstat(lockPath); err != nil || !info.Mode().IsRegular() {
 		t.Fatalf("stable ZCode lifecycle lock: info=%v err=%v", info, err)
 	}

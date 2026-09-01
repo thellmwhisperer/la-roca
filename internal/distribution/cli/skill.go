@@ -795,7 +795,7 @@ func (env *cliEnv) recordZcodeWrapperState(path, executable string, preimage zco
 	}
 	var prior artifact.Entry
 	var priorFound bool
-	_, err = mutateArtifactRegistry(paths.Artifacts, func(registry *artifact.Registry) (bool, error) {
+	_, err = env.mutateArtifactRegistry(paths.Artifacts, func(registry *artifact.Registry) (bool, error) {
 		prior, priorFound = registry.Find(artifactKindHook, agentcfg.RuntimeZcode, path)
 		if priorFound && continuousZcodeOwnership(prior, transaction) {
 			transaction.CreatedRoot = transaction.CreatedRoot || prior.CreatedRoot
@@ -814,7 +814,7 @@ func (env *cliEnv) recordZcodeWrapperState(path, executable string, preimage zco
 			return nil, errors.Join(err, readErr)
 		}
 	}
-	return artifactRegistryRollback(paths.Artifacts, transaction, prior, priorFound), nil
+	return env.artifactRegistryRollback(paths.Artifacts, transaction, prior, priorFound), nil
 }
 
 func (env *cliEnv) zcodeWrapperExpected(path string) ([]byte, artifact.Entry, bool, error) {
