@@ -35,7 +35,7 @@ func TestStatusCommandReportsAXIRowsWithoutWaitingForTheModel(t *testing.T) {
 		"databases": [
 			{"plugin":"claude-code-parser","database":"corpus","path":"claude-code-corpus.db","alias":"parser","tables":[{"name":"sessions","id_column":"session_id","text_columns":["title"]}]},
 			{"plugin":"roca-corpus","database":"corpus","path":"roca-corpus.db","alias":"corpus","tables":[{"name":"notes","id_column":"id","text_columns":["body"]}]},
-			{"plugin":"roca-firstmate","database":"firstmate","path":"firstmate.db","alias":"firstmate","tables":[{"name":"task_state_versions","id_column":"id","text_columns":["body"]}]},
+			{"plugin":"roca-notes","database":"notes","path":"notes.db","alias":"notes","tables":[{"name":"task_state_versions","id_column":"id","text_columns":["body"]}]},
 			{"plugin":"roca-galactic","database":"galactic","path":"roca-galactic.db","alias":"galactic","tables":[{"name":"messages","id_column":"id","text_columns":["body"]}]},
 			{"plugin":"roca-ops","database":"ops","path":"roca-ops.db","alias":"ops","tables":[{"name":"memories","id_column":"id","text_columns":["content"]}]}
 		]
@@ -108,7 +108,7 @@ func TestStatusCommandReportsAXIRowsWithoutWaitingForTheModel(t *testing.T) {
 	for _, needle := range []string{
 		"worker:", "databases[5]{", "plugin", "embedded_chunks", "candidate_chunks",
 		"sidecar_bytes", "last_write", "state", "help[", "roca vector status --json",
-		"claude-code-parser", "roca-corpus", "roca-firstmate", "roca-galactic", "roca-ops",
+		"claude-code-parser", "roca-corpus", "roca-notes", "roca-galactic", "roca-ops",
 	} {
 		if !strings.Contains(text, needle) {
 			t.Fatalf("AXI status missing %q:\n%s", needle, text)

@@ -40,8 +40,8 @@ func TestReportVectorizationReadsSidecarFactsAndNeverInventZero(t *testing.T) {
 		Plugin: "roca-galactic", Database: "galactic", Path: "roca-galactic.db", Alias: "galactic",
 		Tables: []vectorTable{{Name: "messages", IDColumn: "id", TextColumns: []string{"body"}}},
 	}
-	firstmate := vectorDatabase{
-		Plugin: "roca-firstmate", Database: "firstmate", Path: "firstmate.db", Alias: "firstmate",
+	notesPlugin := vectorDatabase{
+		Plugin: "roca-notes", Database: "notes", Path: "notes.db", Alias: "notes",
 		Tables: []vectorTable{{Name: "task_state_versions", IDColumn: "id", TextColumns: []string{"body"}}},
 	}
 	parser := vectorDatabase{
@@ -51,7 +51,7 @@ func TestReportVectorizationReadsSidecarFactsAndNeverInventZero(t *testing.T) {
 			{Name: "exchanges", IDColumn: "id", TextColumns: []string{"human_text"}},
 		},
 	}
-	writeRegistry(t, root, vectorRegistry{Schema: 2, Databases: []vectorDatabase{parser, corpus, firstmate, galactic, ops}})
+	writeRegistry(t, root, vectorRegistry{Schema: 2, Databases: []vectorDatabase{parser, corpus, notesPlugin, galactic, ops}})
 
 	writeSourceRows(t, filepath.Join(root, corpus.Plugin, corpus.Path),
 		`CREATE TABLE notes(id TEXT PRIMARY KEY, body TEXT);
@@ -62,8 +62,8 @@ func TestReportVectorizationReadsSidecarFactsAndNeverInventZero(t *testing.T) {
 		ops.owner(), 4, map[string]string{
 			"contract": ops.contractFingerprint(), "source_fingerprint": "sealed-ops",
 		})
-	writeSidecarWithChunks(t, SidecarPath(filepath.Join(root, firstmate.Plugin, firstmate.Path)),
-		firstmate.owner(), 2, map[string]string{"contract": "stale-contract"})
+	writeSidecarWithChunks(t, SidecarPath(filepath.Join(root, notesPlugin.Plugin, notesPlugin.Path)),
+		notesPlugin.owner(), 2, map[string]string{"contract": "stale-contract"})
 	if err := os.MkdirAll(filepath.Join(root, galactic.Plugin), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -148,12 +148,12 @@ func TestReportVectorizationReadsSidecarFactsAndNeverInventZero(t *testing.T) {
 		t.Fatalf("missing sidecar state = %q, want empty", parserRow.State)
 	}
 
-	firstmateRow := got["roca-firstmate/firstmate"]
-	if firstmateRow.State != StateOutdated {
-		t.Fatalf("stale contract = %q, want outdated", firstmateRow.State)
+	notesRow := got["roca-notes/notes"]
+	if notesRow.State != StateOutdated {
+		t.Fatalf("stale contract = %q, want outdated", notesRow.State)
 	}
-	if firstmateRow.EmbeddedChunks == nil || *firstmateRow.EmbeddedChunks != 2 {
-		t.Fatalf("outdated sidecar still has readable chunks = %v", firstmateRow.EmbeddedChunks)
+	if notesRow.EmbeddedChunks == nil || *notesRow.EmbeddedChunks != 2 {
+		t.Fatalf("outdated sidecar still has readable chunks = %v", notesRow.EmbeddedChunks)
 	}
 
 	galacticRow := got["roca-galactic/galactic"]
