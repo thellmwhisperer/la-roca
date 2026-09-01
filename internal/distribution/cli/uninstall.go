@@ -369,25 +369,24 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 		var err error
 		if registryErr != nil {
 			err = fmt.Errorf("ownership registry unavailable")
-		} else {
+		} else if purge && target.registered {
+			finalize := func(entry artifact.Entry) error {
+				removeRecoveryBackups(report, target.settings)
+				if cleanupErr := cleanupCreatedZcodeHookPaths(entry, target.settings, target.wrapper); cleanupErr != nil {
+					return cleanupErr
+				}
+				return env.unregisterArtifactEntry(entry)
+			}
 			outcome, warning, err = env.uninstallManagedZcodeHandoffHook(
-				target.settings, target.wrapper, purge && target.registered)
+				target.settings, target.wrapper, finalize)
+		} else {
+			outcome, warning, err = env.uninstallManagedZcodeHandoffHook(target.settings, target.wrapper)
+			if purge {
+				removeRecoveryBackups(report, target.settings)
+			}
 		}
 		if warning != "" {
 			fmt.Fprintln(env.errOut, warning)
-		}
-		if purge {
-			removeRecoveryBackups(report, target.settings)
-		}
-		if err == nil && purge && target.registered {
-			present, verified := zcodeManagedHookState(target.settings)
-			if !verified || present {
-				err = fmt.Errorf("ZCode hook withdrawal from %s could not be verified", target.settings)
-			} else if cleanupErr := cleanupCreatedZcodeHookPaths(target.entry, target.settings, target.wrapper); cleanupErr != nil {
-				err = cleanupErr
-			} else {
-				err = env.unregisterArtifactEntry(target.entry)
-			}
 		}
 		withdrawn("the ZCode handoff hook from "+target.settings, outcome, err)
 	}
@@ -522,11 +521,15 @@ func cleanupCreatedZcodeHookPaths(entry artifact.Entry, configPath, wrapperPath 
 			}
 		}
 	}
+	lockPath := filepath.Join(root, ".roca-hooks.lock")
 	if entry.CreatedLock {
-		lockPath := filepath.Join(root, ".roca-hooks.lock")
 		if err := os.Remove(lockPath); err != nil && !os.IsNotExist(err) {
 			return err
 		}
+	} else if _, err := os.Lstat(lockPath); err == nil {
+		return fmt.Errorf("unproven ZCode artifact remains at %s", lockPath)
+	} else if !os.IsNotExist(err) {
+		return err
 	}
 	for _, directory := range []struct {
 		path    string

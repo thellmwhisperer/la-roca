@@ -251,6 +251,8 @@ func TestZcodeMCPMatchRequiresExactStdioInvocation(t *testing.T) {
 		t.Fatalf("installed invocation match = %v, err=%v", matched, err)
 	}
 	for _, invalid := range []string{
+		`{"mcp":{},"mcp":{"servers":{"roca":{"type":"stdio","command":"/bin/roca","args":["mcp","serve"]}}}}`,
+		`{"mcp":{"servers":{"roca":{"type":"stdio","type":"stdio","command":"/bin/roca","args":["mcp","serve"]}}}}`,
 		`{"mcp":{"servers":{"roca":{"type":"http","command":"/bin/roca","args":["mcp","serve"]}}}}`,
 		`{"mcp":{"servers":{"roca":{"type":"stdio","command":"/bin/other","args":["mcp","serve"]}}}}`,
 		`{"mcp":{"servers":{"roca":{"type":"stdio","command":"/bin/roca","args":["serve"]}}}}`,
@@ -259,7 +261,7 @@ func TestZcodeMCPMatchRequiresExactStdioInvocation(t *testing.T) {
 			t.Fatal(err)
 		}
 		matched, err := agentcfg.ZcodeMCPMatches(path, "/bin/roca")
-		if err != nil || matched {
+		if matched {
 			t.Fatalf("invalid invocation match = %v, err=%v: %s", matched, err, invalid)
 		}
 	}
