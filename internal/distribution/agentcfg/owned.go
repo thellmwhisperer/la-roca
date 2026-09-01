@@ -71,7 +71,7 @@ func saveOwnedMCP(path string, created []string) error {
 	if err != nil {
 		return err
 	}
-	owned.MCP = created
+	owned.MCP = mergeOwned(owned.MCP, created)
 	return writeOwned(path, owned)
 }
 
@@ -80,8 +80,21 @@ func SaveOwnedHooks(path string, created []string) error {
 	if err != nil {
 		return err
 	}
-	owned.Hooks = created
+	owned.Hooks = mergeOwned(owned.Hooks, created)
 	return writeOwned(path, owned)
+}
+
+func mergeOwned(existing, created []string) []string {
+	merged := make([]string, 0, len(existing)+len(created))
+	seen := make(map[string]struct{}, len(existing)+len(created))
+	for _, path := range append(append([]string{}, existing...), created...) {
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		merged = append(merged, path)
+	}
+	return merged
 }
 
 func clearOwnedMCP(path string) error {

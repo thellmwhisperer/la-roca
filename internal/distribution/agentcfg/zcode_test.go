@@ -157,6 +157,48 @@ func TestZcodeUninstallRejectsUnreadableOwnershipBeforeEditingConfig(t *testing.
 	}
 }
 
+func TestZcodeInstallRejectsUnreadableOwnershipBeforeEditingConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	writeFile(t, path, "{}\n")
+	writeFile(t, path+".roca-owned", "{not-json\n")
+
+	outcome, err := agentcfg.Install(agentcfg.RuntimeZcode, path, "roca")
+	if err == nil {
+		t.Fatal("install accepted an unrecognized ownership sidecar")
+	}
+	if outcome.Changed {
+		t.Fatal("install reported a config mutation after ownership preflight failed")
+	}
+	if got := read(t, path); got != "{}\n" {
+		t.Fatalf("install edited config before rejecting ownership: %s", got)
+	}
+	if got := read(t, path+".roca-owned"); got != "{not-json\n" {
+		t.Fatalf("install edited unrecognized ownership: %s", got)
+	}
+}
+
+func TestZcodeReinstallPreservesMCPContainerOwnership(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	writeFile(t, path, "{}\n")
+	if _, err := agentcfg.Install(agentcfg.RuntimeZcode, path, "roca"); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, path, "{\"mcp\":{}}\n")
+	if _, err := agentcfg.Install(agentcfg.RuntimeZcode, path, "roca"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := agentcfg.Uninstall(agentcfg.RuntimeZcode, path); err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal([]byte(read(t, path)), &document); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := document["mcp"]; ok {
+		t.Fatalf("reinstall lost ownership of the product-created mcp container: %#v", document)
+	}
+}
+
 func writeFile(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
