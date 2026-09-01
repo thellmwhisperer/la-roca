@@ -171,3 +171,67 @@ func TestZcodeHookUninstallDoesNotRemoveOperatorOwnedEmptyHooks(t *testing.T) {
 		t.Fatalf("operator-owned hooks object was removed: %s", got)
 	}
 }
+
+func TestZcodeHookUninstallRejectsUnreadableOwnershipBeforeMutation(t *testing.T) {
+	home := skillTestHome(t)
+	binary := filepath.Join(home, "bin", "roca")
+	if err := os.MkdirAll(filepath.Dir(binary), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(EnvExecutable, binary)
+	config := filepath.Join(home, ".zcode", "cli", "config.json")
+	if err := os.MkdirAll(filepath.Dir(config), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := rootCommand(&cliEnv{out: io.Discard, build: Build{Version: "test"}})
+	root.SetArgs([]string{"hooks", "install", "zcode"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	configBefore, err := os.ReadFile(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapper := filepath.Join(home, ".zcode", "hooks", "roca-handoff.sh")
+	wrapperBefore, err := os.ReadFile(wrapper)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owned := config + ".roca-owned"
+	if err := os.WriteFile(owned, []byte("{not-json\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	root = rootCommand(&cliEnv{out: io.Discard, build: Build{Version: "test"}})
+	root.SetArgs([]string{"hooks", "uninstall", "zcode"})
+	if err := root.Execute(); err == nil {
+		t.Fatal("uninstall accepted an unrecognized ownership sidecar")
+	}
+	configAfter, err := os.ReadFile(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(configAfter) != string(configBefore) {
+		t.Fatalf("uninstall edited config before rejecting ownership:\n--- before ---\n%s\n--- after ---\n%s", configBefore, configAfter)
+	}
+	wrapperAfter, err := os.ReadFile(wrapper)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(wrapperAfter) != string(wrapperBefore) {
+		t.Fatal("uninstall edited wrapper before rejecting ownership")
+	}
+	ownedAfter, err := os.ReadFile(owned)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(ownedAfter) != "{not-json\n" {
+		t.Fatalf("uninstall edited unrecognized ownership: %s", ownedAfter)
+	}
+}

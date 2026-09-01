@@ -266,17 +266,18 @@ func Uninstall(name, path string) (Outcome, error) {
 	if err != nil {
 		return Outcome{}, err
 	}
-	created := loadOwnedMCP(path)
+	created, err := loadOwnedMCP(path)
+	if err != nil {
+		return Outcome{Runtime: name, Path: path}, err
+	}
 	outcome, err := Edit(name, path, func(text string) (string, error) {
 		return withdrawCreated(r, text, created)
 	}, false)
 	if err != nil {
 		return outcome, err
 	}
-	if outcome.Changed {
-		if err := clearOwnedMCP(path); err != nil {
-			return outcome, err
-		}
+	if err := clearOwnedMCP(path); err != nil {
+		return outcome, err
 	}
 	return outcome, nil
 }

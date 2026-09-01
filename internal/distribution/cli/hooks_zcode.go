@@ -100,7 +100,10 @@ func installZcodeHandoffHook(configPath, executable string) (agentcfg.Outcome, s
 }
 
 func uninstallZcodeHandoffHook(configPath, wrapperPath string) (agentcfg.Outcome, string, error) {
-	created := agentcfg.LoadOwnedHooks(configPath)
+	created, err := agentcfg.LoadOwnedHooks(configPath)
+	if err != nil {
+		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
+	}
 	var warning string
 	outcome, err := agentcfg.Edit(agentcfg.RuntimeZcode, configPath, func(previous string) (string, error) {
 		settings, err := jsonObject(previous)
