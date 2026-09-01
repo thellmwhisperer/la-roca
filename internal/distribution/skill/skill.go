@@ -285,6 +285,7 @@ func uninstallWithChecksum(name, path, systemSHA256 string, afterQuarantine func
 	}
 	out := Outcome{Runtime: name, Path: path}
 	if _, err := os.Lstat(path); os.IsNotExist(err) {
+		out.Missing = true
 		return out, nil
 	} else if err != nil {
 		return out, err
@@ -307,6 +308,7 @@ func uninstallWithChecksum(name, path, systemSHA256 string, afterQuarantine func
 	}
 	if err := os.Rename(path, quarantine); err != nil {
 		if os.IsNotExist(err) {
+			out.Missing = true
 			return out, nil
 		}
 		return out, fmt.Errorf("quarantine %s: %w", path, err)

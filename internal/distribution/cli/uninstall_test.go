@@ -2,6 +2,7 @@ package cli
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -387,6 +388,52 @@ func TestUninstallCleansTheEmptySkillChainAndNamesEverySurvivor(t *testing.T) {
 // product's: the generated catalog has no shipped bytes, so the withdrawal
 // falls back to an empty checksum and refuses, the same safe reading the
 // canonical skill gives an edited SYSTEM zone it cannot prove.
+func TestSkillUninstallRetainsDivergedOwnershipForRetry(t *testing.T) {
+	for _, registryOnly := range []bool{false, true} {
+		t.Run(fmt.Sprintf("registry-only=%v", registryOnly), func(t *testing.T) {
+			home := skillTestHome(t)
+			root := filepath.Join(home, "zcode-original")
+			t.Setenv("ZCODE_HOME", root)
+			runZcodeTestCLI(t, "skill", "install", "zcode")
+			path := filepath.Join(root, "skills", "roca", "SKILL.md")
+			body, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			zones, err := artifact.Parse(string(body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(artifact.Zoned("operator system\n", zones.User)), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if registryOnly {
+				t.Setenv("ZCODE_HOME", filepath.Join(home, "zcode-current"))
+			}
+			purgeZcodeTestIntegrations(false)
+			registryPath := filepath.Join(home, ".roca", "artifacts.json")
+			registry, err := artifact.LoadRegistry(registryPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, found := registry.Find(artifactKindSkill, "zcode", path); !found {
+				t.Fatal("diverged skill lost retry ownership")
+			}
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+			purgeZcodeTestIntegrations(false)
+			registry, err = artifact.LoadRegistry(registryPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, found := registry.Find(artifactKindSkill, "zcode", path); found {
+				t.Fatal("confirmed-missing skill retained stale ownership")
+			}
+		})
+	}
+}
+
 func TestUninstallLeavesAnUnregisteredCatalogFileAlone(t *testing.T) {
 	home := t.TempDir()
 	isolateRuntimeDirs(t, home)
