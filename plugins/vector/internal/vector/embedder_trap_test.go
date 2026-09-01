@@ -15,11 +15,12 @@ func TestNativeEmbedTrapRestartsAndFreesFutureCallers(t *testing.T) {
 	t.Cleanup(func() { nativeCallTimeout = previousTimeout })
 	restarted := make(chan struct{}, 1)
 	previousRestart := restartTrappedWorker
-	restartTrappedWorker = func() {
+	restartTrappedWorker = func(string) error {
 		select {
 		case restarted <- struct{}{}:
 		default:
 		}
+		return nil
 	}
 	t.Cleanup(func() { restartTrappedWorker = previousRestart })
 	started := make(chan struct{})

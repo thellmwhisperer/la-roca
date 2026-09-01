@@ -4,8 +4,11 @@ package vector
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -31,18 +34,70 @@ type Native struct {
 	engine        nativeEngine
 	backend       string
 	fallback      string
-	trapped       atomic.Bool
-	trapAction    func()
+	terminal      atomic.Pointer[nativeTrap]
+	activeElement atomic.Pointer[string]
+	trapAction    func(string) error
 }
 
-var errNativeTrapped = fmt.Errorf("semantic search stalled while preparing embeddings")
+type nativeTrap struct {
+	err error
+}
 
-var restartTrappedWorker = func() {
+const (
+	nativeTrapElementEnv  = "ROCA_VECTOR_NATIVE_TRAP_ELEMENT"
+	nativeTrapRestartsEnv = "ROCA_VECTOR_NATIVE_TRAP_RESTARTS"
+	maxNativeTrapRestarts = 1
+)
+
+var (
+	errNativeTrapped     = fmt.Errorf("semantic search stalled while preparing embeddings")
+	execWorkerProcess    = syscall.Exec
+	restartTrappedWorker = restartTrappedWorkerProcess
+)
+
+func restartTrappedWorkerProcess(element string) error {
+	restarts := 0
+	if os.Getenv(nativeTrapElementEnv) == element {
+		var err error
+		restarts, err = strconv.Atoi(os.Getenv(nativeTrapRestartsEnv))
+		if err != nil || restarts < 0 {
+			return nativeTrapBudgetError(element, maxNativeTrapRestarts)
+		}
+	}
+	if restarts >= maxNativeTrapRestarts {
+		return nativeTrapBudgetError(element, restarts)
+	}
 	executable, err := os.Executable()
 	if err != nil {
-		return
+		return fmt.Errorf("restart vector worker after native stall: %w", err)
 	}
-	_ = syscall.Exec(executable, os.Args, os.Environ())
+	environment := replaceEnvironment(os.Environ(), nativeTrapElementEnv, element)
+	environment = replaceEnvironment(environment, nativeTrapRestartsEnv, strconv.Itoa(restarts+1))
+	if err := execWorkerProcess(executable, os.Args, environment); err != nil {
+		return fmt.Errorf("restart vector worker after native stall: %w", err)
+	}
+	return nil
+}
+
+func nativeTrapBudgetError(element string, restarts int) error {
+	return fmt.Errorf("%w: embedding element %s stalled after %d worker restart", errNativeTrapped,
+		element, restarts)
+}
+
+func replaceEnvironment(environment []string, key, value string) []string {
+	prefix := key + "="
+	result := make([]string, 0, len(environment)+1)
+	for _, entry := range environment {
+		if !strings.HasPrefix(entry, prefix) {
+			result = append(result, entry)
+		}
+	}
+	return append(result, prefix+value)
+}
+
+func nativeElementIdentity(input string) string {
+	digest := sha256.Sum256([]byte(input))
+	return fmt.Sprintf("sha256:%x", digest[:8])
 }
 
 type nativeEngine interface {
@@ -51,17 +106,17 @@ type nativeEngine interface {
 }
 
 func (n *Native) acquireNative(ctx context.Context) error {
-	if n.trapped.Load() {
-		return errNativeTrapped
+	if err := n.TerminalError(); err != nil {
+		return err
 	}
 	n.ownershipOnce.Do(func() {
 		n.ownership = make(chan struct{}, 1)
 	})
 	select {
 	case n.ownership <- struct{}{}:
-		if n.trapped.Load() {
+		if err := n.TerminalError(); err != nil {
 			<-n.ownership
-			return errNativeTrapped
+			return err
 		}
 		if err := ctx.Err(); err != nil {
 			<-n.ownership
@@ -73,17 +128,33 @@ func (n *Native) acquireNative(ctx context.Context) error {
 	}
 }
 
-func (n *Native) markNativeTrapped() {
-	if n.trapped.CompareAndSwap(false, true) && n.trapAction != nil {
-		n.trapAction()
+func (n *Native) markNativeTrapped(element string) {
+	state := &nativeTrap{err: errNativeTrapped}
+	if !n.terminal.CompareAndSwap(nil, state) {
+		return
+	}
+	if n.trapAction != nil {
+		if err := n.trapAction(element); err != nil {
+			n.terminal.Store(&nativeTrap{err: err})
+		}
 	}
 }
 
 func (n *Native) TerminalError() error {
-	if n.trapped.Load() {
-		return errNativeTrapped
+	if state := n.terminal.Load(); state != nil {
+		return state.err
 	}
 	return nil
+}
+
+func (n *Native) trappedElement(input []string) string {
+	if active := n.activeElement.Load(); active != nil {
+		return *active
+	}
+	if len(input) > 0 {
+		return nativeElementIdentity(input[0])
+	}
+	return nativeElementIdentity("")
 }
 
 func EnableWorkerRestartOnNativeTrap(embedder Embedder) {
@@ -101,6 +172,9 @@ func (n *Native) nativeContextError(callerCtx context.Context) error {
 		return err
 	}
 	n.record(telemetry.Record{Kind: telemetry.KindError, Err: "semantic search stalled"})
+	if err := n.TerminalError(); err != nil {
+		return err
+	}
 	return errNativeTrapped
 }
 

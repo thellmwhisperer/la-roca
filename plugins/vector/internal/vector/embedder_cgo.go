@@ -50,7 +50,7 @@ func (n *Native) Embed(ctx context.Context, requestedModel string, input []strin
 	case <-ctx.Done():
 		llamacpp.RequestAbort()
 		if callerCtx.Err() == nil {
-			n.markNativeTrapped()
+			n.markNativeTrapped(n.trappedElement(input))
 		}
 		return nil, n.nativeContextError(callerCtx)
 	}
@@ -60,6 +60,11 @@ func (n *Native) embedLocked(ctx context.Context, input []string) ([][]float32, 
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if len(input) > 0 {
+		element := nativeElementIdentity(input[0])
+		n.activeElement.Store(&element)
+	}
+	defer n.activeElement.Store(nil)
 	if n.engine == nil {
 		if err := n.open(ctx); err != nil {
 			return nil, err
@@ -71,6 +76,8 @@ func (n *Native) embedLocked(ctx context.Context, input []string) ([][]float32, 
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
+		element := nativeElementIdentity(text)
+		n.activeElement.Store(&element)
 		vector, _, err := n.engine.Embed(text)
 		if err != nil {
 			n.record(telemetry.Record{Kind: telemetry.KindError, Backend: n.backend, Fallback: n.fallback, Err: "embed failed"})
