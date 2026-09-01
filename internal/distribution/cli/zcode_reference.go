@@ -50,7 +50,13 @@ func zcodeHookCommandsReferenceWrapper(commands []string, wrapperPath string) (b
 }
 
 func zcodeCommandWordPath(word string, index int, home, wrapperBase string) (string, bool, error) {
-	if word == "" || strings.HasPrefix(word, "-") {
+	if word == "" {
+		return "", false, nil
+	}
+	if strings.HasPrefix(word, "-") {
+		if strings.ContainsAny(word, `/~\\`) || strings.Contains(word, wrapperBase) {
+			return "", false, fmt.Errorf("option may contain a wrapper path")
+		}
 		return "", false, nil
 	}
 	if index == 0 && strings.Contains(word, "=") && !strings.ContainsAny(word, `/\\`) {

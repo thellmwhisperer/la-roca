@@ -11,6 +11,7 @@
 package agentcfg
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -283,18 +284,37 @@ func ZcodeMCPMatches(path, executable string) (bool, error) {
 		return false, err
 	}
 	r := runtimes[RuntimeZcode]
-	document, err := editors[r.kind].decode(r, string(body))
+	view, root, err := rootObject(r, string(body))
 	if err != nil {
 		return false, err
 	}
-	mcp, _ := document["mcp"].(map[string]any)
-	servers, _ := mcp["servers"].(map[string]any)
-	entry, _ := servers[ServerName].(map[string]any)
-	if len(entry) != 3 || entry["type"] != "stdio" || entry["command"] != executable {
+	servers, found, err := objectAtPath(view, root, []string{"mcp", "servers"})
+	if err != nil || !found {
+		return false, err
+	}
+	index := servers.find(ServerName)
+	if index < 0 {
 		return false, nil
 	}
-	args, _ := entry["args"].([]any)
-	return len(args) == 2 && args[0] == "mcp" && args[1] == "serve", nil
+	entry, err := objectAt(view, servers.members[index].valueStart)
+	if err != nil || len(entry.members) != 3 {
+		return false, err
+	}
+	decode := func(key string, destination any) bool {
+		index := entry.find(key)
+		if index < 0 {
+			return false
+		}
+		member := entry.members[index]
+		return json.Unmarshal([]byte(view[member.valueStart:member.end]), destination) == nil
+	}
+	var entryType, command string
+	var args []string
+	if !decode("type", &entryType) || !decode("command", &command) || !decode("args", &args) {
+		return false, nil
+	}
+	return entryType == "stdio" && command == executable &&
+		len(args) == 2 && args[0] == "mcp" && args[1] == "serve", nil
 }
 
 func UninstallZcodeMCP(path, preimage string) (Outcome, error) {

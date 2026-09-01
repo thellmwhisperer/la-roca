@@ -707,12 +707,7 @@ func zcodeManagedHookPresent(configPath string) bool {
 	return present
 }
 
-func zcodeHookSelected(configPath, wrapperPath string) (bool, error) {
-	if _, err := os.Lstat(wrapperPath); err == nil {
-		return true, nil
-	} else if !os.IsNotExist(err) {
-		return false, err
-	}
+func zcodeHookSelected(configPath, _ string) (bool, error) {
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		return false, nil
 	} else if err != nil {
@@ -879,7 +874,7 @@ func (env *cliEnv) installManagedZcodeHandoffHook(configPath, wrapperPath, execu
 	return outcome, warning, err
 }
 
-func (env *cliEnv) uninstallManagedZcodeHandoffHook(configPath, wrapperPath string, retainOwnership ...bool) (outcome agentcfg.Outcome, warning string, err error) {
+func (env *cliEnv) uninstallManagedZcodeHandoffHook(configPath, wrapperPath string, finalize ...func(artifact.Entry) error) (outcome agentcfg.Outcome, warning string, err error) {
 	configPath, err = filepath.Abs(configPath)
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
@@ -893,19 +888,39 @@ func (env *cliEnv) uninstallManagedZcodeHandoffHook(configPath, wrapperPath stri
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
 	defer func() { err = errors.Join(err, stableRelease()) }()
-	release, err := lockZcodeHookLifecycle(configPath, wrapperPath, false)
-	if err != nil {
-		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
-	}
-	defer func() { err = errors.Join(err, release()) }()
 	expected, entry, found, err := env.zcodeWrapperExpected(wrapperPath)
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
+	if !found && !zcodeManagedHookPresent(configPath) {
+		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", nil
+	}
+	release, err := lockZcodeHookLifecycle(configPath, wrapperPath, false)
+	if err != nil {
+		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
+	}
+	localReleased := false
+	defer func() {
+		if !localReleased {
+			err = errors.Join(err, release())
+		}
+	}()
 	outcome, warning, err = uninstallZcodeHandoffHookUnlocked(configPath, wrapperPath, expected)
 	present, verified := zcodeManagedHookState(configPath)
-	retain := len(retainOwnership) > 0 && retainOwnership[0]
-	if err == nil && found && verified && !present && !retain {
+	if err == nil && len(finalize) > 0 {
+		switch {
+		case !found:
+			err = fmt.Errorf("ZCode hook ownership state for %s is missing", wrapperPath)
+		case !verified || present:
+			err = fmt.Errorf("ZCode hook withdrawal from %s could not be verified", configPath)
+		default:
+			err = release()
+			localReleased = true
+			if err == nil {
+				err = finalize[0](entry)
+			}
+		}
+	} else if err == nil && found && verified && !present {
 		err = env.unregisterArtifactEntry(entry)
 	}
 	return outcome, warning, err
