@@ -196,6 +196,55 @@ func TestAppendableSessionParsersUseStoredExchangeCursor(t *testing.T) {
 	}
 }
 
+func TestIncrementalOrphanedToolsPreserveAndExtendTheFullProjection(t *testing.T) {
+	db := corpusDatabase(t)
+	const sessionID = "incremental-orphan-tools"
+	writeHarvestRecords(t, db, parsers.Records{Sessions: []parsers.Session{{
+		ID: sessionID,
+		OrphanedTools: []parsers.ToolUse{{
+			Name: "aborted", ParamsSummary: "full rollout",
+		}},
+	}}})
+	writeHarvestRecords(t, db, parsers.Records{Sessions: []parsers.Session{{
+		ID: sessionID, Incremental: true, OrphanedTools: []parsers.ToolUse{},
+	}}})
+
+	var afterCompletedTail int
+	if err := db.SQL().QueryRow(`SELECT COUNT(*) FROM tool_uses
+		WHERE session_id = ? AND exchange_number IS NULL`, sessionID).Scan(&afterCompletedTail); err != nil {
+		t.Fatal(err)
+	}
+	if afterCompletedTail != 1 {
+		t.Fatalf("orphaned tools after completed tail = %d, want the existing orphan preserved",
+			afterCompletedTail)
+	}
+
+	writeHarvestRecords(t, db, parsers.Records{Sessions: []parsers.Session{{
+		ID: sessionID, Incremental: true,
+		OrphanedTools: []parsers.ToolUse{{Name: "superseded", ParamsSummary: "tail rollout"}},
+	}}})
+	rows, err := db.SQL().Query(`SELECT tool_name FROM tool_uses
+		WHERE session_id = ? AND exchange_number IS NULL ORDER BY id`, sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		names = append(names, name)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(names) != 2 || names[0] != "aborted" || names[1] != "superseded" {
+		t.Fatalf("orphaned tools after orphan tail = %v, want preserved and appended rows", names)
+	}
+}
+
 func TestCodexHistoryCursorRemainsPerSession(t *testing.T) {
 	prefix := `{"session_id":"history-1","text":"one","ts":1785578401}` + "\n" +
 		`{"session_id":"history-2","text":"other","ts":1785578402}` + "\n"

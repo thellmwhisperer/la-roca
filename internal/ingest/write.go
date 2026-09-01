@@ -387,7 +387,12 @@ func (w *writer) sessionWithPolicy(ctx context.Context, session parsers.Session,
 		}
 	}
 	if session.OrphanedTools != nil {
-		tools, err := w.replaceOrphanedTools(ctx, session.ID, session.OrphanedTools)
+		var tools int
+		if session.Incremental {
+			tools, err = w.insertTools(ctx, session.ID, nil, session.OrphanedTools)
+		} else {
+			tools, err = w.replaceOrphanedTools(ctx, session.ID, session.OrphanedTools)
+		}
 		if err != nil {
 			return counts, err
 		}
