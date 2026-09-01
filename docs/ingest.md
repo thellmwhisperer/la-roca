@@ -16,7 +16,7 @@ without a La Roca login](lifecycle.md#install).
 | GLM | User skill documents and their supporting Markdown files |
 | Cursor | Agent and legacy IDE sessions, prompts, thinking, and tool calls from its local SQLite stores |
 | OpenCode | Sessions and exchanges, distilled from its local database |
-| ZCode | Desktop sessions, messages, reasoning, and tool calls from its local database |
+| ZCode | Sessions, messages, reasoning, and tool calls from the local database shared by the desktop app and its embedded CLI |
 | Pi | Complete session tree, including nested child runs |
 | Hermes | Sessions and channel, usage and routing intel from its state database, plus curated MEMORY.md blocks |
 | Grok Build | Sessions, from the session update stream and its metadata sidecar |
@@ -416,11 +416,13 @@ them.
 
 ## ZCode
 
-This reader is pinned to ZCode Desktop 3.10.2 (macOS build 3.10.2.6414),
+This reader is pinned to ZCode 3.10.2 (macOS build 3.10.2.6414),
 whose bundled session runtime reports schema version 0.16.5 and migrations
 `0001_base_session_store` through `0018_session_input_failed_status`. ZCode
-keeps the primary conversation store at `~/.zcode/cli/db/db.sqlite` in SQLite
-WAL mode. The database's `session` rows carry identity, title, directory,
+is not desktop-only: the macOS app embeds a CLI at
+`/Applications/ZCode.app/Contents/Resources/glm/zcode.cjs` (`--prompt` mode).
+Both surfaces share the primary conversation store at
+`~/.zcode/cli/db/db.sqlite`, which uses SQLite WAL mode. The database's `session` rows carry identity, title, directory,
 parent, runtime version, and millisecond timestamps. Its ordered `message` rows
 carry JSON documents: visible human prompts record the selected model under
 `model`, while assistant messages record `modelID` and `providerID` directly.
@@ -437,12 +439,13 @@ held 35 `model_usage`, 28 `tool_usage`, and seven `turn_usage` observability
 rows. These aggregates established the synthetic fixture shape; no real
 conversation text, identifier, account value, or attachment entered a fixture.
 
-Three secondary surfaces were checked. `~/.zcode/v2/tasks-index.sqlite` is a
+Five secondary surfaces were checked. `~/.zcode/v2/tasks-index.sqlite` is a
 desktop task index that repeats session title, status, workspace, and selected
 model but has no messages. `~/.zcode/cli/rollout/model-io-<session>.jsonl`
 contains raw model request/response telemetry (41 records in the measured
 session) that repeats the durable conversation at a lower-level network
-boundary. `~/.zcode/cli/log/*.jsonl` is operational telemetry, and
+boundary. `~/.zcode/cli/log/*.jsonl` is operational telemetry.
+`~/.zcode/cli/memories/` existed with no files in the measured store, and
 `~/Library/Application Support/ZCode` contains Electron browser state rather
 than durable conversations. None adds a conversation record absent from the
 primary database, so none is ingested.

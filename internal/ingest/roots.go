@@ -87,8 +87,8 @@ type Roots struct {
 	// OpenCodeTelegramLogs is the companion bot's own log directory. Its
 	// session ids enrich matching OpenCode records; the logs are never corpus.
 	OpenCodeTelegramLogs string
-	// ZCodeDB is ZCode Desktop's durable session database below its private
-	// storage root.
+	// ZCodeDB is ZCode's durable session database below its private storage
+	// root. The desktop app and the embedded CLI share this file.
 	ZCodeDB    string
 	PiRoot     string
 	PiSessions string
