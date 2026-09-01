@@ -138,8 +138,10 @@ Where each runtime keeps its configuration, and what Roca writes into it:
 every other byte comes back untouched: comments, ordering, blank lines, the
 JSONC OpenCode tolerates and the neighbouring servers. That is why the edits are
 surgical text-range edits and not a parse-and-reserialize round trip, which is
-easy and eats comments. It is measured the only way that is not a matter of
-opinion: installing and then withdrawing gives back the exact previous bytes
+easy and eats comments. ZCode records the parent-container preimage in Roca's
+owned stdio entry, so withdrawal removes only containers that installation
+created rather than inferring ownership from an empty object. It is measured
+the only way that is not a matter of opinion: installing and then withdrawing gives back the exact previous bytes
 (`internal/distribution/agentcfg/agentcfg_test.go`, five runtimes).
 
 Two more things the shared spine gives every edit: the previous bytes are backed

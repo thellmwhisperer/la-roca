@@ -26,6 +26,132 @@ type member struct {
 	start, valueStart, end int
 }
 
+const zcodeMCPPreimageEnv = "ROCA_ZCODE_MCP_PREIMAGE"
+
+func declareZcodeMCP(r runtime, text, executable string) (string, error) {
+	if strings.TrimSpace(text) == "" {
+		text = "{}\n"
+	}
+	view, root, err := rootObject(r, text)
+	if err != nil {
+		return "", err
+	}
+	provenance := "none"
+	mcpIndex := root.find("mcp")
+	if mcpIndex < 0 {
+		provenance = "mcp+servers"
+	} else {
+		mcp, err := objectAt(view, root.members[mcpIndex].valueStart)
+		if err != nil {
+			return "", fmt.Errorf("mcp must be an object: %w", err)
+		}
+		serversIndex := mcp.find("servers")
+		if serversIndex < 0 {
+			provenance = "servers"
+		} else {
+			servers, err := objectAt(view, mcp.members[serversIndex].valueStart)
+			if err != nil {
+				return "", fmt.Errorf("servers must be an object: %w", err)
+			}
+			if rocaIndex := servers.find(ServerName); rocaIndex >= 0 {
+				entry, err := objectAt(view, servers.members[rocaIndex].valueStart)
+				if err != nil {
+					return "", err
+				}
+				envIndex := entry.find("env")
+				if envIndex >= 0 {
+					env, envErr := objectAt(view, entry.members[envIndex].valueStart)
+					if envErr == nil {
+						recorded := jsonStringMember(view, env, zcodeMCPPreimageEnv)
+						if recorded == "none" || recorded == "servers" || recorded == "mcp+servers" {
+							provenance = recorded
+						}
+					}
+				}
+			}
+		}
+	}
+	entry := append(fields{{"type", "stdio"}}, commandAndArgs(executable)...)
+	entry = append(entry, field{"env", map[string]string{zcodeMCPPreimageEnv: provenance}})
+	return jsonDeclare(r, text, entry)
+}
+
+func withdrawZcodeMCP(r runtime, text string) (string, error) {
+	provenance, err := zcodeMCPProvenance(r, text)
+	if err != nil {
+		return "", err
+	}
+	next, err := jsonRemove(r, text, []string{ServerName})
+	if err != nil || provenance == "none" || next == text {
+		return next, err
+	}
+	if provenance == "servers" || provenance == "mcp+servers" {
+		next, err = cutJSONMemberIfEmpty(r, next, []string{"mcp"}, "servers")
+		if err != nil {
+			return "", err
+		}
+	}
+	if provenance == "mcp+servers" {
+		next, err = cutJSONMemberIfEmpty(r, next, nil, "mcp")
+	}
+	return next, err
+}
+
+func zcodeMCPProvenance(r runtime, text string) (string, error) {
+	if strings.TrimSpace(text) == "" {
+		return "none", nil
+	}
+	view, root, err := rootObject(r, text)
+	if err != nil {
+		return "", err
+	}
+	servers, ok, err := objectAtPath(view, root, []string{"mcp", "servers"})
+	if err != nil || !ok {
+		return "none", err
+	}
+	rocaIndex := servers.find(ServerName)
+	if rocaIndex < 0 {
+		return "none", nil
+	}
+	entry, err := objectAt(view, servers.members[rocaIndex].valueStart)
+	if err != nil {
+		return "", err
+	}
+	envIndex := entry.find("env")
+	if envIndex < 0 {
+		return "none", nil
+	}
+	env, err := objectAt(view, entry.members[envIndex].valueStart)
+	if err != nil {
+		return "none", nil
+	}
+	provenance := jsonStringMember(view, env, zcodeMCPPreimageEnv)
+	if provenance != "servers" && provenance != "mcp+servers" {
+		return "none", nil
+	}
+	return provenance, nil
+}
+
+func cutJSONMemberIfEmpty(r runtime, text string, path []string, key string) (string, error) {
+	view, root, err := rootObject(r, text)
+	if err != nil {
+		return "", err
+	}
+	container, ok, err := objectAtPath(view, root, path)
+	if err != nil || !ok {
+		return text, err
+	}
+	index := container.find(key)
+	if index < 0 {
+		return text, nil
+	}
+	inside, err := objectAt(view, container.members[index].valueStart)
+	if err != nil || len(inside.members) != 0 {
+		return text, err
+	}
+	return container.cut(text, index), nil
+}
+
 func jsonDeclare(r runtime, text string, entry fields) (string, error) {
 	if strings.TrimSpace(text) == "" {
 		text = "{}\n"
@@ -182,18 +308,20 @@ func DeclareZcodeSessionStartHook(text, marker, command string, timeoutMs int) (
 	if strings.TrimSpace(text) == "" {
 		text = "{}\n"
 	}
-	owned := zcodeHookGroup{Matcher: marker, Hooks: []zcodeCommandHook{{
-		Type: "command", Command: command, TimeoutMs: timeoutMs,
-	}}}
 	view, root, err := rootObject(runtime{kind: kindJSON}, text)
 	if err != nil {
 		return "", err
 	}
+	preimage := zcodeHookPreimage{}
 	container := root
 	path := []string{"hooks", "events"}
 	for i, key := range path {
 		memberIndex := container.find(key)
 		if memberIndex < 0 {
+			preimage.Hooks = i == 0
+			preimage.Events = true
+			preimage.SessionStart = true
+			owned := zcodeOwnedHookGroup(marker, preimage, command, timeoutMs)
 			pad := padUnder(view, container, indentOf(view, container.close)+indent)
 			keys := append(append([]string{}, path[i:]...), "SessionStart")
 			return container.insert(text,
@@ -208,6 +336,8 @@ func DeclareZcodeSessionStartHook(text, marker, command string, timeoutMs int) (
 	}
 	sessionIndex := container.find("SessionStart")
 	if sessionIndex < 0 {
+		preimage.SessionStart = true
+		owned := zcodeOwnedHookGroup(marker, preimage, command, timeoutMs)
 		pad := padUnder(view, container, indentOf(view, container.close)+indent)
 		return container.insert(text, renderJSONValuePath([]string{"SessionStart"},
 			[]zcodeHookGroup{owned}, pad), indentOf(view, container.close)), nil
@@ -218,16 +348,22 @@ func DeclareZcodeSessionStartHook(text, marker, command string, timeoutMs int) (
 	}
 	for _, entry := range entries.values {
 		group, err := objectAt(view, entry.start)
-		if err != nil || jsonStringMember(view, group, "matcher") != marker {
+		if err != nil {
 			continue
 		}
+		recorded, owned := parseZcodeHookMarker(marker, jsonStringMember(view, group, "matcher"))
+		if !owned {
+			continue
+		}
+		managed := zcodeOwnedHookGroup(marker, recorded, command, timeoutMs)
 		pad := indentOf(view, entry.start)
-		rendered, err := json.MarshalIndent(owned, pad, indent)
+		rendered, err := json.MarshalIndent(managed, pad, indent)
 		if err != nil {
 			return "", err
 		}
 		return text[:entry.start] + string(rendered) + text[entry.end:], nil
 	}
+	owned := zcodeOwnedHookGroup(marker, preimage, command, timeoutMs)
 	pad := arrayPadUnder(view, entries,
 		indentOf(view, container.members[sessionIndex].start)+indent)
 	rendered, err := json.MarshalIndent(owned, pad, indent)
@@ -304,42 +440,137 @@ func RemoveZcodeSessionStartHook(text, marker string) (string, error) {
 	if marker == "" {
 		return "", fmt.Errorf("ZCode SessionStart marker must not be empty")
 	}
+	preimage := zcodeHookPreimage{}
 	for {
-		next, found, err := removeOneZcodeSessionStartHook(text, marker)
-		if err != nil || !found {
-			return next, err
+		next, recorded, found, err := removeOneZcodeSessionStartHook(text, marker)
+		if err != nil {
+			return "", err
 		}
+		if !found {
+			break
+		}
+		preimage.Hooks = preimage.Hooks || recorded.Hooks
+		preimage.Events = preimage.Events || recorded.Events
+		preimage.SessionStart = preimage.SessionStart || recorded.SessionStart
 		text = next
 	}
+	var err error
+	r := runtime{kind: kindJSON}
+	if preimage.SessionStart {
+		text, err = cutJSONArrayMemberIfEmpty(r, text, []string{"hooks", "events"}, "SessionStart")
+		if err != nil {
+			return "", err
+		}
+	}
+	if preimage.Events {
+		text, err = cutJSONMemberIfEmpty(r, text, []string{"hooks"}, "events")
+		if err != nil {
+			return "", err
+		}
+	}
+	if preimage.Hooks {
+		text, err = cutJSONMemberIfEmpty(r, text, nil, "hooks")
+	}
+	return text, err
 }
 
-func removeOneZcodeSessionStartHook(text, marker string) (string, bool, error) {
+func removeOneZcodeSessionStartHook(text, marker string) (string, zcodeHookPreimage, bool, error) {
 	if strings.TrimSpace(text) == "" {
-		return text, false, nil
+		return text, zcodeHookPreimage{}, false, nil
 	}
 	view, root, err := rootObject(runtime{kind: kindJSON}, text)
 	if err != nil {
-		return "", false, err
+		return "", zcodeHookPreimage{}, false, err
 	}
 	container, ok, err := objectAtPath(view, root, []string{"hooks", "events"})
 	if err != nil || !ok {
-		return text, false, err
+		return text, zcodeHookPreimage{}, false, err
 	}
 	sessionIndex := container.find("SessionStart")
 	if sessionIndex < 0 {
-		return text, false, nil
+		return text, zcodeHookPreimage{}, false, nil
 	}
 	entries, err := arrayAt(view, container.members[sessionIndex].valueStart)
 	if err != nil {
-		return "", false, fmt.Errorf("SessionStart must be an array: %w", err)
+		return "", zcodeHookPreimage{}, false, fmt.Errorf("SessionStart must be an array: %w", err)
 	}
 	for entryIndex, entry := range entries.values {
 		group, err := objectAt(view, entry.start)
-		if err == nil && jsonStringMember(view, group, "matcher") == marker {
-			return entries.cut(text, entryIndex), true, nil
+		if err != nil {
+			continue
+		}
+		preimage, owned := parseZcodeHookMarker(marker, jsonStringMember(view, group, "matcher"))
+		if owned {
+			return entries.cut(text, entryIndex), preimage, true, nil
 		}
 	}
-	return text, false, nil
+	return text, zcodeHookPreimage{}, false, nil
+}
+
+type zcodeHookPreimage struct {
+	Hooks        bool
+	Events       bool
+	SessionStart bool
+}
+
+func zcodeOwnedHookGroup(marker string, preimage zcodeHookPreimage, command string, timeoutMs int) zcodeHookGroup {
+	return zcodeHookGroup{Matcher: renderZcodeHookMarker(marker, preimage), Hooks: []zcodeCommandHook{{
+		Type: "command", Command: command, TimeoutMs: timeoutMs,
+	}}}
+}
+
+func renderZcodeHookMarker(marker string, preimage zcodeHookPreimage) string {
+	code := "none"
+	if preimage.Hooks {
+		code = "hes"
+	} else if preimage.Events {
+		code = "es"
+	} else if preimage.SessionStart {
+		code = "s"
+	}
+	return "^(?:.*|" + marker + "_" + code + ")$"
+}
+
+func parseZcodeHookMarker(marker, value string) (zcodeHookPreimage, bool) {
+	if value == "^(?:.*|"+marker+")$" {
+		return zcodeHookPreimage{}, true
+	}
+	prefix := "^(?:.*|" + marker + "_"
+	if !strings.HasPrefix(value, prefix) || !strings.HasSuffix(value, ")$") {
+		return zcodeHookPreimage{}, false
+	}
+	switch strings.TrimSuffix(strings.TrimPrefix(value, prefix), ")$") {
+	case "none":
+		return zcodeHookPreimage{}, true
+	case "s":
+		return zcodeHookPreimage{SessionStart: true}, true
+	case "es":
+		return zcodeHookPreimage{Events: true, SessionStart: true}, true
+	case "hes":
+		return zcodeHookPreimage{Hooks: true, Events: true, SessionStart: true}, true
+	default:
+		return zcodeHookPreimage{}, false
+	}
+}
+
+func cutJSONArrayMemberIfEmpty(r runtime, text string, path []string, key string) (string, error) {
+	view, root, err := rootObject(r, text)
+	if err != nil {
+		return "", err
+	}
+	container, ok, err := objectAtPath(view, root, path)
+	if err != nil || !ok {
+		return text, err
+	}
+	index := container.find(key)
+	if index < 0 {
+		return text, nil
+	}
+	inside, err := arrayAt(view, container.members[index].valueStart)
+	if err != nil || len(inside.values) != 0 {
+		return text, err
+	}
+	return container.cut(text, index), nil
 }
 
 type zcodeHookGroup struct {

@@ -623,7 +623,7 @@ func zcodeHookWrapperPath() (string, error) {
 	return filepath.Join(root, "hooks", "roca-handoff.sh"), nil
 }
 
-const zcodeSessionStartMarker = "^(?:.*|roca_session_start_marker)$"
+const zcodeSessionStartMarker = "roca_session_start_marker"
 
 func installZcodeHandoffHook(configPath, wrapperPath, executable string) (agentcfg.Outcome, string, error) {
 	state, err := readZcodeWrapperState(wrapperPath)
@@ -666,7 +666,7 @@ func uninstallZcodeHandoffHook(configPath, wrapperPath string) (agentcfg.Outcome
 		next, editErr := agentcfg.RemoveZcodeSessionStartHook(previous, zcodeSessionStartMarker)
 		if editErr != nil {
 			keepWrapper = true
-			warning = fmt.Sprintf("warning: %s is not readable as zcode settings; remove the nested hooks.events.SessionStart entry whose matcher is %q and command is %s by hand", configPath, zcodeSessionStartMarker, command)
+			warning = fmt.Sprintf("warning: %s is not readable as zcode settings; remove the nested hooks.events.SessionStart entry carrying La Roca marker %q and command %s by hand", configPath, zcodeSessionStartMarker, command)
 			return previous, nil
 		}
 		commands, commandsErr := agentcfg.ZcodeHookCommands(next)

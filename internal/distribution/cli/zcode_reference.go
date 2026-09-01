@@ -172,11 +172,13 @@ func simpleShellWords(command string) ([]string, bool) {
 			}
 			if quote == '"' && current == '\\' {
 				index++
-				if index >= len(runes) {
+				if index >= len(runes) || !strings.ContainsRune("$`\"\\\n", runes[index]) {
 					return nil, false
 				}
-				word.WriteRune(runes[index])
-				started = true
+				if runes[index] != '\n' {
+					word.WriteRune(runes[index])
+					started = true
+				}
 				continue
 			}
 			if current == '`' {
