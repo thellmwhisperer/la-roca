@@ -2073,6 +2073,53 @@ func TestClaudeHookInstallerPreservesSettingsAndIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestClaudeHookKeepsLegacySymlinkReplacementBehavior(t *testing.T) {
+	for _, operation := range []string{"install", "uninstall"} {
+		t.Run(operation, func(t *testing.T) {
+			dir := t.TempDir()
+			target := filepath.Join(dir, "shared.json")
+			link := filepath.Join(dir, "settings.json")
+			binary := filepath.Join(dir, "roca")
+			if operation == "install" {
+				if err := os.WriteFile(target, []byte("{}"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			} else if _, err := installClaudeAuthorshipHook(target, binary); err != nil {
+				t.Fatal(err)
+			}
+			targetBefore, err := os.ReadFile(target)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, link); err != nil {
+				t.Skipf("symlinks are unavailable: %v", err)
+			}
+			if operation == "install" {
+				if _, err := installClaudeAuthorshipHook(link, binary); err != nil {
+					t.Fatal(err)
+				}
+				if readClaudeHookValue(t, link, "PreToolUse") == nil {
+					t.Fatal("install did not publish the Claude hook at the settings path")
+				}
+			} else {
+				outcome, warning, err := uninstallClaudeAuthorshipHook(link)
+				if err != nil || warning != "" || !outcome.Changed {
+					t.Fatalf("uninstall result: outcome=%+v warning=%q err=%v", outcome, warning, err)
+				}
+				if readClaudeHookValue(t, link, "PreToolUse") != nil {
+					t.Fatal("uninstall left the Claude hook at the settings path")
+				}
+			}
+			if info, err := os.Lstat(link); err != nil || !info.Mode().IsRegular() {
+				t.Fatalf("legacy hook edit did not replace the symlink: info=%v err=%v", info, err)
+			}
+			if targetAfter, err := os.ReadFile(target); err != nil || !bytes.Equal(targetAfter, targetBefore) {
+				t.Fatalf("legacy hook edit changed the symlink target: body=%q err=%v", targetAfter, err)
+			}
+		})
+	}
+}
+
 func TestHookCommandRegistersTheOwnedClaudeFragment(t *testing.T) {
 	home := skillTestHome(t)
 	binary := filepath.Join(home, "bin", "roca")
