@@ -14,15 +14,13 @@ func TestNativeEmbedTrapRestartsAndFreesFutureCallers(t *testing.T) {
 	nativeCallTimeout = 40 * time.Millisecond
 	t.Cleanup(func() { nativeCallTimeout = previousTimeout })
 	restarted := make(chan struct{}, 1)
-	previousRestart := restartTrappedWorker
-	restartTrappedWorker = func(string) error {
+	restart := func(string) error {
 		select {
 		case restarted <- struct{}{}:
 		default:
 		}
 		return nil
 	}
-	t.Cleanup(func() { restartTrappedWorker = previousRestart })
 	started := make(chan struct{})
 	block := make(chan struct{})
 	t.Cleanup(func() {
@@ -33,7 +31,7 @@ func TestNativeEmbedTrapRestartsAndFreesFutureCallers(t *testing.T) {
 		}
 	})
 	native := &Native{engine: &blockingEngine{started: started, block: block}}
-	EnableWorkerRestartOnNativeTrap(native)
+	EnableWorkerRestartOnNativeTrap(native, restart)
 	first := make(chan error, 1)
 	go func() {
 		_, err := native.Embed(context.Background(), DefaultModel, []string{"trapped"})

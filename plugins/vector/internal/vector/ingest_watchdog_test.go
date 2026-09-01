@@ -32,20 +32,8 @@ func TestQueryIngestDoesNotWaitForeverWhenTheChildNeverReturns(t *testing.T) {
 }
 
 func TestTrappedNativeRejectsNewCallersWithoutRestartingOneShotProcess(t *testing.T) {
-	restarted := make(chan struct{}, 1)
-	previous := restartTrappedWorker
-	restartTrappedWorker = func(string) error {
-		restarted <- struct{}{}
-		return nil
-	}
-	t.Cleanup(func() { restartTrappedWorker = previous })
 	native := &Native{}
 	native.markNativeTrapped("sha256:one-shot")
-	select {
-	case <-restarted:
-		t.Fatal("one-shot native trap requested a process restart")
-	default:
-	}
 	began := time.Now()
 	err := native.acquireNative(context.Background())
 	if elapsed := time.Since(began); elapsed > 100*time.Millisecond {
@@ -59,25 +47,20 @@ func TestTrappedNativeRejectsNewCallersWithoutRestartingOneShotProcess(t *testin
 	}
 }
 
-func TestWorkerNativeTrapRequestsProcessRestart(t *testing.T) {
-	restarted := make(chan struct{}, 1)
-	previous := restartTrappedWorker
-	restartTrappedWorker = func(string) error {
-		restarted <- struct{}{}
-		return nil
-	}
-	t.Cleanup(func() { restartTrappedWorker = previous })
+func TestWorkerNativeTrapRequestsCancellationBeforeRestart(t *testing.T) {
+	canceled := make(chan struct{})
+	recovery := NewWorkerTrapRecovery(func() { close(canceled) }, func() {})
 	native := &Native{}
-	EnableWorkerRestartOnNativeTrap(native)
+	EnableWorkerRestartOnNativeTrap(native, recovery.Handle)
 	native.markNativeTrapped("sha256:worker")
 	select {
-	case <-restarted:
+	case <-canceled:
 	case <-time.After(time.Second):
-		t.Fatal("worker native trap did not request a restart")
+		t.Fatal("worker native trap did not cancel in-flight work")
 	}
 }
 
-func TestWorkerNativeTrapFailsAfterOneRestartOfTheSameElement(t *testing.T) {
+func TestWorkerNativeTrapLedgerRemembersNonconsecutiveElements(t *testing.T) {
 	previousExec := execWorkerProcess
 	execCalls := 0
 	var restartedEnvironment []string
@@ -88,28 +71,56 @@ func TestWorkerNativeTrapFailsAfterOneRestartOfTheSameElement(t *testing.T) {
 		return execFailure
 	}
 	t.Cleanup(func() { execWorkerProcess = previousExec })
-	t.Setenv(nativeTrapElementEnv, "")
-	t.Setenv(nativeTrapRestartsEnv, "")
-	element := "sha256:repeatable"
-	if err := restartTrappedWorkerProcess(element); !errors.Is(err, execFailure) {
-		t.Fatalf("first trap restart = %v, want exec attempt", err)
-	}
-	for _, entry := range restartedEnvironment {
-		if key, value, ok := strings.Cut(entry, "="); ok {
-			switch key {
-			case nativeTrapElementEnv, nativeTrapRestartsEnv:
+	t.Setenv(nativeTrapDeathsEnv, "")
+	applyRestartEnvironment := func() {
+		for _, entry := range restartedEnvironment {
+			if key, value, ok := strings.Cut(entry, "="); ok && key == nativeTrapDeathsEnv {
 				t.Setenv(key, value)
 			}
 		}
 	}
-	native := &Native{trapAction: restartTrappedWorkerProcess}
-	native.markNativeTrapped(element)
-	err := native.TerminalError()
-	if !errors.Is(err, errNativeTrapped) || !strings.Contains(err.Error(), element) ||
-		!strings.Contains(err.Error(), "after 1 worker restart") {
-		t.Fatalf("second trap = %v, want named terminal failure", err)
+	requestRestart := func(element string) {
+		canceled := false
+		drained := false
+		recovery := NewWorkerTrapRecovery(func() { canceled = true }, func() {
+			if !canceled {
+				t.Fatal("worker commands drained before cancellation")
+			}
+			drained = true
+		})
+		if err := recovery.Handle(element); err != nil {
+			t.Fatalf("request restart for %s: %v", element, err)
+		}
+		if !canceled {
+			t.Fatalf("restart for %s did not cancel in-flight work", element)
+		}
+		if requested, err := recovery.RestartIfRequested(); !requested || !errors.Is(err, execFailure) {
+			t.Fatalf("restart for %s = requested %t, error %v", element, requested, err)
+		}
+		if !drained {
+			t.Fatalf("restart for %s did not drain worker commands", element)
+		}
+		applyRestartEnvironment()
 	}
-	if execCalls != 1 {
-		t.Fatalf("exec calls = %d, want one bounded restart", execCalls)
+	requestRestart("sha256:A")
+	requestRestart("sha256:B")
+	canceled := false
+	recovery := NewWorkerTrapRecovery(func() { canceled = true }, func() {})
+	native := &Native{}
+	EnableWorkerRestartOnNativeTrap(native, recovery.Handle)
+	native.markNativeTrapped("sha256:A")
+	err := native.TerminalError()
+	if !errors.Is(err, errNativeTrapped) || !strings.Contains(err.Error(), "sha256:A") ||
+		!strings.Contains(err.Error(), "after 1 worker restart") {
+		t.Fatalf("repeated nonconsecutive trap = %v, want named terminal failure", err)
+	}
+	if canceled {
+		t.Fatal("exhausted restart budget canceled work for another exec")
+	}
+	if requested, _ := recovery.RestartIfRequested(); requested {
+		t.Fatal("exhausted restart budget retained another restart")
+	}
+	if execCalls != 2 {
+		t.Fatalf("exec calls = %d, want one each for A and B", execCalls)
 	}
 }

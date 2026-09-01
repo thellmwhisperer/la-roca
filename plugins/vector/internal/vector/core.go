@@ -638,7 +638,13 @@ func (c CoreCLI) queryWithTimeout(ctx context.Context, statement, timeout string
 }
 
 func runCommand(ctx context.Context, executable string, args ...string) ([]byte, error) {
+	finished, err := beginTrackedCommand(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer finished()
 	command := exec.CommandContext(ctx, executable, args...)
+	configureCommandCancellation(command)
 	raw, err := command.Output()
 	if err == nil {
 		return raw, nil
