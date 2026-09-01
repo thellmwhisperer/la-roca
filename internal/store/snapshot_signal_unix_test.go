@@ -1,29 +1,5 @@
 //go:build !windows
 
-/**
- * @overview Verifies Unix signal cleanup for snapshot owners. ~120 lines, no public symbols.
- *
- *   READING GUIDE
- *   -------------
- *   1. Start at TestCatchableSignalsRemoveOpenSnapshots  <- subprocess behavior
- *
- *   MAIN FLOW
- *   ---------
- *   startSnapshotHelper -> send signal -> process cleanup -> assert directory absent
- *
- *   PUBLIC API
- *   ----------
- *   None.
- *
- *   INTERNALS
- *   ---------
- *   TestCatchableSignalsRemoveOpenSnapshots, TestSignalDuringLeaseRegistrationCleansStaging
- *   TestSignalCleanupHasABoundedFallback, TestSignalCleanupDoesNotWaitForNamespaceLock
- *   signalHelper, assertSnapshotDirAbsent
- *
- * @exports
- * @deps testing; syscall
- */
 package store
 
 import (
@@ -32,8 +8,6 @@ import (
 	"testing"
 	"time"
 )
-
-// -- 1/1 CORE · TestCatchableSignalsRemoveOpenSnapshots -- <- START HERE
 
 func TestCatchableSignalsRemoveOpenSnapshots(t *testing.T) {
 	tests := []struct {
@@ -100,10 +74,6 @@ func TestSignalCleanupDoesNotWaitForNamespaceLock(t *testing.T) {
 	unlock()
 }
 
-// -/ 1/1
-
-// -- 2/2 HELPER · Signal delivery and directory assertions --
-
 func signalHelper(t *testing.T, helper *snapshotHelper, signal os.Signal, timeoutMsg string) {
 	t.Helper()
 	if err := helper.cmd.Process.Signal(signal); err != nil {
@@ -127,5 +97,3 @@ func assertSnapshotDirAbsent(t *testing.T, directory, msg string) {
 		t.Fatalf("%s: %v", msg, err)
 	}
 }
-
-// -/ 2/2

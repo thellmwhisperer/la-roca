@@ -1,30 +1,3 @@
-/**
- * @overview Verifies snapshot lifetime, reuse, reaping, and telemetry. ~1150 lines, no public symbols.
- *
- *   READING GUIDE
- *   -------------
- *   1. Start at TestReadOnlySnapshotLifecycle        <- baseline behavior
- *   2. TestSnapshotFlightsUseFinalSourceFingerprint <- concurrency contract
- *   3. TestKilledProcessOrphanIsReapedAndLiveSnapshotIsKept
- *   4. TestLeaseLessLegacySnapshotsArePreserved    <- upgrade contract
- *   5. TestSnapshotHelperProcess                   <- subprocess fixture
- *
- *   MAIN FLOW
- *   ---------
- *   fixtureDatabase -> OpenReadOnlySnapshot -> assert filesystem/telemetry -> Close
- *
- *   PUBLIC API
- *   ----------
- *   None.
- *
- *   INTERNALS
- *   ---------
- *   lifecycle tests, namespace tests, flight tests, reap tests, snapshotHelper
- *   filesystem helpers
- *
- * @exports
- * @deps testing; os/exec; internal/securefile
- */
 package store
 
 import (
@@ -45,8 +18,6 @@ import (
 
 	"github.com/thellmwhisperer/la-roca/internal/securefile"
 )
-
-// -- 1/5 CORE · Snapshot lifecycle -- <- START HERE
 
 func TestReadOnlySnapshotLifecycle(t *testing.T) {
 	t.Run("canceled before copy", func(t *testing.T) {
@@ -137,10 +108,6 @@ func TestReadOnlySnapshotLifecycle(t *testing.T) {
 		assertReapKeepsLiveAndRemovesOrphan(t, orphan, live.directory)
 	})
 }
-
-// -/ 1/5
-
-// -- 2/5 HELPER · Cache identity and context-aware flights --
 
 func TestSnapshotCacheDistinguishesSameMetadataReplacement(t *testing.T) {
 	root := isolateSnapshotTemp(t)
@@ -531,10 +498,6 @@ func TestSnapshotCacheAndSweepCoordination(t *testing.T) {
 	})
 }
 
-// -/ 2/5
-
-// -- 3/5 HELPER · Cross-process reaping and telemetry --
-
 func TestKilledProcessOrphanIsReapedAndLiveSnapshotIsKept(t *testing.T) {
 	root := isolateSnapshotTemp(t)
 	killedSource := fixtureDatabase(t)
@@ -910,10 +873,6 @@ func TestExitCleanupRemovesOpenSnapshots(t *testing.T) {
 	_ = snapshot.Close()
 }
 
-// -/ 3/5
-
-// -- 4/5 HELPER · Subprocess snapshot owner --
-
 func TestSnapshotHelperProcess(t *testing.T) {
 	mode := os.Getenv("ROCA_SNAPSHOT_HELPER")
 	if mode == "" {
@@ -1025,10 +984,6 @@ func (helper *snapshotHelper) wait() error {
 	helper.waited = true
 	return helper.cmd.Wait()
 }
-
-// -/ 4/5
-
-// -- 5/5 HELPER · Test fixtures and filesystem assertions --
 
 type snapshotResult struct {
 	snapshot *ReadOnlySnapshot
@@ -1221,5 +1176,3 @@ func assertReapKeepsLiveAndRemovesOrphan(t *testing.T, orphanDir, liveDir string
 		t.Fatalf("live snapshot was reaped: %v", err)
 	}
 }
-
-// -/ 5/5

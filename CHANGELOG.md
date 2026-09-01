@@ -4,7 +4,7 @@
 
 ### Bug Fixes
 
-* **store:** delete read-only database snapshots on every exit, reap orphans the next process no longer holds, and reuse one copy per source inside a process. Create and reap events go to the snapshots JSONL telemetry log with source, size, count and megabytes reclaimed.
+* **store:** delete read-only database snapshots on every exit, reap lease-proven orphans, and reuse one copy per source-database fingerprint inside a process. Create and reap events go to the snapshots JSONL telemetry log.
 
 ### Features
 

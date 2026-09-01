@@ -1,40 +1,3 @@
-/**
- * @overview Creates leased read-only SQLite snapshots. ~1000 lines, 10 public symbols.
- *
- *   READING GUIDE
- *   -------------
- *   1. Start at OpenReadOnlySnapshot  <- coordinates reuse and creation
- *   2. createReadOnlySnapshot         <- publishes a leased copy
- *   3. scavengeReadOnlySnapshots      <- removes abandoned copies
- *   4. ReadOnlySnapshot.Close         <- releases the final reference
- *
- *   MAIN FLOW
- *   ---------
- *   OpenReadOnlySnapshot -> create/read cache -> hold lease -> Close -> remove directory
- *
- *   PUBLIC API
- *   ----------
- *   ReadOnlySnapshot         Leased read-only database copy.
- *   SnapshotLogWriter        Snapshot lifecycle telemetry sink.
- *   WithSnapshotLogWriter    Binds snapshot telemetry to an operation context.
- *   WithSnapshotCoordinationTimeout bounds coordination phases.
- *   OpenReadOnlySnapshot     Opens or reuses a stable source snapshot.
- *   SnapshotDirectories      Lists snapshot directories the reaper owns.
- *   CloseReadOnlySnapshots   Closes every snapshot still held by the process.
- *   SQL                      Returns the copied database handle.
- *   URI                      Returns the copied database URI.
- *   Close                    Releases one reference and removes the final copy.
- *
- *   INTERNALS
- *   ---------
- *   snapshotArtifact, snapshotLease, snapshotInflight, snapshotNamespaceRoot
- *   createReadOnlySnapshot, scavengeReadOnlySnapshots
- *   claimSnapshotDirectory
- *   inspectSnapshotSource, copySnapshotSource, openCopiedSnapshot, cleanupHeldSnapshots
- *
- * @exports ReadOnlySnapshot, SnapshotLogWriter, WithSnapshotLogWriter, WithSnapshotCoordinationTimeout, OpenReadOnlySnapshot, SnapshotDirectories, CloseReadOnlySnapshots, SQL, URI, Close
- * @deps database/sql and modernc SQLite; internal/securefile; os/signal and filesystem
- */
 package store
 
 import (
@@ -71,8 +34,7 @@ const (
 	bytesPerMB                 = 1024 * 1024
 )
 
-// -- 1/7 HELPER · Snapshot state and coordination --
-
+// ReadOnlySnapshot is one acquisition of a process-cached, read-only SQLite copy.
 type ReadOnlySnapshot struct {
 	artifact  *snapshotArtifact
 	directory string
@@ -163,14 +125,15 @@ func WithSnapshotLogWriter(ctx context.Context, writer SnapshotLogWriter) contex
 	return context.WithValue(ctx, snapshotLogContextKey{}, writer)
 }
 
-// WithSnapshotCoordinationTimeout bounds snapshot coordination phases.
+// WithSnapshotCoordinationTimeout sets the timeout for snapshot coordination,
+// orphan reaping, copied-database opening, and telemetry. Source copying remains
+// governed only by ctx.
 func WithSnapshotCoordinationTimeout(ctx context.Context, timeout time.Duration) context.Context {
 	return context.WithValue(ctx, snapshotCoordinationTimeoutContextKey{}, timeout)
 }
 
-// SnapshotDirectories lists every directory under root that carries the
-// read-only snapshot prefix the reaper owns. The CLI test suite uses it to
-// assert a completed command leaves no snapshot directory behind.
+// SnapshotDirectories lists directories beneath root whose names carry the
+// read-only snapshot prefix.
 func SnapshotDirectories(root string) ([]string, error) {
 	var directories []string
 	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
@@ -186,10 +149,8 @@ func SnapshotDirectories(root string) ([]string, error) {
 	return directories, err
 }
 
-// -/ 1/7
-
-// -- 2/7 CORE · OpenReadOnlySnapshot cache and flights -- <- START HERE
-
+// OpenReadOnlySnapshot opens or reuses the process-cached copy for the source
+// database's current fingerprint.
 func OpenReadOnlySnapshot(ctx context.Context, path string) (*ReadOnlySnapshot, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -310,10 +271,6 @@ var errSnapshotShuttingDown = errors.New("process is terminating")
 func isSnapshotContextError(err error) bool {
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
-
-// -/ 2/7
-
-// -- 3/7 HELPER · Snapshot creation and atomic publication --
 
 func createReadOnlySnapshot(ctx context.Context, abs string, before snapshotSourceState, namespace string,
 	logger SnapshotLogWriter,
@@ -570,10 +527,6 @@ func (lease *snapshotLease) destroy(cause error) error {
 	return errors.Join(cause, lease.err)
 }
 
-// -/ 3/7
-
-// -- 4/7 HELPER · Orphan reaping --
-
 func scavengeReadOnlySnapshots(ctx context.Context, root string) error {
 	return scavengeSnapshotRoot(ctx, root)
 }
@@ -718,10 +671,6 @@ func cleanupSnapshotDirectory(directory string, cause error) error {
 	}
 	return cause
 }
-
-// -/ 4/7
-
-// -- 5/7 HELPER · Source fingerprinting, copying, and SQLite opening --
 
 func inspectSnapshotSource(path string) (snapshotSourceState, error) {
 	var state snapshotSourceState
@@ -920,18 +869,17 @@ func openCopiedSnapshot(ctx context.Context, path, directory string) (*snapshotA
 	return &snapshotArtifact{database: database, uri: uri, directory: directory}, nil
 }
 
-// -/ 5/7
-
-// -- 6/7 HELPER · Handle lifetime and process cleanup --
-
+// SQL returns the copied database handle.
 func (snapshot *ReadOnlySnapshot) SQL() *sql.DB {
 	return snapshot.artifact.database
 }
 
+// URI returns the read-only URI for the copied database.
 func (snapshot *ReadOnlySnapshot) URI() string {
 	return snapshot.artifact.uri
 }
 
+// Close releases this acquisition. The copy remains cached until process cleanup.
 func (snapshot *ReadOnlySnapshot) Close() error {
 	if snapshot == nil {
 		return nil
@@ -1017,6 +965,7 @@ func beginSnapshotShutdown() {
 	snapshotShutdownCancel()
 }
 
+// CloseReadOnlySnapshots drains in-flight copies and removes the process cache.
 func CloseReadOnlySnapshots() error {
 	return cleanupHeldSnapshots()
 }
@@ -1047,10 +996,6 @@ func cleanupHeldSnapshots() error {
 	return result
 }
 
-// -/ 6/7
-
-// -- 7/7 HELPER · JSONL telemetry --
-
 func snapshotLogWriterFromContext(ctx context.Context) SnapshotLogWriter {
 	writer, _ := ctx.Value(snapshotLogContextKey{}).(SnapshotLogWriter)
 	return writer
@@ -1071,5 +1016,3 @@ func logSnapshotRecord(ctx context.Context, writer SnapshotLogWriter, record map
 	record["timestamp"] = time.Now().UTC()
 	_ = writer(ctx, record)
 }
-
-// -/ 7/7
