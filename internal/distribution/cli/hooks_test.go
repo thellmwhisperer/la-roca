@@ -835,7 +835,7 @@ func TestZcodeHookReinstallDropsOwnershipOnRecreatedManagedTree(t *testing.T) {
 	}
 }
 
-func TestZcodePurgeWithdrawsDeclarationsFromReplacementTree(t *testing.T) {
+func TestZcodePurgeDropsClaimsForReplacementTree(t *testing.T) {
 	home := skillTestHome(t)
 	rootPath := filepath.Join(home, ".zcode")
 	config, wrapper := zcodeTestConfigAndWrapper(home)
@@ -865,8 +865,8 @@ func TestZcodePurgeWithdrawsDeclarationsFromReplacementTree(t *testing.T) {
 		t.Fatalf("replacement artifacts were not reported: %v", report.Errors)
 	}
 	matched, err := agentcfg.ZcodeMCPMatches(config, filepath.Join(home, "roca"))
-	if err != nil || matched || zcodeManagedHookPresent(config) {
-		t.Fatalf("replacement declarations survived: mcp=%v hook=%v err=%v", matched, zcodeManagedHookPresent(config), err)
+	if err != nil || !matched || zcodeManagedHookPresent(config) {
+		t.Fatalf("replacement declaration state: mcp=%v hook=%v err=%v", matched, zcodeManagedHookPresent(config), err)
 	}
 	for _, path := range []string{rootPath, config, wrapper, lockPath} {
 		if _, err := os.Stat(path); err != nil {
@@ -900,8 +900,8 @@ func TestZcodeDirectUninstallRetainsReplacementArtifacts(t *testing.T) {
 	runZcodeTestCLI(t, "hooks", "uninstall", "zcode")
 	runZcodeTestCLI(t, "mcp", "uninstall", "zcode")
 	matched, err := agentcfg.ZcodeMCPMatches(config, filepath.Join(home, "roca"))
-	if err != nil || matched || zcodeManagedHookPresent(config) {
-		t.Fatalf("replacement declarations survived: mcp=%v hook=%v err=%v", matched, zcodeManagedHookPresent(config), err)
+	if err != nil || !matched || zcodeManagedHookPresent(config) {
+		t.Fatalf("replacement declaration state: mcp=%v hook=%v err=%v", matched, zcodeManagedHookPresent(config), err)
 	}
 	_, document := readZcodeTestJSON(t, config)
 	hooks := document["hooks"].(map[string]any)
