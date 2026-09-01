@@ -504,6 +504,10 @@ func hooksInstallCommand(env *cliEnv) *cobra.Command {
 		func(runtime, path string) (agentcfg.Outcome, string, error) {
 			declared := chosenExecutable(executable)
 			if runtime == agentcfg.RuntimeZcode {
+				if pills || handoff {
+					return agentcfg.Outcome{Runtime: runtime, Path: path}, "",
+						fmt.Errorf("not-supported-on-zcode: --pills and --handoff are Claude-only (follow-up: issue #274)")
+				}
 				if force {
 					return agentcfg.Outcome{Runtime: runtime, Path: path}, "",
 						fmt.Errorf("--force is not supported for ZCode hooks; move or remove the conflicting wrapper, then retry")
@@ -534,6 +538,10 @@ func hooksUninstallCommand(env *cliEnv) *cobra.Command {
 		"Withdraw a runtime's La Roca hook, leaving its other settings in place",
 		"withdrawn", func(runtime, path string) (agentcfg.Outcome, string, error) {
 			if runtime == agentcfg.RuntimeZcode {
+				if pills || handoff {
+					return agentcfg.Outcome{Runtime: runtime, Path: path}, "",
+						fmt.Errorf("not-supported-on-zcode: --pills and --handoff are Claude-only (follow-up: issue #274)")
+				}
 				wrapper, err := zcodeHookWrapperPath()
 				if err != nil {
 					return agentcfg.Outcome{Runtime: runtime, Path: path}, "", err
@@ -978,10 +986,8 @@ func installZcodeHandoffHookWithPrevious(configPath, wrapperPath, executable str
 	outcome, err := agentcfg.InstallZcodeSessionStartHook(
 		configPath, zcodeSessionStartMarker, command, 15000, recordState)
 	if err != nil {
-		if state.exists || !zcodeManagedHookPresent(configPath) {
-			if restoreErr := restoreZcodeWrapper(wrapperPath, state, []byte(wrapper)); restoreErr != nil {
-				err = errors.Join(err, restoreErr)
-			}
+		if restoreErr := restoreZcodeWrapper(wrapperPath, state, []byte(wrapper)); restoreErr != nil {
+			err = errors.Join(err, restoreErr)
 		}
 		return outcome, "", err
 	}
@@ -1172,17 +1178,14 @@ func readZcodeWrapperState(path string) (zcodeWrapperState, error) {
 
 func restoreZcodeWrapper(path string, state zcodeWrapperState, installed []byte) error {
 	if !state.exists {
-		current, err := os.ReadFile(path)
-		if os.IsNotExist(err) {
-			return nil
-		}
+		retained, err := removeZcodeWrapper(path, installed)
 		if err != nil {
 			return err
 		}
-		if string(current) != string(installed) {
+		if retained {
 			return fmt.Errorf("roll back %s: wrapper changed after installation", path)
 		}
-		return os.Remove(path)
+		return nil
 	}
 	if err := securefile.Replace(path, state.body, installed); err != nil {
 		return fmt.Errorf("roll back %s: %w", path, err)

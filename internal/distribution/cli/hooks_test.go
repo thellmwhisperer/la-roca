@@ -756,6 +756,24 @@ func TestZcodeHookReinstallExpiresOwnershipWithoutManagedContinuity(t *testing.T
 	assertZcodeOwnershipExpiresWithoutContinuity(t, "hooks")
 }
 
+func TestZcodeHooksRejectClaudeOnlyFlags(t *testing.T) {
+	for _, operation := range []string{"install", "uninstall"} {
+		for _, flag := range []string{"--pills", "--handoff"} {
+			t.Run(operation+" "+flag, func(t *testing.T) {
+				home := skillTestHome(t)
+				err := executeZcodeTestCLI("hooks", operation, "zcode", flag)
+				if err == nil || !strings.Contains(err.Error(), "not-supported-on-zcode") ||
+					!strings.Contains(err.Error(), "issue #274") {
+					t.Fatalf("unsupported flag error = %v", err)
+				}
+				if _, err := os.Stat(filepath.Join(home, ".zcode")); !os.IsNotExist(err) {
+					t.Fatalf("rejected flag changed ZCode state: %v", err)
+				}
+			})
+		}
+	}
+}
+
 func TestZcodeHooksRejectForce(t *testing.T) {
 	home := skillTestHome(t)
 	if err := executeZcodeTestCLI("hooks", "install", "zcode", "--force", "--executable", filepath.Join(home, "roca")); err == nil || !strings.Contains(err.Error(), "--force is not supported") {
@@ -910,6 +928,101 @@ func TestZcodeFailedInstallRollsBackCreationProvenance(t *testing.T) {
 				t.Fatal("failed install retained creation provenance")
 			}
 		})
+	}
+}
+
+func TestZcodeFailedConfigPublicationRestoresFreshWrapper(t *testing.T) {
+	home := skillTestHome(t)
+	config, wrapper := zcodeTestConfigAndWrapper(home)
+	if err := os.MkdirAll(filepath.Dir(config), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	executable := filepath.Join(home, "roca")
+	command := zcodeOwnedHookCommand(wrapper)
+	_, _, err := installZcodeHandoffHookWithPrevious(config, wrapper, executable, nil,
+		func(_ string, _, _ bool) error {
+			operator, err := agentcfg.DeclareZcodeSessionStartHook(
+				`{}`, zcodeSessionStartMarker, command, 15000)
+			if err != nil {
+				return err
+			}
+			operator, _, err = agentcfg.EnsureZcodeHooksEnabled(operator)
+			if err != nil {
+				return err
+			}
+			return os.WriteFile(config, []byte(operator), 0o600)
+		})
+	if err == nil {
+		t.Fatal("hook install accepted a lost config publication race")
+	}
+	if _, err := os.Stat(wrapper); !os.IsNotExist(err) {
+		t.Fatalf("failed publication left a wrapper: %v", err)
+	}
+	if !zcodeManagedHookPresent(config) {
+		t.Fatal("operator config used to win the race was changed")
+	}
+}
+
+func TestZcodePurgeKeepsOwnershipWhenConfigInspectionFails(t *testing.T) {
+	for _, integration := range []string{"mcp", "hooks"} {
+		t.Run(integration, func(t *testing.T) {
+			home := skillTestHome(t)
+			installZcodeTestIntegration(t, integration, home)
+			config := filepath.Join(home, ".zcode", "cli", "config.json")
+			if err := os.WriteFile(config, []byte(`{broken`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			report := purgeZcodeTestIntegrations(true)
+			if len(report.Errors) == 0 {
+				t.Fatal("purge accepted an unreadable registered config")
+			}
+			registry, err := artifact.LoadRegistry(filepath.Join(home, ".roca", "artifacts.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			kind := artifactKindMCP
+			path := config
+			if integration == "hooks" {
+				kind = artifactKindHook
+				path = filepath.Join(home, ".zcode", "hooks", "roca-handoff.sh")
+			}
+			if _, found := registry.Find(kind, agentcfg.RuntimeZcode, path); !found {
+				t.Fatal("inspection failure discarded retry ownership")
+			}
+		})
+	}
+}
+
+func TestZcodePurgeReconcilesExactWrapperAfterDeclarationRemoval(t *testing.T) {
+	home := skillTestHome(t)
+	config := filepath.Join(home, ".zcode", "cli", "config.json")
+	writeFile(t, config, `{"hooks":{"enabled":true}}`)
+	installZcodeTestIntegration(t, "hooks", home)
+	body, err := os.ReadFile(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withoutManaged, err := agentcfg.RemoveZcodeSessionStartHook(string(body), zcodeSessionStartMarker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config, []byte(withoutManaged), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	wrapper := filepath.Join(home, ".zcode", "hooks", "roca-handoff.sh")
+	report := purgeZcodeTestIntegrations(true)
+	if !strings.Contains(strings.Join(report.Errors, "\n"), config) {
+		t.Fatalf("retained paths were not reported: %v", report.Errors)
+	}
+	if _, err := os.Stat(wrapper); !os.IsNotExist(err) {
+		t.Fatalf("exact orphaned wrapper survived: %v", err)
+	}
+	registry, err := artifact.LoadRegistry(filepath.Join(home, ".roca", "artifacts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, found := registry.Find(artifactKindHook, agentcfg.RuntimeZcode, wrapper); found {
+		t.Fatal("reconciled wrapper ownership survived")
 	}
 }
 

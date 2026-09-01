@@ -648,16 +648,20 @@ func (env *cliEnv) purgeRegisteredZcodeIntegrations(report *lifecycle.Report, re
 				return configErr
 			}
 			liveHooks := make([]artifact.Entry, 0, len(group.hooks))
+			wrapperOnlyHooks := make([]artifact.Entry, 0, len(group.hooks))
 			withdrawOnlyHooks := make([]artifact.Entry, 0, len(group.hooks))
 			for _, entry := range group.hooks {
 				if configMissing {
 					continuous, continuityErr := zcodeWrapperContinuity(entry)
+					if continuityErr != nil {
+						return continuityErr
+					}
 					wrapperMissing := false
-					if continuityErr == nil && !continuous {
+					if !continuous {
 						_, wrapperErr := os.Lstat(entry.Path)
 						wrapperMissing = os.IsNotExist(wrapperErr)
 						if wrapperErr != nil && !wrapperMissing {
-							continuityErr = wrapperErr
+							return wrapperErr
 						}
 					}
 					if continuous || wrapperMissing {
@@ -665,24 +669,44 @@ func (env *cliEnv) purgeRegisteredZcodeIntegrations(report *lifecycle.Report, re
 						continue
 					}
 					withdrawOnlyHooks = append(withdrawOnlyHooks, entry)
-					failed(report, "retained uncertain ZCode hook artifacts at %s: %v", config, continuityErr)
+					failed(report, "retained uncertain ZCode hook artifacts at %s", config)
 					continue
 				}
 				declared, declarationErr := zcodeHookDeclarationPresent(config)
+				if declarationErr != nil {
+					return declarationErr
+				}
 				if !declared {
-					if unregisterErr := env.unregisterArtifactEntry(entry); unregisterErr != nil {
-						return errors.Join(declarationErr, unregisterErr)
+					continuous, continuityErr := zcodeWrapperContinuity(entry)
+					if continuityErr != nil {
+						return continuityErr
 					}
-					failed(report, "retained ZCode hook artifacts at %s because managed declaration ownership is absent: %v",
-						config, declarationErr)
+					_, wrapperErr := os.Lstat(entry.Path)
+					wrapperMissing := os.IsNotExist(wrapperErr)
+					if wrapperErr != nil && !wrapperMissing {
+						return wrapperErr
+					}
+					if continuous || wrapperMissing {
+						wrapperOnlyHooks = append(wrapperOnlyHooks, entry)
+						continue
+					}
+					if unregisterErr := env.unregisterArtifactEntry(entry); unregisterErr != nil {
+						return unregisterErr
+					}
+					failed(report, "retained operator-modified ZCode hook wrapper %s", entry.Path)
 					continue
 				}
 				canonical, canonicalErr := zcodeHookDeclarationContinuity(config, entry)
+				if canonicalErr != nil {
+					return canonicalErr
+				}
 				continuous, continuityErr := zcodeWrapperContinuity(entry)
+				if continuityErr != nil {
+					return continuityErr
+				}
 				if !canonical || !continuous {
 					withdrawOnlyHooks = append(withdrawOnlyHooks, entry)
-					failed(report, "retained uncertain ZCode hook artifacts at %s: %v",
-						config, errors.Join(canonicalErr, continuityErr))
+					failed(report, "retained uncertain ZCode hook artifacts at %s", config)
 					continue
 				}
 				liveHooks = append(liveHooks, entry)
@@ -694,15 +718,34 @@ func (env *cliEnv) purgeRegisteredZcodeIntegrations(report *lifecycle.Report, re
 					continue
 				}
 				continuous, continuityErr := zcodeMCPContinuity(config, entry)
+				if continuityErr != nil {
+					return continuityErr
+				}
 				if !continuous {
 					if unregisterErr := env.unregisterArtifactEntry(entry); unregisterErr != nil {
-						return errors.Join(continuityErr, unregisterErr)
+						return unregisterErr
 					}
-					failed(report, "retained ZCode MCP artifacts at %s because managed continuity is absent: %v",
-						config, continuityErr)
+					failed(report, "retained uncertain ZCode MCP artifacts at %s", config)
 					continue
 				}
 				liveMCP = append(liveMCP, entry)
+			}
+			for _, entry := range wrapperOnlyHooks {
+				expected, expectedErr := zcodeWrapperExpectedFromEntry(entry)
+				if expectedErr != nil {
+					return expectedErr
+				}
+				retained, removeErr := removeZcodeWrapper(entry.Path, expected)
+				if removeErr != nil {
+					return removeErr
+				}
+				if retained {
+					return fmt.Errorf("ZCode hook wrapper changed while reconciling %s", entry.Path)
+				}
+				if err := env.unregisterArtifactEntry(entry); err != nil {
+					return err
+				}
+				failed(report, "retained uncertain ZCode hook paths at %s", config)
 			}
 			for _, entry := range withdrawOnlyHooks {
 				outcome, warning, uninstallErr := uninstallZcodeHandoffHookUnlocked(
