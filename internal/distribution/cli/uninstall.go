@@ -384,6 +384,23 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 		}
 		return env.uninstallZcodeMCP(path)
 	}
+	verifyMCPWithdrawal := func(runtime, path string, withdrawalErr error) error {
+		if runtime != agentcfg.RuntimeZcode || withdrawalErr != nil {
+			return withdrawalErr
+		}
+		status, err := agentcfg.Status(runtime, path)
+		if err != nil {
+			return err
+		}
+		switch status.State {
+		case agentcfg.StateMissing, agentcfg.StateNotConfigured:
+			return nil
+		case agentcfg.StateConfigured:
+			return fmt.Errorf("ZCode MCP declaration remains active in %s", path)
+		default:
+			return fmt.Errorf("ZCode MCP withdrawal from %s could not be verified: %s", path, status.Error)
+		}
+	}
 
 	for _, runtime := range agentcfg.Runtimes() {
 		path, err := configFileOf(runtime, "")
@@ -397,6 +414,7 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 			continue
 		}
 		outcome, err := withdrawMCP(runtime, path)
+		err = verifyMCPWithdrawal(runtime, path, err)
 		withdrawn("roca from "+runtime, outcome, err)
 		if purge {
 			removeRuntimeRecoveryBackups(report, runtime, path)
@@ -411,6 +429,7 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 			}
 			processedMCPPaths[key] = true
 			outcome, err := withdrawMCP(entry.Runtime, entry.Path)
+			err = verifyMCPWithdrawal(entry.Runtime, entry.Path, err)
 			withdrawn("roca from "+entry.Runtime+" at "+entry.Path, outcome, err)
 			if purge {
 				removeRuntimeRecoveryBackups(report, entry.Runtime, entry.Path)
@@ -507,7 +526,7 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 		if warning != "" {
 			fmt.Fprintln(env.errOut, warning)
 		}
-		if err == nil && target.registered {
+		if err == nil {
 			present, verified := zcodeManagedHookState(target.settings)
 			if !verified || present {
 				err = fmt.Errorf("ZCode hook withdrawal from %s could not be verified", target.settings)
@@ -532,59 +551,61 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 	}
 	processedSkillPaths := map[string]bool{}
 	removedSkillState := map[string]artifact.Entry{}
-	for _, runtime := range skill.Runtimes() {
-		// Each embedded skill falls back to this build's own bytes when no
-		// registry entry names them. The generated catalog has no shipped bytes,
-		// so its unregistered fallback is empty: an empty answer refuses the
-		// withdrawal, which is the safe reading of a file this product cannot
-		// prove.
-		var withdrawals []struct {
-			kind, path, fallback string
-		}
-		for _, embedded := range skill.EmbeddedSkills() {
-			path, err := skill.NamedPath(runtime, embedded.Name, home, os.Getenv)
+	if registryErr == nil {
+		for _, runtime := range skill.Runtimes() {
+			// Each embedded skill falls back to this build's own bytes when no
+			// registry entry names them. The generated catalog has no shipped bytes,
+			// so its unregistered fallback is empty: an empty answer refuses the
+			// withdrawal, which is the safe reading of a file this product cannot
+			// prove.
+			var withdrawals []struct {
+				kind, path, fallback string
+			}
+			for _, embedded := range skill.EmbeddedSkills() {
+				path, err := skill.NamedPath(runtime, embedded.Name, home, os.Getenv)
+				if err != nil {
+					failed(report, "%s", err)
+					continue
+				}
+				withdrawals = append(withdrawals, struct {
+					kind, path, fallback string
+				}{artifactKindSkill, path, artifact.Checksum(embedded.Body)})
+			}
+			catalogPath, err := skill.CatalogPath(runtime, home, os.Getenv)
 			if err != nil {
 				failed(report, "%s", err)
 				continue
 			}
 			withdrawals = append(withdrawals, struct {
 				kind, path, fallback string
-			}{artifactKindSkill, path, artifact.Checksum(embedded.Body)})
-		}
-		catalogPath, err := skill.CatalogPath(runtime, home, os.Getenv)
-		if err != nil {
-			failed(report, "%s", err)
-			continue
-		}
-		withdrawals = append(withdrawals, struct {
-			kind, path, fallback string
-		}{artifactKindSkillCatalog, catalogPath, ""})
-		for _, file := range withdrawals {
-			processedSkillPaths[file.kind+"\x00"+runtime+"\x00"+file.path] = true
-			checksum := file.fallback
-			registeredEntry, registered := registry.Find(file.kind, runtime, file.path)
-			if registered {
-				checksum = registeredEntry.SystemSHA256
+			}{artifactKindSkillCatalog, catalogPath, ""})
+			for _, file := range withdrawals {
+				processedSkillPaths[file.kind+"\x00"+runtime+"\x00"+file.path] = true
+				checksum := file.fallback
+				registeredEntry, registered := registry.Find(file.kind, runtime, file.path)
+				if registered {
+					checksum = registeredEntry.SystemSHA256
+				}
+				outcome, err := skill.UninstallWithChecksum(runtime, file.path, checksum)
+				if err != nil {
+					failed(report, "withdraw skill from %s: %v", runtime, err)
+					continue
+				}
+				if registered && (outcome.Changed || outcome.Missing) {
+					removedSkillState[registeredEntry.Key()] = registeredEntry
+				}
+				if outcome.Changed {
+					report.Deleted = append(report.Deleted, outcome.Removed...)
+				}
+				// The copy this withdrawal just made is spared from the purge and named
+				// like any other survivor: it holds the bytes the operator wrote, and the
+				// withdrawal made it precisely because they are left nowhere else.
+				if purge {
+					removeRecoveryBackups(report, file.path, outcome.Backup)
+					removeHollowSkillDirs(report, file.path)
+				}
+				nameSurvivingBackups(report, file.path)
 			}
-			outcome, err := skill.UninstallWithChecksum(runtime, file.path, checksum)
-			if err != nil {
-				failed(report, "withdraw skill from %s: %v", runtime, err)
-				continue
-			}
-			if registered && (outcome.Changed || outcome.Missing) {
-				removedSkillState[registeredEntry.Key()] = registeredEntry
-			}
-			if outcome.Changed {
-				report.Deleted = append(report.Deleted, outcome.Removed...)
-			}
-			// The copy this withdrawal just made is spared from the purge and named
-			// like any other survivor: it holds the bytes the operator wrote, and the
-			// withdrawal made it precisely because they are left nowhere else.
-			if purge {
-				removeRecoveryBackups(report, file.path, outcome.Backup)
-				removeHollowSkillDirs(report, file.path)
-			}
-			nameSurvivingBackups(report, file.path)
 		}
 	}
 	if registryErr == nil {
