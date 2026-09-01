@@ -442,7 +442,7 @@ func skillTestHome(t *testing.T) string {
 	t.Setenv("HOME", home)
 	for _, key := range []string{
 		"CLAUDE_CONFIG_DIR", "CODEX_HOME", "CURSOR_HOME", "GROK_HOME", "OPENCODE_CONFIG",
-		"HERMES_HOME", "PI_CODING_AGENT_DIR", "QWEN_HOME",
+		"HERMES_HOME", "PI_CODING_AGENT_DIR", "QWEN_HOME", "ZCODE_HOME",
 	} {
 		t.Setenv(key, "")
 	}

@@ -305,18 +305,8 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 			fmt.Fprintln(env.errOut, warning)
 		}
 		withdrawn("the ZCode handoff hook from "+settings, outcome, err)
-		nameZcodeOperatorBackups(report, wrapper)
-		lockPath := filepath.Join(filepath.Dir(filepath.Dir(wrapper)), ".roca-hooks.lock")
 		if purge {
 			removeRecoveryBackups(report, settings)
-			if err := os.Remove(lockPath); err == nil {
-				report.Deleted = append(report.Deleted, lockPath)
-			} else if !os.IsNotExist(err) {
-				failed(report, "delete %s: %v", lockPath, err)
-			}
-		} else if _, err := os.Stat(lockPath); err == nil {
-			report.Kept = append(report.Kept, lifecycle.Kept{Path: lockPath,
-				Reason: "serializes ZCode hook lifecycle changes"})
 		}
 	}
 
@@ -412,14 +402,6 @@ func keepTheBackup(report *lifecycle.Report, outcome agentcfg.Outcome) {
 		os.Remove(outcome.Backup)
 	}
 	nameSurvivingBackups(report, outcome.Path)
-}
-
-func nameZcodeOperatorBackups(report *lifecycle.Report, wrapper string) {
-	matches, _ := filepath.Glob(wrapper + ".roca.operator.bak*")
-	for _, path := range matches {
-		report.Kept = append(report.Kept, lifecycle.Kept{Path: path,
-			Reason: "pre-existing operator wrapper retained for recovery"})
-	}
 }
 
 // removeRecoveryBackups applies the purge consent to the recovery copies La

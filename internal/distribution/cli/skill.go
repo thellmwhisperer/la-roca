@@ -624,36 +624,16 @@ func zcodeHookWrapperPath() (string, error) {
 }
 
 func installZcodeHandoffHook(configPath, wrapperPath, executable string) (agentcfg.Outcome, string, error) {
-	release, err := lockZcodeHookLifecycle(wrapperPath)
-	if err != nil {
-		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
-	}
-	defer release()
 	state, err := readZcodeWrapperState(wrapperPath)
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
-	provenancePath := wrapperPath + ".roca.state.json"
-	provenanceState, err := readZcodeWrapperState(provenancePath)
-	if err != nil {
-		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
-	}
-	provenance, err := zcodeProvenanceForInstall(wrapperPath, state, provenancePath)
-	if err != nil {
-		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
-	}
 	wrapper := zcodeWrapper(executable)
-	provenance.InstalledSHA256 = artifact.Checksum(wrapper)
-	if err := writeZcodeFile(wrapperPath, wrapper, state, 0o700); err != nil {
-		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
+	if state.exists && !isManagedZcodeWrapper(state.body) {
+		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "",
+			fmt.Errorf("refuse to replace unrecognized ZCode hook wrapper %s; move or remove it, then retry", wrapperPath)
 	}
-	encodedProvenance, err := json.MarshalIndent(provenance, "", "  ")
-	if err == nil {
-		encodedProvenance = append(encodedProvenance, '\n')
-		err = writeZcodeFile(provenancePath, string(encodedProvenance), provenanceState, 0o600)
-	}
-	if err != nil {
-		_ = restoreZcodeWrapper(wrapperPath, state, []byte(wrapper))
+	if err := writeZcodeWrapper(wrapperPath, wrapper, state); err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
 	command := zcodeOwnedHookCommand(wrapperPath)
@@ -664,27 +644,19 @@ func installZcodeHandoffHook(configPath, wrapperPath, executable string) (agentc
 		if restoreErr := restoreZcodeWrapper(wrapperPath, state, []byte(wrapper)); restoreErr != nil {
 			err = errors.Join(err, restoreErr)
 		}
-		if restoreErr := restoreZcodeWrapper(provenancePath, provenanceState, encodedProvenance); restoreErr != nil {
-			err = errors.Join(err, restoreErr)
-		}
 		return outcome, "", err
 	}
 	body, readErr := os.ReadFile(configPath)
 	if readErr == nil {
-		_, declared, enabled, enabledErr := agentcfg.ZcodeHooksEnabled(string(body))
-		if enabledErr == nil && declared && !enabled {
-			return outcome, fmt.Sprintf("warning: ZCode hook installed but inactive because hooks.enabled is false in %s; set it to true to enable SessionStart", configPath), nil
+		declared, enabled, enabledErr := agentcfg.ZcodeHooksEnabled(string(body))
+		if enabledErr == nil && (!declared || !enabled) {
+			return outcome, fmt.Sprintf("warning: ZCode hook installed but inactive because hooks.enabled is false or absent in %s; set it to true to enable SessionStart", configPath), nil
 		}
 	}
 	return outcome, "", nil
 }
 
 func uninstallZcodeHandoffHook(configPath, wrapperPath string) (agentcfg.Outcome, string, error) {
-	release, err := lockZcodeHookLifecycle(wrapperPath)
-	if err != nil {
-		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
-	}
-	defer release()
 	var warning string
 	command := zcodeOwnedHookCommand(wrapperPath)
 	outcome, err := agentcfg.Edit(agentcfg.RuntimeZcode, configPath, func(previous string) (string, error) {
@@ -698,7 +670,7 @@ func uninstallZcodeHandoffHook(configPath, wrapperPath string) (agentcfg.Outcome
 	if err != nil {
 		return outcome, warning, err
 	}
-	if removeErr := removeZcodeWrapper(wrapperPath, wrapperPath+".roca.state.json"); removeErr != nil {
+	if removeErr := removeZcodeWrapper(wrapperPath); removeErr != nil {
 		return outcome, warning, removeErr
 	}
 	return outcome, warning, nil
@@ -727,15 +699,22 @@ func readZcodeWrapperState(path string) (zcodeWrapperState, error) {
 
 func restoreZcodeWrapper(path string, state zcodeWrapperState, installed []byte) error {
 	if !state.exists {
-		if err := securefile.Remove(path, installed); err != nil {
-			return fmt.Errorf("roll back %s: %w", path, err)
+		current, err := os.ReadFile(path)
+		if os.IsNotExist(err) {
+			return nil
 		}
-		return nil
+		if err != nil {
+			return err
+		}
+		if string(current) != string(installed) {
+			return fmt.Errorf("roll back %s: wrapper changed after installation", path)
+		}
+		return os.Remove(path)
 	}
-	if err := securefile.ReplaceExact(path, state.body, installed, state.mode); err != nil {
+	if err := securefile.Replace(path, state.body, installed); err != nil {
 		return fmt.Errorf("roll back %s: %w", path, err)
 	}
-	return nil
+	return os.Chmod(path, state.mode)
 }
 
 func zcodeHandoffContext(ctx context.Context, env *cliEnv) string {
@@ -766,130 +745,44 @@ fi
 `
 }
 
-func writeZcodeFile(path, content string, state zcodeWrapperState, mode os.FileMode) error {
+func writeZcodeWrapper(path, content string, state zcodeWrapperState) error {
 	if state.exists {
-		if string(state.body) == content && state.mode == mode {
+		if string(state.body) == content && state.mode&0o100 != 0 {
 			return nil
 		}
-		return securefile.ReplaceExact(path, []byte(content), state.body, mode)
+		if err := securefile.Replace(path, []byte(content), state.body); err != nil {
+			return err
+		}
+		return os.Chmod(path, 0o700)
 	}
-	return securefile.CreatePreservingParentMode(path, []byte(content), mode, 0o700)
+	return securefile.Write(path, []byte(content), 0o700, 0o700)
 }
 
-func removeZcodeWrapper(path, provenancePath string) error {
-	provenanceState, err := readZcodeWrapperState(provenancePath)
-	if err != nil || !provenanceState.exists {
-		return err
-	}
-	var provenance zcodeWrapperProvenance
-	if err := json.Unmarshal(provenanceState.body, &provenance); err != nil {
-		return fmt.Errorf("read ZCode wrapper provenance %s: %w", provenancePath, err)
-	}
+func removeZcodeWrapper(path string) error {
 	body, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		return securefile.Remove(provenancePath, provenanceState.body)
+		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("read %s: %w", path, err)
 	}
-	if artifact.Checksum(string(body)) != provenance.InstalledSHA256 {
+	if !isManagedZcodeWrapper(body) {
 		return nil
 	}
-	if provenance.Preimage.Exists {
-		backup, err := readZcodeWrapperState(provenance.Preimage.Backup)
-		if err != nil {
-			return err
-		}
-		if !backup.exists || artifact.Checksum(string(backup.body)) != provenance.Preimage.SHA256 {
-			return fmt.Errorf("ZCode operator wrapper backup %s does not match its recorded checksum", provenance.Preimage.Backup)
-		}
-		if err := securefile.ReplaceExact(path, backup.body, body, os.FileMode(provenance.Preimage.Mode)); err != nil {
-			return fmt.Errorf("restore operator wrapper %s from %s: %w", path, provenance.Preimage.Backup, err)
-		}
-	} else if err := securefile.Remove(path, body); err != nil {
+	if err := os.Remove(path); err != nil {
 		return fmt.Errorf("remove %s: %w", path, err)
 	}
-	return securefile.Remove(provenancePath, provenanceState.body)
+	return nil
+}
+
+func isManagedZcodeWrapper(body []byte) bool {
+	text := string(body)
+	return strings.HasPrefix(text, "#!/bin/bash\n# Managed by roca hooks install zcode.\n") &&
+		strings.Contains(text, " hooks run zcode 2>/dev/null")
 }
 
 func zcodeOwnedHookCommand(path string) string {
 	return shellQuote(path) + " # Managed by roca hooks install zcode"
-}
-
-type zcodeWrapperProvenance struct {
-	Schema          int                  `json:"schema"`
-	InstalledSHA256 string               `json:"installed_sha256"`
-	Preimage        zcodeWrapperPreimage `json:"preimage"`
-}
-
-type zcodeWrapperPreimage struct {
-	Exists bool   `json:"exists"`
-	Backup string `json:"backup,omitempty"`
-	SHA256 string `json:"sha256,omitempty"`
-	Mode   uint32 `json:"mode,omitempty"`
-}
-
-func lockZcodeHookLifecycle(wrapperPath string) (func() error, error) {
-	root := filepath.Dir(filepath.Dir(wrapperPath))
-	if err := os.MkdirAll(root, 0o700); err != nil {
-		return nil, err
-	}
-	return securefile.Lock(filepath.Join(root, ".roca-hooks.lock"))
-}
-
-func zcodeProvenanceForInstall(path string, state zcodeWrapperState, provenancePath string) (zcodeWrapperProvenance, error) {
-	persisted, err := readZcodeWrapperState(provenancePath)
-	if err != nil {
-		return zcodeWrapperProvenance{}, err
-	}
-	if persisted.exists {
-		var provenance zcodeWrapperProvenance
-		if json.Unmarshal(persisted.body, &provenance) == nil && state.exists &&
-			artifact.Checksum(string(state.body)) == provenance.InstalledSHA256 {
-			return provenance, nil
-		}
-	}
-	provenance := zcodeWrapperProvenance{Schema: 1}
-	if !state.exists {
-		return provenance, nil
-	}
-	backup, err := backUpZcodeOperatorWrapper(path, state)
-	if err != nil {
-		return zcodeWrapperProvenance{}, err
-	}
-	provenance.Preimage = zcodeWrapperPreimage{
-		Exists: true, Backup: backup, SHA256: artifact.Checksum(string(state.body)),
-		Mode: uint32(state.mode),
-	}
-	return provenance, nil
-}
-
-func backUpZcodeOperatorWrapper(path string, state zcodeWrapperState) (string, error) {
-	base := path + ".roca.operator.bak"
-	for index := 0; ; index++ {
-		candidate := base
-		if index > 0 {
-			candidate = fmt.Sprintf("%s.%d", base, index)
-		}
-		body, err := os.ReadFile(candidate)
-		if err == nil {
-			info, statErr := os.Stat(candidate)
-			if statErr == nil && string(body) == string(state.body) && info.Mode().Perm() == state.mode {
-				return candidate, nil
-			}
-			continue
-		}
-		if !os.IsNotExist(err) {
-			return "", fmt.Errorf("read operator wrapper backup %s: %w", candidate, err)
-		}
-		if err := securefile.CreatePreservingParentMode(candidate, state.body, state.mode, 0o700); err != nil {
-			if os.IsExist(err) {
-				continue
-			}
-			return "", err
-		}
-		return candidate, nil
-	}
 }
 
 // The hook is intentionally one hard-coded Claude artifact. Its command object
