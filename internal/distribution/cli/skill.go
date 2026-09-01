@@ -750,6 +750,7 @@ const (
 type zcodeHookPathState struct {
 	createdRoot, createdConfigDir, createdHooksDir, createdConfig, createdLock bool
 	createdHooksEnabled                                                        bool
+	rootIdentity                                                               string
 }
 
 func zcodeHookPathPreimage(configPath, wrapperPath string) (zcodeHookPathState, error) {
@@ -782,14 +783,23 @@ func (env *cliEnv) recordZcodeWrapperState(path, executable string, preimage zco
 		InstalledVersion: env.build.Version, AvailableVersion: env.build.Version,
 		SystemSHA256: artifact.Checksum(expected), Format: zcodeWrapperStateFormat,
 		Executable:  executable,
-		CreatedRoot: preimage.createdRoot, CreatedConfigDir: preimage.createdConfigDir,
-		CreatedHooksDir: preimage.createdHooksDir, CreatedConfig: preimage.createdConfig,
-		CreatedLock: preimage.createdLock, CreatedHooksEnabled: preimage.createdHooksEnabled,
+		CreatedRoot: preimage.createdRoot, RootIdentity: preimage.rootIdentity,
+		CreatedConfigDir: preimage.createdConfigDir, CreatedHooksDir: preimage.createdHooksDir,
+		CreatedConfig: preimage.createdConfig, CreatedLock: preimage.createdLock,
+		CreatedHooksEnabled: preimage.createdHooksEnabled,
 	}
 	var prior artifact.Entry
 	var priorFound bool
 	_, err = mutateArtifactRegistry(paths.Artifacts, func(registry *artifact.Registry) (bool, error) {
 		prior, priorFound = registry.Find(artifactKindHook, agentcfg.RuntimeZcode, path)
+		if priorFound && continuousZcodeOwnership(prior, transaction) {
+			transaction.CreatedRoot = transaction.CreatedRoot || prior.CreatedRoot
+			transaction.CreatedConfigDir = transaction.CreatedConfigDir || prior.CreatedConfigDir
+			transaction.CreatedHooksDir = transaction.CreatedHooksDir || prior.CreatedHooksDir
+			transaction.CreatedConfig = transaction.CreatedConfig || prior.CreatedConfig
+			transaction.CreatedLock = transaction.CreatedLock || prior.CreatedLock
+			transaction.CreatedHooksEnabled = transaction.CreatedHooksEnabled || prior.CreatedHooksEnabled
+		}
 		registry.Upsert(transaction)
 		return true, nil
 	})
@@ -851,6 +861,9 @@ func (env *cliEnv) installManagedZcodeHandoffHookLocked(configPath, wrapperPath,
 	pathPreimage := zcodeHookPathState{}
 	root := filepath.Dir(filepath.Dir(wrapperPath))
 	pathPreimage.createdRoot, err = ensureZcodeDirectory(root)
+	if err == nil {
+		pathPreimage.rootIdentity, err = zcodeRootIdentity(root)
+	}
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}

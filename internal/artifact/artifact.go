@@ -231,6 +231,7 @@ type Entry struct {
 	Format              string `json:"format,omitempty"`
 	Executable          string `json:"executable,omitempty"`
 	CreatedRoot         bool   `json:"created_root,omitempty"`
+	RootIdentity        string `json:"root_identity,omitempty"`
 	CreatedConfigDir    bool   `json:"created_config_dir,omitempty"`
 	CreatedHooksDir     bool   `json:"created_hooks_dir,omitempty"`
 	CreatedConfig       bool   `json:"created_config,omitempty"`

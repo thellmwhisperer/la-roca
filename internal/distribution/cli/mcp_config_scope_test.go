@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"os"
@@ -111,8 +112,12 @@ func TestZcodeMCPReinstallDropsOwnershipOnRecreatedManagedTree(t *testing.T) {
 		t.Fatalf("recreated MCP path ownership = %#v, found=%v", entry, found)
 	}
 	purgeZcodeTestIntegrations(true)
-	if body, err := os.ReadFile(config); err != nil || strings.TrimSpace(string(body)) != "{}" {
-		t.Fatalf("operator-recreated MCP config changed: body=%q err=%v", body, err)
+	matched, err := agentcfg.ZcodeMCPMatches(config, filepath.Join(home, "roca"))
+	if err != nil || matched {
+		t.Fatalf("operator-recreated MCP declaration survived: matched=%v err=%v", matched, err)
+	}
+	if _, err := os.Stat(config); err != nil {
+		t.Fatalf("operator-recreated MCP config was removed: %v", err)
 	}
 }
 
@@ -273,6 +278,33 @@ func TestZcodeMCPAndHooksShareLifecycleLock(t *testing.T) {
 	}
 }
 
+func TestFullUninstallTimesOutBeforeChangingZcodeState(t *testing.T) {
+	home := skillTestHome(t)
+	config := filepath.Join(home, ".zcode", "cli", "config.json")
+	installZcodeTestIntegration(t, "mcp", home)
+	holder := &cliEnv{out: io.Discard, errOut: io.Discard}
+	release, err := holder.lockManagedZcodeLifecycle()
+	if err != nil {
+		t.Fatal(err)
+	}
+	contender := &cliEnv{out: io.Discard, errOut: io.Discard}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	command := uninstallCommand(contender)
+	command.SetContext(ctx)
+	err = contender.uninstall(command, strings.NewReader(""), false)
+	if err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("contended uninstall error = %v", err)
+	}
+	matched, matchErr := agentcfg.ZcodeMCPMatches(config, filepath.Join(home, "roca"))
+	if matchErr != nil || !matched {
+		t.Fatalf("timed-out uninstall changed ZCode state: matched=%v err=%v", matched, matchErr)
+	}
+	if err := release(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestZcodePurgeDiscoversRegistryUnderLifecycleLock(t *testing.T) {
 	home := skillTestHome(t)
 	env := &cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}}
@@ -327,15 +359,16 @@ func TestZcodeMCPReinstallRefreshesExecutableProvenance(t *testing.T) {
 		t.Fatal(err)
 	}
 	entry, found := registry.Find(artifactKindMCP, agentcfg.RuntimeZcode, config)
-	if !found || entry.Executable != second || entry.CreatedConfig || entry.CreatedConfigDir || entry.CreatedRoot {
+	if !found || entry.Executable != second || !entry.CreatedConfig || !entry.CreatedConfigDir ||
+		!entry.CreatedRoot || entry.RootIdentity == "" {
 		t.Fatalf("refreshed MCP provenance = %#v, found=%v", entry, found)
 	}
 	report := purgeZcodeTestIntegrations(true)
-	if !strings.Contains(strings.Join(report.Errors, "\n"), config) {
-		t.Fatalf("unproven reinstalled config was not reported: %v", report.Errors)
+	if len(report.Errors) != 0 {
+		t.Fatalf("purge errors = %v", report.Errors)
 	}
-	if body, err := os.ReadFile(config); err != nil || strings.TrimSpace(string(body)) != "{}" {
-		t.Fatalf("unproven reinstalled config changed: body=%q err=%v", body, err)
+	if _, err := os.Stat(filepath.Join(home, ".zcode")); !os.IsNotExist(err) {
+		t.Fatalf("continuously owned MCP tree survived purge: %v", err)
 	}
 }
 

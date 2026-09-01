@@ -165,6 +165,7 @@ const zcodeMCPPreimageFormat = "zcode-mcp-preimage-v1:"
 
 type zcodeMCPPathState struct {
 	createdRoot, createdConfigDir, createdConfig bool
+	rootIdentity                                 string
 }
 
 func zcodeMCPPathPreimage(path string) (zcodeMCPPathState, error) {
@@ -208,6 +209,9 @@ func (env *cliEnv) installZcodeMCPLocked(path, executable string) (outcome agent
 	pathPreimage := zcodeMCPPathState{}
 	root := filepath.Dir(filepath.Dir(path))
 	pathPreimage.createdRoot, err = ensureZcodeDirectory(root)
+	if err == nil {
+		pathPreimage.rootIdentity, err = zcodeRootIdentity(root)
+	}
 	if err == nil {
 		pathPreimage.createdConfigDir, err = ensureZcodeDirectory(filepath.Dir(path))
 	}
@@ -270,6 +274,10 @@ func (env *cliEnv) lockManagedZcodeLifecycle() (func() error, error) {
 	return lockManagedFile(paths.Artifacts + ".zcode.lock")
 }
 
+func continuousZcodeOwnership(prior, current artifact.Entry) bool {
+	return prior.RootIdentity != "" && prior.RootIdentity == current.RootIdentity
+}
+
 func (env *cliEnv) recordZcodeMCPPreimage(path, executable, preimage string, configured bool, pathStates ...zcodeMCPPathState) (func() error, error) {
 	paths, err := env.resolvePaths()
 	if err != nil {
@@ -282,6 +290,7 @@ func (env *cliEnv) recordZcodeMCPPreimage(path, executable, preimage string, con
 	}
 	if len(pathStates) > 0 {
 		transaction.CreatedRoot = pathStates[0].createdRoot
+		transaction.RootIdentity = pathStates[0].rootIdentity
 		transaction.CreatedConfigDir = pathStates[0].createdConfigDir
 		transaction.CreatedConfig = pathStates[0].createdConfig
 	}
@@ -289,11 +298,14 @@ func (env *cliEnv) recordZcodeMCPPreimage(path, executable, preimage string, con
 	var priorFound bool
 	changed, err := mutateArtifactRegistry(paths.Artifacts, func(registry *artifact.Registry) (bool, error) {
 		prior, priorFound = registry.Find(artifactKindMCP, agentcfg.RuntimeZcode, path)
-		if priorFound && configured {
+		if priorFound && configured && continuousZcodeOwnership(prior, transaction) {
 			if _, err := zcodeMCPPreimageFromEntry(prior); err != nil {
 				return false, err
 			}
 			transaction.Format = prior.Format
+			transaction.CreatedRoot = transaction.CreatedRoot || prior.CreatedRoot
+			transaction.CreatedConfigDir = transaction.CreatedConfigDir || prior.CreatedConfigDir
+			transaction.CreatedConfig = transaction.CreatedConfig || prior.CreatedConfig
 			if transaction == prior {
 				return false, nil
 			}
