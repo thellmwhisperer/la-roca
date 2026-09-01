@@ -4,6 +4,7 @@
 #include "llama-ext.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -18,6 +19,24 @@ struct roca_llama_engine {
 
 static void quiet_log(enum ggml_log_level, const char *, void *) {}
 
+static std::atomic<int> g_abort{0};
+
+static bool should_abort(void *) {
+    return g_abort.load() != 0;
+}
+
+static bool progress_continue(float, void *) {
+    return g_abort.load() == 0;
+}
+
+extern "C" void roca_llama_request_abort(void) {
+    g_abort.store(1);
+}
+
+extern "C" void roca_llama_clear_abort(void) {
+    g_abort.store(0);
+}
+
 static void fail(char ** error, const std::string & message) {
     if (error != nullptr) {
         *error = strdup(message.c_str());
@@ -29,8 +48,10 @@ extern "C" roca_llama_engine * roca_llama_open(const char * model_path, int thre
     llama_log_set(quiet_log, nullptr);
     llama_backend_init();
 
+    g_abort.store(0);
     llama_model_params model_params = llama_model_default_params();
     model_params.n_gpu_layers = gpu_layers;
+    model_params.progress_callback = progress_continue;
     llama_model * model = llama_model_load_from_file(model_path, model_params);
     if (model == nullptr) {
         fail(error, "model load failed");
@@ -62,6 +83,7 @@ extern "C" roca_llama_engine * roca_llama_open(const char * model_path, int thre
     context_params.pooling_type = LLAMA_POOLING_TYPE_MEAN;
     context_params.attention_type = LLAMA_ATTENTION_TYPE_NON_CAUSAL;
     context_params.no_perf = true;
+    context_params.abort_callback = should_abort;
     llama_context * context = llama_init_from_model(model, context_params);
     if (context == nullptr) {
         llama_model_free(model);
@@ -128,6 +150,10 @@ extern "C" int roca_llama_embed(
     llama_memory_clear(llama_get_memory(engine->context), true);
     const int32_t decoded = llama_decode(engine->context, batch);
     llama_batch_free(batch);
+    if (decoded == 2) {
+        fail(error, "aborted");
+        return 1;
+    }
     if (decoded != 0) {
         fail(error, "decode failed");
         return 1;
