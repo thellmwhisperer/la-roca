@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -42,8 +43,9 @@ exit 1
 		t.Fatal(err)
 	}
 
+	var warnings strings.Builder
 	for attempt := 0; attempt < 2; attempt++ {
-		root := rootCommand(&cliEnv{out: io.Discard, build: Build{Version: "test"}})
+		root := rootCommand(&cliEnv{out: io.Discard, errOut: &warnings, build: Build{Version: "test"}})
 		root.SetArgs([]string{"hooks", "install", "zcode"})
 		if err := root.Execute(); err != nil {
 			t.Fatalf("install attempt %d: %v", attempt+1, err)
@@ -61,6 +63,10 @@ exit 1
 	hooks := document["hooks"].(map[string]any)
 	if hooks["enabled"] != false {
 		t.Fatalf("hooks.enabled = %#v, want the operator's false value", hooks["enabled"])
+	}
+	if !strings.Contains(warnings.String(), "installed but inactive") ||
+		!strings.Contains(warnings.String(), "hooks.enabled is false") {
+		t.Fatalf("disabled hook install warning = %q", warnings.String())
 	}
 	if !strings.Contains(string(body), `"numeric_spelling":9007199254740993`) {
 		t.Fatalf("installer re-encoded neighboring numeric configuration: %s", body)
@@ -183,6 +189,66 @@ func TestZcodeHookCommandExecutesWhenWrapperPathContainsSpaces(t *testing.T) {
 	}
 }
 
+func TestZcodeInstallPreservesOperatorHookUsingSameWrapper(t *testing.T) {
+	home := t.TempDir()
+	config := filepath.Join(home, "config.json")
+	wrapper := filepath.Join(home, "hooks", "roca-handoff.sh")
+	operatorCommand := shellQuote(wrapper)
+	initial := fmt.Sprintf(`{"hooks":{"enabled":true,"events":{"SessionStart":[{"hooks":[{"type":"command","command":%q,"timeoutMs":4000}]}]}}}`, operatorCommand)
+	if err := os.WriteFile(config, []byte(initial), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := installZcodeHandoffHook(config, wrapper, filepath.Join(home, "roca")); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(body, &document); err != nil {
+		t.Fatal(err)
+	}
+	entries := document["hooks"].(map[string]any)["events"].(map[string]any)["SessionStart"].([]any)
+	if len(entries) != 2 {
+		t.Fatalf("SessionStart entries = %d, want operator and managed hooks", len(entries))
+	}
+	if _, _, err := uninstallZcodeHandoffHook(config, wrapper); err != nil {
+		t.Fatal(err)
+	}
+	body, err = os.ReadFile(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != initial {
+		t.Fatalf("operator hook changed:\nwant %s\n got %s", initial, body)
+	}
+}
+
+func TestZcodeHookRestoresMatchingInstallPreimage(t *testing.T) {
+	home := t.TempDir()
+	config := filepath.Join(home, "config.json")
+	wrapper := filepath.Join(home, "hooks", "roca-handoff.sh")
+	if err := os.MkdirAll(filepath.Dir(wrapper), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, original := range []string{"wrapper A\n", "wrapper B\n", "wrapper A\n"} {
+		if err := os.WriteFile(wrapper, []byte(original), 0o640); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := installZcodeHandoffHook(config, wrapper, filepath.Join(home, "roca")); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := uninstallZcodeHandoffHook(config, wrapper); err != nil {
+			t.Fatal(err)
+		}
+		body, err := os.ReadFile(wrapper)
+		if err != nil || string(body) != original {
+			t.Fatalf("restored wrapper = %q, want %q, err=%v", body, original, err)
+		}
+	}
+}
+
 func TestZcodeHookRestoresPreexistingWrapperAndKeepsItsBackup(t *testing.T) {
 	home := skillTestHome(t)
 	wrapper := filepath.Join(home, ".zcode", "hooks", "roca-handoff.sh")
@@ -200,9 +266,17 @@ func TestZcodeHookRestoresPreexistingWrapperAndKeepsItsBackup(t *testing.T) {
 		if err := root.Execute(); err != nil {
 			t.Fatal(err)
 		}
-		backup, found, err := latestZcodeOperatorBackup(wrapper)
-		if err != nil || !found {
-			t.Fatalf("operator wrapper backup: found=%v err=%v", found, err)
+		provenanceBody, err := os.ReadFile(wrapper + ".roca.state.json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var provenance zcodeWrapperProvenance
+		if err := json.Unmarshal(provenanceBody, &provenance); err != nil {
+			t.Fatal(err)
+		}
+		backup := provenance.Preimage.Backup
+		if backup == "" {
+			t.Fatal("operator wrapper backup was not recorded")
 		}
 		if full {
 			report := lifecycle.Report{Purged: true, Deleted: []string{}}
@@ -238,7 +312,7 @@ func TestZcodeWrapperInstallUsesCapturedPreimage(t *testing.T) {
 	if err := os.WriteFile(path, concurrent, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeZcodeWrapper(path, zcodeWrapper("/bin/roca"), state); err == nil {
+	if err := writeZcodeFile(path, zcodeWrapper("/bin/roca"), state, 0o700); err == nil {
 		t.Fatal("wrapper install accepted a stale preimage")
 	}
 	body, err := os.ReadFile(path)
