@@ -40,9 +40,9 @@ roca vector status
 
 The bounded status contract is in `docs/vector.md#the-one-command-path`.
 Report either the history fraction or the progress-unavailable diagnostic, and
-include the stop reason when there is one. A pass that stopped partway is not
-an empty product: the rows it already wrote are queryable, and word search
-covers the rest. Never report a machine with rows on disk as having nothing.
+include the stop reason when there is one. A pass that stopped partway is not an
+empty product: the rows it already wrote are queryable, and word search covers
+the rest. Never report a machine with rows on disk as having nothing.
 
 `completion.json` under the plugin state directory records `started_at`,
 `finished_at`, and `exit_status` for the last pass. Read it to say whether the
