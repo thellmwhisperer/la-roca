@@ -144,7 +144,7 @@ func (f Federation) seedLegacySidecar(ctx context.Context, legacy *sql.DB,
 	if err := ensureBaseSchema(target); err != nil {
 		return 0, err
 	}
-	existing, existingModel, existingDimensions, err := readIndexState(target)
+	existing, existingModel, existingDimensions, err := readIndexState(target, nil)
 	if err != nil {
 		return 0, fmt.Errorf("read sidecar seed state for %s: %w", database.owner(), err)
 	}
@@ -318,7 +318,7 @@ func copyLegacySeedBatch(ctx context.Context, legacy, target *sql.DB,
 	for index := range seeds {
 		chunks[index] = seeds[index].chunk
 	}
-	if err := refreshSourceRecords(ctx, target, chunks); err != nil {
+	if err := refreshSourceRecords(ctx, target, chunks, nil); err != nil {
 		return 0, err
 	}
 	return len(seeds), nil

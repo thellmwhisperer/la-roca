@@ -13,12 +13,53 @@ import (
 	"github.com/thellmwhisperer/la-roca-vector/internal/telemetry"
 )
 
+var (
+	nativeCallTimeout   = 10 * time.Minute
+	nativeOpenPreferred = llamacpp.OpenPreferred
+)
+
 func (n *Native) Embed(ctx context.Context, requestedModel string, input []string) ([][]float32, error) {
 	if requestedModel != DefaultModel {
 		return nil, fmt.Errorf("embedding model %q is not supported by this engine", requestedModel)
 	}
-	if err := n.ensureOpen(ctx); err != nil {
+	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	callerCtx := ctx
+	ctx, cancel := boundContext(ctx, nativeCallTimeout)
+	defer cancel()
+	type reply struct {
+		vectors [][]float32
+		err     error
+	}
+	if err := n.acquireNative(ctx); err != nil {
+		return nil, n.nativeContextError(callerCtx)
+	}
+	done := make(chan reply, 1)
+	go func() {
+		defer n.releaseNative()
+		vectors, err := n.embedLocked(ctx, input)
+		done <- reply{vectors: vectors, err: err}
+	}()
+	select {
+	case result := <-done:
+		if ctx.Err() != nil {
+			return nil, n.nativeContextError(callerCtx)
+		}
+		return result.vectors, result.err
+	case <-ctx.Done():
+		return nil, n.nativeContextError(callerCtx)
+	}
+}
+
+func (n *Native) embedLocked(ctx context.Context, input []string) ([][]float32, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if n.engine == nil {
+		if err := n.open(ctx); err != nil {
+			return nil, err
+		}
 	}
 	started := time.Now()
 	result := make([][]float32, len(input))
@@ -50,15 +91,6 @@ func (n *Native) Embed(ctx context.Context, requestedModel string, input []strin
 	return result, nil
 }
 
-func (n *Native) ensureOpen(ctx context.Context) error {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	if n.engine != nil {
-		return nil
-	}
-	return n.open(ctx)
-}
-
 func (n *Native) open(ctx context.Context) error {
 	path, err := n.modelPath(ctx)
 	if err != nil {
@@ -71,9 +103,12 @@ func (n *Native) open(ctx context.Context) error {
 	if !n.ReadOnly {
 		policy = n.Writer
 	}
-	loaded, err := llamacpp.OpenPreferred(path, runtime.NumCPU(), policy)
+	loaded, err := openPreferredWithContext(ctx, path, runtime.NumCPU(), policy)
 	if err != nil {
 		n.record(telemetry.Record{Kind: telemetry.KindError, Err: "the embedding model failed to load"})
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return fmt.Errorf("the embedding model failed to load")
 	}
 	if !n.ReadOnly {
@@ -89,9 +124,20 @@ func (n *Native) open(ctx context.Context) error {
 	return nil
 }
 
+func openPreferredWithContext(ctx context.Context, path string, threads int, policy llamacpp.Policy) (*llamacpp.Engine, error) {
+	loaded, err := nativeOpenPreferred(path, threads, policy)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		if loaded != nil {
+			loaded.Close()
+		}
+		return nil, ctxErr
+	}
+	return loaded, err
+}
+
 func (n *Native) Accelerated() bool {
-	n.mu.Lock()
-	defer n.mu.Unlock()
+	_ = n.acquireNative(context.Background())
+	defer n.releaseNative()
 	return n.backend == llamacpp.BackendMetal
 }
 
@@ -99,8 +145,8 @@ func (n *Native) Close() {
 	if n == nil {
 		return
 	}
-	n.mu.Lock()
-	defer n.mu.Unlock()
+	_ = n.acquireNative(context.Background())
+	defer n.releaseNative()
 	if n.engine != nil {
 		n.engine.Close()
 		n.engine = nil
