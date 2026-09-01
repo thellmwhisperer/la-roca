@@ -23,9 +23,10 @@ import (
 )
 
 const (
-	vectorRegistryFilename = "vector-registry.json"
-	vectorRegistrySchema   = 2
-	declaredReaderVersion  = "declared-surfaces-v2"
+	vectorRegistryFilename         = "vector-registry.json"
+	vectorRegistrySchema           = 2
+	declaredReaderVersion          = "declared-surfaces-v2"
+	countSourcesStatementTimeoutMS = "30000"
 )
 
 var (
@@ -1273,7 +1274,7 @@ func (d DeclaredCorpus) CountSources(ctx context.Context, sourceKind string) (in
 		statement := fmt.Sprintf(`SELECT COUNT(*) AS n FROM %s.%s src WHERE %s`,
 			quoteIdentifier(d.Database.Alias), quoteIdentifier(table.Name),
 			declaredSourcePredicate("src", table))
-		rows, err := d.Core.query(ctx, statement)
+		rows, err := d.Core.queryWithTimeout(ctx, statement, countSourcesStatementTimeoutMS)
 		if err != nil {
 			return 0, err
 		}

@@ -99,17 +99,17 @@ func TestDeclaredCorpusLimitsUnboundedStatementsToIngestReads(t *testing.T) {
 		t.Fatal(err)
 	}
 	base := sqliteRunner(db)
-	wantUnbounded := false
+	wantTimeout := ""
 	runner := func(ctx context.Context, executable string, args ...string) ([]byte, error) {
-		unbounded := false
+		timeout := ""
 		for index := 0; index+1 < len(args); index++ {
-			if args[index] == "--timeout-ms" && args[index+1] == "0" {
-				unbounded = true
+			if args[index] == "--timeout-ms" {
+				timeout = args[index+1]
 				break
 			}
 		}
-		if wantUnbounded != unbounded {
-			return nil, fmt.Errorf("statement timeout mismatch: got unbounded=%t, want %t", unbounded, wantUnbounded)
+		if wantTimeout != timeout {
+			return nil, fmt.Errorf("statement timeout = %q, want %q", timeout, wantTimeout)
 		}
 		return base(ctx, executable, args...)
 	}
@@ -117,17 +117,18 @@ func TestDeclaredCorpusLimitsUnboundedStatementsToIngestReads(t *testing.T) {
 	corpus := DeclaredCorpus{Core: CoreCLI{Executable: "sqlite-fixture", Run: runner},
 		Database: vectorDatabase{Plugin: "fixture", Database: "records", Alias: "main",
 			Tables: []vectorTable{table}}}
-	wantUnbounded = true
+	wantTimeout = "0"
 	if _, err := corpus.CountChunks(context.Background(), "records"); err != nil {
 		t.Fatal(err)
 	}
 	if err := corpus.WalkSources(context.Background(), "records", func(sourceRow) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
-	wantUnbounded = false
+	wantTimeout = "30000"
 	if _, err := corpus.CountSources(context.Background(), "records"); err != nil {
 		t.Fatal(err)
 	}
+	wantTimeout = ""
 	want := sourceRow{kind: "records", sourceID: "record-1", text: "synthetic body",
 		rowText: "synthetic body", fingerprintVersion: table.embeddingContractFingerprint()}
 	if _, err := corpus.ResolveSource(context.Background(), "records", locator{
