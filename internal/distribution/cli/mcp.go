@@ -211,6 +211,9 @@ func (env *cliEnv) installZcodeMCP(path, executable string) (outcome agentcfg.Ou
 }
 
 func (env *cliEnv) lockManagedZcodeLifecycle() (func() error, error) {
+	if env.zcodeLifecycleLocked {
+		return func() error { return nil }, nil
+	}
 	paths, err := env.resolvePaths()
 	if err != nil {
 		return nil, err

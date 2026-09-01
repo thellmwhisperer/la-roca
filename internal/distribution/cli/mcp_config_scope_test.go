@@ -254,6 +254,47 @@ func TestZcodeMCPAndHooksShareLifecycleLock(t *testing.T) {
 	}
 }
 
+func TestZcodePurgeDiscoversRegistryUnderLifecycleLock(t *testing.T) {
+	home := skillTestHome(t)
+	env := &cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}}
+	release, err := env.lockManagedZcodeLifecycle()
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan lifecycle.Report, 1)
+	go func() {
+		report := lifecycle.Report{Purged: true, Deleted: []string{}}
+		env.withdrawTheIntegrations(&report, true)
+		done <- report
+	}()
+	select {
+	case report := <-done:
+		t.Fatalf("purge discovered targets before acquiring lifecycle lock: %#v", report)
+	case <-time.After(50 * time.Millisecond):
+	}
+	custom := filepath.Join(home, "custom", "config.json")
+	preimage, err := zcodeMCPPathPreimage(custom)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := agentcfg.InstallZcodeMCP(custom, filepath.Join(home, "roca"), nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.recordZcodeMCPPreimage(custom, agentcfg.ZcodeMCPPreimageMCPServers, false, preimage); err != nil {
+		t.Fatal(err)
+	}
+	if err := release(); err != nil {
+		t.Fatal(err)
+	}
+	report := <-done
+	if len(report.Errors) != 0 {
+		t.Fatalf("purge errors = %v", report.Errors)
+	}
+	if _, err := os.Stat(custom); !os.IsNotExist(err) {
+		t.Fatalf("late registered custom ZCode config survived purge: %v", err)
+	}
+}
+
 func TestFreshZcodeMCPPurgeRemovesCreatedRuntimePaths(t *testing.T) {
 	home := skillTestHome(t)
 	root := rootCommand(&cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}})
