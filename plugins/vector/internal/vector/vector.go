@@ -62,7 +62,16 @@ type Index struct {
 	Progress    func(IngestProgress)
 	BatchSize   int
 	totalHint   int
+	liveness    workLiveness
 	Events      engine.Sink
+}
+
+type workLiveness func()
+
+func (l workLiveness) progressed() {
+	if l != nil {
+		l()
+	}
 }
 
 type Corpus interface {
@@ -246,7 +255,7 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 			return Delta{}, err
 		}
 	}
-	existing, model, dimensions, err := readIndexState(store)
+	existing, model, dimensions, err := readIndexState(store, i.liveness)
 	if err != nil {
 		return Delta{}, err
 	}
@@ -301,12 +310,14 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 	existingSnapshot := make(map[string]storedChunk, len(existing))
 	for key, chunk := range existing {
 		existingSnapshot[key] = chunk
+		i.liveness.progressed()
 	}
 	go func() {
 		summary := scanSummary{desired: make(map[string]string, len(existingSnapshot)),
 			chunks: make(map[string]desiredChunk, len(existingSnapshot)), markers: map[string]desiredChunk{}}
 		seenSources := map[string]bool{}
 		summary.err = i.Corpus.WalkSources(scanCtx, sourceKind, func(source sourceRow) error {
+			i.liveness.progressed()
 			rowKey := source.kind + "\x00" + source.stableID()
 			if !seenSources[rowKey] {
 				summary.sources++
@@ -329,11 +340,13 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 				summary.markers[rowKey] = chunk
 				if old, ok := existingSnapshot[key]; ok && old.fingerprint == chunk.fingerprint {
 					summary.unchanged++
+					i.liveness.progressed()
 					continue
 				}
 				discovered.Add(1)
 				select {
 				case changed <- chunk:
+					i.liveness.progressed()
 				case <-scanCtx.Done():
 					return scanCtx.Err()
 				}
@@ -373,6 +386,7 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 		if err != nil {
 			return err
 		}
+		i.liveness.progressed()
 		if len(vectors) == 0 || len(vectors[0]) == 0 {
 			return fmt.Errorf("embedding model %s returned an empty vector", i.Model)
 		}
@@ -388,7 +402,7 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 			}
 		}
 		batchChunks := int64(len(batch))
-		if err := writeBatch(ctx, store, batch, vectors, existing, &report); err != nil {
+		if err := writeBatch(ctx, store, batch, vectors, existing, &report, i.liveness); err != nil {
 			return err
 		}
 		pending = pending[count:]
@@ -437,7 +451,7 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 	if !embeddingStarted.IsZero() {
 		i.emitProgress(report, currentRange, embeddedChunks, max(discovered.Load(), embeddingTotal), embeddingStarted)
 	}
-	if err := syncSourceFingerprints(ctx, store, summary.chunks, existing); err != nil {
+	if err := syncSourceFingerprints(ctx, store, summary.chunks, existing, i.liveness); err != nil {
 		return Delta{}, err
 	}
 	if dimensions == 0 {
@@ -445,6 +459,7 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 		if err != nil {
 			return Delta{}, err
 		}
+		i.liveness.progressed()
 		if len(vectors) != 1 || len(vectors[0]) == 0 {
 			return Delta{}, fmt.Errorf("embedding model %s returned an empty dimension probe", i.Model)
 		}
@@ -453,14 +468,15 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 			return Delta{}, err
 		}
 	}
-	if err := removeMissing(ctx, store, existing, desiredFingerprints, sourceKind, &report); err != nil {
+	if err := removeMissing(ctx, store, existing, desiredFingerprints, sourceKind, &report, i.liveness); err != nil {
 		return Delta{}, err
 	}
 	markers := make([]desiredChunk, 0, len(summary.markers))
 	for _, marker := range summary.markers {
 		markers = append(markers, marker)
+		i.liveness.progressed()
 	}
-	if err := refreshSourceRecords(ctx, store, markers); err != nil {
+	if err := refreshSourceRecords(ctx, store, markers, i.liveness); err != nil {
 		return Delta{}, err
 	}
 	if sourceKind == "" {
@@ -529,7 +545,7 @@ func (i Index) queryTexts(ctx context.Context, texts []string, k int,
 		return nil, fmt.Errorf("open vector database: %w", err)
 	}
 	defer store.Close()
-	_, model, dimensions, err := readIndexState(store)
+	_, model, dimensions, err := readIndexState(store, nil)
 	if err != nil {
 		return nil, fmt.Errorf("read vector index: %w; run `roca vector install`", err)
 	}
@@ -969,7 +985,7 @@ func tableColumns(db *sql.DB, table string) (map[string]bool, error) {
 	return columns, rows.Err()
 }
 
-func readIndexState(db *sql.DB) (map[string]storedChunk, string, int, error) {
+func readIndexState(db *sql.DB, liveness workLiveness) (map[string]storedChunk, string, int, error) {
 	state := map[string]storedChunk{}
 	columns, err := tableColumns(db, "chunks")
 	if err != nil {
@@ -994,6 +1010,7 @@ func readIndexState(db *sql.DB) (map[string]storedChunk, string, int, error) {
 		item.sourceKind = kind
 		item.sourceID = sourceID
 		state[chunkKey(kind, sourceID, column, index)] = item
+		liveness.progressed()
 	}
 	if err := rows.Close(); err != nil {
 		return nil, "", 0, err
@@ -1037,7 +1054,7 @@ func ensureVectorTables(db *sql.DB, dimensions int, model string) error {
 }
 
 func writeBatch(ctx context.Context, db *sql.DB, chunks []desiredChunk, vectors [][]float32,
-	existing map[string]storedChunk, report *Delta) error {
+	existing map[string]storedChunk, report *Delta, liveness workLiveness) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -1065,6 +1082,7 @@ func writeBatch(ctx context.Context, db *sql.DB, chunks []desiredChunk, vectors 
 			report.Updated++
 			existing[key] = storedChunk{id: old.id, sourceKind: chunk.sourceKind, sourceID: chunk.sourceID,
 				fingerprint: chunk.fingerprint, sourceFingerprint: chunk.sourceFingerprint}
+			liveness.progressed()
 			continue
 		}
 		result, err := tx.ExecContext(ctx, `INSERT INTO chunks(source_kind,source_id,text_column,chunk_index,fingerprint,source_fingerprint,locator) VALUES (?,?,?,?,?,?,?)`,
@@ -1085,17 +1103,20 @@ func writeBatch(ctx context.Context, db *sql.DB, chunks []desiredChunk, vectors 
 		report.Added++
 		existing[key] = storedChunk{id: id, sourceKind: chunk.sourceKind, sourceID: chunk.sourceID,
 			fingerprint: chunk.fingerprint, sourceFingerprint: chunk.sourceFingerprint}
+		liveness.progressed()
 	}
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	return refreshSourceRecords(ctx, db, chunks)
+	liveness.progressed()
+	return refreshSourceRecords(ctx, db, chunks, liveness)
 }
 
-func refreshSourceRecords(ctx context.Context, db *sql.DB, chunks []desiredChunk) error {
+func refreshSourceRecords(ctx context.Context, db *sql.DB, chunks []desiredChunk, liveness workLiveness) error {
 	rows := map[string]desiredChunk{}
 	for _, chunk := range chunks {
 		rows[chunk.sourceKind+"\x00"+chunk.sourceID] = chunk
+		liveness.progressed()
 	}
 	wrote := false
 	for _, chunk := range rows {
@@ -1106,6 +1127,7 @@ func refreshSourceRecords(ctx context.Context, db *sql.DB, chunks []desiredChunk
 			return err
 		}
 		if total != chunk.sourceChunks || current != chunk.sourceChunks {
+			liveness.progressed()
 			continue
 		}
 		if _, err := db.ExecContext(ctx, `INSERT INTO sources(source_kind,source_id,raw_source_id,source_fingerprint,chunk_count)
@@ -1116,6 +1138,7 @@ func refreshSourceRecords(ctx context.Context, db *sql.DB, chunks []desiredChunk
 			return err
 		}
 		wrote = wrote || chunk.progressComplete
+		liveness.progressed()
 	}
 	if wrote {
 		return markSourceProgressKnown(ctx, db)
@@ -1130,10 +1153,11 @@ func markSourceProgressKnown(ctx context.Context, db *sql.DB) error {
 }
 
 func syncSourceFingerprints(ctx context.Context, db *sql.DB,
-	chunks map[string]desiredChunk, existing map[string]storedChunk) error {
+	chunks map[string]desiredChunk, existing map[string]storedChunk, liveness workLiveness) error {
 	for key, chunk := range chunks {
 		old, ok := existing[key]
 		if !ok || old.sourceFingerprint == chunk.sourceFingerprint {
+			liveness.progressed()
 			continue
 		}
 		if _, err := db.ExecContext(ctx, `UPDATE chunks SET source_fingerprint=?,updated_at=datetime('now') WHERE id=?`,
@@ -1142,13 +1166,14 @@ func syncSourceFingerprints(ctx context.Context, db *sql.DB,
 		}
 		old.sourceFingerprint = chunk.sourceFingerprint
 		existing[key] = old
+		liveness.progressed()
 	}
 	return nil
 }
 
 func removeMissing(ctx context.Context, db *sql.DB, existing map[string]storedChunk,
 	desiredFingerprints map[string]string,
-	sourceKind string, report *Delta) error {
+	sourceKind string, report *Delta, liveness workLiveness) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -1157,9 +1182,11 @@ func removeMissing(ctx context.Context, db *sql.DB, existing map[string]storedCh
 	removedSources := map[[2]string]bool{}
 	for key, old := range existing {
 		if sourceKind != "" && old.sourceKind != sourceKind {
+			liveness.progressed()
 			continue
 		}
 		if _, desired := desiredFingerprints[key]; desired {
+			liveness.progressed()
 			continue
 		}
 		if err := deleteEmbeddings(ctx, tx, old.id); err != nil {
@@ -1170,12 +1197,14 @@ func removeMissing(ctx context.Context, db *sql.DB, existing map[string]storedCh
 		}
 		removedSources[[2]string{old.sourceKind, old.sourceID}] = true
 		report.Removed++
+		liveness.progressed()
 	}
 	for key := range removedSources {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM sources WHERE source_kind=? AND source_id=?`,
 			key[0], key[1]); err != nil {
 			return err
 		}
+		liveness.progressed()
 	}
 	return tx.Commit()
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -99,17 +100,17 @@ func TestDeclaredCorpusLimitsUnboundedStatementsToIngestReads(t *testing.T) {
 		t.Fatal(err)
 	}
 	base := sqliteRunner(db)
-	wantUnbounded := false
+	wantTimeout := ""
 	runner := func(ctx context.Context, executable string, args ...string) ([]byte, error) {
-		unbounded := false
+		timeout := ""
 		for index := 0; index+1 < len(args); index++ {
-			if args[index] == "--timeout-ms" && args[index+1] == "0" {
-				unbounded = true
+			if args[index] == "--timeout-ms" {
+				timeout = args[index+1]
 				break
 			}
 		}
-		if wantUnbounded != unbounded {
-			return nil, fmt.Errorf("statement timeout mismatch: got unbounded=%t, want %t", unbounded, wantUnbounded)
+		if wantTimeout != timeout {
+			return nil, fmt.Errorf("statement timeout = %q, want %q", timeout, wantTimeout)
 		}
 		return base(ctx, executable, args...)
 	}
@@ -117,17 +118,18 @@ func TestDeclaredCorpusLimitsUnboundedStatementsToIngestReads(t *testing.T) {
 	corpus := DeclaredCorpus{Core: CoreCLI{Executable: "sqlite-fixture", Run: runner},
 		Database: vectorDatabase{Plugin: "fixture", Database: "records", Alias: "main",
 			Tables: []vectorTable{table}}}
-	wantUnbounded = true
+	wantTimeout = "0"
 	if _, err := corpus.CountChunks(context.Background(), "records"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := corpus.CountSources(context.Background(), "records"); err != nil {
 		t.Fatal(err)
 	}
 	if err := corpus.WalkSources(context.Background(), "records", func(sourceRow) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
-	wantUnbounded = false
+	wantTimeout = "30000"
+	if _, err := corpus.CountSources(context.Background(), "records"); err != nil {
+		t.Fatal(err)
+	}
+	wantTimeout = ""
 	want := sourceRow{kind: "records", sourceID: "record-1", text: "synthetic body",
 		rowText: "synthetic body", fingerprintVersion: table.embeddingContractFingerprint()}
 	if _, err := corpus.ResolveSource(context.Background(), "records", locator{
@@ -241,11 +243,133 @@ func TestEmbeddingSchedulerMergesDatabaseHeadsNewestFirst(t *testing.T) {
 	}
 }
 
+func TestEmbeddingSchedulerFailsWhenAJobNeverProducesWork(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	scheduler := newEmbeddingScheduler(ctx, &recordingEmbedder{}, 2)
+	scheduler.stallAfter = 100 * time.Millisecond
+	scheduler.gatherWindow = 20 * time.Millisecond
+	go func() {
+		embedder := scheduledEmbedder{base: scheduler.base, id: 0, scheduler: scheduler}
+		ordered := context.WithValue(ctx, sourceOrderKey{}, sourceOrder{timestamp: "2026-01-01", id: "ready"})
+		_, _ = embedder.Embed(ordered, DefaultModel, []string{"ready"})
+		scheduler.finished <- 0
+	}()
+	done := make(chan error, 1)
+	go func() { done <- scheduler.run() }()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected the scheduler to fail when a peer never produced work")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("scheduler hung waiting for a job that never produced work")
+	}
+}
+
+type delayedScanCorpus struct {
+	*memoryCorpus
+	delay time.Duration
+}
+
+func (c *delayedScanCorpus) WalkSources(ctx context.Context, sourceKind string, visit func(sourceRow) error) error {
+	return c.memoryCorpus.WalkSources(ctx, sourceKind, func(source sourceRow) error {
+		timer := time.NewTimer(c.delay)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+			return visit(source)
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	})
+}
+
+func TestEmbeddingSchedulerAllowsAProgressingUnchangedScan(t *testing.T) {
+	rows := make([]sourceRow, 5)
+	for index := range rows {
+		rows[index] = sourceRow{kind: "memories", sourceID: fmt.Sprint(index), text: fmt.Sprintf("unchanged %d", index)}
+	}
+	path := t.TempDir() + "/vector.db"
+	base := &recordingEmbedder{}
+	initial := Index{Corpus: &memoryCorpus{sources: rows}, VectorPath: path, Model: DefaultModel,
+		Embedder: base, BatchSize: 1}
+	if _, err := initial.Ingest(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	scheduler := newEmbeddingScheduler(ctx, base, 1)
+	scheduler.stallAfter = 100 * time.Millisecond
+	rescan := initial
+	rescan.Corpus = &delayedScanCorpus{memoryCorpus: &memoryCorpus{sources: rows}, delay: 40 * time.Millisecond}
+	rescan.Embedder = scheduledEmbedder{base: base, id: 0, scheduler: scheduler}
+	var progress atomic.Int64
+	rescan.liveness = func() {
+		progress.Add(1)
+		scheduler.heartbeat()
+	}
+	type ingestResult struct {
+		delta Delta
+		err   error
+	}
+	done := make(chan ingestResult, 1)
+	go func() {
+		delta, err := rescan.Ingest(ctx)
+		done <- ingestResult{delta: delta, err: err}
+		scheduler.finished <- 0
+	}()
+	runErr := scheduler.run()
+	if runErr != nil {
+		cancel()
+	}
+	result := <-done
+	if runErr != nil || result.err != nil {
+		t.Fatalf("progressing unchanged scan failed: scheduler=%v ingest=%v", runErr, result.err)
+	}
+	if result.delta.Unchanged != len(rows) {
+		t.Fatalf("unchanged scan = %+v, want %d unchanged", result.delta, len(rows))
+	}
+	if progress.Load() <= int64(len(rows)*4) {
+		t.Fatalf("liveness updates = %d, want scan and reconciliation progress", progress.Load())
+	}
+}
+
+func TestEmbeddingSchedulerEmbedsReadyWorkWithoutWaitingForeverForAPeer(t *testing.T) {
+	base := &recordingEmbedder{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	scheduler := newEmbeddingScheduler(ctx, base, 2)
+	scheduler.gatherWindow = 20 * time.Millisecond
+	embedded := make(chan error, 1)
+	go func() {
+		embedder := scheduledEmbedder{base: base, id: 0, scheduler: scheduler}
+		ordered := context.WithValue(ctx, sourceOrderKey{}, sourceOrder{timestamp: "2026-01-01", id: "ready"})
+		_, err := embedder.Embed(ordered, DefaultModel, []string{"ready"})
+		embedded <- err
+		scheduler.finished <- 0
+	}()
+	go func() { _ = scheduler.run() }()
+	select {
+	case err := <-embedded:
+		if err != nil {
+			t.Fatalf("ready job embed: %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("scheduler waited for a peer instead of embedding ready work")
+	}
+	scheduler.finished <- 1
+	inputs := base.snapshot()
+	if len(inputs) != 1 || inputs[0][0] != "ready" {
+		t.Fatalf("embedded %v, want the ready job only", inputs)
+	}
+}
+
 func TestEmbeddingSchedulerCompletionDoesNotBlockAfterCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	scheduler := newEmbeddingScheduler(ctx, &recordingEmbedder{}, 1)
 	cancel()
-	scheduler.run()
+	_ = scheduler.run()
 	done := make(chan struct{})
 	go func() {
 		scheduler.finished <- 0
