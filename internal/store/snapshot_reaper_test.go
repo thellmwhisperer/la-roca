@@ -226,9 +226,10 @@ func TestSnapshotReaperDoesNotTakeAGlobalLock(t *testing.T) {
 	plantSnapshotDir(t, root, snapshotDirectoryPrefix+"right", now.Add(-2*time.Hour), lease, 8)
 	var inFlight atomic.Int32
 	release := make(chan struct{})
+	var releaseOnce sync.Once
 	inspect := func(string, snapshotLease) snapshotOwnerLiveness {
 		if inFlight.Add(1) == 2 {
-			close(release)
+			releaseOnce.Do(func() { close(release) })
 		}
 		select {
 		case <-release:
@@ -317,6 +318,33 @@ func TestSnapshotReaperUsesProcessDeathAsPositiveProof(t *testing.T) {
 	}
 	mustExist(t, livePath)
 	mustMissing(t, deadPath)
+}
+
+func TestSaveReaperCursorDoesNotReusePredictableTempFile(t *testing.T) {
+	root := t.TempDir()
+	predictableTemp := filepath.Join(root, snapshotReaperCursorName+".tmp")
+	canary := []byte("do not overwrite")
+	if err := os.WriteFile(predictableTemp, canary, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cursor := reaperCursor{mtime: 123, name: snapshotDirectoryPrefix + "candidate"}
+	if err := saveReaperCursor(root, cursor); err != nil {
+		t.Fatal(err)
+	}
+	gotCanary, err := os.ReadFile(predictableTemp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotCanary) != string(canary) {
+		t.Fatalf("predictable temp file changed to %q", gotCanary)
+	}
+	gotCursor, err := loadReaperCursor(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotCursor != cursor {
+		t.Fatalf("cursor=%+v want %+v", gotCursor, cursor)
+	}
 }
 
 func TestOpenReadOnlySnapshotWritesALeaseAndLeavesUncertainDirs(t *testing.T) {
@@ -435,7 +463,7 @@ func mustMissing(t *testing.T, paths ...string) {
 }
 
 func exitedProcessPID() (int, error) {
-	cmd := exec.Command("true")
+	cmd := exec.Command(os.Args[0], "-test.run=^$")
 	if err := cmd.Run(); err != nil {
 		return 0, err
 	}

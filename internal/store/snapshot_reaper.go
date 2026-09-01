@@ -401,9 +401,18 @@ func saveReaperCursor(root string, cursor reaperCursor) error {
 		}
 		return nil
 	}
-	tmp := path + ".tmp"
 	payload := fmt.Sprintf("v1\n%d %s\n", cursor.mtime, cursor.name)
-	if err := os.WriteFile(tmp, []byte(payload), 0o600); err != nil {
+	tmpFile, err := os.CreateTemp(root, snapshotReaperCursorName+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmp := tmpFile.Name()
+	defer os.Remove(tmp)
+	if _, err := tmpFile.WriteString(payload); err != nil {
+		_ = tmpFile.Close()
+		return err
+	}
+	if err := tmpFile.Close(); err != nil {
 		return err
 	}
 	return os.Rename(tmp, path)
