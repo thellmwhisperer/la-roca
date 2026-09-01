@@ -11,8 +11,9 @@ import (
 
 var (
 	errAtomicNoReplaceUnsupported = errors.New("atomic no-replace publication is unsupported")
+	errAtomicExchangeUnsupported  = errors.New("atomic exchange is unsupported")
 	renameNoReplaceFile           = renameNoReplace
-	isolateFile                   = os.Rename
+	exchangeFiles                 = exchange
 )
 
 // Write replaces path atomically after the new bytes and permissions are durable.
@@ -45,101 +46,93 @@ func Remove(path string, expected []byte) error {
 }
 
 func exchangeExact(path string, data, expected []byte, mode os.FileMode, remove bool) error {
-	dir := filepath.Dir(path)
-	if err := verifyNoReplace(dir, filepath.Base(path)); err != nil {
-		return err
-	}
-	transaction, err := os.MkdirTemp(dir, "."+filepath.Base(path)+"-exchange-")
-	if err != nil {
-		return err
-	}
-	cleanup := true
-	defer func() {
-		if cleanup {
-			os.RemoveAll(transaction)
-		}
-	}()
-
-	staged := filepath.Join(transaction, "replacement")
-	if !remove {
-		file, err := os.OpenFile(staged, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
-		if err != nil {
-			return err
-		}
-		if _, err := file.Write(data); err != nil {
-			file.Close()
-			return err
-		}
-		if err := file.Sync(); err != nil {
-			file.Close()
-			return err
-		}
-		if err := file.Close(); err != nil {
-			return err
-		}
-	}
-
-	held := filepath.Join(transaction, "current")
-	if err := isolateFile(path, held); err != nil {
-		if remove && os.IsNotExist(err) {
+	if remove {
+		if _, err := os.Stat(path); os.IsNotExist(err) {
 			return nil
 		}
+	}
+	staged, err := stage(filepath.Dir(path), filepath.Base(path), data, mode)
+	if err != nil {
 		return err
 	}
-	current, err := os.ReadFile(held)
-	if err != nil {
-		return preserveExchangedFile(path, held, err, &cleanup)
+	keep := false
+	defer func() {
+		if !keep {
+			os.Remove(staged)
+		}
+	}()
+	if err := exchangeFiles(staged, path); err != nil {
+		return err
 	}
-	if string(current) != string(expected) {
-		return preserveExchangedFile(path, held, fmt.Errorf(
-			"%s changed while it was being edited: close the runtime that owns it and try again",
-			path), &cleanup)
+	current, err := os.ReadFile(staged)
+	if err != nil || string(current) != string(expected) {
+		cause := err
+		if cause == nil {
+			cause = fmt.Errorf("%s changed while it was being edited: close the runtime that owns it and try again", path)
+		}
+		if restoreErr := exchangeFiles(staged, path); restoreErr != nil {
+			keep = true
+			return fmt.Errorf("%v; displaced file preserved at %s: %w", cause, staged, restoreErr)
+		}
+		return cause
 	}
 	if remove {
-		if err := os.Remove(held); err != nil {
-			cleanup = false
-			return fmt.Errorf("remove %s; isolated file preserved at %s: %w", path, held, err)
+		if err := os.Remove(path); err != nil {
+			keep = true
+			return fmt.Errorf("remove %s; previous file preserved at %s: %w", path, staged, err)
 		}
-		return nil
-	}
-	if err := renameNoReplaceFile(staged, path); err != nil {
-		cleanup = false
-		return fmt.Errorf("restore %s; replacement preserved at %s: %w", path, staged, err)
-	}
-	if err := os.Remove(held); err != nil {
-		cleanup = false
-		return fmt.Errorf("remove replaced %s; isolated file preserved at %s: %w", path, held, err)
 	}
 	return nil
 }
 
-func preserveExchangedFile(path, held string, cause error, cleanup *bool) error {
-	if err := renameNoReplaceFile(held, path); err != nil {
-		*cleanup = false
-		return fmt.Errorf("%v; current file preserved at %s: %w", cause, held, err)
+func stage(dir, base string, data []byte, mode os.FileMode) (string, error) {
+	file, err := os.CreateTemp(dir, "."+base+"-exchange-")
+	if err != nil {
+		return "", err
 	}
-	return cause
+	path := file.Name()
+	if err := file.Chmod(mode); err != nil {
+		file.Close()
+		os.Remove(path)
+		return "", err
+	}
+	if _, err := file.Write(data); err != nil {
+		file.Close()
+		os.Remove(path)
+		return "", err
+	}
+	if err := file.Sync(); err != nil {
+		file.Close()
+		os.Remove(path)
+		return "", err
+	}
+	if err := file.Close(); err != nil {
+		os.Remove(path)
+		return "", err
+	}
+	return path, nil
 }
 
-func verifyNoReplace(dir, base string) error {
-	probe, err := os.CreateTemp(dir, "."+base+"-noreplace-")
-	if err != nil {
+func conditionalExchange(staged, path string, previous []byte) error {
+	if err := exchangeFiles(staged, path); err != nil {
 		return err
 	}
-	staged := probe.Name()
-	if err := probe.Close(); err != nil {
-		os.Remove(staged)
-		return err
+	current, err := os.ReadFile(staged)
+	if err == nil && string(current) == string(previous) {
+		return nil
 	}
-	target := staged + ".published"
-	if err := renameNoReplaceFile(staged, target); err != nil {
-		os.Remove(staged)
-		if errors.Is(err, errAtomicNoReplaceUnsupported) {
-			return fmt.Errorf("cannot safely edit %s: %w", filepath.Join(dir, base), err)
+	cause := err
+	if cause == nil {
+		cause = fmt.Errorf("%s changed while it was being edited: close the runtime that owns it and try again", path)
+	}
+	if restoreErr := exchangeFiles(staged, path); restoreErr != nil {
+		recovery := staged + ".recovery"
+		if renameErr := os.Rename(staged, recovery); renameErr != nil {
+			return fmt.Errorf("%v; preserve displaced file %s: %v; restore: %w", cause, staged, renameErr, restoreErr)
 		}
-		return err
+		return fmt.Errorf("%v; displaced file preserved at %s: %w", cause, recovery, restoreErr)
 	}
-	return os.Remove(target)
+	return cause
 }
 
 // BackUp preserves previous bytes beside path without overwriting older copies.
@@ -187,9 +180,7 @@ func publish(path string, data, previous []byte, mode, dirMode os.FileMode,
 	staged := temporary.Name()
 	defer func() {
 		temporary.Close()
-		if err != nil {
-			os.Remove(staged)
-		}
+		os.Remove(staged)
 	}()
 	if err = temporary.Chmod(mode); err != nil {
 		return err
@@ -203,17 +194,6 @@ func publish(path string, data, previous []byte, mode, dirMode os.FileMode,
 	if err = temporary.Close(); err != nil {
 		return err
 	}
-	if previous != nil {
-		current, readErr := os.ReadFile(path)
-		if readErr != nil {
-			return fmt.Errorf("re-read %s: %w", path, readErr)
-		}
-		if string(current) != string(previous) {
-			return fmt.Errorf(
-				"%s changed while it was being edited: close the runtime that owns it and try again",
-				path)
-		}
-	}
 	if createOnly {
 		if err = renameNoReplaceFile(staged, path); err != nil {
 			if os.IsExist(err) {
@@ -224,13 +204,12 @@ func publish(path string, data, previous []byte, mode, dirMode os.FileMode,
 			}
 			return fmt.Errorf("atomically create %s: %w", path, err)
 		}
-	} else if err = os.Rename(staged, path); err != nil {
-		return err
-	}
-	if !createOnly {
-		if err = os.Chmod(path, mode); err != nil {
+	} else if previous != nil {
+		if err = conditionalExchange(staged, path, previous); err != nil {
 			return err
 		}
+	} else if err = os.Rename(staged, path); err != nil {
+		return err
 	}
 	if runtime.GOOS == "windows" {
 		return nil

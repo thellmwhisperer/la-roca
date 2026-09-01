@@ -247,6 +247,22 @@ func DeclareZcodeSessionStartHook(text, command string, timeoutMs int) (string, 
 	return entries.insert(text, pad+string(rendered), indentOf(view, entries.close)), nil
 }
 
+func ZcodeHooksEnabled(text string) (bool, bool, bool, error) {
+	if strings.TrimSpace(text) == "" {
+		return false, false, false, nil
+	}
+	document, err := jsonDecode(runtime{kind: kindJSON}, text)
+	if err != nil {
+		return false, false, false, err
+	}
+	hooks, present := document["hooks"].(map[string]any)
+	if !present {
+		return false, false, false, nil
+	}
+	enabled, declared := hooks["enabled"].(bool)
+	return true, declared, enabled, nil
+}
+
 func RemoveZcodeSessionStartHook(text, command string) (string, error) {
 	for {
 		next, found, err := removeOneZcodeSessionStartHook(text, command)

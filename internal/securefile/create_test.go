@@ -51,62 +51,78 @@ func TestCreatePreservingParentModePreservesConcurrentTarget(t *testing.T) {
 	assertMode(t, dir, 0o750)
 }
 
-func TestRemoveExactPreservesAFileCreatedAfterIsolation(t *testing.T) {
+func TestReplaceExactPreservesConcurrentTargetAfterExchange(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "roca-handoff.sh")
 	expected := []byte("installed wrapper")
 	concurrent := []byte("operator replacement")
 	if err := os.WriteFile(path, expected, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	realIsolate := isolateFile
-	isolateFile = func(source, held string) error {
-		if err := realIsolate(source, held); err != nil {
+	realExchange := exchangeFiles
+	exchangeFiles = func(staged, target string) error {
+		if err := realExchange(staged, target); err != nil {
 			return err
 		}
-		return os.WriteFile(source, concurrent, 0o600)
-	}
-	t.Cleanup(func() { isolateFile = realIsolate })
-
-	if err := Remove(path, expected); err != nil {
-		t.Fatal(err)
-	}
-	assertFileContentAndMode(t, path, concurrent, 0o600)
-}
-
-func TestReplaceExactPreservesAFileCreatedAfterIsolation(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "roca-handoff.sh")
-	expected := []byte("installed wrapper")
-	concurrent := []byte("operator replacement")
-	if err := os.WriteFile(path, expected, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	realIsolate := isolateFile
-	isolateFile = func(source, held string) error {
-		if err := realIsolate(source, held); err != nil {
+		if err := os.WriteFile(target, concurrent, 0o640); err != nil {
 			return err
 		}
-		return os.WriteFile(source, concurrent, 0o640)
+		return os.Chmod(target, 0o640)
 	}
-	t.Cleanup(func() { isolateFile = realIsolate })
+	t.Cleanup(func() { exchangeFiles = realExchange })
 
-	err := ReplaceExact(path, []byte("previous wrapper"), expected, 0o600)
-	if err == nil || !strings.Contains(err.Error(), "replacement preserved") {
-		t.Fatalf("replace error = %v, want preserved replacement", err)
+	if err := ReplaceExact(path, []byte("previous wrapper"), expected, 0o600); err != nil {
+		t.Fatal(err)
 	}
 	assertFileContentAndMode(t, path, concurrent, 0o640)
 }
 
-func TestExactExchangeLeavesLiveFileWhenNoReplaceIsUnsupported(t *testing.T) {
+func TestReplacePreservesConcurrentTargetAfterExchange(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	expected := []byte("operator config")
+	concurrent := []byte("runtime update")
+	if err := os.WriteFile(path, expected, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	realExchange := exchangeFiles
+	exchangeFiles = func(staged, target string) error {
+		if err := realExchange(staged, target); err != nil {
+			return err
+		}
+		if err := os.WriteFile(target, concurrent, 0o640); err != nil {
+			return err
+		}
+		return os.Chmod(target, 0o640)
+	}
+	t.Cleanup(func() { exchangeFiles = realExchange })
+
+	if err := Replace(path, []byte("roca edit"), expected); err != nil {
+		t.Fatal(err)
+	}
+	assertFileContentAndMode(t, path, concurrent, 0o640)
+}
+
+func TestReplaceExactAppliesRequestedMode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ReplaceExact(path, []byte("new"), []byte("old"), 0o664); err != nil {
+		t.Fatal(err)
+	}
+	assertFileContentAndMode(t, path, []byte("new"), 0o664)
+}
+
+func TestExactExchangeLeavesLiveFileWhenExchangeIsUnsupported(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "roca-handoff.sh")
 	original := []byte("operator wrapper")
 	if err := os.WriteFile(path, original, 0o640); err != nil {
 		t.Fatal(err)
 	}
-	realRename := renameNoReplaceFile
-	renameNoReplaceFile = func(_, _ string) error {
-		return errAtomicNoReplaceUnsupported
+	realExchange := exchangeFiles
+	exchangeFiles = func(_, _ string) error {
+		return errAtomicExchangeUnsupported
 	}
-	t.Cleanup(func() { renameNoReplaceFile = realRename })
+	t.Cleanup(func() { exchangeFiles = realExchange })
 
 	for _, operation := range []struct {
 		name string
@@ -116,7 +132,7 @@ func TestExactExchangeLeavesLiveFileWhenNoReplaceIsUnsupported(t *testing.T) {
 		{"remove", func() error { return Remove(path, original) }},
 	} {
 		t.Run(operation.name, func(t *testing.T) {
-			if err := operation.run(); err == nil || !strings.Contains(err.Error(), "atomic no-replace") {
+			if err := operation.run(); err == nil || !strings.Contains(err.Error(), "atomic exchange") {
 				t.Fatalf("operation error = %v", err)
 			}
 			assertFileContentAndMode(t, path, original, 0o640)
