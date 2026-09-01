@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/thellmwhisperer/la-roca-vector/internal/engine"
@@ -22,9 +23,10 @@ import (
 )
 
 const (
-	vectorRegistryFilename = "vector-registry.json"
-	vectorRegistrySchema   = 2
-	declaredReaderVersion  = "declared-surfaces-v2"
+	vectorRegistryFilename         = "vector-registry.json"
+	vectorRegistrySchema           = 2
+	declaredReaderVersion          = "declared-surfaces-v2"
+	countSourcesStatementTimeoutMS = "30000"
 )
 
 var (
@@ -706,6 +708,7 @@ func (f Federation) Ingest(ctx context.Context, sourceKind string) (FederationDe
 			defer workers.Done()
 			index := f.index(job.database, job.reader, job.sidecar)
 			index.BatchSize = 1
+			index.liveness = scheduler.heartbeat
 			index.Embedder = scheduledEmbedder{base: f.Embedder, id: id, scheduler: scheduler}
 			if sourceKind == "" {
 				job.delta, job.err = index.Ingest(orderedCtx)
@@ -715,7 +718,10 @@ func (f Federation) Ingest(ctx context.Context, sourceKind string) (FederationDe
 			scheduler.finished <- id
 		}(id, job)
 	}
-	scheduler.run()
+	runErr := scheduler.run()
+	if runErr != nil {
+		cancel()
+	}
 	workers.Wait()
 	var ingestErr error
 	for _, job := range jobs {
@@ -738,8 +744,14 @@ func (f Federation) Ingest(ctx context.Context, sourceKind string) (FederationDe
 	if preparationErr != nil {
 		return result, preparationErr
 	}
+	if errors.Is(runErr, errIndexingStalled) {
+		return result, runErr
+	}
 	if ingestErr != nil {
 		return result, ingestErr
+	}
+	if runErr != nil {
+		return result, runErr
 	}
 	return result, nil
 }
@@ -758,13 +770,34 @@ type embeddingReply struct {
 	err     error
 }
 
+var (
+	embeddingStallTimeout  = 30 * time.Minute
+	embeddingGatherWindow  = time.Second
+	historyProgressTimeout = 30 * time.Second
+	errIndexingStalled     = fmt.Errorf("indexing stalled waiting for embedding work")
+)
+
+func boundContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout <= 0 {
+		return ctx, func() {}
+	}
+	if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) <= timeout {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, timeout)
+}
+
 type embeddingScheduler struct {
-	ctx      context.Context
-	base     Embedder
-	requests chan embeddingRequest
-	finished chan int
-	active   map[int]bool
-	mu       sync.Mutex
+	ctx             context.Context
+	base            Embedder
+	requests        chan embeddingRequest
+	finished        chan int
+	heartbeats      chan struct{}
+	active          map[int]bool
+	mu              sync.Mutex
+	livenessVersion atomic.Uint64
+	stallAfter      time.Duration
+	gatherWindow    time.Duration
 }
 
 func newEmbeddingScheduler(ctx context.Context, base Embedder, count int) *embeddingScheduler {
@@ -773,27 +806,94 @@ func newEmbeddingScheduler(ctx context.Context, base Embedder, count int) *embed
 		active[id] = true
 	}
 	return &embeddingScheduler{ctx: ctx, base: base, requests: make(chan embeddingRequest),
-		finished: make(chan int, count), active: active}
+		finished: make(chan int, count), heartbeats: make(chan struct{}, 1), active: active}
 }
 
-func (s *embeddingScheduler) run() {
+func (s *embeddingScheduler) heartbeat() {
+	s.livenessVersion.Add(1)
+	select {
+	case s.heartbeats <- struct{}{}:
+	default:
+	}
+}
+
+func (s *embeddingScheduler) run() error {
 	pending := map[int]embeddingRequest{}
+	stallAfter := s.stallAfter
+	if stallAfter <= 0 {
+		stallAfter = embeddingStallTimeout
+	}
+	gatherWindow := s.gatherWindow
+	if gatherWindow <= 0 {
+		gatherWindow = embeddingGatherWindow
+	}
+	stall := time.NewTimer(stallAfter)
+	defer stall.Stop()
+	observedLiveness := s.livenessVersion.Load()
+	resetStall := func() {
+		if !stall.Stop() {
+			select {
+			case <-stall.C:
+			default:
+			}
+		}
+		observedLiveness = s.livenessVersion.Load()
+		stall.Reset(stallAfter)
+	}
+	failPending := func(err error) error {
+		for _, request := range pending {
+			request.reply <- embeddingReply{err: err}
+		}
+		return err
+	}
 	for len(s.active) > 0 {
-		for len(pending) < len(s.active) {
+		if len(pending) == 0 {
 			select {
 			case request := <-s.requests:
 				pending[request.id] = request
+				resetStall()
 			case id := <-s.finished:
 				delete(s.active, id)
+				delete(pending, id)
+				resetStall()
+			case <-s.heartbeats:
+				resetStall()
 			case <-s.ctx.Done():
-				for _, request := range pending {
-					request.reply <- embeddingReply{err: s.ctx.Err()}
+				return failPending(s.ctx.Err())
+			case <-stall.C:
+				if s.livenessVersion.Load() != observedLiveness {
+					resetStall()
+					continue
 				}
-				return
+				return failPending(errIndexingStalled)
+			}
+			continue
+		}
+		if len(pending) < len(s.active) {
+			timer := time.NewTimer(gatherWindow)
+			gathering := true
+			for gathering && len(pending) < len(s.active) {
+				select {
+				case request := <-s.requests:
+					pending[request.id] = request
+					resetStall()
+				case id := <-s.finished:
+					delete(s.active, id)
+					delete(pending, id)
+					resetStall()
+				case <-s.ctx.Done():
+					timer.Stop()
+					return failPending(s.ctx.Err())
+				case <-timer.C:
+					gathering = false
+				}
+			}
+			if gathering {
+				timer.Stop()
 			}
 		}
-		if len(s.active) == 0 {
-			return
+		if len(pending) == 0 {
+			continue
 		}
 		selected := -1
 		for id, request := range pending {
@@ -805,7 +905,9 @@ func (s *embeddingScheduler) run() {
 		delete(pending, selected)
 		vectors, err := s.embed(request.ctx, request.model, request.input)
 		request.reply <- embeddingReply{vectors: vectors, err: err}
+		resetStall()
 	}
+	return nil
 }
 
 func (s *embeddingScheduler) embed(ctx context.Context, model string, input []string) ([][]float32, error) {
@@ -1172,7 +1274,7 @@ func (d DeclaredCorpus) CountSources(ctx context.Context, sourceKind string) (in
 		statement := fmt.Sprintf(`SELECT COUNT(*) AS n FROM %s.%s src WHERE %s`,
 			quoteIdentifier(d.Database.Alias), quoteIdentifier(table.Name),
 			declaredSourcePredicate("src", table))
-		rows, err := d.Core.queryIngest(ctx, statement)
+		rows, err := d.Core.queryWithTimeout(ctx, statement, countSourcesStatementTimeoutMS)
 		if err != nil {
 			return 0, err
 		}
@@ -1669,8 +1771,11 @@ type DatabaseProgress struct {
 
 // HistoryProgress answers while a pass is running and after one stopped, because both
 // are questions the operator asks. It reads counts only: no embedding, no
-// chunking, nothing that would make asking expensive.
+// chunking, nothing that would make asking expensive. A missing caller deadline
+// is capped so status returns or fails instead of hanging on a large COUNT.
 func (f Federation) HistoryProgress(ctx context.Context) (Progress, error) {
+	ctx, cancel := boundContext(ctx, historyProgressTimeout)
+	defer cancel()
 	result := Progress{Databases: []DatabaseProgress{}}
 	for _, database := range f.databases {
 		reader := DeclaredCorpus{Core: f.Core, Database: database}
