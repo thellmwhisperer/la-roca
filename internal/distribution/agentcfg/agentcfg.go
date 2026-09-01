@@ -240,12 +240,32 @@ func Install(name, path, executable string) (Outcome, error) {
 	}, true)
 }
 
-func InstallZcodeMCP(path, executable string, recordPreimage func(string, bool) error) (Outcome, error) {
+func InstallZcodeSessionStartHook(path, marker, command string, timeoutMs int,
+	record func(string, bool, bool) error) (Outcome, error) {
+	return edit(RuntimeZcode, path, func(previous string, existed bool) (string, error) {
+		next, err := DeclareZcodeSessionStartHook(previous, marker, command, timeoutMs)
+		if err != nil {
+			return "", err
+		}
+		next, createdEnabled, err := EnsureZcodeHooksEnabled(next)
+		if err != nil {
+			return "", err
+		}
+		if record != nil {
+			if err := record(previous, createdEnabled, existed); err != nil {
+				return "", err
+			}
+		}
+		return next, nil
+	}, nil, true)
+}
+
+func InstallZcodeMCP(path, executable string, recordPreimage func(string, bool, bool) error) (Outcome, error) {
 	if strings.TrimSpace(executable) == "" {
 		executable = "roca"
 	}
 	r := runtimes[RuntimeZcode]
-	return Edit(RuntimeZcode, path, func(text string) (string, error) {
+	return edit(RuntimeZcode, path, func(text string, existed bool) (string, error) {
 		preimage, err := ZcodeMCPPreimage(text)
 		if err != nil {
 			return "", err
@@ -255,12 +275,12 @@ func InstallZcodeMCP(path, executable string, recordPreimage func(string, bool) 
 			return "", err
 		}
 		if recordPreimage != nil {
-			if err := recordPreimage(preimage, configured); err != nil {
+			if err := recordPreimage(preimage, configured, existed); err != nil {
 				return "", err
 			}
 		}
 		return declare(r, text, executable)
-	}, true)
+	}, nil, true)
 }
 
 // Uninstall withdraws Roca's entry with the bounded empty-container behavior
@@ -403,7 +423,9 @@ func Status(name, path string) (Report, error) {
 // guarantees. Two edit paths would create two sets of ways to lose a file.
 func Edit(name, path string, transform func(string) (string, error),
 	createMissing bool) (Outcome, error) {
-	return edit(name, path, transform, nil, createMissing)
+	return edit(name, path, func(text string, _ bool) (string, error) {
+		return transform(text)
+	}, nil, createMissing)
 }
 
 // EditWithBackup applies a surgical edit while allowing the recovery copy to
@@ -411,7 +433,9 @@ func Edit(name, path string, transform func(string) (string, error),
 // to make a deliberately non-byte-exact, secret-free backup.
 func EditWithBackup(name, path string, transform, backupTransform func(string) (string, error),
 	createMissing bool) (Outcome, error) {
-	return edit(name, path, transform, backupTransform, createMissing)
+	return edit(name, path, func(text string, _ bool) (string, error) {
+		return transform(text)
+	}, backupTransform, createMissing)
 }
 
 // Rewrite transforms an existing file in place without creating a backup or
@@ -435,8 +459,8 @@ func Rewrite(path string, transform func(string) (string, error)) error {
 	return securefile.Replace(path, []byte(next), previous)
 }
 
-func edit(name, path string, transform, backupTransform func(string) (string, error),
-	createMissing bool) (Outcome, error) {
+func edit(name, path string, transform func(string, bool) (string, error),
+	backupTransform func(string) (string, error), createMissing bool) (Outcome, error) {
 	outcome := Outcome{Runtime: name, Path: path}
 
 	previous, err := os.ReadFile(path)
@@ -449,7 +473,7 @@ func edit(name, path string, transform, backupTransform func(string) (string, er
 		return outcome, fmt.Errorf("read %s: %w", path, err)
 	}
 
-	next, err := transform(string(previous))
+	next, err := transform(string(previous), previous != nil)
 	if err != nil {
 		return outcome, fmt.Errorf("%s: %w", path, err)
 	}

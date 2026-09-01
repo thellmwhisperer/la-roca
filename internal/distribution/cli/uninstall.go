@@ -547,6 +547,47 @@ type zcodePurgeGroup struct {
 	hooks  []artifact.Entry
 }
 
+func zcodeMCPContinuity(config string, entry artifact.Entry) (bool, error) {
+	if entry.Executable == "" {
+		return false, nil
+	}
+	return agentcfg.ZcodeMCPMatches(config, entry.Executable)
+}
+
+func zcodeHookContinuity(config string, entry artifact.Entry) (bool, error) {
+	configBody, err := os.ReadFile(config)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	next, err := agentcfg.DeclareZcodeSessionStartHook(string(configBody), zcodeSessionStartMarker,
+		zcodeOwnedHookCommand(entry.Path), 15000)
+	if err != nil || next != string(configBody) {
+		return false, err
+	}
+	expected, err := zcodeWrapperExpectedFromEntry(entry)
+	if err != nil {
+		return false, err
+	}
+	info, err := os.Lstat(entry.Path)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !info.Mode().IsRegular() {
+		return false, nil
+	}
+	body, err := os.ReadFile(entry.Path)
+	if err != nil {
+		return false, err
+	}
+	return string(body) == string(expected), nil
+}
+
 func (env *cliEnv) purgeRegisteredZcodeIntegrations(report *lifecycle.Report, registry artifact.Registry) ([]agentcfg.Outcome, map[string]bool, map[string]bool) {
 	groups := map[string]*zcodePurgeGroup{}
 	mcpPaths := map[string]bool{}
@@ -592,9 +633,35 @@ func (env *cliEnv) purgeRegisteredZcodeIntegrations(report *lifecycle.Report, re
 		}
 		groupErr := func() (err error) {
 			defer func() { err = errors.Join(err, stableRelease()) }()
-			aggregate := artifact.Entry{}
-			wrappers := make([]string, 0, len(group.hooks))
+			liveHooks := make([]artifact.Entry, 0, len(group.hooks))
 			for _, entry := range group.hooks {
+				continuous, continuityErr := zcodeHookContinuity(config, entry)
+				if !continuous {
+					if unregisterErr := env.unregisterArtifactEntry(entry); unregisterErr != nil {
+						return errors.Join(continuityErr, unregisterErr)
+					}
+					failed(report, "retained ZCode hook artifacts at %s because managed continuity is absent: %v",
+						config, continuityErr)
+					continue
+				}
+				liveHooks = append(liveHooks, entry)
+			}
+			liveMCP := make([]artifact.Entry, 0, len(group.mcp))
+			for _, entry := range group.mcp {
+				continuous, continuityErr := zcodeMCPContinuity(config, entry)
+				if !continuous {
+					if unregisterErr := env.unregisterArtifactEntry(entry); unregisterErr != nil {
+						return errors.Join(continuityErr, unregisterErr)
+					}
+					failed(report, "retained ZCode MCP artifacts at %s because managed continuity is absent: %v",
+						config, continuityErr)
+					continue
+				}
+				liveMCP = append(liveMCP, entry)
+			}
+			aggregate := artifact.Entry{}
+			wrappers := make([]string, 0, len(liveHooks))
+			for _, entry := range liveHooks {
 				expected, expectedErr := zcodeWrapperExpectedFromEntry(entry)
 				if expectedErr != nil {
 					return expectedErr
@@ -614,7 +681,7 @@ func (env *cliEnv) purgeRegisteredZcodeIntegrations(report *lifecycle.Report, re
 				aggregateZcodeProvenance(&aggregate, entry)
 				wrappers = append(wrappers, entry.Path)
 			}
-			for _, entry := range group.mcp {
+			for _, entry := range liveMCP {
 				preimage, preimageErr := zcodeMCPPreimageFromEntry(entry)
 				if preimageErr != nil {
 					return preimageErr
@@ -632,7 +699,7 @@ func (env *cliEnv) purgeRegisteredZcodeIntegrations(report *lifecycle.Report, re
 			if err := cleanupCreatedZcodePaths(aggregate, config, wrappers); err != nil {
 				return err
 			}
-			for _, entry := range append(append([]artifact.Entry{}, group.hooks...), group.mcp...) {
+			for _, entry := range append(append([]artifact.Entry{}, liveHooks...), liveMCP...) {
 				if err := env.unregisterArtifactEntry(entry); err != nil {
 					return err
 				}

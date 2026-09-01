@@ -252,6 +252,50 @@ func TestZcodeHookRoundTripPreservesEmptySessionStartWhitespace(t *testing.T) {
 	}
 }
 
+func TestZcodeHookReinstallCollapsesManagedDuplicates(t *testing.T) {
+	marker := "roca_session_start_marker"
+	installed, err := agentcfg.DeclareZcodeSessionStartHook(
+		`{}`, marker, "/old-wrapper", 15000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal([]byte(installed), &document); err != nil {
+		t.Fatal(err)
+	}
+	events := document["hooks"].(map[string]any)["events"].(map[string]any)
+	groups := events["SessionStart"].([]any)
+	events["SessionStart"] = append(groups, groups[0])
+	duplicated, err := json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reconciled, err := agentcfg.DeclareZcodeSessionStartHook(
+		string(duplicated), marker, "/new-wrapper", 15000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(reconciled), &document); err != nil {
+		t.Fatal(err)
+	}
+	groups = document["hooks"].(map[string]any)["events"].(map[string]any)["SessionStart"].([]any)
+	if len(groups) != 1 {
+		t.Fatalf("managed SessionStart groups = %d", len(groups))
+	}
+	hooks := groups[0].(map[string]any)["hooks"].([]any)
+	if command := hooks[0].(map[string]any)["command"]; command != "/new-wrapper" {
+		t.Fatalf("reconciled command = %v", command)
+	}
+	withdrawn, err := agentcfg.RemoveZcodeSessionStartHook(reconciled, marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	document = nil
+	if err := json.Unmarshal([]byte(withdrawn), &document); err != nil || len(document) != 0 {
+		t.Fatalf("merged hook ownership did not restore empty config: %s, err=%v", withdrawn, err)
+	}
+}
+
 func TestZcodeEditorsRejectTrailingGarbage(t *testing.T) {
 	invalid := `{} trailing`
 	if _, err := agentcfg.DeclareZcodeSessionStartHook(invalid, "marker", "/bin/hook", 15000); err == nil {
@@ -302,7 +346,7 @@ func TestZcodeMCPPreimageUsesComparedInstallSnapshot(t *testing.T) {
 	}
 	concurrent := `{"mcp":{"servers":{}}}`
 	var recorded string
-	_, err := agentcfg.InstallZcodeMCP(path, "roca", func(preimage string, _ bool) error {
+	_, err := agentcfg.InstallZcodeMCP(path, "roca", func(preimage string, _, _ bool) error {
 		recorded = preimage
 		return os.WriteFile(path, []byte(concurrent), 0o600)
 	})
@@ -314,6 +358,58 @@ func TestZcodeMCPPreimageUsesComparedInstallSnapshot(t *testing.T) {
 	}
 	if got := read(t, path); got != concurrent {
 		t.Fatalf("concurrent config changed: got %s", got)
+	}
+}
+
+func TestZcodeInstallSnapshotsFileExistence(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		prepare func(string) error
+		install func(string, func(bool)) error
+		want    bool
+	}{
+		{
+			name:    "MCP existing empty file",
+			prepare: func(path string) error { return os.WriteFile(path, nil, 0o600) },
+			install: func(path string, observed func(bool)) error {
+				_, err := agentcfg.InstallZcodeMCP(path, "roca", func(_ string, _, existed bool) error {
+					observed(existed)
+					return nil
+				})
+				return err
+			},
+			want: true,
+		},
+		{
+			name:    "hook missing file",
+			prepare: func(string) error { return nil },
+			install: func(path string, observed func(bool)) error {
+				_, err := agentcfg.InstallZcodeSessionStartHook(path, "marker", "/wrapper", 15000,
+					func(_ string, createdEnabled, existed bool) error {
+						if !createdEnabled {
+							t.Fatal("missing hook config did not create hooks.enabled")
+						}
+						observed(existed)
+						return nil
+					})
+				return err
+			},
+			want: false,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.json")
+			if err := test.prepare(path); err != nil {
+				t.Fatal(err)
+			}
+			observed := !test.want
+			if err := test.install(path, func(value bool) { observed = value }); err != nil {
+				t.Fatal(err)
+			}
+			if observed != test.want {
+				t.Fatalf("observed existence = %v, want %v", observed, test.want)
+			}
+		})
 	}
 }
 

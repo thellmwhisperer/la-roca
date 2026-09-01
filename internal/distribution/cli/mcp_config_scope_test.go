@@ -125,7 +125,7 @@ func TestZcodeMCPStateRollbackPreservesConcurrentRegistryEntries(t *testing.T) {
 	home := skillTestHome(t)
 	env := &cliEnv{build: Build{Version: "test"}}
 	path := filepath.Join(home, "zcode.json")
-	rollback, err := env.recordZcodeMCPPreimage(path, agentcfg.ZcodeMCPPreimageMCPServers, false)
+	rollback, err := env.recordZcodeMCPPreimage(path, "/bin/roca", agentcfg.ZcodeMCPPreimageMCPServers, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -271,7 +271,7 @@ func TestZcodePurgeDiscoversRegistryUnderLifecycleLock(t *testing.T) {
 	if _, err := agentcfg.InstallZcodeMCP(custom, filepath.Join(home, "roca"), nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := env.recordZcodeMCPPreimage(custom, agentcfg.ZcodeMCPPreimageMCPServers, false, preimage); err != nil {
+	if _, err := env.recordZcodeMCPPreimage(custom, filepath.Join(home, "roca"), agentcfg.ZcodeMCPPreimageMCPServers, false, preimage); err != nil {
 		t.Fatal(err)
 	}
 	if err := release(); err != nil {

@@ -206,23 +206,62 @@ func (env *cliEnv) installZcodeMCP(path, executable string) (agentcfg.Outcome, e
 }
 
 func (env *cliEnv) installZcodeMCPLocked(path, executable string) (outcome agentcfg.Outcome, err error) {
-	pathPreimage, err := zcodeMCPPathPreimage(path)
+	pathPreimage := zcodeMCPPathState{}
+	root := filepath.Dir(filepath.Dir(path))
+	pathPreimage.createdRoot, err = ensureZcodeDirectory(root)
+	if err == nil {
+		pathPreimage.createdConfigDir, err = ensureZcodeDirectory(filepath.Dir(path))
+	}
 	if err != nil {
+		err = errors.Join(err, rollbackCreatedZcodeMCPPaths(pathPreimage, path))
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: path}, err
 	}
 	var rollback func() error
 	outcome, err = agentcfg.InstallZcodeMCP(path, executable,
-		func(preimage string, configured bool) error {
-			rollback, err = env.recordZcodeMCPPreimage(path, preimage, configured, pathPreimage)
+		func(preimage string, configured, existed bool) error {
+			pathPreimage.createdConfig = !existed
+			rollback, err = env.recordZcodeMCPPreimage(path, executable, preimage, configured, pathPreimage)
 			return err
 		})
-	if err != nil && rollback != nil {
-		published, matchErr := agentcfg.ZcodeMCPMatches(path, executable)
-		if !published {
-			err = errors.Join(err, matchErr, rollback(), rollbackCreatedZcodeMCPPaths(pathPreimage, path))
+	if err != nil {
+		if rollback != nil {
+			published, matchErr := agentcfg.ZcodeMCPMatches(path, executable)
+			if published {
+				return outcome, err
+			}
+			err = errors.Join(err, matchErr, rollback())
 		}
+		cleanup := pathPreimage
+		cleanup.createdConfig = false
+		err = errors.Join(err, rollbackCreatedZcodeMCPPaths(cleanup, path))
 	}
 	return outcome, err
+}
+
+func ensureZcodeDirectory(path string) (bool, error) {
+	info, err := os.Lstat(path)
+	if err == nil {
+		if !info.IsDir() {
+			return false, fmt.Errorf("refuse non-directory ZCode path %s", path)
+		}
+		return false, nil
+	}
+	if !os.IsNotExist(err) {
+		return false, err
+	}
+	if err := os.Mkdir(path, 0o700); err == nil {
+		return true, nil
+	} else if !os.IsExist(err) {
+		return false, err
+	}
+	info, err = os.Lstat(path)
+	if err != nil {
+		return false, err
+	}
+	if !info.IsDir() {
+		return false, fmt.Errorf("refuse non-directory ZCode path %s", path)
+	}
+	return false, nil
 }
 
 func (env *cliEnv) lockManagedZcodeLifecycle() (func() error, error) {
@@ -239,7 +278,7 @@ func (env *cliEnv) lockManagedZcodeLifecycle() (func() error, error) {
 	return securefile.Lock(paths.Artifacts + ".zcode.lock")
 }
 
-func (env *cliEnv) recordZcodeMCPPreimage(path, preimage string, configured bool, pathStates ...zcodeMCPPathState) (func() error, error) {
+func (env *cliEnv) recordZcodeMCPPreimage(path, executable, preimage string, configured bool, pathStates ...zcodeMCPPathState) (func() error, error) {
 	paths, err := env.resolvePaths()
 	if err != nil {
 		return nil, err
@@ -247,7 +286,7 @@ func (env *cliEnv) recordZcodeMCPPreimage(path, preimage string, configured bool
 	transaction := artifact.Entry{
 		Kind: artifactKindMCP, Runtime: agentcfg.RuntimeZcode, Path: path,
 		InstalledVersion: env.build.Version, AvailableVersion: env.build.Version,
-		Format: zcodeMCPPreimageFormat + preimage,
+		Format: zcodeMCPPreimageFormat + preimage, Executable: executable,
 	}
 	if len(pathStates) > 0 {
 		transaction.CreatedRoot = pathStates[0].createdRoot

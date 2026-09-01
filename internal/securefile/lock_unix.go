@@ -22,9 +22,11 @@ func lock(path string, flags int) (func() error, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := file.Chmod(0o600); err != nil {
-		file.Close()
-		return nil, err
+	if flags&os.O_CREATE != 0 {
+		if err := file.Chmod(0o600); err != nil {
+			file.Close()
+			return nil, err
+		}
 	}
 	if err := unix.Flock(int(file.Fd()), unix.LOCK_EX); err != nil {
 		file.Close()
