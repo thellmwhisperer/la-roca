@@ -1224,6 +1224,50 @@ func TestFullUninstallRetainsBinaryForUnverifiedZcodeHook(t *testing.T) {
 	}
 }
 
+func TestFullUninstallRetainsBinaryForUnclaimedZcodeDeclarations(t *testing.T) {
+	for _, integration := range []string{"mcp", "hooks"} {
+		t.Run(integration, func(t *testing.T) {
+			home := skillTestHome(t)
+			installZcodeTestIntegration(t, integration, home)
+			config, wrapper := zcodeTestConfigAndWrapper(home)
+			before, err := os.ReadFile(config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Remove(filepath.Join(home, ".roca", "artifacts.json")); err != nil {
+				t.Fatal(err)
+			}
+			var output strings.Builder
+			env := &cliEnv{out: &output, errOut: &output}
+			if err := env.uninstall(uninstallCommand(env), strings.NewReader(""), false); err != nil {
+				t.Fatal(err)
+			}
+			running, err := os.Executable()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(output.String(), running) ||
+				!strings.Contains(output.String(), "integration withdrawal failed") {
+				t.Fatalf("unclaimed %s declaration did not retain the binary:\n%s", integration, output.String())
+			}
+			after, err := os.ReadFile(config)
+			if err != nil || string(after) != string(before) {
+				t.Fatalf("unclaimed %s declaration changed: err=%v", integration, err)
+			}
+			if integration == "hooks" {
+				if _, err := os.Stat(wrapper); err != nil {
+					t.Fatalf("unclaimed hook wrapper changed: %v", err)
+				}
+			} else {
+				matched, err := agentcfg.ZcodeMCPMatches(config, filepath.Join(home, "roca"))
+				if err != nil || !matched {
+					t.Fatalf("unclaimed MCP changed: matched=%v err=%v", matched, err)
+				}
+			}
+		})
+	}
+}
+
 func TestZcodePurgeKeepsOwnershipWhenConfigInspectionFails(t *testing.T) {
 	for _, integration := range []string{"mcp", "hooks"} {
 		t.Run(integration, func(t *testing.T) {

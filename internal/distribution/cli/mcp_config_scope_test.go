@@ -312,6 +312,12 @@ func TestNewerArtifactRegistryDegradesStatusAndBlocksUninstall(t *testing.T) {
 	if _, err := agentcfg.Install(agentcfg.RuntimeZcode, config, executable); err != nil {
 		t.Fatal(err)
 	}
+	runZcodeTestCLI(t, "skill", "install", "zcode")
+	skillPath := filepath.Join(home, ".zcode", "skills", "roca", "SKILL.md")
+	skillBefore, err := os.ReadFile(skillPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	registryPath := filepath.Join(home, ".roca", "artifacts.json")
 	writeFile(t, registryPath, `{"schema":3,"artifacts":[]}`)
 	env := &cliEnv{out: io.Discard, errOut: io.Discard}
@@ -337,6 +343,15 @@ func TestNewerArtifactRegistryDegradesStatusAndBlocksUninstall(t *testing.T) {
 		if owned == registryPath {
 			t.Fatal("destructive purge planning claimed a newer ownership registry")
 		}
+	}
+	report := lifecycle.Report{Purged: true}
+	env.withdrawTheIntegrations(&report, false)
+	if len(report.Errors) == 0 {
+		t.Fatal("full uninstall accepted newer ownership schema")
+	}
+	skillAfter, err := os.ReadFile(skillPath)
+	if err != nil || string(skillAfter) != string(skillBefore) {
+		t.Fatalf("newer ownership schema did not preserve skill: err=%v", err)
 	}
 }
 
