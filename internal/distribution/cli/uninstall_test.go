@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -222,22 +223,19 @@ func TestPurgeReconciliationKeepsTheOriginalReasonForAPath(t *testing.T) {
 	}
 }
 
-func TestFullPurgeRetainsZcodeLifecycleLock(t *testing.T) {
+func TestFullPurgeRemovesZcodeLifecycleLockAfterWithdrawal(t *testing.T) {
 	home := t.TempDir()
 	isolateRuntimeDirs(t, home)
 	paths := resolvedIn(t, home)
-	var out strings.Builder
-	env := &cliEnv{out: &out, errOut: &out}
+	env := &cliEnv{out: io.Discard, errOut: io.Discard}
 	if err := env.uninstall(uninstallCommand(env), strings.NewReader(""), true); err != nil {
 		t.Fatal(err)
 	}
-	lockPath := paths.Artifacts + ".lock"
-	if info, err := os.Lstat(lockPath); err != nil || !info.Mode().IsRegular() {
-		t.Fatalf("stable ZCode lifecycle lock: info=%v err=%v", info, err)
+	if _, err := os.Lstat(paths.Artifacts + ".lock"); !os.IsNotExist(err) {
+		t.Fatalf("ZCode lifecycle lock survived purge: %v", err)
 	}
-	if !strings.Contains(out.String(), lockPath) ||
-		!strings.Contains(out.String(), "concurrent ZCode operations remain serialized") {
-		t.Fatalf("retained lifecycle lock was not reported:\n%s", out.String())
+	if _, err := os.Lstat(dirOf(paths.DB)); !os.IsNotExist(err) {
+		t.Fatalf("data directory survived purge: %v", err)
 	}
 }
 
