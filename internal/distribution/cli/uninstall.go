@@ -240,7 +240,7 @@ func failed(report *lifecycle.Report, format string, args ...any) {
 // one such line for every supported runtime would be noise.
 func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool) []agentcfg.Outcome {
 	var outcomes []agentcfg.Outcome
-	if purge && !env.zcodeLifecycleLocked {
+	if !env.zcodeLifecycleLocked {
 		release, err := env.lockManagedZcodeLifecycle()
 		if err != nil {
 			failed(report, "lock ZCode lifecycle: %v", err)
@@ -554,7 +554,7 @@ func zcodeMCPContinuity(config string, entry artifact.Entry) (bool, error) {
 	return agentcfg.ZcodeMCPMatches(config, entry.Executable)
 }
 
-func zcodeHookContinuity(config string, entry artifact.Entry) (bool, error) {
+func zcodeHookDeclarationContinuity(config string, entry artifact.Entry) (bool, error) {
 	configBody, err := os.ReadFile(config)
 	if os.IsNotExist(err) {
 		return false, nil
@@ -564,9 +564,10 @@ func zcodeHookContinuity(config string, entry artifact.Entry) (bool, error) {
 	}
 	next, err := agentcfg.DeclareZcodeSessionStartHook(string(configBody), zcodeSessionStartMarker,
 		zcodeOwnedHookCommand(entry.Path), 15000)
-	if err != nil || next != string(configBody) {
-		return false, err
-	}
+	return err == nil && next == string(configBody), err
+}
+
+func zcodeWrapperContinuity(entry artifact.Entry) (bool, error) {
 	expected, err := zcodeWrapperExpectedFromEntry(entry)
 	if err != nil {
 		return false, err
@@ -634,14 +635,21 @@ func (env *cliEnv) purgeRegisteredZcodeIntegrations(report *lifecycle.Report, re
 		groupErr := func() (err error) {
 			defer func() { err = errors.Join(err, stableRelease()) }()
 			liveHooks := make([]artifact.Entry, 0, len(group.hooks))
+			withdrawOnlyHooks := make([]artifact.Entry, 0, len(group.hooks))
 			for _, entry := range group.hooks {
-				continuous, continuityErr := zcodeHookContinuity(config, entry)
-				if !continuous {
+				declared, declarationErr := zcodeHookDeclarationContinuity(config, entry)
+				if !declared {
 					if unregisterErr := env.unregisterArtifactEntry(entry); unregisterErr != nil {
-						return errors.Join(continuityErr, unregisterErr)
+						return errors.Join(declarationErr, unregisterErr)
 					}
-					failed(report, "retained ZCode hook artifacts at %s because managed continuity is absent: %v",
-						config, continuityErr)
+					failed(report, "retained ZCode hook artifacts at %s because managed declaration continuity is absent: %v",
+						config, declarationErr)
+					continue
+				}
+				continuous, continuityErr := zcodeWrapperContinuity(entry)
+				if !continuous {
+					withdrawOnlyHooks = append(withdrawOnlyHooks, entry)
+					failed(report, "retained uncertain ZCode hook artifacts at %s: %v", config, continuityErr)
 					continue
 				}
 				liveHooks = append(liveHooks, entry)
@@ -658,6 +666,24 @@ func (env *cliEnv) purgeRegisteredZcodeIntegrations(report *lifecycle.Report, re
 					continue
 				}
 				liveMCP = append(liveMCP, entry)
+			}
+			for _, entry := range withdrawOnlyHooks {
+				expected, _ := zcodeWrapperExpectedFromEntry(entry)
+				outcome, warning, uninstallErr := uninstallZcodeHandoffHookUnlocked(
+					config, entry.Path, expected, entry.CreatedHooksEnabled)
+				if warning != "" {
+					fmt.Fprintln(env.errOut, warning)
+				}
+				if uninstallErr != nil {
+					return fmt.Errorf("withdraw the ZCode handoff hook from %s: %w", config, uninstallErr)
+				}
+				if outcome.Changed {
+					outcomes = append(outcomes, outcome)
+				}
+				removeRecoveryBackups(report, config)
+				if err := env.unregisterArtifactEntry(entry); err != nil {
+					return err
+				}
 			}
 			aggregate := artifact.Entry{}
 			wrappers := make([]string, 0, len(liveHooks))
