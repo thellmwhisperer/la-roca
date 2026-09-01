@@ -114,6 +114,7 @@ func TestExportConversationFingerprintIncludesParserRevision(t *testing.T) {
 		parsers.KindClaudeWebProjects,
 		parsers.KindClaudeWebDesignChats,
 		parsers.KindChatGPTWebConversations,
+		parsers.KindChatGPTCodex,
 	} {
 		t.Run(string(kind), func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "conversations.json")
