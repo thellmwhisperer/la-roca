@@ -156,8 +156,10 @@ func TestZcodeHookCommandExecutesWhenWrapperPathContainsSpaces(t *testing.T) {
 	if err := os.WriteFile(binary, []byte("#!/bin/sh\nprintf '%s\\n' '{\"additionalContext\":\"space-safe\"}'\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := installZcodeHandoffHook(config, wrapper, binary); err != nil {
+	if _, warning, err := installZcodeHandoffHook(config, wrapper, binary); err != nil {
 		t.Fatal(err)
+	} else if !strings.Contains(warning, "installed but inactive") {
+		t.Fatalf("fresh ZCode install warning = %q", warning)
 	}
 	body, err := os.ReadFile(config)
 	if err != nil {
@@ -225,33 +227,10 @@ func TestZcodeInstallPreservesOperatorHookUsingSameWrapper(t *testing.T) {
 	}
 }
 
-func TestZcodeHookRestoresMatchingInstallPreimage(t *testing.T) {
+func TestZcodeHookRefusesPreexistingOperatorWrapper(t *testing.T) {
 	home := t.TempDir()
 	config := filepath.Join(home, "config.json")
 	wrapper := filepath.Join(home, "hooks", "roca-handoff.sh")
-	if err := os.MkdirAll(filepath.Dir(wrapper), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	for _, original := range []string{"wrapper A\n", "wrapper B\n", "wrapper A\n"} {
-		if err := os.WriteFile(wrapper, []byte(original), 0o640); err != nil {
-			t.Fatal(err)
-		}
-		if _, _, err := installZcodeHandoffHook(config, wrapper, filepath.Join(home, "roca")); err != nil {
-			t.Fatal(err)
-		}
-		if _, _, err := uninstallZcodeHandoffHook(config, wrapper); err != nil {
-			t.Fatal(err)
-		}
-		body, err := os.ReadFile(wrapper)
-		if err != nil || string(body) != original {
-			t.Fatalf("restored wrapper = %q, want %q, err=%v", body, original, err)
-		}
-	}
-}
-
-func TestZcodeHookRestoresPreexistingWrapperAndKeepsItsBackup(t *testing.T) {
-	home := skillTestHome(t)
-	wrapper := filepath.Join(home, ".zcode", "hooks", "roca-handoff.sh")
 	original := []byte("#!/bin/sh\nprintf 'operator wrapper\\n'\n")
 	if err := os.MkdirAll(filepath.Dir(wrapper), 0o700); err != nil {
 		t.Fatal(err)
@@ -259,43 +238,16 @@ func TestZcodeHookRestoresPreexistingWrapperAndKeepsItsBackup(t *testing.T) {
 	if err := os.WriteFile(wrapper, original, 0o640); err != nil {
 		t.Fatal(err)
 	}
-	binary := filepath.Join(home, "bin", "roca")
-	for _, full := range []bool{false, true} {
-		root := rootCommand(&cliEnv{out: io.Discard, build: Build{Version: "test"}})
-		root.SetArgs([]string{"hooks", "install", "zcode", "--executable", binary})
-		if err := root.Execute(); err != nil {
-			t.Fatal(err)
-		}
-		provenanceBody, err := os.ReadFile(wrapper + ".roca.state.json")
-		if err != nil {
-			t.Fatal(err)
-		}
-		var provenance zcodeWrapperProvenance
-		if err := json.Unmarshal(provenanceBody, &provenance); err != nil {
-			t.Fatal(err)
-		}
-		backup := provenance.Preimage.Backup
-		if backup == "" {
-			t.Fatal("operator wrapper backup was not recorded")
-		}
-		if full {
-			report := lifecycle.Report{Purged: true, Deleted: []string{}}
-			(&cliEnv{out: io.Discard, errOut: io.Discard}).withdrawTheIntegrations(&report, true)
-		} else {
-			root = rootCommand(&cliEnv{out: io.Discard, build: Build{Version: "test"}})
-			root.SetArgs([]string{"hooks", "uninstall", "zcode"})
-			if err := root.Execute(); err != nil {
-				t.Fatal(err)
-			}
-		}
-		body, err := os.ReadFile(wrapper)
-		if err != nil || string(body) != string(original) {
-			t.Fatalf("operator wrapper not restored: body=%q err=%v", body, err)
-		}
-		backupBody, err := os.ReadFile(backup)
-		if err != nil || string(backupBody) != string(original) {
-			t.Fatalf("operator backup did not survive uninstall: body=%q err=%v", backupBody, err)
-		}
+	if _, _, err := installZcodeHandoffHook(config, wrapper, filepath.Join(home, "roca")); err == nil ||
+		!strings.Contains(err.Error(), "refuse to replace unrecognized") {
+		t.Fatalf("install collision error = %v", err)
+	}
+	body, err := os.ReadFile(wrapper)
+	if err != nil || string(body) != string(original) {
+		t.Fatalf("operator wrapper changed: body=%q err=%v", body, err)
+	}
+	if _, err := os.Stat(config); !os.IsNotExist(err) {
+		t.Fatalf("refused install created config: %v", err)
 	}
 }
 
@@ -312,12 +264,21 @@ func TestZcodeWrapperInstallUsesCapturedPreimage(t *testing.T) {
 	if err := os.WriteFile(path, concurrent, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeZcodeFile(path, zcodeWrapper("/bin/roca"), state, 0o700); err == nil {
+	if err := writeZcodeWrapper(path, zcodeWrapper("/bin/roca"), state); err == nil {
 		t.Fatal("wrapper install accepted a stale preimage")
 	}
 	body, err := os.ReadFile(path)
 	if err != nil || string(body) != string(concurrent) {
 		t.Fatalf("wrapper install changed concurrent bytes: body=%q err=%v", body, err)
+	}
+}
+
+func TestFullUninstallDoesNotCreateUnselectedZcodeState(t *testing.T) {
+	home := skillTestHome(t)
+	report := lifecycle.Report{Purged: true, Deleted: []string{}}
+	(&cliEnv{out: io.Discard, errOut: io.Discard}).withdrawTheIntegrations(&report, false)
+	if _, err := os.Stat(filepath.Join(home, ".zcode")); !os.IsNotExist(err) {
+		t.Fatalf("uninstall created unselected ZCode state: %v", err)
 	}
 }
 

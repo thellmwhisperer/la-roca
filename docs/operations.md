@@ -73,9 +73,13 @@ claude-handoff`) to delete by hand.
 ZCode's required nested `hooks.events.SessionStart` shape. The command points
 to `~/.zcode/hooks/roca-handoff.sh`, an executable wrapper that emits
 `{"additionalContext":"..."}` JSON because ZCode discards plain-text hook
-stdout. Reinstalling is idempotent, and `roca hooks uninstall zcode` removes
-only that nested command and the wrapper while preserving neighbouring hooks.
-Neither init nor update installs or refreshes this integration.
+stdout. It does not change the operator-owned `hooks.enabled`; when that value
+is false or absent, install warns that the hook is inactive and says to set it
+to true. A pre-existing unrecognized wrapper is left untouched and blocks the
+install with a clear remedy. Reinstalling is idempotent, and `roca hooks
+uninstall zcode` removes only that nested command and the managed wrapper while
+preserving neighbouring hooks. Neither init nor update installs or refreshes
+this integration.
 
 Other harnesses can use the same client-side pattern: intercept the shell tool,
 read identity only from a harness-owned session source, and inject both flags;
