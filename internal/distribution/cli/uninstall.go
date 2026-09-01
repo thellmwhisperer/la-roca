@@ -642,9 +642,32 @@ func (env *cliEnv) purgeRegisteredZcodeIntegrations(report *lifecycle.Report, re
 		}
 		groupErr := func() (err error) {
 			defer func() { err = errors.Join(err, stableRelease()) }()
+			_, configErr := os.Lstat(config)
+			configMissing := os.IsNotExist(configErr)
+			if configErr != nil && !configMissing {
+				return configErr
+			}
 			liveHooks := make([]artifact.Entry, 0, len(group.hooks))
 			withdrawOnlyHooks := make([]artifact.Entry, 0, len(group.hooks))
 			for _, entry := range group.hooks {
+				if configMissing {
+					continuous, continuityErr := zcodeWrapperContinuity(entry)
+					wrapperMissing := false
+					if continuityErr == nil && !continuous {
+						_, wrapperErr := os.Lstat(entry.Path)
+						wrapperMissing = os.IsNotExist(wrapperErr)
+						if wrapperErr != nil && !wrapperMissing {
+							continuityErr = wrapperErr
+						}
+					}
+					if continuous || wrapperMissing {
+						liveHooks = append(liveHooks, entry)
+						continue
+					}
+					withdrawOnlyHooks = append(withdrawOnlyHooks, entry)
+					failed(report, "retained uncertain ZCode hook artifacts at %s: %v", config, continuityErr)
+					continue
+				}
 				declared, declarationErr := zcodeHookDeclarationPresent(config)
 				if !declared {
 					if unregisterErr := env.unregisterArtifactEntry(entry); unregisterErr != nil {
@@ -666,6 +689,10 @@ func (env *cliEnv) purgeRegisteredZcodeIntegrations(report *lifecycle.Report, re
 			}
 			liveMCP := make([]artifact.Entry, 0, len(group.mcp))
 			for _, entry := range group.mcp {
+				if configMissing {
+					liveMCP = append(liveMCP, entry)
+					continue
+				}
 				continuous, continuityErr := zcodeMCPContinuity(config, entry)
 				if !continuous {
 					if unregisterErr := env.unregisterArtifactEntry(entry); unregisterErr != nil {
