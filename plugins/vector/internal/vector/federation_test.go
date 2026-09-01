@@ -4,15 +4,34 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
+
+func TestFederationReportsSchedulerStallInsteadOfWorkerCancellation(t *testing.T) {
+	federation, _, _, _ := federationFixture(t)
+	previous := embeddingStallTimeout
+	embeddingStallTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { embeddingStallTimeout = previous })
+	federation.Core.Run = func(ctx context.Context, _ string, _ ...string) ([]byte, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_, err := federation.Ingest(ctx, "")
+	if !errors.Is(err, errIndexingStalled) {
+		t.Fatalf("federation ingest error = %v, want indexing stalled", err)
+	}
+}
 
 func TestFederationBuildsOwnedSidecarsAndGarbageCollectsByDelta(t *testing.T) {
 	federation, corpusPath, opsPath, embedder := federationFixture(t)
@@ -1135,5 +1154,62 @@ func TestProgressTreatsLegacySidecarIdentityAsUnknown(t *testing.T) {
 	if _, err := federation.HistoryProgress(context.Background()); err == nil ||
 		!strings.Contains(err.Error(), "progress identity is unavailable") {
 		t.Fatalf("legacy progress identity = %v", err)
+	}
+}
+
+func TestHistoryProgressPlacesADeadlineWhenTheCallerDidNot(t *testing.T) {
+	var gotDeadline bool
+	federation := Federation{
+		Core: CoreCLI{Executable: "roca", Run: func(ctx context.Context, _ string, _ ...string) ([]byte, error) {
+			_, gotDeadline = ctx.Deadline()
+			return nil, context.Canceled
+		}},
+		databases: []vectorDatabase{{
+			Plugin: "fixture", Database: "records", Alias: "main",
+			Path:   filepath.Join(t.TempDir(), "missing.db"),
+			Tables: []vectorTable{{Name: "records", IDColumn: "id", TextColumns: []string{"body"}}},
+		}},
+	}
+	if _, err := federation.HistoryProgress(context.Background()); err == nil {
+		t.Fatal("expected the bounded count to surface an error")
+	}
+	if !gotDeadline {
+		t.Fatal("status progress had no deadline; a large COUNT can hang forever")
+	}
+}
+
+func TestHistoryProgressReturnsWhenTheCountIsCancelled(t *testing.T) {
+	started := make(chan struct{})
+	federation := Federation{
+		Core: CoreCLI{Executable: "roca", Run: func(ctx context.Context, _ string, _ ...string) ([]byte, error) {
+			close(started)
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}},
+		databases: []vectorDatabase{{
+			Plugin: "fixture", Database: "records", Alias: "main",
+			Path:   filepath.Join(t.TempDir(), "missing.db"),
+			Tables: []vectorTable{{Name: "records", IDColumn: "id", TextColumns: []string{"body"}}},
+		}},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := federation.HistoryProgress(ctx)
+		errCh <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("history count was not started")
+	}
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatal("expected a deadline error, got success")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("HistoryProgress hung after its context expired")
 	}
 }

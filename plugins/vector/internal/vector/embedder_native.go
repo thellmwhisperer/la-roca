@@ -22,16 +22,45 @@ type Native struct {
 	ReadOnly  bool
 	// Writer is the backend policy for an indexing run: which occasion this
 	// pass is, plus whatever lever the operator pulled. Readers ignore it.
-	Writer   llamacpp.Policy
-	mu       sync.Mutex
-	engine   nativeEngine
-	backend  string
-	fallback string
+	Writer        llamacpp.Policy
+	ownershipOnce sync.Once
+	ownership     chan struct{}
+	engine        nativeEngine
+	backend       string
+	fallback      string
 }
 
 type nativeEngine interface {
 	Embed(string) ([]float32, int, error)
 	Close()
+}
+
+func (n *Native) acquireNative(ctx context.Context) error {
+	n.ownershipOnce.Do(func() {
+		n.ownership = make(chan struct{}, 1)
+	})
+	select {
+	case n.ownership <- struct{}{}:
+		if err := ctx.Err(); err != nil {
+			<-n.ownership
+			return err
+		}
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (n *Native) releaseNative() {
+	<-n.ownership
+}
+
+func (n *Native) nativeContextError(callerCtx context.Context) error {
+	if err := callerCtx.Err(); err != nil {
+		return err
+	}
+	n.record(telemetry.Record{Kind: telemetry.KindError, Err: "semantic search stalled"})
+	return fmt.Errorf("semantic search stalled while preparing embeddings")
 }
 
 func ConfiguredEmbedder(dataDir, stateDir string, events engine.Sink, tel *telemetry.Store,

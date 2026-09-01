@@ -3,7 +3,11 @@
 package vector
 
 import (
+	"context"
+	"errors"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/thellmwhisperer/la-roca-vector/internal/llamacpp"
 )
@@ -75,5 +79,48 @@ func TestNativeWriterPolicyDrivesTheRecordedReason(t *testing.T) {
 	}
 	if writer.Writer.Lever != llamacpp.LeverCPU {
 		t.Fatalf("lever = %q, want %q", writer.Writer.Lever, llamacpp.LeverCPU)
+	}
+}
+
+func TestNativeOwnershipDropsExpiredWaiters(t *testing.T) {
+	native := &Native{}
+	if err := native.acquireNative(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waiting, cancelWaiting := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancelWaiting()
+	if err := native.acquireNative(waiting); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expired waiter error = %v, want deadline exceeded", err)
+	}
+	native.releaseNative()
+	fresh, cancelFresh := context.WithTimeout(context.Background(), time.Second)
+	defer cancelFresh()
+	if err := native.acquireNative(fresh); err != nil {
+		t.Fatalf("fresh ownership after expired waiter: %v", err)
+	}
+	native.releaseNative()
+}
+
+func TestNativeContextErrorPreservesCallerCancellation(t *testing.T) {
+	native := &Native{}
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	deadline, cancelDeadline := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancelDeadline()
+	for name, test := range map[string]struct {
+		ctx  context.Context
+		want error
+	}{
+		"canceled": {ctx: canceled, want: context.Canceled},
+		"deadline": {ctx: deadline, want: context.DeadlineExceeded},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := native.nativeContextError(test.ctx); !errors.Is(err, test.want) {
+				t.Fatalf("native context error = %v, want %v", err, test.want)
+			}
+		})
+	}
+	if err := native.nativeContextError(context.Background()); !strings.Contains(err.Error(), "stalled") {
+		t.Fatalf("internal timeout error = %v, want stall", err)
 	}
 }

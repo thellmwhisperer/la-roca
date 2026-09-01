@@ -38,8 +38,9 @@ report:
 roca vector status
 ```
 
-It says whether a pass is reading right now, how much of the history it has
-read, and what stopped it if it stopped. A pass that stopped partway is not an
+The bounded status contract is in `docs/vector.md#the-one-command-path`.
+Report either the history fraction or the progress-unavailable diagnostic, and
+include the stop reason when there is one. A pass that stopped partway is not an
 empty product: the rows it already wrote are queryable, and word search covers
 the rest. Never report a machine with rows on disk as having nothing.
 
