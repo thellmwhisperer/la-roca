@@ -110,7 +110,7 @@ detect_platform() {
     Darwin) os=darwin ;;
     Linux)  os=linux ;;
     MINGW*|MSYS*|CYGWIN*|Windows_NT)
-      die "Windows is not installed by this script. Download roca-<version>-windows-x64.exe from https://github.com/$REPO/releases and put it on your PATH." ;;
+      die "On Windows, use WSL (first class): Linux binaries and this curl installer work as-is there. The native .exe is manual and untested; Windows-side agent paths (/mnt/c) are not auto-detected. To try native Windows anyway, download roca-<version>-windows-x64.exe from https://github.com/$REPO/releases and put it on your PATH." ;;
   esac
   case "$arch" in
     arm64|aarch64) arch=arm64 ;;

@@ -47,10 +47,12 @@ plugins reports that none were placed.
 | `--api URL` | `https://api.github.com`, or `ROCA_GITHUB_API` |
 | `--force` | Reinstall even when that version is already active |
 
-Windows is not installed by the shell script. Download the `.exe` release
-artefact, place it as `roca.exe` in a directory on `PATH`, and let that core
-binary extract its carried `roca-vector.exe` beside it. The exact native
-sequence is in
+On Windows, use WSL (first class): the Linux binaries and curl installer work
+as-is inside the distribution. Windows-side agent paths under `/mnt/c` are not
+auto-detected. The native `.exe` route is manual and untested; operators who
+choose it must download the release artefact, place it as `roca.exe` in a
+directory on `PATH`, and let that core binary extract its carried
+`roca-vector.exe` beside it. The exact native sequence is in
 [Local vector search](vector.md#windows-install). Windows keeps the previous
 local embeddings runtime until its own native lane exists. The same release also
 publishes `roca-vector-vX.Y.Z-windows-x64.tar.gz` for standalone use. Core
