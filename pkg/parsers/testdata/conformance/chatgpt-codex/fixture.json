@@ -1,0 +1,10 @@
+{
+  "parser": "chatgpt_codex",
+  "destination": "corpus",
+  "source": "codex.data",
+  "meta": {"Path":"/synthetic/chatgpt-codex/codex.data","SourceAgent":"codex-cloud"},
+  "want": {
+    "sessions": [{"id":"fixture-codex-cloud","source_agent":"codex-cloud","title":"Synthetic GitHub mention hatch","exchanges":[{"human_text":"Open the imaginary hatch.","agent_text":"The hatch is open."}]}],
+    "memories": []
+  }
+}

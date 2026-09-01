@@ -133,9 +133,16 @@ columns remain NULL. Epoch timestamps are normalized into the corpus's UTC ISO
 their own; they are counted, because how much a snapshot stated about an answer
 is what decides which of two snapshots of it keeps the provenance.
 
-`shared_conversations.json`, `codex.json`, and attachment files are counted in
-the ingest summary as out-of-scope exclusions and never warned about: Codex
-conversations are a source of their own and not part of this reading.
+`codex.json` is the cloud Codex companion of the same export. La Roca reads it
+under the `codex-cloud` source, distinct from local `~/.codex/sessions`
+rollouts, and stamps Codex CLI as the harness. The file states no timestamps
+in the mid-2026 shape; those columns stay empty rather than being inferred.
+When a cloud conversation and a local rollout share an identity, the writer
+keeps the richer row: the local rollout's model, provider, and times fill or
+win, and the cloud title fills if the session had none.
+
+`shared_conversations.json` and attachment files are counted in the ingest
+summary as out-of-scope exclusions and never warned about.
 `conversation_asset_file_names.json`, `chat.html`, and `ads.json` are expected
 companions of an export and are ignored outright. La Roca does not open
 attachment bytes.

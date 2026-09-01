@@ -321,7 +321,8 @@ func scanClaudeWebExports(roots Roots) []Target {
 }
 
 // scanChatGPTWebExports reads both generations of the export conversation
-// layout and accounts for the records that this build deliberately leaves out.
+// layout plus the Codex cloud companion, and accounts for the records that
+// this build deliberately leaves out.
 //
 // A declaration nobody can read and a directory whose layout nobody recognizes
 // are different problems with different remedies, so they are diagnosed apart
@@ -352,10 +353,9 @@ func scanChatGPTWebExports(roots Roots, plan *Plan) []Target {
 			case name == "shared_conversations.json":
 				target.ExclusionReason = "shared ChatGPT conversations are out of scope"
 			case name == "codex.json":
-				// The one companion that carries conversations of its own. Counting it
-				// as left out by design is not a warning, and it is the only signal an
-				// operator gets that a whole content file went unread.
-				target.ExclusionReason = "Codex conversations in a ChatGPT export are out of scope"
+				recognized = true
+				target.Kind = parsers.KindChatGPTCodex
+				target.SourceAgent = "codex-cloud"
 			case name == "conversation_asset_file_names.json" || name == "chat.html" ||
 				name == "ads.json":
 				continue

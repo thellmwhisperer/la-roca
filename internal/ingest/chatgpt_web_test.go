@@ -135,17 +135,17 @@ func TestDeclaredShardedChatGPTExportIngestsEveryShard(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Delta != (Tables{Sessions: 2, Exchanges: 3}) {
+	if result.Delta != (Tables{Sessions: 3, Exchanges: 4}) {
 		t.Fatalf("sharded export delta = %+v", result.Delta)
 	}
-	// The two shards are read; codex.json is the third file the scan counts, left
-	// out by design and reported as such rather than warned about or hidden.
-	if result.Scanned["chatgpt_web_export_files"] != 3 || result.FilesRead != 2 {
-		t.Fatalf("sharded files scanned/read = %d/%d, want 3/2",
+	// The two shards and codex.json are all read; companions that are still out
+	// of scope are ignored outright rather than excluded.
+	if result.Scanned["chatgpt_web_export_files"] != 3 || result.FilesRead != 3 {
+		t.Fatalf("sharded files scanned/read = %d/%d, want 3/3",
 			result.Scanned["chatgpt_web_export_files"], result.FilesRead)
 	}
-	if result.FilesExcluded != 1 || len(result.Warnings) != 0 {
-		t.Fatalf("companion accounting: excluded=%d warnings=%v, want 1 and none",
+	if result.FilesExcluded != 0 || len(result.Warnings) != 0 {
+		t.Fatalf("companion accounting: excluded=%d warnings=%v, want 0 and none",
 			result.FilesExcluded, result.Warnings)
 	}
 	for text, wantModel := range map[string]string{
@@ -184,11 +184,11 @@ func TestOverlappingChatGPTExportsKeepTheRicherLegacyRows(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if got := countRows(t, db.SQL(), "sessions"); got != 2 {
-				t.Fatalf("sessions = %d, want 2", got)
+			if got := countRows(t, db.SQL(), "sessions WHERE source_agent = 'chatgpt-web'"); got != 2 {
+				t.Fatalf("chatgpt-web sessions = %d, want 2", got)
 			}
-			if got := countRows(t, db.SQL(), "exchanges"); got != 3 {
-				t.Fatalf("exchanges = %d, want 3", got)
+			if got := countRows(t, db.SQL(), "exchanges e JOIN sessions s ON s.session_id = e.session_id WHERE s.source_agent = 'chatgpt-web'"); got != 3 {
+				t.Fatalf("chatgpt-web exchanges = %d, want 3", got)
 			}
 			expectRicherLegacyModels(t, db.SQL())
 		})
