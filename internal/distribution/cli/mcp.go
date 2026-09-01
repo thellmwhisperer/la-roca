@@ -186,7 +186,7 @@ func (env *cliEnv) installZcodeMCP(path, executable string) (outcome agentcfg.Ou
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: path}, err
 	}
-	release, err := env.lockZcodeMCPLifecycle()
+	release, err := env.lockManagedZcodeLifecycle()
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: path}, err
 	}
@@ -210,7 +210,7 @@ func (env *cliEnv) installZcodeMCP(path, executable string) (outcome agentcfg.Ou
 	return outcome, err
 }
 
-func (env *cliEnv) lockZcodeMCPLifecycle() (func() error, error) {
+func (env *cliEnv) lockManagedZcodeLifecycle() (func() error, error) {
 	paths, err := env.resolvePaths()
 	if err != nil {
 		return nil, err
@@ -218,7 +218,7 @@ func (env *cliEnv) lockZcodeMCPLifecycle() (func() error, error) {
 	if err := os.MkdirAll(filepath.Dir(paths.Artifacts), 0o700); err != nil {
 		return nil, err
 	}
-	return securefile.Lock(paths.Artifacts + ".mcp.lock")
+	return securefile.Lock(paths.Artifacts + ".zcode.lock")
 }
 
 func (env *cliEnv) recordZcodeMCPPreimage(path, preimage string, configured bool, pathStates ...zcodeMCPPathState) (func() error, error) {
@@ -352,7 +352,7 @@ func (env *cliEnv) uninstallZcodeMCP(path string, finalize ...func(artifact.Entr
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: path}, err
 	}
-	release, err := env.lockZcodeMCPLifecycle()
+	release, err := env.lockManagedZcodeLifecycle()
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: path}, err
 	}

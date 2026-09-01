@@ -265,7 +265,7 @@ func TestZcodeFreshHookInstallEnablesHooksAndReportsIt(t *testing.T) {
 	if err != nil || !declared || !enabled {
 		t.Fatalf("hooks.enabled: declared=%v enabled=%v err=%v", declared, enabled, err)
 	}
-	if !strings.Contains(notices.String(), "set hooks.enabled to true") {
+	if !strings.Contains(notices.String(), "enabled ZCode hooks by adding hooks.enabled: true") {
 		t.Fatalf("enablement notice = %q", notices.String())
 	}
 	root = rootCommand(&cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}})
@@ -276,6 +276,124 @@ func TestZcodeFreshHookInstallEnablesHooksAndReportsIt(t *testing.T) {
 	body, err = os.ReadFile(config)
 	if err != nil || strings.TrimSpace(string(body)) != "{}" {
 		t.Fatalf("created enablement survived uninstall: body=%q err=%v", body, err)
+	}
+}
+
+func TestZcodeCombinedMCPAndHookPurgeIsAggregated(t *testing.T) {
+	home := skillTestHome(t)
+	executable := filepath.Join(home, "roca")
+	for _, args := range [][]string{
+		{"mcp", "install", "zcode", "--executable", executable},
+		{"hooks", "install", "zcode", "--executable", executable},
+	} {
+		root := rootCommand(&cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}})
+		root.SetArgs(args)
+		if err := root.Execute(); err != nil {
+			t.Fatalf("install %v: %v", args, err)
+		}
+	}
+	report := lifecycle.Report{Purged: true, Deleted: []string{}}
+	(&cliEnv{out: io.Discard, errOut: io.Discard}).withdrawTheIntegrations(&report, true)
+	if len(report.Errors) != 0 {
+		t.Fatalf("aggregated purge errors = %v", report.Errors)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".zcode")); !os.IsNotExist(err) {
+		t.Fatalf("combined ZCode artifacts survived purge: %v", err)
+	}
+	registry, err := artifact.LoadRegistry(filepath.Join(home, ".roca", "artifacts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range registry.Entries {
+		if entry.Runtime == agentcfg.RuntimeZcode && (entry.Kind == artifactKindMCP || entry.Kind == artifactKindHook) {
+			t.Fatalf("stale ZCode ownership survived: %#v", entry)
+		}
+	}
+}
+
+func TestZcodeHookUninstallKeepsActivationForNeighboringHooks(t *testing.T) {
+	home := skillTestHome(t)
+	executable := filepath.Join(home, "roca")
+	root := rootCommand(&cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}})
+	root.SetArgs([]string{"hooks", "install", "zcode", "--executable", executable})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(home, ".zcode", "cli", "config.json")
+	body, err := os.ReadFile(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(body, &document); err != nil {
+		t.Fatal(err)
+	}
+	hooks := document["hooks"].(map[string]any)
+	events := hooks["events"].(map[string]any)
+	events["Other"] = []any{map[string]any{"hooks": []any{map[string]any{
+		"type": "command", "command": "operator-hook", "timeoutMs": float64(5000),
+	}}}}
+	body, err = json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root = rootCommand(&cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}})
+	root.SetArgs([]string{"hooks", "uninstall", "zcode"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	body, err = os.ReadFile(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	document = nil
+	if err := json.Unmarshal(body, &document); err != nil {
+		t.Fatal(err)
+	}
+	hooks = document["hooks"].(map[string]any)
+	if hooks["enabled"] != true {
+		t.Fatalf("neighboring hook was disabled: %s", body)
+	}
+	commands, err := agentcfg.ZcodeHookCommands(string(body))
+	if err != nil || !slices.Contains(commands, "operator-hook") {
+		t.Fatalf("operator hook changed: commands=%v err=%v", commands, err)
+	}
+}
+
+func TestZcodeHookPurgeReportsRetainedCreatedConfig(t *testing.T) {
+	home := skillTestHome(t)
+	root := rootCommand(&cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}})
+	root.SetArgs([]string{"hooks", "install", "zcode", "--executable", filepath.Join(home, "roca")})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(home, ".zcode", "cli", "config.json")
+	body, err := os.ReadFile(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(body, &document); err != nil {
+		t.Fatal(err)
+	}
+	document["operator"] = true
+	body, err = json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	report := lifecycle.Report{Purged: true, Deleted: []string{}}
+	(&cliEnv{out: io.Discard, errOut: io.Discard}).withdrawTheIntegrations(&report, true)
+	if !strings.Contains(strings.Join(report.Errors, "\n"), config) {
+		t.Fatalf("retained config was not reported: %v", report.Errors)
+	}
+	if body, err := os.ReadFile(config); err != nil || !strings.Contains(string(body), `"operator":true`) {
+		t.Fatalf("operator config changed: body=%q err=%v", body, err)
 	}
 }
 
