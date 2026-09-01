@@ -102,18 +102,18 @@ func ClearOwnedHooks(path string) error {
 	return writeOwned(path, owned)
 }
 
-func loadOwnedMCP(path string) []string {
+func loadOwnedMCP(path string) ([]string, error) {
 	owned, err := loadOwned(path)
 	if err != nil {
-		return nil
+		return nil, err
 	}
-	return owned.MCP
+	return owned.MCP, nil
 }
 
-func LoadOwnedHooks(path string) []string {
+func LoadOwnedHooks(path string) ([]string, error) {
 	owned, err := loadOwned(path)
 	if err != nil {
-		return nil
+		return nil, err
 	}
-	return owned.Hooks
+	return owned.Hooks, nil
 }

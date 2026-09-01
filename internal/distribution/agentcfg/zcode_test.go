@@ -103,6 +103,60 @@ func TestZcodeUninstallPrunesOnlyContainersThisInstallCreated(t *testing.T) {
 	}
 }
 
+func TestZcodeUninstallClearsStaleOwnershipBeforeOperatorContainersAppear(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	writeFile(t, path, "{}\n")
+	if _, err := agentcfg.Install(agentcfg.RuntimeZcode, path, "roca"); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, path, "{}\n")
+	if outcome, err := agentcfg.Uninstall(agentcfg.RuntimeZcode, path); err != nil {
+		t.Fatal(err)
+	} else if outcome.Changed {
+		t.Fatal("uninstall changed a config with no Roca server")
+	}
+	if _, err := os.Stat(path + ".roca-owned"); !os.IsNotExist(err) {
+		t.Fatalf("stale ownership survived explicit uninstall: %v", err)
+	}
+
+	before := "{\n  \"mcp\": {\n    \"servers\": {}\n  }\n}\n"
+	writeFile(t, path, before)
+	if _, err := agentcfg.Install(agentcfg.RuntimeZcode, path, "roca"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := agentcfg.Uninstall(agentcfg.RuntimeZcode, path); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(t, path); got != before {
+		t.Fatalf("stale ownership pruned operator containers:\n--- before ---\n%s\n--- after ---\n%s", before, got)
+	}
+}
+
+func TestZcodeUninstallRejectsUnreadableOwnershipBeforeEditingConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	writeFile(t, path, "{}\n")
+	if _, err := agentcfg.Install(agentcfg.RuntimeZcode, path, "roca"); err != nil {
+		t.Fatal(err)
+	}
+	before := read(t, path)
+	writeFile(t, path+".roca-owned", "{not-json\n")
+
+	outcome, err := agentcfg.Uninstall(agentcfg.RuntimeZcode, path)
+	if err == nil {
+		t.Fatal("uninstall accepted an unrecognized ownership sidecar")
+	}
+	if outcome.Changed {
+		t.Fatal("uninstall reported a config mutation after ownership preflight failed")
+	}
+	if got := read(t, path); got != before {
+		t.Fatalf("uninstall edited config before rejecting ownership:\n--- before ---\n%s\n--- after ---\n%s", before, got)
+	}
+	if got := read(t, path+".roca-owned"); got != "{not-json\n" {
+		t.Fatalf("uninstall edited unrecognized ownership: %s", got)
+	}
+}
+
 func writeFile(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
