@@ -161,6 +161,10 @@ func mcpStatusCommand(env *cliEnv) *cobra.Command {
 const zcodeMCPPreimageFormat = "zcode-mcp-preimage-v1:"
 
 func (env *cliEnv) installZcodeMCP(path, executable string) (outcome agentcfg.Outcome, err error) {
+	path, err = filepath.Abs(path)
+	if err != nil {
+		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: path}, err
+	}
 	release, err := env.lockZcodeMCPLifecycle()
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: path}, err
@@ -173,7 +177,11 @@ func (env *cliEnv) installZcodeMCP(path, executable string) (outcome agentcfg.Ou
 			return err
 		})
 	if err != nil && rollback != nil {
-		err = errors.Join(err, rollback())
+		report, statusErr := agentcfg.Status(agentcfg.RuntimeZcode, path)
+		published := statusErr == nil && report.State == agentcfg.StateConfigured && report.Instance == executable
+		if !published {
+			err = errors.Join(err, rollback())
+		}
 	}
 	return outcome, err
 }
@@ -210,8 +218,15 @@ func (env *cliEnv) recordZcodeMCPPreimage(path, preimage string, configured bool
 		registry.Upsert(transaction)
 		return true, nil
 	})
-	if err != nil || !changed {
-		return nil, err
+	if err != nil {
+		current, found, readErr := env.registeredArtifact(artifactKindMCP, agentcfg.RuntimeZcode, path)
+		if readErr != nil || !found || current != transaction {
+			return nil, errors.Join(err, readErr)
+		}
+		changed = true
+	}
+	if !changed {
+		return nil, nil
 	}
 	return func() error {
 		_, err := mutateArtifactRegistry(paths.Artifacts, func(registry *artifact.Registry) (bool, error) {
@@ -299,6 +314,10 @@ func (env *cliEnv) uninstallMCP(runtime, path string) (agentcfg.Outcome, error) 
 }
 
 func (env *cliEnv) uninstallZcodeMCP(path string) (outcome agentcfg.Outcome, err error) {
+	path, err = filepath.Abs(path)
+	if err != nil {
+		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: path}, err
+	}
 	release, err := env.lockZcodeMCPLifecycle()
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: path}, err
@@ -368,13 +387,17 @@ func configFileOf(runtime, declared string) (string, error) {
 		}
 	}
 	if declared != "" {
-		return declared, nil
+		return filepath.Abs(declared)
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("I do not know where your HOME is: name the file with --config")
 	}
-	return agentcfg.ConfigPath(runtime, home, os.Getenv)
+	path, err := agentcfg.ConfigPath(runtime, home, os.Getenv)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Abs(path)
 }
 
 func chosenExecutable(declared string) string {

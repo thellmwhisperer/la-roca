@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/artifact"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/agentcfg"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/lifecycle"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 )
@@ -209,8 +210,9 @@ func TestZcodeHookReinstallRepointsManagedWrapper(t *testing.T) {
 
 func TestFullUninstallWithdrawsRegisteredZcodeHome(t *testing.T) {
 	home := skillTestHome(t)
+	t.Chdir(home)
 	custom := filepath.Join(home, "custom-zcode")
-	t.Setenv("ZCODE_HOME", custom)
+	t.Setenv("ZCODE_HOME", "custom-zcode")
 	config := filepath.Join(custom, "cli", "config.json")
 	if err := os.MkdirAll(filepath.Dir(config), 0o700); err != nil {
 		t.Fatal(err)
@@ -244,6 +246,57 @@ func TestFullUninstallWithdrawsRegisteredZcodeHome(t *testing.T) {
 	}
 	if strings.Contains(string(body), "roca-handoff.sh") {
 		t.Fatalf("registered ZCode hook survived: %s", body)
+	}
+}
+
+func TestZcodeUnreadableHookKeepsOwnershipForRetry(t *testing.T) {
+	home := skillTestHome(t)
+	config := filepath.Join(home, ".zcode", "cli", "config.json")
+	if err := os.MkdirAll(filepath.Dir(config), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config, []byte(`{"hooks":{"enabled":true}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := rootCommand(&cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}})
+	root.SetArgs([]string{"hooks", "install", "zcode", "--executable", filepath.Join(home, "roca")})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config, []byte(`{broken`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root = rootCommand(&cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}})
+	root.SetArgs([]string{"hooks", "uninstall", "zcode"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	wrapper := filepath.Join(home, ".zcode", "hooks", "roca-handoff.sh")
+	registry, err := artifact.LoadRegistry(filepath.Join(home, ".roca", "artifacts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, found := registry.Find(artifactKindHook, agentcfg.RuntimeZcode, wrapper); !found {
+		t.Fatal("unreadable hook configuration lost retry ownership")
+	}
+	if _, err := os.Stat(wrapper); err != nil {
+		t.Fatalf("managed wrapper was not retained: %v", err)
+	}
+}
+
+func TestFullUninstallDoesNotCreateUnselectedZcodeLock(t *testing.T) {
+	home := skillTestHome(t)
+	config := filepath.Join(home, ".zcode", "cli", "config.json")
+	if err := os.MkdirAll(filepath.Dir(config), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config, []byte(`{"theme":"operator"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	report := lifecycle.Report{Purged: true, Deleted: []string{}}
+	(&cliEnv{out: io.Discard, errOut: io.Discard}).withdrawTheIntegrations(&report, false)
+	if _, err := os.Stat(filepath.Join(home, ".zcode", ".roca-hooks.lock")); !os.IsNotExist(err) {
+		t.Fatalf("unselected ZCode created a runtime lock: %v", err)
 	}
 }
 

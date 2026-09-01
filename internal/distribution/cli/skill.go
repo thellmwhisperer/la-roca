@@ -624,10 +624,11 @@ func zcodeRoot() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("I do not know where your HOME is")
 	}
+	root := filepath.Join(home, ".zcode")
 	if declared := os.Getenv("ZCODE_HOME"); declared != "" {
-		return agentcfg.Expand(declared, home), nil
+		root = agentcfg.Expand(declared, home)
 	}
-	return filepath.Join(home, ".zcode"), nil
+	return filepath.Abs(root)
 }
 
 func zcodeHookWrapperPath() (string, error) {
@@ -644,6 +645,41 @@ func zcodeHookConfigForWrapper(wrapper string) (string, error) {
 	}
 	root := filepath.Dir(filepath.Dir(wrapper))
 	return filepath.Join(root, "cli", "config.json"), nil
+}
+
+func zcodeManagedHookState(configPath string) (present, verified bool) {
+	body, err := os.ReadFile(configPath)
+	if os.IsNotExist(err) {
+		return false, true
+	}
+	if err != nil {
+		return false, false
+	}
+	next, err := agentcfg.RemoveZcodeSessionStartHook(string(body), zcodeSessionStartMarker)
+	if err != nil {
+		return false, false
+	}
+	return next != string(body), true
+}
+
+func zcodeManagedHookPresent(configPath string) bool {
+	present, _ := zcodeManagedHookState(configPath)
+	return present
+}
+
+func zcodeHookSelected(configPath, wrapperPath string) (bool, error) {
+	if _, err := os.Lstat(wrapperPath); err == nil {
+		return true, nil
+	} else if !os.IsNotExist(err) {
+		return false, err
+	}
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+	present, _ := zcodeManagedHookState(configPath)
+	return present, nil
 }
 
 const (
@@ -671,7 +707,10 @@ func (env *cliEnv) recordZcodeWrapperState(path, executable string) (func() erro
 		return true, nil
 	})
 	if err != nil {
-		return nil, err
+		current, found, readErr := env.registeredArtifact(artifactKindHook, agentcfg.RuntimeZcode, path)
+		if readErr != nil || !found || current != transaction {
+			return nil, errors.Join(err, readErr)
+		}
 	}
 	return func() error {
 		_, err := mutateArtifactRegistry(paths.Artifacts, func(registry *artifact.Registry) (bool, error) {
@@ -721,6 +760,14 @@ func (env *cliEnv) lockManagedZcodeHookLifecycle() (func() error, error) {
 }
 
 func (env *cliEnv) installManagedZcodeHandoffHook(configPath, wrapperPath, executable string) (outcome agentcfg.Outcome, warning string, err error) {
+	configPath, err = filepath.Abs(configPath)
+	if err != nil {
+		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
+	}
+	wrapperPath, err = filepath.Abs(wrapperPath)
+	if err != nil {
+		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
+	}
 	stableRelease, err := env.lockManagedZcodeHookLifecycle()
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
@@ -731,7 +778,7 @@ func (env *cliEnv) installManagedZcodeHandoffHook(configPath, wrapperPath, execu
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
 	defer func() { err = errors.Join(err, release()) }()
-	previous, _, _, err := env.zcodeWrapperExpected(wrapperPath)
+	previous, _, previousFound, err := env.zcodeWrapperExpected(wrapperPath)
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
@@ -741,7 +788,12 @@ func (env *cliEnv) installManagedZcodeHandoffHook(configPath, wrapperPath, execu
 	}
 	outcome, warning, err = installZcodeHandoffHookWithPrevious(configPath, wrapperPath, executable, previous)
 	if err != nil && rollback != nil {
-		err = errors.Join(err, rollback())
+		body, readErr := os.ReadFile(wrapperPath)
+		published := readErr == nil && string(body) == zcodeWrapper(executable) &&
+			(previousFound || zcodeManagedHookPresent(configPath))
+		if !published {
+			err = errors.Join(err, rollback())
+		}
 	}
 	if err == nil && warning != "" {
 		err = fmt.Errorf("ZCode hook installed but inactive in %s; set hooks.enabled to true to enable SessionStart", configPath)
@@ -751,6 +803,14 @@ func (env *cliEnv) installManagedZcodeHandoffHook(configPath, wrapperPath, execu
 }
 
 func (env *cliEnv) uninstallManagedZcodeHandoffHook(configPath, wrapperPath string) (outcome agentcfg.Outcome, warning string, err error) {
+	configPath, err = filepath.Abs(configPath)
+	if err != nil {
+		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
+	}
+	wrapperPath, err = filepath.Abs(wrapperPath)
+	if err != nil {
+		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
+	}
 	stableRelease, err := env.lockManagedZcodeHookLifecycle()
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
@@ -766,7 +826,8 @@ func (env *cliEnv) uninstallManagedZcodeHandoffHook(configPath, wrapperPath stri
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
 	outcome, warning, err = uninstallZcodeHandoffHookUnlocked(configPath, wrapperPath, expected)
-	if err == nil && found {
+	present, verified := zcodeManagedHookState(configPath)
+	if err == nil && found && verified && !present {
 		err = env.unregisterArtifactEntry(entry)
 	}
 	return outcome, warning, err
@@ -796,6 +857,9 @@ func installZcodeHandoffHookWithPrevious(configPath, wrapperPath, executable str
 			fmt.Errorf("refuse to replace operator-modified ZCode hook wrapper %s; move or remove it, then retry", wrapperPath)
 	}
 	if err := writeZcodeWrapper(wrapperPath, wrapper, state, previous); err != nil {
+		if body, readErr := os.ReadFile(wrapperPath); readErr == nil && string(body) == wrapper {
+			err = errors.Join(err, restoreZcodeWrapper(wrapperPath, state, []byte(wrapper)))
+		}
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
 	command := zcodeOwnedHookCommand(wrapperPath)
@@ -803,8 +867,10 @@ func installZcodeHandoffHookWithPrevious(configPath, wrapperPath, executable str
 		return agentcfg.DeclareZcodeSessionStartHook(previous, zcodeSessionStartMarker, command, 15000)
 	}, true)
 	if err != nil {
-		if restoreErr := restoreZcodeWrapper(wrapperPath, state, []byte(wrapper)); restoreErr != nil {
-			err = errors.Join(err, restoreErr)
+		if !zcodeManagedHookPresent(configPath) {
+			if restoreErr := restoreZcodeWrapper(wrapperPath, state, []byte(wrapper)); restoreErr != nil {
+				err = errors.Join(err, restoreErr)
+			}
 		}
 		return outcome, "", err
 	}

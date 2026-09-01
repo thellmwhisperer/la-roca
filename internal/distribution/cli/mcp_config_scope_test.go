@@ -77,6 +77,43 @@ func TestZcodeMCPStateRestoresContainerPreimage(t *testing.T) {
 	}
 }
 
+func TestZcodeMCPPersistsAbsoluteConfigPath(t *testing.T) {
+	home := skillTestHome(t)
+	first := t.TempDir()
+	t.Chdir(first)
+	before := `{"mcp":{}}`
+	if err := os.WriteFile("zcode.json", []byte(before), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := rootCommand(&cliEnv{out: io.Discard, build: Build{Version: "test"}})
+	root.SetArgs([]string{"mcp", "install", "zcode", "--config", "zcode.json", "--executable", filepath.Join(home, "roca")})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	absolute := filepath.Join(first, "zcode.json")
+	registry, err := artifact.LoadRegistry(filepath.Join(home, ".roca", "artifacts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, found := registry.Find(artifactKindMCP, agentcfg.RuntimeZcode, absolute); !found {
+		t.Fatalf("absolute MCP ownership path not recorded: %s", absolute)
+	}
+	second := t.TempDir()
+	t.Chdir(second)
+	report := lifecycle.Report{Purged: true}
+	(&cliEnv{out: io.Discard, errOut: io.Discard}).withdrawTheIntegrations(&report, false)
+	if len(report.Errors) != 0 {
+		t.Fatalf("full uninstall errors = %v", report.Errors)
+	}
+	body, err := os.ReadFile(absolute)
+	if err != nil || string(body) != before {
+		t.Fatalf("original relative config was not restored: body=%q err=%v", body, err)
+	}
+	if _, err := os.Stat(filepath.Join(second, "zcode.json")); !os.IsNotExist(err) {
+		t.Fatalf("uninstall targeted the new working directory: %v", err)
+	}
+}
+
 func TestZcodeMCPStateRollbackPreservesConcurrentRegistryEntries(t *testing.T) {
 	home := skillTestHome(t)
 	env := &cliEnv{build: Build{Version: "test"}}

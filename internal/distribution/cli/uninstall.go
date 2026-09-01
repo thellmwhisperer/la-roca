@@ -339,7 +339,11 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 	}
 	if wrapper, err := zcodeHookWrapperPath(); err != nil {
 		failed(report, "%s", err)
-	} else {
+	} else if settings, err := zcodeHookConfigForWrapper(wrapper); err != nil {
+		failed(report, "%s", err)
+	} else if selected, err := zcodeHookSelected(settings, wrapper); err != nil {
+		failed(report, "inspect ZCode hook selection: %v", err)
+	} else if selected {
 		addZcodeHookTarget(wrapper)
 	}
 	if registryErr == nil {

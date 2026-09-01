@@ -260,7 +260,11 @@ func pathOf(name, home string, env func(string) string, skillName string) (strin
 			root = agentcfg.Expand(declared, home)
 		}
 	}
-	return filepath.Join(root, "skills", skillName, "SKILL.md"), nil
+	path := filepath.Join(root, "skills", skillName, "SKILL.md")
+	if name == agentcfg.RuntimeZcode {
+		return filepath.Abs(path)
+	}
+	return path, nil
 }
 
 // UninstallWithChecksum removes one of this product's skill directories from a
