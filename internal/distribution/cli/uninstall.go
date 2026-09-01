@@ -293,9 +293,9 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 			return agentcfg.Outcome{Runtime: runtime, Path: path}, fmt.Errorf("ownership registry unavailable")
 		}
 		if purge {
-			return env.uninstallZcodeMCP(path, func(entry artifact.Entry) error {
+			return env.uninstallZcodeMCP(path, func(entry artifact.Entry, identity os.FileInfo) error {
 				removeRecoveryBackups(report, path)
-				return cleanupCreatedZcodeMCPPaths(entry, path)
+				return cleanupCreatedZcodeMCPPaths(entry, path, identity)
 			})
 		}
 		return env.uninstallZcodeMCP(path)
@@ -404,9 +404,9 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 		if registryErr != nil {
 			err = fmt.Errorf("ownership registry unavailable")
 		} else if purge && target.registered {
-			finalize := func(entry artifact.Entry) error {
+			finalize := func(entry artifact.Entry, identity os.FileInfo) error {
 				removeRecoveryBackups(report, target.settings)
-				if cleanupErr := cleanupCreatedZcodeHookPaths(entry, target.settings, target.wrapper); cleanupErr != nil {
+				if cleanupErr := cleanupCreatedZcodeHookPaths(entry, target.settings, target.wrapper, identity); cleanupErr != nil {
 					return cleanupErr
 				}
 				return env.unregisterArtifactEntry(entry)
@@ -745,8 +745,8 @@ func (env *cliEnv) purgeRegisteredZcodeIntegrations(report *lifecycle.Report, re
 				if err := env.unregisterArtifactEntry(entry); err != nil {
 					return err
 				}
-				failed(report, "retained uncertain ZCode hook paths at %s", config)
 			}
+			var configIdentity os.FileInfo
 			for _, entry := range withdrawOnlyHooks {
 				outcome, warning, uninstallErr := uninstallZcodeHandoffHookUnlocked(
 					config, entry.Path, nil, entry.CreatedHooksEnabled)
@@ -758,6 +758,7 @@ func (env *cliEnv) purgeRegisteredZcodeIntegrations(report *lifecycle.Report, re
 				}
 				if outcome.Changed {
 					outcomes = append(outcomes, outcome)
+					configIdentity = outcome.FileIdentity
 				}
 				removeRecoveryBackups(report, config)
 				if err := env.unregisterArtifactEntry(entry); err != nil {
@@ -781,6 +782,7 @@ func (env *cliEnv) purgeRegisteredZcodeIntegrations(report *lifecycle.Report, re
 				}
 				if outcome.Changed {
 					outcomes = append(outcomes, outcome)
+					configIdentity = outcome.FileIdentity
 				}
 				removeRecoveryBackups(report, config)
 				aggregateZcodeProvenance(&aggregate, entry)
@@ -797,11 +799,12 @@ func (env *cliEnv) purgeRegisteredZcodeIntegrations(report *lifecycle.Report, re
 				}
 				if outcome.Changed {
 					outcomes = append(outcomes, outcome)
+					configIdentity = outcome.FileIdentity
 				}
 				removeRecoveryBackups(report, config)
 				aggregateZcodeProvenance(&aggregate, entry)
 			}
-			if err := cleanupCreatedZcodePaths(aggregate, config, wrappers); err != nil {
+			if err := cleanupCreatedZcodePaths(aggregate, config, wrappers, configIdentity); err != nil {
 				return err
 			}
 			for _, entry := range append(append([]artifact.Entry{}, liveHooks...), liveMCP...) {
@@ -826,19 +829,21 @@ func aggregateZcodeProvenance(target *artifact.Entry, entry artifact.Entry) {
 	target.CreatedLock = target.CreatedLock || entry.CreatedLock
 }
 
-func cleanupCreatedZcodePaths(entry artifact.Entry, configPath string, wrappers []string) error {
+func cleanupCreatedZcodePaths(entry artifact.Entry, configPath string, wrappers []string, identity os.FileInfo) error {
 	configDir := filepath.Dir(configPath)
 	root := filepath.Dir(configDir)
 	var cleanupErr error
 	if entry.CreatedConfig {
-		identity, identityErr := os.Lstat(configPath)
-		if identityErr == nil {
+		if identity != nil {
 			retained, err := removeEmptyZcodeConfigMatching(configPath, identity)
 			cleanupErr = errors.Join(cleanupErr, err)
 			if retained && err == nil {
 				cleanupErr = errors.Join(cleanupErr,
 					fmt.Errorf("operator configuration remains in proven-created ZCode config %s", configPath))
 			}
+		} else if _, identityErr := os.Lstat(configPath); identityErr == nil {
+			cleanupErr = errors.Join(cleanupErr,
+				fmt.Errorf("operator configuration remains in proven-created ZCode config %s", configPath))
 		} else if !os.IsNotExist(identityErr) {
 			cleanupErr = errors.Join(cleanupErr, identityErr)
 		}
@@ -890,8 +895,8 @@ func cleanupCreatedZcodePaths(entry artifact.Entry, configPath string, wrappers 
 	return cleanupErr
 }
 
-func cleanupCreatedZcodeMCPPaths(entry artifact.Entry, configPath string) error {
-	return cleanupCreatedZcodePaths(entry, configPath, nil)
+func cleanupCreatedZcodeMCPPaths(entry artifact.Entry, configPath string, identity os.FileInfo) error {
+	return cleanupCreatedZcodePaths(entry, configPath, nil, identity)
 }
 
 func rollbackCreatedZcodeMCPPaths(preimage zcodeMCPPathState, configPath string) error {
@@ -922,8 +927,8 @@ func rollbackCreatedZcodeMCPPaths(preimage zcodeMCPPathState, configPath string)
 	return err
 }
 
-func cleanupCreatedZcodeHookPaths(entry artifact.Entry, configPath, wrapperPath string) error {
-	return cleanupCreatedZcodePaths(entry, configPath, []string{wrapperPath})
+func cleanupCreatedZcodeHookPaths(entry artifact.Entry, configPath, wrapperPath string, identity os.FileInfo) error {
+	return cleanupCreatedZcodePaths(entry, configPath, []string{wrapperPath}, identity)
 }
 
 func rollbackCreatedZcodeHookPaths(preimage zcodeHookPathState, configPath, wrapperPath string) error {

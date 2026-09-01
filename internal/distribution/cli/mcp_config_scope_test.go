@@ -409,12 +409,20 @@ func TestManagedArtifactLocksRejectSymlinksWithoutChangingTargets(t *testing.T) 
 
 func TestZcodeConfigCleanupRetainsReplacedEmptyFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
-	if err := os.WriteFile(path, []byte(`{}`), 0o600); err != nil {
+	before := `{}`
+	if err := os.WriteFile(path, []byte(before), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	owned, err := os.Lstat(path)
+	preimage, err := agentcfg.ZcodeMCPPreimage(before)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if _, err := agentcfg.Install(agentcfg.RuntimeZcode, path, "roca"); err != nil {
+		t.Fatal(err)
+	}
+	outcome, err := agentcfg.UninstallZcodeMCP(path, preimage)
+	if err != nil || outcome.FileIdentity == nil {
+		t.Fatalf("withdrawal identity: outcome=%#v err=%v", outcome, err)
 	}
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
@@ -422,9 +430,9 @@ func TestZcodeConfigCleanupRetainsReplacedEmptyFile(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	retained, err := removeEmptyZcodeConfigMatching(path, owned)
-	if err != nil || !retained {
-		t.Fatalf("replacement cleanup: retained=%v err=%v", retained, err)
+	err = cleanupCreatedZcodePaths(artifact.Entry{CreatedConfig: true}, path, nil, outcome.FileIdentity)
+	if err == nil {
+		t.Fatal("replacement cleanup was not reported")
 	}
 	if body, err := os.ReadFile(path); err != nil || string(body) != `{}` {
 		t.Fatalf("operator replacement changed: body=%q err=%v", body, err)

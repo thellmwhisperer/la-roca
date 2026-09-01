@@ -160,10 +160,11 @@ func Runtimes() []string {
 // Outcome is what one edit did. Changed false means the file already said what
 // it had to say, which is the normal result of the second install.
 type Outcome struct {
-	Runtime string `json:"runtime"`
-	Path    string `json:"path"`
-	Changed bool   `json:"changed"`
-	Backup  string `json:"backup,omitempty"`
+	Runtime      string      `json:"runtime"`
+	Path         string      `json:"path"`
+	Changed      bool        `json:"changed"`
+	Backup       string      `json:"backup,omitempty"`
+	FileIdentity os.FileInfo `json:"-"`
 }
 
 // Report is one runtime's state, read without touching the file.
@@ -503,7 +504,12 @@ func edit(name, path string, transform func(string, bool) (string, error),
 	} else if err := securefile.Replace(path, []byte(next), previous); err != nil {
 		return outcome, err
 	}
+	identity, err := os.Lstat(path)
+	if err != nil {
+		return outcome, err
+	}
 	outcome.Changed = true
+	outcome.FileIdentity = identity
 	return outcome, nil
 }
 
