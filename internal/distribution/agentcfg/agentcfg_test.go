@@ -187,7 +187,7 @@ func TestZcodeUsesTheNestedMCPServersShape(t *testing.T) {
 func TestZcodeHookRoundTripPreservesEmptySessionStartWhitespace(t *testing.T) {
 	before := "{\n  \"neighbor\": 9007199254740993,\n  \"hooks\": {\n    \"events\": {\n      \"SessionStart\": [\n        \n      ]\n    }\n  }\n}\n"
 	command := "/home/operator/.zcode/hooks/roca-handoff.sh"
-	marker := "^(?:.*|roca_session_start_marker)$"
+	marker := "roca_session_start_marker"
 	installed, err := agentcfg.DeclareZcodeSessionStartHook(before, marker, command, 15000)
 	if err != nil {
 		t.Fatal(err)
@@ -205,22 +205,50 @@ func TestZcodeHookRoundTripPreservesEmptySessionStartWhitespace(t *testing.T) {
 	}
 }
 
-func TestZcodeWithdrawalPreservesPreexistingMCPParents(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.json")
-	before := `{"numeric_spelling":9007199254740993,"mcp":{}}`
-	if err := os.WriteFile(path, []byte(before), 0o600); err != nil {
-		t.Fatal(err)
+func TestZcodeWithdrawalRestoresMCPContainerPreimage(t *testing.T) {
+	for _, before := range []string{
+		`{}`,
+		`{"numeric_spelling":9007199254740993,"mcp":{}}`,
+		`{"mcp":{"servers":{}}}`,
+	} {
+		t.Run(before, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.json")
+			if err := os.WriteFile(path, []byte(before), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := agentcfg.Install(agentcfg.RuntimeZcode, path, "roca"); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := agentcfg.Uninstall(agentcfg.RuntimeZcode, path); err != nil {
+				t.Fatal(err)
+			}
+			if after := read(t, path); after != before {
+				t.Fatalf("MCP container preimage changed:\nwant %s\n got %s", before, after)
+			}
+		})
 	}
-	if _, err := agentcfg.Install(agentcfg.RuntimeZcode, path, "roca"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := agentcfg.Uninstall(agentcfg.RuntimeZcode, path); err != nil {
-		t.Fatal(err)
-	}
-	after := read(t, path)
-	if !strings.Contains(after, `"numeric_spelling":9007199254740993`) ||
-		!strings.Contains(after, `"mcp"`) || strings.Contains(after, `"roca"`) {
-		t.Fatalf("withdrawal changed neighboring ZCode configuration: %s", after)
+}
+
+func TestZcodeHookWithdrawalRestoresContainerPreimage(t *testing.T) {
+	for _, before := range []string{
+		`{}`,
+		`{"hooks":{}}`,
+		`{"hooks":{"events":{}}}`,
+	} {
+		t.Run(before, func(t *testing.T) {
+			installed, err := agentcfg.DeclareZcodeSessionStartHook(before,
+				"roca_session_start_marker", "/home/operator/.zcode/hooks/roca-handoff.sh", 15000)
+			if err != nil {
+				t.Fatal(err)
+			}
+			withdrawn, err := agentcfg.RemoveZcodeSessionStartHook(installed, "roca_session_start_marker")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if withdrawn != before {
+				t.Fatalf("hook container preimage changed:\nwant %s\n got %s", before, withdrawn)
+			}
+		})
 	}
 }
 

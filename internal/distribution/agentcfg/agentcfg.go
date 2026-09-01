@@ -237,6 +237,9 @@ func Install(name, path, executable string) (Outcome, error) {
 		executable = "roca"
 	}
 	return Edit(name, path, func(text string) (string, error) {
+		if name == RuntimeZcode {
+			return declareZcodeMCP(r, text, executable)
+		}
 		return declare(r, text, executable)
 	}, true)
 }
@@ -250,6 +253,9 @@ func Uninstall(name, path string) (Outcome, error) {
 		return Outcome{}, err
 	}
 	return Edit(name, path, func(text string) (string, error) {
+		if name == RuntimeZcode {
+			return withdrawZcodeMCP(r, text)
+		}
 		return withdraw(r, text)
 	}, false)
 }

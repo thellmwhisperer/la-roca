@@ -79,7 +79,7 @@ exit 1
 	if len(entries) != 2 {
 		t.Fatalf("SessionStart entries = %d, want operator hook plus one Roca hook", len(entries))
 	}
-	if marker := entries[1].(map[string]any)["matcher"]; marker != zcodeSessionStartMarker {
+	if marker, _ := entries[1].(map[string]any)["matcher"].(string); !strings.Contains(marker, zcodeSessionStartMarker) {
 		t.Fatalf("managed SessionStart marker = %#v", marker)
 	}
 	wrapper := filepath.Join(home, ".zcode", "hooks", "roca-handoff.sh")
@@ -290,6 +290,40 @@ func TestZcodeUninstallKeepsWrapperForEquivalentOperatorPaths(t *testing.T) {
 				t.Fatalf("operator config changed: body=%q err=%v", body, err)
 			}
 		})
+	}
+}
+
+func TestZcodeUninstallKeepsWrapperForAmbiguousDoubleQuotedEscape(t *testing.T) {
+	home := filepath.Join(t.TempDir(), `home\q`)
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	config := filepath.Join(home, ".zcode", "cli", "config.json")
+	wrapper := filepath.Join(home, ".zcode", "hooks", "roca-handoff.sh")
+	if err := os.MkdirAll(filepath.Dir(config), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	operatorCommand := `"` + wrapper + `"`
+	initial := fmt.Sprintf(`{"hooks":{"enabled":true,"events":{"SessionStart":[{"hooks":[{"type":"command","command":%q,"timeoutMs":4000}]}]}}}`, operatorCommand)
+	if err := os.WriteFile(config, []byte(initial), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := installZcodeHandoffHook(config, wrapper, filepath.Join(home, "roca")); err != nil {
+		t.Fatal(err)
+	}
+	_, warning, err := uninstallZcodeHandoffHook(config, wrapper)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(warning, "could not compare remaining ZCode hook paths") {
+		t.Fatalf("ambiguous escape warning = %q", warning)
+	}
+	if _, err := os.Stat(wrapper); err != nil {
+		t.Fatalf("ambiguously referenced wrapper was removed: %v", err)
+	}
+	if body, err := os.ReadFile(config); err != nil || string(body) != initial {
+		t.Fatalf("operator config changed: body=%q err=%v", body, err)
 	}
 }
 
