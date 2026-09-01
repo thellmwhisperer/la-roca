@@ -58,12 +58,13 @@ exit 1
 		t.Fatal(err)
 	}
 
-	var warnings strings.Builder
 	for attempt := 0; attempt < 2; attempt++ {
-		root := rootCommand(&cliEnv{out: io.Discard, errOut: &warnings, build: Build{Version: "test"}})
+		root := rootCommand(&cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}})
 		root.SetArgs([]string{"hooks", "install", "zcode"})
-		if err := root.Execute(); err != nil {
-			t.Fatalf("install attempt %d: %v", attempt+1, err)
+		err := root.Execute()
+		if err == nil || !strings.Contains(err.Error(), "installed but inactive") ||
+			!strings.Contains(err.Error(), "set hooks.enabled to true") {
+			t.Fatalf("inactive install attempt %d error = %v", attempt+1, err)
 		}
 	}
 
@@ -78,10 +79,6 @@ exit 1
 	hooks := document["hooks"].(map[string]any)
 	if hooks["enabled"] != false {
 		t.Fatalf("hooks.enabled = %#v, want the operator's false value", hooks["enabled"])
-	}
-	if !strings.Contains(warnings.String(), "installed but inactive") ||
-		!strings.Contains(warnings.String(), "hooks.enabled is false") {
-		t.Fatalf("disabled hook install warning = %q", warnings.String())
 	}
 	if !strings.Contains(string(body), `"numeric_spelling":9007199254740993`) {
 		t.Fatalf("installer re-encoded neighboring numeric configuration: %s", body)
@@ -124,7 +121,7 @@ exit 1
 	if context["additionalContext"] != "synthetic handoff" {
 		t.Fatalf("wrapper context = %#v", context)
 	}
-	if err := os.WriteFile(binary, []byte("#!/bin/sh\nexit 1\n"), 0o700); err != nil {
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\nprintf 'partial output'\nexit 1\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	output, err = exec.Command(wrapper).Output()
@@ -157,8 +154,8 @@ exit 1
 
 	root = rootCommand(&cliEnv{out: io.Discard, build: Build{Version: "test"}})
 	root.SetArgs([]string{"hooks", "install", "zcode"})
-	if err := root.Execute(); err != nil {
-		t.Fatal(err)
+	if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "installed but inactive") {
+		t.Fatalf("inactive reinstall error = %v", err)
 	}
 	report := lifecycle.Report{Purged: true, Deleted: []string{}}
 	(&cliEnv{out: io.Discard, errOut: io.Discard}).withdrawTheIntegrations(&report, false)
@@ -171,6 +168,82 @@ exit 1
 	}
 	if strings.Contains(string(body), "roca-handoff.sh") {
 		t.Fatalf("zcode hook survived full uninstall: %s", body)
+	}
+}
+
+func TestZcodeHookUninstallWithoutInstallCreatesNoRuntimeDirectories(t *testing.T) {
+	home := skillTestHome(t)
+	root := rootCommand(&cliEnv{out: io.Discard, build: Build{Version: "test"}})
+	root.SetArgs([]string{"hooks", "uninstall", "zcode"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".zcode")); !os.IsNotExist(err) {
+		t.Fatalf("empty uninstall created ZCode directories: %v", err)
+	}
+}
+
+func TestZcodeHookReinstallRepointsManagedWrapper(t *testing.T) {
+	home := skillTestHome(t)
+	config := filepath.Join(home, ".zcode", "cli", "config.json")
+	if err := os.MkdirAll(filepath.Dir(config), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config, []byte(`{"hooks":{"enabled":true}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	first := filepath.Join(home, "bin", "roca-v1")
+	second := filepath.Join(home, "bin", "roca-v2")
+	for _, executable := range []string{first, second} {
+		root := rootCommand(&cliEnv{out: io.Discard, build: Build{Version: "test"}})
+		root.SetArgs([]string{"hooks", "install", "zcode", "--executable", executable})
+		if err := root.Execute(); err != nil {
+			t.Fatalf("install %s: %v", executable, err)
+		}
+	}
+	wrapper := filepath.Join(home, ".zcode", "hooks", "roca-handoff.sh")
+	if body, err := os.ReadFile(wrapper); err != nil || string(body) != zcodeWrapper(second) {
+		t.Fatalf("repointed wrapper: body=%q err=%v", body, err)
+	}
+}
+
+func TestFullUninstallWithdrawsRegisteredZcodeHome(t *testing.T) {
+	home := skillTestHome(t)
+	custom := filepath.Join(home, "custom-zcode")
+	t.Setenv("ZCODE_HOME", custom)
+	config := filepath.Join(custom, "cli", "config.json")
+	if err := os.MkdirAll(filepath.Dir(config), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config, []byte(`{"hooks":{"enabled":true}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := rootCommand(&cliEnv{out: io.Discard, build: Build{Version: "test"}})
+	root.SetArgs([]string{"hooks", "install", "zcode", "--executable", filepath.Join(home, "roca")})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	var output strings.Builder
+	runSkill(t, &output, "skill", "install", "zcode")
+	wrapper := filepath.Join(custom, "hooks", "roca-handoff.sh")
+	skillPath := filepath.Join(custom, "skills", "roca", "SKILL.md")
+	t.Setenv("ZCODE_HOME", "")
+	report := lifecycle.Report{Purged: true, Deleted: []string{}}
+	(&cliEnv{out: io.Discard, errOut: io.Discard}).withdrawTheIntegrations(&report, false)
+	if len(report.Errors) != 0 {
+		t.Fatalf("full uninstall errors = %v", report.Errors)
+	}
+	for _, path := range []string{wrapper, skillPath} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("registered ZCode artifact survived: %s", path)
+		}
+	}
+	body, err := os.ReadFile(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), "roca-handoff.sh") {
+		t.Fatalf("registered ZCode hook survived: %s", body)
 	}
 }
 
@@ -401,6 +474,18 @@ func TestZcodeUninstallRetainsWrapperWithEditedExecutable(t *testing.T) {
 	}
 	if body, err := os.ReadFile(wrapper); err != nil || string(body) != string(edited) {
 		t.Fatalf("edited wrapper changed: body=%q err=%v", body, err)
+	}
+}
+
+func TestZcodeWrapperRemovalDoesNotCreateMissingDirectories(t *testing.T) {
+	home := t.TempDir()
+	wrapper := filepath.Join(home, "missing", "hooks", "roca-handoff.sh")
+	retained, err := removeZcodeWrapper(wrapper, []byte(zcodeWrapper(filepath.Join(home, "roca"))))
+	if err != nil || retained {
+		t.Fatalf("absent wrapper removal: retained=%v err=%v", retained, err)
+	}
+	if _, err := os.Stat(filepath.Join(home, "missing")); !os.IsNotExist(err) {
+		t.Fatalf("absent wrapper removal created directories: %v", err)
 	}
 }
 

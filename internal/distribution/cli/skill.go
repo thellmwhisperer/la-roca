@@ -638,6 +638,14 @@ func zcodeHookWrapperPath() (string, error) {
 	return filepath.Join(root, "hooks", "roca-handoff.sh"), nil
 }
 
+func zcodeHookConfigForWrapper(wrapper string) (string, error) {
+	if !filepath.IsAbs(wrapper) || filepath.Base(wrapper) != "roca-handoff.sh" || filepath.Base(filepath.Dir(wrapper)) != "hooks" {
+		return "", fmt.Errorf("invalid registered ZCode wrapper path %s", wrapper)
+	}
+	root := filepath.Dir(filepath.Dir(wrapper))
+	return filepath.Join(root, "cli", "config.json"), nil
+}
+
 const (
 	zcodeSessionStartMarker = "roca_session_start_marker"
 	zcodeWrapperStateFormat = "zcode-wrapper-v1"
@@ -701,24 +709,53 @@ func zcodeWrapperExpectedFromEntry(entry artifact.Entry) ([]byte, error) {
 	return expected, nil
 }
 
+func (env *cliEnv) lockManagedZcodeHookLifecycle() (func() error, error) {
+	paths, err := env.resolvePaths()
+	if err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(filepath.Dir(paths.Artifacts), 0o700); err != nil {
+		return nil, err
+	}
+	return securefile.Lock(paths.Artifacts + ".hooks.lock")
+}
+
 func (env *cliEnv) installManagedZcodeHandoffHook(configPath, wrapperPath, executable string) (outcome agentcfg.Outcome, warning string, err error) {
+	stableRelease, err := env.lockManagedZcodeHookLifecycle()
+	if err != nil {
+		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
+	}
+	defer func() { err = errors.Join(err, stableRelease()) }()
 	release, err := lockZcodeHookLifecycle(configPath, wrapperPath, true)
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
 	defer func() { err = errors.Join(err, release()) }()
+	previous, _, _, err := env.zcodeWrapperExpected(wrapperPath)
+	if err != nil {
+		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
+	}
 	rollback, err := env.recordZcodeWrapperState(wrapperPath, executable)
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
-	outcome, warning, err = installZcodeHandoffHookUnlocked(configPath, wrapperPath, executable)
+	outcome, warning, err = installZcodeHandoffHookWithPrevious(configPath, wrapperPath, executable, previous)
 	if err != nil && rollback != nil {
 		err = errors.Join(err, rollback())
+	}
+	if err == nil && warning != "" {
+		err = fmt.Errorf("ZCode hook installed but inactive in %s; set hooks.enabled to true to enable SessionStart", configPath)
+		warning = ""
 	}
 	return outcome, warning, err
 }
 
 func (env *cliEnv) uninstallManagedZcodeHandoffHook(configPath, wrapperPath string) (outcome agentcfg.Outcome, warning string, err error) {
+	stableRelease, err := env.lockManagedZcodeHookLifecycle()
+	if err != nil {
+		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
+	}
+	defer func() { err = errors.Join(err, stableRelease()) }()
 	release, err := lockZcodeHookLifecycle(configPath, wrapperPath, false)
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
@@ -745,16 +782,20 @@ func installZcodeHandoffHook(configPath, wrapperPath, executable string) (outcom
 }
 
 func installZcodeHandoffHookUnlocked(configPath, wrapperPath, executable string) (agentcfg.Outcome, string, error) {
+	return installZcodeHandoffHookWithPrevious(configPath, wrapperPath, executable, nil)
+}
+
+func installZcodeHandoffHookWithPrevious(configPath, wrapperPath, executable string, previous []byte) (agentcfg.Outcome, string, error) {
 	state, err := readZcodeWrapperState(wrapperPath)
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
 	wrapper := zcodeWrapper(executable)
-	if state.exists && string(state.body) != wrapper {
+	if state.exists && string(state.body) != wrapper && string(state.body) != string(previous) {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "",
 			fmt.Errorf("refuse to replace operator-modified ZCode hook wrapper %s; move or remove it, then retry", wrapperPath)
 	}
-	if err := writeZcodeWrapper(wrapperPath, wrapper, state); err != nil {
+	if err := writeZcodeWrapper(wrapperPath, wrapper, state, previous); err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
 	command := zcodeOwnedHookCommand(wrapperPath)
@@ -923,16 +964,28 @@ func zcodeWrapper(executable string) string {
 # Managed by roca hooks install zcode.
 set -euo pipefail
 
-if ! ` + shellQuote(executable) + ` hooks run zcode 2>/dev/null; then
+if output=$(` + shellQuote(executable) + ` hooks run zcode 2>/dev/null); then
+  printf '%s\n' "$output"
+else
   printf '{"additionalContext":""}\n'
 fi
 `
 }
 
-func writeZcodeWrapper(path, content string, state zcodeWrapperState) error {
+func writeZcodeWrapper(path, content string, state zcodeWrapperState, previous ...[]byte) error {
 	if state.exists {
 		if string(state.body) != content {
-			return fmt.Errorf("refuse to replace operator-modified ZCode hook wrapper %s", path)
+			var managed []byte
+			if len(previous) > 0 {
+				managed = previous[0]
+			}
+			if len(managed) == 0 || string(state.body) != string(managed) {
+				return fmt.Errorf("refuse to replace operator-modified ZCode hook wrapper %s", path)
+			}
+			if err := securefile.Replace(path, []byte(content), state.body); err != nil {
+				return err
+			}
+			return os.Chmod(path, 0o700)
 		}
 		if state.mode == 0o700 {
 			return nil
@@ -947,12 +1000,12 @@ func removeZcodeWrapper(path string, expected []byte) (bool, error) {
 }
 
 func removeZcodeWrapperAfterQuarantine(path string, expected []byte, afterRename func()) (bool, error) {
+	if _, err := os.Lstat(path); os.IsNotExist(err) {
+		return false, nil
+	} else if err != nil {
+		return false, fmt.Errorf("stat %s: %w", path, err)
+	}
 	if len(expected) == 0 {
-		if _, err := os.Stat(path); os.IsNotExist(err) {
-			return false, nil
-		} else if err != nil {
-			return false, fmt.Errorf("stat %s: %w", path, err)
-		}
 		return true, nil
 	}
 	temporary, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+"-remove-*")
