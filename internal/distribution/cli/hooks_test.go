@@ -1447,8 +1447,9 @@ func TestZcodeInstallPreservesOperatorHookUsingSameWrapper(t *testing.T) {
 
 func TestZcodeUninstallKeepsWrapperForEquivalentOperatorPaths(t *testing.T) {
 	for _, test := range []struct {
-		name    string
-		command func(string, string) (string, error)
+		name      string
+		command   func(string, string) (string, error)
+		uncertain bool
 	}{
 		{name: "home alias", command: func(_, _ string) (string, error) {
 			return "~/.zcode/hooks/roca-handoff.sh", nil
@@ -1457,19 +1458,19 @@ func TestZcodeUninstallKeepsWrapperForEquivalentOperatorPaths(t *testing.T) {
 			alias := filepath.Join(home, "operator-wrapper")
 			return shellQuote(alias), os.Symlink(wrapper, alias)
 		}},
-		{name: "ambiguous shell", command: func(_, _ string) (string, error) {
+		{name: "ambiguous shell", uncertain: true, command: func(_, _ string) (string, error) {
 			return `test -x "$HOME/.zcode/hooks/roca-handoff.sh" && "$HOME/.zcode/hooks/roca-handoff.sh"`, nil
 		}},
-		{name: "nested command fragment", command: func(_, wrapper string) (string, error) {
+		{name: "nested command fragment", uncertain: true, command: func(_, wrapper string) (string, error) {
 			return "sh -c " + shellQuote(wrapper+" --flag"), nil
 		}},
 		{name: "multiline after comment", command: func(_, wrapper string) (string, error) {
 			return "echo ok # note\n" + shellQuote(wrapper), nil
 		}},
-		{name: "ambiguous glob", command: func(_, _ string) (string, error) {
+		{name: "ambiguous glob", uncertain: true, command: func(_, _ string) (string, error) {
 			return "roca-*.sh", nil
 		}},
-		{name: "attached option path", command: func(_, wrapper string) (string, error) {
+		{name: "attached option path", uncertain: true, command: func(_, wrapper string) (string, error) {
 			return "/bin/bash --rcfile=" + wrapper + " -i -c exit", nil
 		}},
 	} {
@@ -1482,7 +1483,11 @@ func TestZcodeUninstallKeepsWrapperForEquivalentOperatorPaths(t *testing.T) {
 				t.Fatal(err)
 			}
 			initial, warning := roundTripZcodeOperatorHook(t, home, config, wrapper, operatorCommand)
-			if !strings.Contains(warning, "remaining operator-owned hook references it") {
+			warningText := "remaining operator-owned hook references it"
+			if test.uncertain {
+				warningText = "possible reference in a neighboring hook"
+			}
+			if !strings.Contains(warning, warningText) {
 				t.Fatalf("wrapper retention warning = %q", warning)
 			}
 			if _, err := os.Stat(wrapper); err != nil {
@@ -1504,7 +1509,7 @@ func TestZcodeUninstallKeepsWrapperForAmbiguousDoubleQuotedEscape(t *testing.T) 
 	config, wrapper := zcodeTestConfigAndWrapper(home)
 	operatorCommand := `"` + wrapper + `"`
 	initial, warning := roundTripZcodeOperatorHook(t, home, config, wrapper, operatorCommand)
-	if !strings.Contains(warning, "could not compare remaining ZCode hook paths") {
+	if !strings.Contains(warning, "possible reference in a neighboring hook") {
 		t.Fatalf("ambiguous escape warning = %q", warning)
 	}
 	if _, err := os.Stat(wrapper); err != nil {

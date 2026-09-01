@@ -1066,7 +1066,8 @@ func uninstallZcodeHandoffHookUnlocked(configPath, wrapperPath string, expected 
 		referenced, referenceErr := zcodeHookCommandsReferenceWrapper(commands, wrapperPath)
 		if referenceErr != nil {
 			keepWrapper = true
-			warning = fmt.Sprintf("warning: could not compare remaining ZCode hook paths in %s: %v", configPath, referenceErr)
+			warning = fmt.Sprintf("warning: conserved %s; possible reference in a neighboring hook in %s: %v",
+				wrapperPath, configPath, referenceErr)
 			return next, nil
 		}
 		keepWrapper = referenced
@@ -1076,11 +1077,8 @@ func uninstallZcodeHandoffHookUnlocked(configPath, wrapperPath string, expected 
 		return outcome, warning, err
 	}
 	if keepWrapper {
-		retained := fmt.Sprintf("kept %s because a remaining operator-owned hook references it", wrapperPath)
 		if warning == "" {
-			warning = "warning: " + retained
-		} else {
-			warning += "; " + retained
+			warning = fmt.Sprintf("warning: kept %s because a remaining operator-owned hook references it", wrapperPath)
 		}
 		return outcome, warning, nil
 	}
