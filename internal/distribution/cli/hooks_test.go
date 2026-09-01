@@ -336,6 +336,63 @@ func assertClaudeWithdrawalWarning(t *testing.T, warned, path string) {
 	}
 }
 
+func TestSessionStartHooksInstallAndUninstallAreIdempotent(t *testing.T) {
+	home := skillTestHome(t)
+	binary := filepath.Join(home, "bin", "roca")
+	t.Setenv(EnvExecutable, binary)
+	path := filepath.Join(home, ".claude", "settings.json")
+
+	for range 2 {
+		var output strings.Builder
+		root := rootCommand(&cliEnv{out: &output, build: Build{Version: "v1.2.3"}})
+		root.SetArgs([]string{"hooks", "install", "claude", "--pills", "--handoff"})
+		if err := root.Execute(); err != nil {
+			t.Fatal(err)
+		}
+		body := readSettings(t, path)
+		if strings.Count(body, shellQuote(binary)+" pill") != 1 ||
+			strings.Count(body, shellQuote(binary)+" handoff latest") != 1 {
+			t.Fatalf("did not keep one pills hook and one handoff hook: %s", body)
+		}
+		if !strings.Contains(body, "SessionStart") {
+			t.Fatalf("did not write SessionStart: %s", body)
+		}
+	}
+
+	if !strings.Contains(readSettings(t, path), "hooks run claude") {
+		t.Fatal("session hooks install dropped the signing hook")
+	}
+
+	var output strings.Builder
+	root := rootCommand(&cliEnv{out: &output, build: Build{Version: "v1.2.3"}})
+	root.SetArgs([]string{"hooks", "uninstall", "claude", "--pills", "--handoff"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	body := readSettings(t, path)
+	if strings.Contains(body, "handoff latest") || strings.Count(body, shellQuote(binary)+" pill") != 0 {
+		t.Fatalf("uninstall left session hooks behind: %s", body)
+	}
+	if !strings.Contains(body, "hooks run claude") {
+		t.Fatalf("session-hook uninstall withdrew the signing hook: %s", body)
+	}
+
+	root = rootCommand(&cliEnv{out: &output, build: Build{Version: "v1.2.3"}})
+	root.SetArgs([]string{"hooks", "uninstall", "claude", "--pills", "--handoff"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("second uninstall is not idempotent: %v", err)
+	}
+
+	root = rootCommand(&cliEnv{out: &output, build: Build{Version: "v1.2.3"}})
+	root.SetArgs([]string{"hooks", "install", "claude"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(readSettings(t, path), `"SessionStart"`) {
+		t.Fatal("bare hooks install claude installed session hooks by default")
+	}
+}
+
 func readSettings(t *testing.T, path string) string {
 	t.Helper()
 	body, err := os.ReadFile(path)

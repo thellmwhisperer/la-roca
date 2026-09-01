@@ -490,66 +490,68 @@ func hooksEditCommand(env *cliEnv, use, short, verb string,
 
 func hooksInstallCommand(env *cliEnv) *cobra.Command {
 	var executable string
-	var force bool
-	cmd := hooksEditCommand(env, "install [runtime]",
-		"Install the Claude Code roca-store signing hook", "updated",
-		func(path string) (agentcfg.Outcome, string, error) {
+	var force, pills, handoff bool
+	cmd := &cobra.Command{
+		Use:   "install [runtime]",
+		Short: "Install Claude Code hooks for authorship signing and optional session context",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			if err := supportedHookRuntime(args[0]); err != nil {
+				return err
+			}
+			path, err := claudeSettingsPath()
+			if err != nil {
+				return err
+			}
 			declared := chosenExecutable(executable)
 			if !filepath.IsAbs(declared) {
-				return agentcfg.Outcome{Runtime: "claude", Path: path}, "",
-					fmt.Errorf("resolve the running executable %q to an absolute path", declared)
+				return fmt.Errorf("resolve the running executable %q to an absolute path", declared)
 			}
-			entry, registered, err := env.registeredArtifact(artifactKindHook, "claude", path)
+			outcome, warning, err := installClaudeAuthorshipAndSessionHooks(env, path, declared, force, pills, handoff)
 			if err != nil {
-				return agentcfg.Outcome{Runtime: "claude", Path: path}, "", err
+				return err
 			}
-			var outcome agentcfg.Outcome
-			if registered {
-				refreshed, err := refreshClaudeHook(path, declared, entry.SystemSHA256, true, force)
-				outcome = agentcfg.Outcome{Runtime: "claude", Path: path,
-					Changed: refreshed.Changed, Backup: refreshed.Backup}
-				if err != nil {
-					return outcome, "", err
-				}
-				if refreshed.Diverged {
-					return outcome, fmt.Sprintf("warning: %s has edits in its SYSTEM fragment; run `roca hooks install claude --force` to replace it", path), nil
-				}
-				if !refreshed.Current {
-					return outcome, "", fmt.Errorf("the installed Claude hook was not found in %s", path)
-				}
-			} else {
-				// Installing into settings this product cannot read is refused, not
-				// warned about: an installer that cannot parse a file cannot edit it.
-				outcome, err = installClaudeAuthorshipHook(path, declared)
-				if err != nil {
-					return outcome, "", err
-				}
+			if warning != "" {
+				fmt.Fprintln(env.errOut, warning)
 			}
-			system, found, err := claudeHookSystem(path)
-			if err != nil || !found {
-				if err == nil {
-					err = fmt.Errorf("the installed Claude hook was not found in %s", path)
-				}
-				return outcome, "", err
-			}
-			return outcome, "", env.registerHook(path, "claude", system)
-		})
+			return env.renderOutcome(outcome, "updated")
+		},
+	}
 	cmd.Flags().StringVar(&executable, "executable", "",
 		"the binary the hook launches (default: this executable; override with "+EnvExecutable+")")
 	cmd.Flags().BoolVar(&force, "force", false, "replace an edited SYSTEM fragment")
+	cmd.Flags().BoolVar(&pills, "pills", false, "add a SessionStart hook that runs `roca pill`")
+	cmd.Flags().BoolVar(&handoff, "handoff", false, "add a SessionStart hook that runs `roca handoff latest`")
 	return cmd
 }
 
 func hooksUninstallCommand(env *cliEnv) *cobra.Command {
-	return hooksEditCommand(env, "uninstall [runtime]",
-		"Withdraw the Claude Code roca-store signing hook, leaving the rest of the settings as they were",
-		"withdrawn", func(path string) (agentcfg.Outcome, string, error) {
-			outcome, warning, err := uninstallClaudeAuthorshipHook(path)
-			if err == nil {
-				err = env.unregisterArtifact(artifactKindHook, "claude", path)
+	var pills, handoff bool
+	cmd := &cobra.Command{
+		Use:   "uninstall [runtime]",
+		Short: "Withdraw Claude Code hooks this product installed",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			if err := supportedHookRuntime(args[0]); err != nil {
+				return err
 			}
-			return outcome, warning, err
-		})
+			path, err := claudeSettingsPath()
+			if err != nil {
+				return err
+			}
+			outcome, warning, err := uninstallClaudeAuthorshipAndSessionHooks(env, path, pills, handoff)
+			if err != nil {
+				return err
+			}
+			if warning != "" {
+				fmt.Fprintln(env.errOut, warning)
+			}
+			return env.renderOutcome(outcome, "withdrawn")
+		},
+	}
+	cmd.Flags().BoolVar(&pills, "pills", false, "withdraw the SessionStart `roca pill` hook")
+	cmd.Flags().BoolVar(&handoff, "handoff", false, "withdraw the SessionStart `roca handoff latest` hook")
+	return cmd
 }
 
 func supportedHookRuntime(name string) error {

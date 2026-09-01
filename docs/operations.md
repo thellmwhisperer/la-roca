@@ -41,6 +41,12 @@ The entry launches this executable's absolute path, overridable with
 shell that does not read an interactive `PATH`. Reinstalling repoints an entry
 whose binary moved instead of adding a second one.
 
+`roca hooks install claude --pills` and `--handoff` are opt-in SessionStart
+entries that run `roca pill` and `roca handoff latest`. They are not installed
+by init, update, or a bare `hooks install claude`. Each flag has its own
+uninstall marker: `roca hooks uninstall claude --pills` and `--handoff` withdraw
+those SessionStart entries and leave the signing hook in place.
+
 That exact command hook inside `PreToolUse` is the artifact's SYSTEM fragment;
 the enclosing group, surrounding Claude settings, and every other hook are its
 USER zone. Its `hooks run claude` command is the explicit ownership marker

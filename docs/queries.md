@@ -156,11 +156,15 @@ also reads the rows. The longer model, repair, and routing contracts live in
 [Model providers](models.md); [the MCP plug](mcp.md) documents the shell-less
 `roca_query`, `roca_sql`, and `roca_exec` equivalents.
 
-For facts whose ordering matters, use explicit SQL instead of asking ranking to
-imply it. A session can fetch its latest project handoff exactly and then store
-the next one:
+For session continuity, do not rank handoffs by clock. Load the active
+unsuperseded ones, and the project pills, with first-class verbs:
 
 ```sh
-roca exec "SELECT content, created_at FROM plugin_roca_ops.memories WHERE layer = 'handoff' AND project = '<project>' ORDER BY created_at DESC LIMIT 1"
-roca store --layer handoff --project '<project>' --content "token refresh done, retry pending" --agent codex --model gpt-5
+roca pill --project '<project>'
+roca handoff latest --project '<project>'
 ```
+
+A handoff is written only when the operator asks, with branch/scope, done,
+current state, and next step, and with `--supersedes` when it replaces another
+memory. Session writers are the interactive harnesses already stamped on
+`source_agent` / `source_surface` (`cli` or `mcp`).

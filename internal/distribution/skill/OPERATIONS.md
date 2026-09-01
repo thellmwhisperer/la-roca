@@ -189,7 +189,7 @@ writing SQL yourself.
 | Stuck on the SQL | `roca playground --sql-only` then `roca exec` |
 | Durable memory | `roca store --layer … --content … --agent … --model …` |
 | Who wrote it / which model | ask by author, or store with `--model` |
-| Project start | the handoff one-liner below, through `roca exec` |
+| Project start | `roca pill` and `roca handoff latest` |
 | No shell | `roca_query` to search; `roca_exec` for SQL; `roca_explore` last resort |
 
 ## Plugins
@@ -286,15 +286,26 @@ roca exec "SELECT substr(COALESCE(e.human_timestamp, e.agent_timestamp), 1, 7) A
 
 Counts by month, same shape, swap the MATCH term.
 
-Handoff one-liner, by layer and project:
+Session context, by project:
 
 ```bash
-roca exec "SELECT content, created_at, project FROM memories WHERE layer = 'handoff' AND project = '<project>' ORDER BY created_at DESC LIMIT 1"
+roca pill
+roca handoff latest
 ```
 
-Handoffs live on ops. The unqualified compatibility query above remains valid;
-when composing a query directly against the ops attachment, its qualified table
-is `plugin_roca_ops.memories`.
+`roca pill` loads active pills for the current project (basename of the working
+directory, or `--project`), including globals, then keeps one row per
+`metadata.pill_slug`: the newest. Rows without a slug are listed by id and not
+loaded. `roca pill show <slug>` returns one complete pill. Output is AXI/TOON
+with the full content; `--json` is the script envelope. There is no budget flag.
+
+`roca handoff latest` loads active handoffs for the project that no other memory
+has superseded. A later row that does not name a predecessor does not hide it.
+When the project has none, it falls back to global handoffs (`project IS NULL`).
+Newest-by-clock is the wrong question: a short worker receipt can bury a real
+session close.
+
+Handoffs live on ops. The qualified table is `plugin_roca_ops.memories`.
 
 ## Investigation method
 
@@ -338,11 +349,8 @@ Do not stack synonyms.
   `sessions` analytics, and what the operator's agents already knew, since
   their memory and rule files land in the `user`, `feedback` and `project`
   layers at ingest. On a fresh install the `handoff` layer is empty until
-  agents store the first one, so read the history, then write it yourself.
-- Start project work with the unqualified handoff one-liner under Deterministic
-  patterns. Ask for the current handoff protocol and follow it instead of
-  freezing it here. After meaningful work, always store a handoff with branch,
-  changes, state, next steps and blockers.
+  somebody stores the first one.
+- Start project work with `roca pill` and `roca handoff latest`. Ask for the current handoff protocol and follow it instead of freezing it here. Do not write a handoff unless the operator asked for one. When they do, the shape is branch/scope, done, current state, and next step, and replacement is declared with `--supersedes`, not in prose. Progress belongs in tasks-axi; delivery belongs in the `pr` field; a session decision belongs in layer `decision`; job state belongs in a layer with `expires_at`.
 - Ask bare first: use one short concept and no hints. Hints can steer SQL to the
   wrong table; a typo can silently leave noise as the best match.
 - Write SQL and `roca exec` first. `roca query` is hybrid search. `roca explore`
@@ -412,7 +420,9 @@ data.
 
 ```bash
 roca exec "SELECT COUNT(*) AS memories FROM memories"
-roca store --layer handoff --content "the ingest update left the gate in place" --origin agent --agent claude --model sonnet
+roca pill
+roca handoff latest
+roca store --layer handoff --content "branch: main done: the ingest update left the gate in place state: word search works next: wait for the operator" --origin agent --agent claude --model sonnet
 ```
 
 ## Bad
