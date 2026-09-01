@@ -667,17 +667,10 @@ func (f Federation) Ingest(ctx context.Context, sourceKind string) (FederationDe
 			return FederationDelta{}, err
 		}
 		contract := database.contractFingerprint()
-		fingerprint, err := databaseFingerprint(databasePath, contract)
+		fingerprint, marker, err := stableDatabaseIdentity(databasePath, contract)
 		if err != nil {
 			if preparationErr == nil {
-				preparationErr = fmt.Errorf("fingerprint vector source %s: %w", database.owner(), err)
-			}
-			continue
-		}
-		marker, err := sourceFileMarker(databasePath)
-		if err != nil {
-			if preparationErr == nil {
-				preparationErr = fmt.Errorf("inspect vector source %s: %w", database.owner(), err)
+				preparationErr = fmt.Errorf("identify vector source %s: %w", database.owner(), err)
 			}
 			continue
 		}
@@ -915,8 +908,11 @@ func (s *embeddingScheduler) run() error {
 		}
 		request := pending[selected]
 		delete(pending, selected)
-		_ = updateWorkerActivity(request.stateDir, "", request.database)
+		database := request.database
+		_ = updateWorkerActivity(request.stateDir, "", &database)
 		vectors, err := s.embed(request.ctx, request.model, request.input)
+		database = ""
+		_ = updateWorkerActivity(request.stateDir, "", &database)
 		request.reply <- embeddingReply{vectors: vectors, err: err}
 		resetStall()
 	}
@@ -1473,7 +1469,30 @@ func (d DeclaredCorpus) hasTable(name string) bool {
 	return ok
 }
 
-var errSidecarChanged = errors.New("sidecar source changed")
+var (
+	errSidecarChanged       = errors.New("sidecar source changed")
+	errSourceChanged        = errors.New("vector source changed while it was inspected")
+	fingerprintVectorSource = databaseFingerprint
+)
+
+func stableDatabaseIdentity(path, contract string) (string, string, error) {
+	before, err := sourceFileMarker(path)
+	if err != nil {
+		return "", "", err
+	}
+	fingerprint, err := fingerprintVectorSource(path, contract)
+	if err != nil {
+		return "", "", err
+	}
+	after, err := sourceFileMarker(path)
+	if err != nil {
+		return "", "", err
+	}
+	if before != after {
+		return "", "", errSourceChanged
+	}
+	return fingerprint, after, nil
+}
 
 func databaseFingerprint(path, contract string) (string, error) {
 	return incrementality.TargetFingerprint(incrementality.Target{

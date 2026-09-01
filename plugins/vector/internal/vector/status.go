@@ -93,17 +93,17 @@ func ReportVectorization(ctx context.Context, req StatusRequest) (Vectorization,
 
 func readWorkerStatus(stateDir string) WorkerStatus {
 	status := WorkerStatus{}
-	if stateDir == "" || !WorkerRunning(stateDir) {
+	if stateDir == "" {
 		return status
 	}
-	pid := ReadWorkerPID(stateDir)
-	if pid <= 0 {
+	claim, running := liveWorkerClaim(stateDir)
+	if !running {
 		return status
 	}
 	status.Running = true
-	status.PID = &pid
+	status.PID = &claim.PID
 	activity, err := readWorkerActivity(stateDir)
-	if err != nil || activity.PID != pid {
+	if err != nil || activity.PID != claim.PID || activity.RunID == "" || activity.RunID != claim.RunID {
 		return status
 	}
 	backend := strings.ToLower(strings.TrimSpace(activity.Backend))
@@ -274,6 +274,11 @@ func readDeclaredChunkCount(ctx context.Context, database vectorDatabase, path s
 		return nil, err
 	}
 	defer store.Close()
+	tx, err := store.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
 	var total int64
 	for _, table := range database.Tables {
 		columns := make([]string, len(table.TextColumns))
@@ -282,7 +287,7 @@ func readDeclaredChunkCount(ctx context.Context, database vectorDatabase, path s
 		}
 		statement := `SELECT ` + strings.Join(columns, ",") + ` FROM ` + quoteIdentifier(table.Name) +
 			` WHERE ` + declaredSourcePredicate("", table)
-		rows, err := store.QueryContext(ctx, statement)
+		rows, err := tx.QueryContext(ctx, statement)
 		if err != nil {
 			return nil, err
 		}
@@ -315,11 +320,15 @@ func readDeclaredChunkCount(ctx context.Context, database vectorDatabase, path s
 			return nil, err
 		}
 	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
 	return &total, nil
 }
 
 type workerActivity struct {
 	PID      int    `json:"pid"`
+	RunID    string `json:"run_id"`
 	Backend  string `json:"backend,omitempty"`
 	Database string `json:"database,omitempty"`
 }
@@ -336,21 +345,25 @@ func readWorkerActivity(stateDir string) (workerActivity, error) {
 	return activity, nil
 }
 
-func updateWorkerActivity(stateDir, backend, database string) error {
-	if stateDir == "" || ReadWorkerPID(stateDir) != os.Getpid() {
+func updateWorkerActivity(stateDir, backend string, database *string) error {
+	if stateDir == "" {
+		return nil
+	}
+	claim, err := readWorkerClaim(stateDir)
+	if err != nil || claim.PID != os.Getpid() || claim.RunID == "" {
 		return nil
 	}
 	workerActivityMu.Lock()
 	defer workerActivityMu.Unlock()
 	activity, _ := readWorkerActivity(stateDir)
-	if activity.PID != os.Getpid() {
-		activity = workerActivity{PID: os.Getpid()}
+	if activity.PID != os.Getpid() || activity.RunID != claim.RunID {
+		activity = workerActivity{PID: os.Getpid(), RunID: claim.RunID}
 	}
 	if backend != "" {
 		activity.Backend = backend
 	}
-	if database != "" {
-		activity.Database = database
+	if database != nil {
+		activity.Database = *database
 	}
 	raw, err := json.Marshal(activity)
 	if err != nil {

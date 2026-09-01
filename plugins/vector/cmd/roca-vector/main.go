@@ -531,7 +531,14 @@ func workerCommand(env *environment) *cobra.Command {
 				return err
 			}
 			defer release()
-			defer vector.ReleaseWorkerClaim(state)
+			releaseClaim, err := vector.LockWorkerClaim(state)
+			if err != nil {
+				return err
+			}
+			defer func() {
+				_ = releaseClaim()
+				vector.ReleaseWorkerClaim(state)
+			}()
 			federation, federationErr := env.federation(model)
 			var completion vector.Completion
 			if federationErr == nil {

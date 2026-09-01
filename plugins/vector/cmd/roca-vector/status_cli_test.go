@@ -26,9 +26,14 @@ func TestStatusCommandReportsAXIRowsWithoutWaitingForTheModel(t *testing.T) {
 	t.Setenv("HOME", filepath.Join(root, "home"))
 	t.Setenv("ROCA_VECTOR_PLUGIN_ROOT", pluginRoot)
 	t.Setenv("ROCA_VECTOR_ROCA_BINARY", "/synthetic/roca")
-	if err := os.WriteFile(filepath.Join(state, vector.WorkerClaimFilename), []byte(fmt.Sprintf("%d\n", os.Getpid())), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(state, vector.WorkerClaimFilename), []byte(fmt.Sprintf("%d status-cli\n", os.Getpid())), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	releaseClaim, err := vector.LockWorkerClaim(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer releaseClaim()
 
 	registry := `{
 		"schema": 2,

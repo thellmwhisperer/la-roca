@@ -2,6 +2,7 @@ package vector
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -102,6 +103,31 @@ func TestWorkerClaimDistinguishesLiveAndStaleProcesses(t *testing.T) {
 		t.Fatalf("stale claim = %v, err=%v", claim, err)
 	}
 	claim.Close()
+}
+
+func TestWorkerRunningRequiresTheClaimOwnerLock(t *testing.T) {
+	directory := t.TempDir()
+	claimPath := filepath.Join(directory, WorkerClaimFilename)
+	if err := os.WriteFile(claimPath, []byte(fmt.Sprintf("%d current-run\n", os.Getpid())), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if WorkerRunning(directory) {
+		t.Fatal("unlocked stale claim reported a running worker")
+	}
+	release, err := LockWorkerClaim(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !WorkerRunning(directory) {
+		_ = release()
+		t.Fatal("locked live claim did not report a running worker")
+	}
+	if err := release(); err != nil {
+		t.Fatal(err)
+	}
+	if WorkerRunning(directory) {
+		t.Fatal("released claim owner lock still reported a running worker")
+	}
 }
 
 func TestManagedStateUsageLocksTheStablePluginRoot(t *testing.T) {

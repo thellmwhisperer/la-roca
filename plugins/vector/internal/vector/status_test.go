@@ -3,6 +3,7 @@ package vector
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,9 +18,7 @@ func TestReportVectorizationReadsSidecarFactsAndNeverInventZero(t *testing.T) {
 	if err := os.MkdirAll(state, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(state, WorkerClaimFilename), []byte(fmt.Sprintf("%d\n", os.Getpid())), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	holdTestWorkerClaim(t, state, "status-facts")
 	corpus := vectorDatabase{
 		Plugin: "roca-corpus", Database: "corpus", Path: "roca-corpus.db", Alias: "corpus",
 		Tables: []vectorTable{{Name: "notes", IDColumn: "id", TextColumns: []string{"body"}}},
@@ -62,7 +61,8 @@ func TestReportVectorizationReadsSidecarFactsAndNeverInventZero(t *testing.T) {
 		"contract": ops.contractFingerprint(), "source_fingerprint": "sealed-ops",
 		sourceMarkerMetaKey: opsMarker,
 	})
-	if err := updateWorkerActivity(state, "metal", corpus.owner()); err != nil {
+	activeDatabase := corpus.owner()
+	if err := updateWorkerActivity(state, "metal", &activeDatabase); err != nil {
 		t.Fatal(err)
 	}
 	writeSidecarWithChunks(t, SidecarPath(filepath.Join(root, notesPlugin.Plugin, notesPlugin.Path)),
@@ -224,9 +224,7 @@ func TestReportVectorizationUnknownNeverBecomesZeroOnAHungSourceCount(t *testing
 
 func TestEmbeddingSchedulerRecordsTheDatabaseItIsEmbedding(t *testing.T) {
 	state := t.TempDir()
-	if err := os.WriteFile(filepath.Join(state, WorkerClaimFilename), []byte(fmt.Sprintf("%d\n", os.Getpid())), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	holdTestWorkerClaim(t, state, "scheduler")
 	base := &delayedEmbedder{delay: 100 * time.Millisecond}
 	scheduler := newEmbeddingScheduler(context.Background(), base, 1)
 	runDone := make(chan error, 1)
@@ -251,6 +249,9 @@ func TestEmbeddingSchedulerRecordsTheDatabaseItIsEmbedding(t *testing.T) {
 	}
 	if err := <-embedDone; err != nil {
 		t.Fatal(err)
+	}
+	if status := readWorkerStatus(state); status.Database != nil {
+		t.Fatalf("finished embedding still reports database %q", *status.Database)
 	}
 	scheduler.finished <- 0
 	if err := <-runDone; err != nil {
@@ -380,6 +381,55 @@ func TestReportVectorizationTreatsSidecarStatErrorsAsUnknown(t *testing.T) {
 	if report.Databases[0].State != StateUnknown {
 		t.Fatalf("unreadable sidecar state = %q, want unknown", report.Databases[0].State)
 	}
+}
+
+func TestStableDatabaseIdentityRejectsAChangedSourceSnapshot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "source.db")
+	if err := os.WriteFile(path, []byte("before"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := fingerprintVectorSource
+	fingerprintVectorSource = func(string, string) (string, error) {
+		if err := os.WriteFile(path, []byte("after-state"), 0o600); err != nil {
+			return "", err
+		}
+		return "fingerprint", nil
+	}
+	t.Cleanup(func() { fingerprintVectorSource = old })
+	if _, _, err := stableDatabaseIdentity(path, "contract"); !errors.Is(err, errSourceChanged) {
+		t.Fatalf("changed source identity error = %v, want %v", err, errSourceChanged)
+	}
+}
+
+func TestWorkerStatusRejectsActivityFromAnotherRun(t *testing.T) {
+	state := t.TempDir()
+	holdTestWorkerClaim(t, state, "current-run")
+	activity := workerActivity{PID: os.Getpid(), RunID: "previous-run", Backend: "metal",
+		Database: "roca-corpus/corpus"}
+	raw, err := json.Marshal(activity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(state, workerActivityFile), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	status := readWorkerStatus(state)
+	if !status.Running || status.Backend != nil || status.Database != nil {
+		t.Fatalf("stale worker activity was reported: %+v", status)
+	}
+}
+
+func holdTestWorkerClaim(t *testing.T, state, runID string) {
+	t.Helper()
+	path := filepath.Join(state, WorkerClaimFilename)
+	if err := os.WriteFile(path, []byte(fmt.Sprintf("%d %s\n", os.Getpid(), runID)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	release, err := lockFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = release() })
 }
 
 func writeSidecarWithChunks(t *testing.T, path, owner string, n int, extraMeta map[string]string) {
