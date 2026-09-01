@@ -56,8 +56,8 @@ func TestOverlappingLocalCodexRolloutKeepsTheRicherRow(t *testing.T) {
 	export := t.TempDir()
 	if err := os.WriteFile(filepath.Join(export, "codex.json"), []byte(`[
 	  {"id":"`+cloudID+`","title":"Synthetic cloud title","archived":false,"turns":[
-	    {"id":"u","role":"user","input_items":[{"type":"message","role":"user","content":[{"content_type":"text","text":"Open the imaginary hatch."}]}]},
-	    {"id":"a","role":"assistant","previous_turn_id":"u","turn_status":"TaskTurnStatusEnum.COMPLETED","output_items":[
+	    {"id":"u","role":"user","create_time":1767225601.125,"input_items":[{"type":"message","role":"user","content":[{"content_type":"text","text":"Open the imaginary hatch."}]}]},
+	    {"id":"a","role":"assistant","previous_turn_id":"u","create_time":1767225602.625,"turn_status":"TaskTurnStatusEnum.COMPLETED","output_items":[
 	      {"type":"message","role":"assistant","content":[{"content_type":"text","text":"The hatch is open."}]}
 	    ]}
 	  ]}
@@ -101,11 +101,13 @@ func TestOverlappingLocalCodexRolloutKeepsTheRicherRow(t *testing.T) {
 				t.Fatalf("exchanges = %d, want 1 merged row", got)
 			}
 			var title, model, provider, humanTS, agentTS string
+			var latency int
 			if err := db.SQL().QueryRow(`SELECT s.title, COALESCE(e.model, ''), COALESCE(e.provider, ''),
-				COALESCE(e.human_timestamp, ''), COALESCE(e.agent_timestamp, '')
+				COALESCE(e.human_timestamp, ''), COALESCE(e.agent_timestamp, ''),
+				COALESCE(e.response_latency_ms, -1)
 				FROM sessions s JOIN exchanges e ON e.session_id = s.session_id
 				WHERE s.session_id = ?`, cloudID).
-				Scan(&title, &model, &provider, &humanTS, &agentTS); err != nil {
+				Scan(&title, &model, &provider, &humanTS, &agentTS, &latency); err != nil {
 				t.Fatal(err)
 			}
 			if title != "Synthetic cloud title" {
@@ -114,8 +116,9 @@ func TestOverlappingLocalCodexRolloutKeepsTheRicherRow(t *testing.T) {
 			if model != "gpt-synthetic-local" || provider != "openai" {
 				t.Errorf("kept provenance = %q/%q, want the richer local rollout", model, provider)
 			}
-			if humanTS != "2026-08-01T12:00:01Z" || agentTS != "2026-08-01T12:00:02Z" {
-				t.Errorf("local timestamps = %q / %q, want both rollout times", humanTS, agentTS)
+			if humanTS != "2026-08-01T12:00:01Z" || agentTS != "2026-08-01T12:00:02Z" || latency != -1 {
+				t.Errorf("local timing = %q / %q / %d, want rollout times and unknown latency",
+					humanTS, agentTS, latency)
 			}
 		})
 	}
