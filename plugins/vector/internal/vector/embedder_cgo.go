@@ -43,7 +43,7 @@ func (n *Native) Embed(ctx context.Context, requestedModel string, input []strin
 	}()
 	select {
 	case result := <-done:
-		if result.err != nil && ctx.Err() != nil {
+		if ctx.Err() != nil {
 			return nil, n.nativeContextError(callerCtx)
 		}
 		return result.vectors, result.err

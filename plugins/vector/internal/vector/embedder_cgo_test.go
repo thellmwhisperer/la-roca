@@ -183,6 +183,7 @@ func TestNativeEmbedPreservesActiveCallerCancellation(t *testing.T) {
 		t.Fatal("native call did not start")
 	}
 	cancel()
+	close(block)
 	select {
 	case err := <-done:
 		if !errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "stalled") {
@@ -191,7 +192,6 @@ func TestNativeEmbedPreservesActiveCallerCancellation(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("canceled native caller did not return")
 	}
-	close(block)
 }
 
 func TestNativeEmbedDoesNotOverlapEngineCalls(t *testing.T) {
