@@ -277,36 +277,13 @@ func TestIncrementalCodexLateVerdictFallsBackToTheFullRollout(t *testing.T) {
 {"type":"response_item","payload":{"type":"function_call_output","call_id":"old","output":{"metadata":{"exit_code":1}}}}
 {"type":"event_msg","payload":{"type":"task_complete","last_agent_message":"done again"}}
 `
-	path := filepath.Join(t.TempDir(), "rollout.jsonl")
-	if err := os.WriteFile(path, []byte(prefix), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	target := Target{Path: path, FileName: filepath.Base(path), Kind: parsers.KindCodexSession,
-		SessionID: "late-verdict", SourceAgent: "codex"}
-	firstResult := Result{}
-	first, reason := read(t.Context(), Options{}, target, incrementality.FileState{}, &firstResult)
-	if reason != "" {
-		t.Fatal(reason)
-	}
-	db := corpusDatabase(t)
-	writeHarvestRecords(t, db, first)
-	metadata, err := json.Marshal(firstResult.harvestCursors[path])
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(prefix+tail), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	secondResult := Result{}
-	second, reason := read(t.Context(), Options{}, target,
-		incrementality.FileState{Metadata: metadata}, &secondResult)
-	if reason != "" {
-		t.Fatal(reason)
-	}
+	db, second := writeGrowingSessionInTwoPasses(t, prefix, tail, Target{
+		FileName: "rollout.jsonl", Kind: parsers.KindCodexSession,
+		SessionID: "late-verdict", SourceAgent: "codex",
+	})
 	if len(second.Sessions) != 1 || second.Sessions[0].Incremental {
 		t.Fatalf("late-verdict reading did not fall back to the full rollout: %+v", second.Sessions)
 	}
-	writeHarvestRecords(t, db, second)
 	var count, hadError int
 	var message string
 	if err := db.SQL().QueryRow(`SELECT COUNT(*), had_error, error_message FROM tool_uses
@@ -506,35 +483,12 @@ func TestIncrementalPiSessionAdvancesItsTimeline(t *testing.T) {
 		`{"id":"a1","parentId":"u1","type":"message","timestamp":"2026-08-01T13:00:02Z","message":{"role":"assistant","content":"done","stopReason":"stop"}}` + "\n"
 	tail := `{"id":"u2","parentId":"a1","type":"message","timestamp":"2026-08-01T13:10:00Z","message":{"role":"user","content":"two"}}` + "\n" +
 		`{"id":"a2","parentId":"u2","type":"message","timestamp":"2026-08-01T13:10:02Z","message":{"role":"assistant","content":"done again","stopReason":"stop"}}` + "\n"
-	path := filepath.Join(t.TempDir(), "session.jsonl")
-	target := Target{Path: path, FileName: filepath.Base(path), Kind: parsers.KindPiSession}
-	if err := os.WriteFile(path, []byte(prefix), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	firstResult := Result{}
-	first, reason := read(t.Context(), Options{}, target, incrementality.FileState{}, &firstResult)
-	if reason != "" {
-		t.Fatal(reason)
-	}
-	db := corpusDatabase(t)
-	writeHarvestRecords(t, db, first)
-	metadata, err := json.Marshal(firstResult.harvestCursors[path])
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(prefix+tail), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	secondResult := Result{}
-	second, reason := read(t.Context(), Options{}, target,
-		incrementality.FileState{Metadata: metadata}, &secondResult)
-	if reason != "" {
-		t.Fatal(reason)
-	}
+	db, second := writeGrowingSessionInTwoPasses(t, prefix, tail, Target{
+		FileName: "session.jsonl", Kind: parsers.KindPiSession,
+	})
 	if len(second.Sessions) != 1 || !second.Sessions[0].Incremental {
 		t.Fatalf("incremental Pi session = %+v", second.Sessions)
 	}
-	writeHarvestRecords(t, db, second)
 	var started, ended string
 	var duration int
 	if err := db.SQL().QueryRow(`SELECT started_at, ended_at, duration_minutes FROM sessions
@@ -721,6 +675,39 @@ func assertHarvestCursorState(t *testing.T, db *store.DB, path string, cursor in
 		t.Fatalf("cursor state = %+v, size=%d; want cursor=%d complete=%t",
 			state, info.Size(), cursor, complete)
 	}
+}
+
+func writeGrowingSessionInTwoPasses(t *testing.T, prefix, tail string,
+	target Target,
+) (*store.DB, parsers.Records) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), target.FileName)
+	target.Path = path
+	if err := os.WriteFile(path, []byte(prefix), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	firstResult := Result{}
+	first, reason := read(t.Context(), Options{}, target, incrementality.FileState{}, &firstResult)
+	if reason != "" {
+		t.Fatal(reason)
+	}
+	db := corpusDatabase(t)
+	writeHarvestRecords(t, db, first)
+	metadata, err := json.Marshal(firstResult.harvestCursors[path])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(prefix+tail), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	secondResult := Result{}
+	second, reason := read(t.Context(), Options{}, target,
+		incrementality.FileState{Metadata: metadata}, &secondResult)
+	if reason != "" {
+		t.Fatal(reason)
+	}
+	writeHarvestRecords(t, db, second)
+	return db, second
 }
 
 func corpusDatabase(t *testing.T) *store.DB {
