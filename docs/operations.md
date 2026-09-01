@@ -42,10 +42,12 @@ shell that does not read an interactive `PATH`. Reinstalling repoints an entry
 whose binary moved instead of adding a second one.
 
 `roca hooks install claude --pills` and `--handoff` are opt-in SessionStart
-entries that run `roca pill` and `roca handoff latest`. They are not installed
-by init, update, or a bare `hooks install claude`. Each flag has its own
-uninstall marker: `roca hooks uninstall claude --pills` and `--handoff` withdraw
-those SessionStart entries and leave the signing hook in place.
+entries that run `roca pill` and `roca handoff latest`. A flagged install edits
+only the requested SessionStart entries; the signing hook remains a separate,
+bare `hooks install claude` operation. Init and update install no SessionStart
+entries. Each flag has its own uninstall marker: `roca hooks uninstall claude
+--pills` and `--handoff` withdraw those entries and leave the signing hook in
+place.
 
 That exact command hook inside `PreToolUse` is the artifact's SYSTEM fragment;
 the enclosing group, surrounding Claude settings, and every other hook are its
@@ -56,13 +58,15 @@ settings, and an edited fragment is left alone until
 [Update](lifecycle.md#update) for the shared zone, divergence and registry
 contract.
 
-`roca hooks uninstall claude` withdraws that entry and leaves every other
-setting, and every hook that is not La Roca's, exactly as it was. `roca
-uninstall` does the same withdrawal before it unlinks the binary, so no hook
-survives calling a command that is gone. Settings La Roca cannot read stop the
-install, which cannot safely edit what it cannot parse, but never stop either
-withdrawal: the file is left byte for byte as it is, and one warning line on
-stderr names it and the `hooks run claude` entry to delete by hand.
+`roca hooks uninstall claude` withdraws the signing entry and leaves every
+other setting, and every hook that is not La Roca's, exactly as it was. `roca
+uninstall` independently attempts to withdraw the signing, pills, and handoff
+entries before it unlinks the binary, so a problem reading one hook shape does
+not suppress either of the others. Settings La Roca cannot read stop an install,
+which cannot safely edit what it cannot parse, but never stop a withdrawal: the
+file is left byte for byte as it is, and stderr names each affected ownership
+marker (`hooks run claude`, `hooks run claude-pills`, or `hooks run
+claude-handoff`) to delete by hand.
 
 Other harnesses can use the same client-side pattern: intercept the shell tool,
 read identity only from a harness-owned session source, and inject both flags;
@@ -72,6 +76,17 @@ no other hook installer ships yet.
 
 Curated memories use typed layers (`handoff`, `pattern`, `discovery`,
 `feedback`, `pill`, among others), the same shape for every runtime.
+
+### Handoff writes
+
+A handoff is stored only on explicit operator instruction. `roca store` and
+`roca_store` accept one only from a recognized interactive session harness on
+the CLI or MCP surface. Its content must give nonblank values for the labeled
+fields branch/scope, done, current state, and next step; a replacement names its
+predecessor with CLI `--supersedes` or the MCP `supersedes` field rather than in
+prose. Rejections direct worker progress to tasks-axi, delivery to the `pr`
+field, session decisions to layer `decision`, and expiring job state to a layer
+with `expires_at`.
 
 `roca store --layer <name>` accepts only a name in the live layer registry and
 lists the registered layers when it refuses a write. This validation is shared

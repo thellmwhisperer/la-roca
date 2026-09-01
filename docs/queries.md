@@ -156,15 +156,29 @@ also reads the rows. The longer model, repair, and routing contracts live in
 [Model providers](models.md); [the MCP plug](mcp.md) documents the shell-less
 `roca_query`, `roca_sql`, and `roca_exec` equivalents.
 
-For session continuity, do not rank handoffs by clock. Load the active
-unsuperseded ones, and the project pills, with first-class verbs:
+## Session context
+
+Both session-context verbs default `--project` to the basename of the working
+directory. They always read the existing `roca-ops` database; if
+`features.roca_ops` is disabled or that database is missing, they refuse rather
+than reading core or creating an empty ops database.
+
+`roca pill [--project <project>]` loads active project and global pills, keeps
+the newest timestamped row for each `metadata.pill_slug`, and lists unslugged
+row IDs without loading them. `roca pill show <slug>` returns the selected pill.
+Default AXI/TOON output includes complete content, `--json` returns the script
+envelope, and there is no budget flag.
+
+`roca handoff latest [--project <project>]` loads every active handoff that no
+other memory supersedes. It chooses project handoffs after that filtering and
+falls back to unsuperseded global handoffs only when no project handoff remains;
+it never treats newest-by-clock as current.
 
 ```sh
 roca pill --project '<project>'
 roca handoff latest --project '<project>'
 ```
 
-A handoff is written only when the operator asks, with branch/scope, done,
-current state, and next step, and with `--supersedes` when it replaces another
-memory. Session writers are the interactive harnesses already stamped on
-`source_agent` / `source_surface` (`cli` or `mcp`).
+A handoff is written only on explicit operator instruction. The
+[handoff write policy](operations.md#handoff-writes) owns the allowed writers,
+required shape, and replacement contract.

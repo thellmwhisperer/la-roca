@@ -173,8 +173,8 @@ use every selected database through its unchanged FTS/SQL path.
   and are last resort. Agents never pass `--full`.
 
 Handoffs and ops live on the ops database. The default `roca query` route
-includes it. Use the qualified handoff query under Deterministic patterns when
-writing SQL yourself.
+includes it. The first-class session-context verbs under Deterministic patterns
+read it directly; use the qualified table named there when writing SQL yourself.
 
 ## When to call what
 
@@ -298,6 +298,8 @@ directory, or `--project`), including globals, then keeps one row per
 `metadata.pill_slug`: the newest. Rows without a slug are listed by id and not
 loaded. `roca pill show <slug>` returns one complete pill. Output is AXI/TOON
 with the full content; `--json` is the script envelope. There is no budget flag.
+Both session-context verbs require `features.roca_ops` and the existing ops
+database; they refuse rather than reading core or creating an empty ops store.
 
 `roca handoff latest` loads active handoffs for the project that no other memory
 has superseded. A later row that does not name a predecessor does not hide it.
@@ -350,7 +352,13 @@ Do not stack synonyms.
   their memory and rule files land in the `user`, `feedback` and `project`
   layers at ingest. On a fresh install the `handoff` layer is empty until
   somebody stores the first one.
-- Start project work with `roca pill` and `roca handoff latest`. Ask for the current handoff protocol and follow it instead of freezing it here. Do not write a handoff unless the operator asked for one. When they do, the shape is branch/scope, done, current state, and next step, and replacement is declared with `--supersedes`, not in prose. Progress belongs in tasks-axi; delivery belongs in the `pr` field; a session decision belongs in layer `decision`; job state belongs in a layer with `expires_at`.
+- Start project work with `roca pill` and `roca handoff latest`. Ask for the
+  current handoff protocol and follow it instead of freezing it here. Do not
+  write a handoff unless the operator asked for one. When they do, the shape is
+  branch/scope, done, current state, and next step, and replacement is declared
+  with CLI `--supersedes` or the MCP `supersedes` field, not in prose. Progress
+  belongs in tasks-axi; delivery belongs in the `pr` field; a session decision
+  belongs in layer `decision`; job state belongs in a layer with `expires_at`.
 - Ask bare first: use one short concept and no hints. Hints can steer SQL to the
   wrong table; a typo can silently leave noise as the best match.
 - Write SQL and `roca exec` first. `roca query` is hybrid search. `roca explore`
@@ -422,6 +430,7 @@ data.
 roca exec "SELECT COUNT(*) AS memories FROM memories"
 roca pill
 roca handoff latest
+# After an explicit operator request:
 roca store --layer handoff --content "branch: main done: the ingest update left the gate in place state: word search works next: wait for the operator" --origin agent --agent claude --model sonnet
 ```
 
