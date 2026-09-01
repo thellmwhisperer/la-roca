@@ -802,6 +802,87 @@ func TestZcodeCustomHookPurgeWithdrawsDeclarationWithModifiedWrapper(t *testing.
 	}
 }
 
+func TestZcodeCustomHookPurgeWithdrawsEditedMarkers(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		duplicate bool
+	}{
+		{name: "edited timeout"},
+		{name: "duplicate marker", duplicate: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			home := skillTestHome(t)
+			custom := filepath.Join(home, "custom-zcode")
+			t.Setenv("ZCODE_HOME", custom)
+			config := filepath.Join(custom, "cli", "config.json")
+			writeFile(t, config, `{"hooks":{"enabled":true}}`)
+			installZcodeTestIntegration(t, "hooks", home)
+			_, document := readZcodeTestJSON(t, config)
+			events := document["hooks"].(map[string]any)["events"].(map[string]any)
+			groups := events["SessionStart"].([]any)
+			if test.duplicate {
+				events["SessionStart"] = append(groups, groups[0])
+			} else {
+				hooks := groups[0].(map[string]any)["hooks"].([]any)
+				hooks[0].(map[string]any)["timeoutMs"] = float64(999)
+			}
+			writeZcodeTestJSON(t, config, document)
+			wrapper := filepath.Join(custom, "hooks", "roca-handoff.sh")
+			t.Setenv("ZCODE_HOME", "")
+			report := purgeZcodeTestIntegrations(true)
+			if !strings.Contains(strings.Join(report.Errors, "\n"), config) {
+				t.Fatalf("retained artifacts were not reported: %v", report.Errors)
+			}
+			if zcodeManagedHookPresent(config) {
+				t.Fatal("edited marker-owned declaration survived purge")
+			}
+			if _, err := os.Stat(wrapper); err != nil {
+				t.Fatalf("wrapper without canonical declaration continuity was removed: %v", err)
+			}
+			registry, err := artifact.LoadRegistry(filepath.Join(home, ".roca", "artifacts.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, found := registry.Find(artifactKindHook, agentcfg.RuntimeZcode, wrapper); found {
+				t.Fatal("withdrawn edited hook ownership survived")
+			}
+		})
+	}
+}
+
+func TestZcodeFailedInstallRollsBackCreationProvenance(t *testing.T) {
+	for _, integration := range []string{"mcp", "hooks"} {
+		t.Run(integration, func(t *testing.T) {
+			home := skillTestHome(t)
+			configDir := filepath.Join(home, ".zcode", "cli")
+			if err := os.MkdirAll(configDir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(configDir, 0o500); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(configDir, 0o700) })
+			err := executeZcodeTestCLI(integration, "install", "zcode", "--executable", filepath.Join(home, "roca"))
+			if err == nil {
+				t.Fatal("install unexpectedly published into a read-only directory")
+			}
+			registry, loadErr := artifact.LoadRegistry(filepath.Join(home, ".roca", "artifacts.json"))
+			if loadErr != nil {
+				t.Fatal(loadErr)
+			}
+			kind := artifactKindMCP
+			path := filepath.Join(configDir, "config.json")
+			if integration == "hooks" {
+				kind = artifactKindHook
+				path = filepath.Join(home, ".zcode", "hooks", "roca-handoff.sh")
+			}
+			if _, found := registry.Find(kind, agentcfg.RuntimeZcode, path); found {
+				t.Fatal("failed install retained creation provenance")
+			}
+		})
+	}
+}
+
 func TestZcodeUnreadableHookKeepsOwnershipForRetry(t *testing.T) {
 	home := skillTestHome(t)
 	config := filepath.Join(home, ".zcode", "cli", "config.json")

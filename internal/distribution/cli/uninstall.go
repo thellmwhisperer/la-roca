@@ -554,6 +554,14 @@ func zcodeMCPContinuity(config string, entry artifact.Entry) (bool, error) {
 	return agentcfg.ZcodeMCPMatches(config, entry.Executable)
 }
 
+func zcodeHookDeclarationPresent(config string) (bool, error) {
+	present, verified := zcodeManagedHookState(config)
+	if !verified {
+		return false, fmt.Errorf("could not verify ZCode hook markers in %s", config)
+	}
+	return present, nil
+}
+
 func zcodeHookDeclarationContinuity(config string, entry artifact.Entry) (bool, error) {
 	configBody, err := os.ReadFile(config)
 	if os.IsNotExist(err) {
@@ -637,19 +645,21 @@ func (env *cliEnv) purgeRegisteredZcodeIntegrations(report *lifecycle.Report, re
 			liveHooks := make([]artifact.Entry, 0, len(group.hooks))
 			withdrawOnlyHooks := make([]artifact.Entry, 0, len(group.hooks))
 			for _, entry := range group.hooks {
-				declared, declarationErr := zcodeHookDeclarationContinuity(config, entry)
+				declared, declarationErr := zcodeHookDeclarationPresent(config)
 				if !declared {
 					if unregisterErr := env.unregisterArtifactEntry(entry); unregisterErr != nil {
 						return errors.Join(declarationErr, unregisterErr)
 					}
-					failed(report, "retained ZCode hook artifacts at %s because managed declaration continuity is absent: %v",
+					failed(report, "retained ZCode hook artifacts at %s because managed declaration ownership is absent: %v",
 						config, declarationErr)
 					continue
 				}
+				canonical, canonicalErr := zcodeHookDeclarationContinuity(config, entry)
 				continuous, continuityErr := zcodeWrapperContinuity(entry)
-				if !continuous {
+				if !canonical || !continuous {
 					withdrawOnlyHooks = append(withdrawOnlyHooks, entry)
-					failed(report, "retained uncertain ZCode hook artifacts at %s: %v", config, continuityErr)
+					failed(report, "retained uncertain ZCode hook artifacts at %s: %v",
+						config, errors.Join(canonicalErr, continuityErr))
 					continue
 				}
 				liveHooks = append(liveHooks, entry)
@@ -668,9 +678,8 @@ func (env *cliEnv) purgeRegisteredZcodeIntegrations(report *lifecycle.Report, re
 				liveMCP = append(liveMCP, entry)
 			}
 			for _, entry := range withdrawOnlyHooks {
-				expected, _ := zcodeWrapperExpectedFromEntry(entry)
 				outcome, warning, uninstallErr := uninstallZcodeHandoffHookUnlocked(
-					config, entry.Path, expected, entry.CreatedHooksEnabled)
+					config, entry.Path, nil, entry.CreatedHooksEnabled)
 				if warning != "" {
 					fmt.Fprintln(env.errOut, warning)
 				}
@@ -752,11 +761,16 @@ func cleanupCreatedZcodePaths(entry artifact.Entry, configPath string, wrappers 
 	root := filepath.Dir(configDir)
 	var cleanupErr error
 	if entry.CreatedConfig {
-		retained, err := removeEmptyZcodeConfig(configPath)
-		cleanupErr = errors.Join(cleanupErr, err)
-		if retained && err == nil {
-			cleanupErr = errors.Join(cleanupErr,
-				fmt.Errorf("operator configuration remains in proven-created ZCode config %s", configPath))
+		identity, identityErr := os.Lstat(configPath)
+		if identityErr == nil {
+			retained, err := removeEmptyZcodeConfigMatching(configPath, identity)
+			cleanupErr = errors.Join(cleanupErr, err)
+			if retained && err == nil {
+				cleanupErr = errors.Join(cleanupErr,
+					fmt.Errorf("operator configuration remains in proven-created ZCode config %s", configPath))
+			}
+		} else if !os.IsNotExist(identityErr) {
+			cleanupErr = errors.Join(cleanupErr, identityErr)
 		}
 	} else if body, err := os.ReadFile(configPath); err == nil && strings.TrimSpace(string(body)) == "{}" {
 		cleanupErr = errors.Join(cleanupErr, fmt.Errorf("unproven ZCode artifact remains at %s", configPath))
@@ -962,6 +976,16 @@ func zcodeEmptyDirectoryVerifier(path string, info os.FileInfo) (bool, error) {
 
 func removeEmptyZcodeConfig(path string) (bool, error) {
 	return removeEmptyZcodeConfigAfterQuarantine(path, nil, os.Remove)
+}
+
+func removeEmptyZcodeConfigMatching(path string, expected os.FileInfo) (bool, error) {
+	return removeOwnedZcodeArtifact(path, func(path string, info os.FileInfo) (bool, error) {
+		if !info.Mode().IsRegular() || !os.SameFile(expected, info) {
+			return false, nil
+		}
+		body, err := os.ReadFile(path)
+		return strings.TrimSpace(string(body)) == "{}", err
+	}, nil, os.Remove)
 }
 
 func removeEmptyZcodeConfigAfterQuarantine(path string, afterRename func(), removeQuarantine func(string) error) (bool, error) {

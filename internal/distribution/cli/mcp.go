@@ -10,7 +10,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/thellmwhisperer/la-roca/internal/artifact"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/agentcfg"
-	"github.com/thellmwhisperer/la-roca/internal/securefile"
 )
 
 // EnvExecutable is an explicit test and operator override. Without it, the
@@ -225,11 +224,7 @@ func (env *cliEnv) installZcodeMCPLocked(path, executable string) (outcome agent
 		})
 	if err != nil {
 		if rollback != nil {
-			published, matchErr := agentcfg.ZcodeMCPMatches(path, executable)
-			if published {
-				return outcome, err
-			}
-			err = errors.Join(err, matchErr, rollback())
+			err = errors.Join(err, rollback())
 		}
 		cleanup := pathPreimage
 		cleanup.createdConfig = false
@@ -272,10 +267,7 @@ func (env *cliEnv) lockManagedZcodeLifecycle() (func() error, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(filepath.Dir(paths.Artifacts), 0o700); err != nil {
-		return nil, err
-	}
-	return securefile.Lock(paths.Artifacts + ".zcode.lock")
+	return lockManagedFile(paths.Artifacts + ".zcode.lock")
 }
 
 func (env *cliEnv) recordZcodeMCPPreimage(path, executable, preimage string, configured bool, pathStates ...zcodeMCPPathState) (func() error, error) {
@@ -326,10 +318,45 @@ func (env *cliEnv) recordZcodeMCPPreimage(path, executable, preimage string, con
 }
 
 func lockArtifactRegistry(path string) (func() error, error) {
+	return lockManagedFile(path + ".lock")
+}
+
+func lockManagedFile(path string) (func() error, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
 	}
-	return securefile.Lock(path + ".lock")
+	for {
+		info, err := os.Lstat(path)
+		if err == nil {
+			if !info.Mode().IsRegular() {
+				return nil, fmt.Errorf("refuse non-regular managed lock %s", path)
+			}
+			return lockExistingZcodeLifecycle(path, info)
+		}
+		if !os.IsNotExist(err) {
+			return nil, err
+		}
+		file, createErr := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600)
+		if os.IsExist(createErr) {
+			continue
+		}
+		if createErr != nil {
+			return nil, createErr
+		}
+		info, statErr := file.Stat()
+		closeErr := file.Close()
+		if statErr != nil || closeErr != nil {
+			if statErr == nil {
+				closeErr = errors.Join(closeErr, cleanupCreatedZcodeLifecycleLock(path, info))
+			}
+			return nil, errors.Join(statErr, closeErr)
+		}
+		release, err := lockExistingZcodeLifecycle(path, info)
+		if err != nil {
+			return nil, errors.Join(err, cleanupCreatedZcodeLifecycleLock(path, info))
+		}
+		return release, nil
+	}
 }
 
 func mutateArtifactRegistry(path string, mutate func(*artifact.Registry) (bool, error)) (changed bool, err error) {
