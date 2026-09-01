@@ -203,45 +203,30 @@ func TestZcodeRejectsDuplicateConfigurationMembers(t *testing.T) {
 	}
 }
 
-func TestZcodeStatusRejectsDuplicateConfigurationMembers(t *testing.T) {
+func TestZcodeStatusRejectsInvalidConfigurationMembers(t *testing.T) {
 	entry := `{"type":"stdio","command":"roca","args":["mcp","serve"]}`
-	for _, document := range []string{
-		`{"mcp":{"servers":{"roca":` + entry + `}},"mcp":{"servers":{}}}`,
-		`{"mcp":{"servers":{"roca":` + entry + `},"servers":{}}}`,
-		`{"mcp":{"servers":{"roca":{"type":"stdio","command":"roca","command":"other","args":["mcp","serve"]}}}}`,
+	for _, test := range []struct {
+		document, errorFragment string
+	}{
+		{`{"mcp":{"servers":{"roca":` + entry + `}},"mcp":{"servers":{}}}`, "duplicate object member"},
+		{`{"mcp":{"servers":{"roca":` + entry + `},"servers":{}}}`, "duplicate object member"},
+		{`{"mcp":{"servers":{"roca":{"type":"stdio","command":"roca","command":"other","args":["mcp","serve"]}}}}`, "duplicate object member"},
+		{`{"mcp":{"servers":{"roca":{}}}}`, "must be a stdio command"},
+		{`{"mcp":{"servers":{"roca":{"type":"http","command":"roca","args":["mcp","serve"]}}}}`, "must be a stdio command"},
+		{`{"mcp":{"servers":{"roca":{"type":"stdio","command":"","args":["mcp","serve"]}}}}`, "must be a stdio command"},
+		{`{"mcp":{"servers":{"roca":{"type":"stdio","command":"roca","args":["serve"]}}}}`, "must be a stdio command"},
+		{`{"mcp":{"servers":{"roca":{"type":"stdio","command":"roca","args":["mcp","serve"],"extra":true}}}}`, "must be a stdio command"},
 	} {
 		path := filepath.Join(t.TempDir(), "config.json")
-		if err := os.WriteFile(path, []byte(document), 0o600); err != nil {
+		if err := os.WriteFile(path, []byte(test.document), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		report, err := agentcfg.Status(agentcfg.RuntimeZcode, path)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if report.State != agentcfg.StateInvalid || !strings.Contains(report.Error, "duplicate object member") {
-			t.Fatalf("duplicate status = %#v", report)
-		}
-	}
-}
-
-func TestZcodeStatusRequiresStdioInvocationShape(t *testing.T) {
-	for _, document := range []string{
-		`{"mcp":{"servers":{"roca":{}}}}`,
-		`{"mcp":{"servers":{"roca":{"type":"http","command":"roca","args":["mcp","serve"]}}}}`,
-		`{"mcp":{"servers":{"roca":{"type":"stdio","command":"","args":["mcp","serve"]}}}}`,
-		`{"mcp":{"servers":{"roca":{"type":"stdio","command":"roca","args":["serve"]}}}}`,
-		`{"mcp":{"servers":{"roca":{"type":"stdio","command":"roca","args":["mcp","serve"],"extra":true}}}}`,
-	} {
-		path := filepath.Join(t.TempDir(), "config.json")
-		if err := os.WriteFile(path, []byte(document), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		report, err := agentcfg.Status(agentcfg.RuntimeZcode, path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if report.State != agentcfg.StateInvalid || !strings.Contains(report.Error, "must be a stdio command") {
-			t.Fatalf("malformed status = %#v for %s", report, document)
+		if report.State != agentcfg.StateInvalid || !strings.Contains(report.Error, test.errorFragment) {
+			t.Fatalf("invalid status = %#v for %s", report, test.document)
 		}
 	}
 }

@@ -297,18 +297,11 @@ func validateZcodeMCPDocument(text string) error {
 	if err != nil {
 		return err
 	}
-	decode := func(key string, destination any) bool {
-		index := entry.find(key)
-		if index < 0 {
-			return false
-		}
-		member := entry.members[index]
-		return json.Unmarshal([]byte(view[member.valueStart:member.end]), destination) == nil
-	}
 	var entryType, command string
 	var args []string
-	if len(entry.members) != 3 || !decode("type", &entryType) || !decode("command", &command) ||
-		!decode("args", &args) || entryType != "stdio" || command == "" ||
+	if len(entry.members) != 3 || !decodeObjectMember(view, entry, "type", &entryType) ||
+		!decodeObjectMember(view, entry, "command", &command) ||
+		!decodeObjectMember(view, entry, "args", &args) || entryType != "stdio" || command == "" ||
 		len(args) != 2 || args[0] != "mcp" || args[1] != "serve" {
 		return fmt.Errorf("mcp.servers.%s must be a stdio command with args [\"mcp\", \"serve\"]", ServerName)
 	}
@@ -337,21 +330,24 @@ func ZcodeMCPMatches(path, executable string) (bool, error) {
 	if err != nil || len(entry.members) != 3 {
 		return false, err
 	}
-	decode := func(key string, destination any) bool {
-		index := entry.find(key)
-		if index < 0 {
-			return false
-		}
-		member := entry.members[index]
-		return json.Unmarshal([]byte(view[member.valueStart:member.end]), destination) == nil
-	}
 	var entryType, command string
 	var args []string
-	if !decode("type", &entryType) || !decode("command", &command) || !decode("args", &args) {
+	if !decodeObjectMember(view, entry, "type", &entryType) ||
+		!decodeObjectMember(view, entry, "command", &command) ||
+		!decodeObjectMember(view, entry, "args", &args) {
 		return false, nil
 	}
 	return entryType == "stdio" && command == executable &&
 		len(args) == 2 && args[0] == "mcp" && args[1] == "serve", nil
+}
+
+func decodeObjectMember(view string, entry object, key string, destination any) bool {
+	index := entry.find(key)
+	if index < 0 {
+		return false
+	}
+	member := entry.members[index]
+	return json.Unmarshal([]byte(view[member.valueStart:member.end]), destination) == nil
 }
 
 func UninstallZcodeMCP(path, preimage string) (Outcome, error) {

@@ -786,20 +786,7 @@ func (env *cliEnv) recordZcodeWrapperState(path, executable string, preimage zco
 			return nil, errors.Join(err, readErr)
 		}
 	}
-	return func() error {
-		_, err := mutateArtifactRegistry(paths.Artifacts, func(registry *artifact.Registry) (bool, error) {
-			current, found := registry.Find(artifactKindHook, agentcfg.RuntimeZcode, path)
-			if !found || current != transaction {
-				return false, nil
-			}
-			removeArtifactEntry(registry, transaction.Key())
-			if priorFound {
-				registry.Upsert(prior)
-			}
-			return true, nil
-		})
-		return err
-	}, nil
+	return artifactRegistryRollback(paths.Artifacts, transaction, prior, priorFound), nil
 }
 
 func (env *cliEnv) zcodeWrapperExpected(path string) ([]byte, artifact.Entry, bool, error) {
@@ -822,7 +809,8 @@ func zcodeWrapperExpectedFromEntry(entry artifact.Entry) ([]byte, error) {
 	return expected, nil
 }
 
-func (env *cliEnv) installManagedZcodeHandoffHook(configPath, wrapperPath, executable string) (outcome agentcfg.Outcome, warning string, err error) {
+func (env *cliEnv) withLockedManagedZcodeHook(configPath, wrapperPath string,
+	operation func(string, string) (agentcfg.Outcome, string, error)) (outcome agentcfg.Outcome, warning string, err error) {
 	configPath, err = filepath.Abs(configPath)
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
@@ -831,11 +819,22 @@ func (env *cliEnv) installManagedZcodeHandoffHook(configPath, wrapperPath, execu
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
-	stableRelease, err := env.lockManagedZcodeLifecycle()
+	release, err := env.lockManagedZcodeLifecycle()
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
-	defer func() { err = errors.Join(err, stableRelease()) }()
+	defer func() { err = errors.Join(err, release()) }()
+	return operation(configPath, wrapperPath)
+}
+
+func (env *cliEnv) installManagedZcodeHandoffHook(configPath, wrapperPath, executable string) (agentcfg.Outcome, string, error) {
+	return env.withLockedManagedZcodeHook(configPath, wrapperPath,
+		func(configPath, wrapperPath string) (agentcfg.Outcome, string, error) {
+			return env.installManagedZcodeHandoffHookLocked(configPath, wrapperPath, executable)
+		})
+}
+
+func (env *cliEnv) installManagedZcodeHandoffHookLocked(configPath, wrapperPath, executable string) (outcome agentcfg.Outcome, warning string, err error) {
 	pathPreimage, err := zcodeHookPathPreimage(configPath, wrapperPath)
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
@@ -888,20 +887,14 @@ func (env *cliEnv) installManagedZcodeHandoffHook(configPath, wrapperPath, execu
 	return outcome, warning, err
 }
 
-func (env *cliEnv) uninstallManagedZcodeHandoffHook(configPath, wrapperPath string, finalize ...func(artifact.Entry) error) (outcome agentcfg.Outcome, warning string, err error) {
-	configPath, err = filepath.Abs(configPath)
-	if err != nil {
-		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
-	}
-	wrapperPath, err = filepath.Abs(wrapperPath)
-	if err != nil {
-		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
-	}
-	stableRelease, err := env.lockManagedZcodeLifecycle()
-	if err != nil {
-		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
-	}
-	defer func() { err = errors.Join(err, stableRelease()) }()
+func (env *cliEnv) uninstallManagedZcodeHandoffHook(configPath, wrapperPath string, finalize ...func(artifact.Entry) error) (agentcfg.Outcome, string, error) {
+	return env.withLockedManagedZcodeHook(configPath, wrapperPath,
+		func(configPath, wrapperPath string) (agentcfg.Outcome, string, error) {
+			return env.uninstallManagedZcodeHandoffHookLocked(configPath, wrapperPath, finalize...)
+		})
+}
+
+func (env *cliEnv) uninstallManagedZcodeHandoffHookLocked(configPath, wrapperPath string, finalize ...func(artifact.Entry) error) (outcome agentcfg.Outcome, warning string, err error) {
 	expected, entry, found, err := env.zcodeWrapperExpected(wrapperPath)
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
