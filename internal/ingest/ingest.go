@@ -874,7 +874,7 @@ func incrementalParseNeedsPrefix(kind parsers.Kind, content []byte, records pars
 	if kind != parsers.KindCodexSession {
 		return false
 	}
-	if !codexTailHasCompletedEventTurn(content) {
+	if records.Deferred > 0 || !codexTailHasCompletedEventTurn(content) {
 		return true
 	}
 	for _, discard := range records.Discards {

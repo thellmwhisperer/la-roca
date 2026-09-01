@@ -293,13 +293,23 @@ func (w *writer) sessionWithPolicy(ctx context.Context, session parsers.Session,
 			if !matched.numberValid {
 				counts.ThinkingBlocksDiscarded += len(exchange.Thinking)
 			}
+			reconcileOrphans := session.OrphanedTools != nil && !session.Incremental
+			if reconcileOrphans && matched.numberValid && len(exchange.Tools) > 0 &&
+				(matched.agentText != "" || matched.agentTimestamp != "") {
+				hasTools, err := w.exchangeHasTools(ctx, session.ID, matched.number)
+				if err != nil {
+					return counts, err
+				}
+				if !hasTools {
+					unresolvedOrphanTools = append(unresolvedOrphanTools, exchange.Tools...)
+				}
+			}
 			// A reading that stated more about this answer than the one the row
 			// carries owns its provenance, in this run or in one months later.
 			// Anything else, an unrecorded richness included, only fills what the
 			// row is missing.
 			richer := statedMore(exchange.Signal, known.Signal)
-			thinking, tools, err := w.enrichExchange(ctx, session.ID, matched, exchange, richer,
-				session.OrphanedTools != nil && !session.Incremental)
+			thinking, tools, err := w.enrichExchange(ctx, session.ID, matched, exchange, richer)
 			if err != nil {
 				return counts, err
 			}
@@ -1320,7 +1330,7 @@ func exchangeProvenanceValues(provenance parsers.Provenance) []any {
 // row carries state its provenance instead. Even then it overwrites nothing the
 // source left unsaid: a NULL is the absence of a statement, not a zero.
 func (w *writer) enrichExchange(ctx context.Context, sessionID string, stored storedExchange,
-	exchange parsers.Exchange, richer, reconcileOrphans bool) (int, int, error) {
+	exchange parsers.Exchange, richer bool) (int, int, error) {
 	provenance := exchange.Provenance
 	humanTimestamp := firstNonEmpty(stored.humanTimestamp, exchange.HumanTimestamp)
 	agentTimestamp := firstNonEmpty(stored.agentTimestamp, exchange.AgentTimestamp)
@@ -1375,10 +1385,6 @@ func (w *writer) enrichExchange(ctx context.Context, sessionID string, stored st
 		}
 	}
 	if stored.agentText != "" || stored.agentTimestamp != "" {
-		if reconcileOrphans {
-			tools, err := w.replaceExchangeTools(ctx, sessionID, number, exchange.Tools)
-			return inserted, tools, err
-		}
 		return inserted, 0, nil
 	}
 	tools, err := w.insertTools(ctx, sessionID, number, exchange.Tools)
@@ -1399,20 +1405,13 @@ func latencyBetween(human, agent string) *int {
 	return &milliseconds
 }
 
-func (w *writer) replaceExchangeTools(ctx context.Context, sessionID string, number int,
-	tools []parsers.ToolUse) (int, error) {
-	stored, err := w.storedTools(ctx, sessionID, number)
-	if err != nil {
-		return 0, err
+func (w *writer) exchangeHasTools(ctx context.Context, sessionID string, number int) (bool, error) {
+	var count int
+	if err := w.tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM tool_uses
+		WHERE session_id = ? AND exchange_number = ?`, sessionID, number).Scan(&count); err != nil {
+		return false, fmt.Errorf("count tools of %s/%d: %w", sessionID, number, err)
 	}
-	if equalToolUses(stored, tools) {
-		return 0, nil
-	}
-	if _, err := w.tx.ExecContext(ctx,
-		`DELETE FROM tool_uses WHERE session_id = ? AND exchange_number = ?`, sessionID, number); err != nil {
-		return 0, fmt.Errorf("replace tools of %s/%d: %w", sessionID, number, err)
-	}
-	return w.insertTools(ctx, sessionID, number, tools)
+	return count > 0, nil
 }
 
 func (w *writer) insertTools(ctx context.Context, sessionID string, number any,
@@ -1438,13 +1437,13 @@ func (w *writer) insertTools(ctx context.Context, sessionID string, number any,
 	return inserted, nil
 }
 
-func (w *writer) storedTools(ctx context.Context, sessionID string,
-	number any) ([]parsers.ToolUse, error) {
+func (w *writer) storedOrphanedTools(ctx context.Context,
+	sessionID string) ([]parsers.ToolUse, error) {
 	rows, err := w.tx.QueryContext(ctx, `
 		SELECT tool_name, tool_params_summary, had_error, error_message, initiative_type
-		FROM tool_uses WHERE session_id = ? AND exchange_number IS ? ORDER BY id`, sessionID, number)
+		FROM tool_uses WHERE session_id = ? AND exchange_number IS NULL ORDER BY id`, sessionID)
 	if err != nil {
-		return nil, fmt.Errorf("read tools of %s/%v: %w", sessionID, number, err)
+		return nil, fmt.Errorf("read orphaned tools of %s: %w", sessionID, err)
 	}
 	var stored []parsers.ToolUse
 	for rows.Next() {
@@ -1453,7 +1452,7 @@ func (w *writer) storedTools(ctx context.Context, sessionID string,
 		var hadError int
 		if err := rows.Scan(&name, &params, &hadError, &message, &initiative); err != nil {
 			_ = rows.Close()
-			return nil, fmt.Errorf("scan tools of %s/%v: %w", sessionID, number, err)
+			return nil, fmt.Errorf("scan orphaned tools of %s: %w", sessionID, err)
 		}
 		stored = append(stored, parsers.ToolUse{
 			Name: name, ParamsSummary: params.String, HadError: hadError != 0,
@@ -1462,10 +1461,10 @@ func (w *writer) storedTools(ctx context.Context, sessionID string,
 	}
 	if err := rows.Err(); err != nil {
 		_ = rows.Close()
-		return nil, fmt.Errorf("iterate tools of %s/%v: %w", sessionID, number, err)
+		return nil, fmt.Errorf("iterate orphaned tools of %s: %w", sessionID, err)
 	}
 	if err := rows.Close(); err != nil {
-		return nil, fmt.Errorf("close tools of %s/%v: %w", sessionID, number, err)
+		return nil, fmt.Errorf("close orphaned tools of %s: %w", sessionID, err)
 	}
 	return stored, nil
 }
@@ -1475,7 +1474,7 @@ func (w *writer) storedTools(ctx context.Context, sessionID string,
 // list and replaced together instead of accumulating duplicates.
 func (w *writer) replaceOrphanedTools(ctx context.Context, sessionID string,
 	tools, unresolved []parsers.ToolUse) (int, error) {
-	stored, err := w.storedTools(ctx, sessionID, nil)
+	stored, err := w.storedOrphanedTools(ctx, sessionID)
 	if err != nil {
 		return 0, err
 	}

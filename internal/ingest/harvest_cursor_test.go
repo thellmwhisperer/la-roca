@@ -196,7 +196,7 @@ func TestAppendableSessionParsersUseStoredExchangeCursor(t *testing.T) {
 	}
 }
 
-func TestCompletedCodexTurnMovesRecoveredOrphanOntoMatchedExchange(t *testing.T) {
+func TestCompletedCodexTurnKeepsRecoveredToolWithoutIdentity(t *testing.T) {
 	prefix := `{"type":"session_meta","payload":{"id":"completed-recovery"}}
 {"type":"event_msg","payload":{"type":"user_message","message":"question"}}
 {"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"question"}]}}
@@ -223,14 +223,14 @@ func TestCompletedCodexTurnMovesRecoveredOrphanOntoMatchedExchange(t *testing.T)
 		Scan(&count, &exchangeNumber, &orphaned, &hadError, &message); err != nil {
 		t.Fatal(err)
 	}
-	if count != 1 || exchangeNumber != 1 || orphaned != 0 || hadError != 1 ||
+	if count != 1 || exchangeNumber != 0 || orphaned != 1 || hadError != 1 ||
 		message != `{"metadata":{"exit_code":1}}` {
 		t.Fatalf("completed recovered tool = count:%d exchange:%d orphaned:%d error:%d message:%q",
 			count, exchangeNumber, orphaned, hadError, message)
 	}
 }
 
-func TestCompletedRecoveredCodexExchangeKeepsNewTool(t *testing.T) {
+func TestCompletedRecoveredCodexExchangeKeepsNewToolAsOrphan(t *testing.T) {
 	prefix := `{"type":"session_meta","payload":{"id":"completed-new-tool"}}
 {"type":"event_msg","payload":{"type":"user_message","message":"question"}}
 {"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"question"}]}}
@@ -254,14 +254,14 @@ func TestCompletedRecoveredCodexExchangeKeepsNewTool(t *testing.T) {
 		Scan(&count, &exchangeNumber, &orphaned, &name, &params); err != nil {
 		t.Fatal(err)
 	}
-	if count != 1 || exchangeNumber != 1 || orphaned != 0 || name != "shell" ||
+	if count != 1 || exchangeNumber != 0 || orphaned != 1 || name != "shell" ||
 		params != `{"cmd":"finish"}` {
 		t.Fatalf("completed new tool = count:%d exchange:%d orphaned:%d name:%q params:%q",
 			count, exchangeNumber, orphaned, name, params)
 	}
 }
 
-func TestFullToolProjectionDoesNotDuplicateAttachedTools(t *testing.T) {
+func TestOrphanProjectionDoesNotDeleteAttachedTools(t *testing.T) {
 	db := corpusDatabase(t)
 	exchange := parsers.Exchange{
 		Number: 1, HumanText: "question", AgentText: "answer",
@@ -271,17 +271,22 @@ func TestFullToolProjectionDoesNotDuplicateAttachedTools(t *testing.T) {
 		ID: "existing-attached-tool", ExchangeNumbersAuthoritative: true,
 		Exchanges: []parsers.Exchange{exchange},
 	}}})
+	exchange.Tools = nil
 	writeHarvestRecords(t, db, parsers.Records{Sessions: []parsers.Session{{
 		ID: "existing-attached-tool", ExchangeNumbersAuthoritative: true,
-		Exchanges: []parsers.Exchange{exchange}, OrphanedTools: []parsers.ToolUse{},
+		Exchanges:     []parsers.Exchange{exchange},
+		OrphanedTools: []parsers.ToolUse{{Name: "interrupt", ParamsSummary: "later"}},
 	}}})
-	var count int
-	if err := db.SQL().QueryRow(`SELECT COUNT(*) FROM tool_uses
-		WHERE session_id = 'existing-attached-tool' AND exchange_number = 1`).Scan(&count); err != nil {
+	var attached, orphaned int
+	if err := db.SQL().QueryRow(`SELECT
+		(SELECT COUNT(*) FROM tool_uses WHERE session_id = 'existing-attached-tool'
+		 AND exchange_number = 1 AND tool_name = 'shell'),
+		(SELECT COUNT(*) FROM tool_uses WHERE session_id = 'existing-attached-tool'
+		 AND exchange_number IS NULL AND tool_name = 'interrupt')`).Scan(&attached, &orphaned); err != nil {
 		t.Fatal(err)
 	}
-	if count != 1 {
-		t.Fatalf("attached tool rows = %d, want 1", count)
+	if attached != 1 || orphaned != 1 {
+		t.Fatalf("tool rows = attached:%d orphaned:%d, want 1/1", attached, orphaned)
 	}
 }
 
@@ -407,6 +412,8 @@ func TestIncrementalCodexInterruptedTailsFallBackToTheFullRollout(t *testing.T) 
 ` + responseTail
 	abort := `{"type":"event_msg","payload":{"type":"turn_aborted"}}
 `
+	invalidCompletion := `{"type":"event_msg","payload":{"type":"task_complete","content":{}}}
+`
 	cases := []struct {
 		name, tail string
 	}{
@@ -414,6 +421,7 @@ func TestIncrementalCodexInterruptedTailsFallBackToTheFullRollout(t *testing.T) 
 		{name: "open", tail: eventTail},
 		{name: "response only", tail: responseTail},
 		{name: "response only abort", tail: responseTail + abort},
+		{name: "parser deferred invalid completion", tail: eventTail + invalidCompletion},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
