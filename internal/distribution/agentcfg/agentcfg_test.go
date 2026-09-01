@@ -224,6 +224,28 @@ func TestZcodeStatusRejectsDuplicateConfigurationMembers(t *testing.T) {
 	}
 }
 
+func TestZcodeStatusRequiresStdioInvocationShape(t *testing.T) {
+	for _, document := range []string{
+		`{"mcp":{"servers":{"roca":{}}}}`,
+		`{"mcp":{"servers":{"roca":{"type":"http","command":"roca","args":["mcp","serve"]}}}}`,
+		`{"mcp":{"servers":{"roca":{"type":"stdio","command":"","args":["mcp","serve"]}}}}`,
+		`{"mcp":{"servers":{"roca":{"type":"stdio","command":"roca","args":["serve"]}}}}`,
+		`{"mcp":{"servers":{"roca":{"type":"stdio","command":"roca","args":["mcp","serve"],"extra":true}}}}`,
+	} {
+		path := filepath.Join(t.TempDir(), "config.json")
+		if err := os.WriteFile(path, []byte(document), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		report, err := agentcfg.Status(agentcfg.RuntimeZcode, path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if report.State != agentcfg.StateInvalid || !strings.Contains(report.Error, "must be a stdio command") {
+			t.Fatalf("malformed status = %#v for %s", report, document)
+		}
+	}
+}
+
 func TestZcodeHookRoundTripPreservesEmptySessionStartWhitespace(t *testing.T) {
 	before := "{\n  \"neighbor\": 9007199254740993,\n  \"hooks\": {\n    \"events\": {\n      \"SessionStart\": [\n        \n      ]\n    }\n  }\n}\n"
 	command := "/home/operator/.zcode/hooks/roca-handoff.sh"

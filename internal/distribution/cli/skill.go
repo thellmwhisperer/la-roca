@@ -1197,59 +1197,12 @@ func removeZcodeWrapperAfterQuarantine(path string, expected []byte, afterRename
 }
 
 func removeZcodeWrapperQuarantine(path string, expected []byte, afterRename func(), removeQuarantine func(string) error) (bool, error) {
-	if _, err := os.Lstat(path); os.IsNotExist(err) {
-		return false, nil
-	} else if err != nil {
-		return false, fmt.Errorf("stat %s: %w", path, err)
-	}
 	if len(expected) == 0 {
-		return true, nil
+		return removeOwnedZcodeArtifact(path, nil, afterRename, removeQuarantine)
 	}
-	temporary, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+"-remove-*")
-	if err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
-		}
-		return false, fmt.Errorf("prepare removal of %s: %w", path, err)
-	}
-	quarantine := temporary.Name()
-	if err := temporary.Close(); err != nil {
-		os.Remove(quarantine)
-		return false, err
-	}
-	if err := os.Remove(quarantine); err != nil {
-		return false, err
-	}
-	if err := os.Rename(path, quarantine); err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
-		}
-		return false, fmt.Errorf("quarantine %s: %w", path, err)
-	}
-	if afterRename != nil {
-		afterRename()
-	}
-	body, err := os.ReadFile(quarantine)
-	if err != nil {
-		restoreErr := securefile.RenameNoReplace(quarantine, path)
-		return true, errors.Join(fmt.Errorf("verify quarantined wrapper %s: %w", quarantine, err), restoreErr)
-	}
-	if string(body) != string(expected) {
-		if restoreErr := securefile.RenameNoReplace(quarantine, path); restoreErr != nil {
-			return true, fmt.Errorf("restore operator-modified wrapper from %s: %w", quarantine, restoreErr)
-		}
-		return true, nil
-	}
-	if err := removeQuarantine(quarantine); err != nil {
-		restoreErr := securefile.RenameNoReplace(quarantine, path)
-		return true, errors.Join(fmt.Errorf("remove %s: %w", quarantine, err), restoreErr)
-	}
-	if _, err := os.Stat(path); err == nil {
-		return true, nil
-	} else if !os.IsNotExist(err) {
-		return false, fmt.Errorf("inspect %s after removal: %w", path, err)
-	}
-	return false, nil
+	return removeOwnedZcodeArtifact(path, zcodeRegularFileVerifier(func(body []byte) bool {
+		return string(body) == string(expected)
+	}), afterRename, removeQuarantine)
 }
 
 func zcodeOwnedHookCommand(path string) string {
