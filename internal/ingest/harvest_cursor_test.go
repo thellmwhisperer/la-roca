@@ -196,6 +196,40 @@ func TestAppendableSessionParsersUseStoredExchangeCursor(t *testing.T) {
 	}
 }
 
+func TestCompletedCodexTurnMovesRecoveredOrphanOntoMatchedExchange(t *testing.T) {
+	prefix := `{"type":"session_meta","payload":{"id":"completed-recovery"}}
+{"type":"event_msg","payload":{"type":"user_message","message":"question"}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"question"}]}}
+{"type":"response_item","payload":{"type":"function_call","call_id":"open","name":"shell","arguments":"{\"cmd\":\"inspect\"}"}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer"}]}}
+`
+	completion := `{"type":"response_item","payload":{"type":"function_call_output","call_id":"open","output":{"metadata":{"exit_code":1}}}}
+{"type":"event_msg","payload":{"type":"task_complete","last_agent_message":"answer"}}
+`
+	db := corpusDatabase(t)
+	for _, content := range []string{prefix, prefix + completion} {
+		records, err := parsers.Parse(parsers.KindCodexSession, []byte(content),
+			parsers.FileMeta{SessionID: "completed-recovery"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeHarvestRecords(t, db, records)
+	}
+	var count, exchangeNumber, orphaned, hadError int
+	var message string
+	if err := db.SQL().QueryRow(`SELECT COUNT(*), COALESCE(MAX(exchange_number), 0),
+		SUM(exchange_number IS NULL), MAX(had_error), COALESCE(MAX(error_message), '')
+		FROM tool_uses WHERE session_id = ?`, "completed-recovery").
+		Scan(&count, &exchangeNumber, &orphaned, &hadError, &message); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 || exchangeNumber != 1 || orphaned != 0 || hadError != 1 ||
+		message != `{"metadata":{"exit_code":1}}` {
+		t.Fatalf("completed recovered tool = count:%d exchange:%d orphaned:%d error:%d message:%q",
+			count, exchangeNumber, orphaned, hadError, message)
+	}
+}
+
 func TestIncrementalCodexLateVerdictFallsBackToTheFullRollout(t *testing.T) {
 	prefix := `{"type":"session_meta","payload":{"id":"late-verdict"}}
 {"type":"event_msg","payload":{"type":"user_message","message":"first"}}
