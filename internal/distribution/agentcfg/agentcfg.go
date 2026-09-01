@@ -295,8 +295,26 @@ func validateZcodeMCPDocument(text string) error {
 	if index < 0 {
 		return nil
 	}
-	_, err = objectAt(view, servers.members[index].valueStart)
-	return err
+	entry, err := objectAt(view, servers.members[index].valueStart)
+	if err != nil {
+		return err
+	}
+	decode := func(key string, destination any) bool {
+		index := entry.find(key)
+		if index < 0 {
+			return false
+		}
+		member := entry.members[index]
+		return json.Unmarshal([]byte(view[member.valueStart:member.end]), destination) == nil
+	}
+	var entryType, command string
+	var args []string
+	if len(entry.members) != 3 || !decode("type", &entryType) || !decode("command", &command) ||
+		!decode("args", &args) || entryType != "stdio" || command == "" ||
+		len(args) != 2 || args[0] != "mcp" || args[1] != "serve" {
+		return fmt.Errorf("mcp.servers.%s must be a stdio command with args [\"mcp\", \"serve\"]", ServerName)
+	}
+	return nil
 }
 
 func ZcodeMCPMatches(path, executable string) (bool, error) {

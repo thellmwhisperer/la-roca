@@ -248,6 +248,69 @@ func TestZcodeFreshHookPurgeRemovesCreatedRuntimePaths(t *testing.T) {
 	}
 }
 
+func TestZcodeHookPurgeRetainsReplacedLifecycleLock(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		replace func(string) error
+		verify  func(*testing.T, string)
+	}{
+		{
+			name: "nonempty file",
+			replace: func(path string) error {
+				return os.WriteFile(path, []byte("operator data\n"), 0o600)
+			},
+			verify: func(t *testing.T, path string) {
+				body, err := os.ReadFile(path)
+				if err != nil || string(body) != "operator data\n" {
+					t.Fatalf("replacement changed: body=%q err=%v", body, err)
+				}
+			},
+		},
+		{
+			name: "symlink",
+			replace: func(path string) error {
+				target := path + ".operator"
+				if err := os.WriteFile(target, []byte("operator target\n"), 0o600); err != nil {
+					return err
+				}
+				if err := os.Remove(path); err != nil {
+					return err
+				}
+				return os.Symlink(target, path)
+			},
+			verify: func(t *testing.T, path string) {
+				info, err := os.Lstat(path)
+				if err != nil || info.Mode()&os.ModeSymlink == 0 {
+					t.Fatalf("replacement symlink changed: info=%v err=%v", info, err)
+				}
+				body, err := os.ReadFile(path + ".operator")
+				if err != nil || string(body) != "operator target\n" {
+					t.Fatalf("replacement target changed: body=%q err=%v", body, err)
+				}
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			home := skillTestHome(t)
+			root := rootCommand(&cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}})
+			root.SetArgs([]string{"hooks", "install", "zcode", "--executable", filepath.Join(home, "roca")})
+			if err := root.Execute(); err != nil {
+				t.Fatal(err)
+			}
+			lockPath := filepath.Join(home, ".zcode", ".roca-hooks.lock")
+			if err := test.replace(lockPath); err != nil {
+				t.Fatal(err)
+			}
+			report := lifecycle.Report{Purged: true, Deleted: []string{}}
+			(&cliEnv{out: io.Discard, errOut: io.Discard}).withdrawTheIntegrations(&report, true)
+			if !strings.Contains(strings.Join(report.Errors, "\n"), lockPath) {
+				t.Fatalf("replaced lock was not reported: %v", report.Errors)
+			}
+			test.verify(t, lockPath)
+		})
+	}
+}
+
 func TestZcodeFreshHookInstallEnablesHooksAndReportsIt(t *testing.T) {
 	home := skillTestHome(t)
 	var notices strings.Builder

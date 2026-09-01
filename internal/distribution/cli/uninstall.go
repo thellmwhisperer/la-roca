@@ -673,8 +673,10 @@ func cleanupCreatedZcodePaths(entry artifact.Entry, configPath string, wrappers 
 	if entry.CreatedLock || len(wrappers) > 0 {
 		lockPath := filepath.Join(root, ".roca-hooks.lock")
 		if entry.CreatedLock {
-			if err := os.Remove(lockPath); err != nil && !os.IsNotExist(err) {
-				cleanupErr = errors.Join(cleanupErr, err)
+			retained, err := removeEmptyZcodeLock(lockPath)
+			cleanupErr = errors.Join(cleanupErr, err)
+			if retained && err == nil {
+				cleanupErr = errors.Join(cleanupErr, fmt.Errorf("operator-owned ZCode artifact remains at %s", lockPath))
 			}
 		} else if _, err := os.Lstat(lockPath); err == nil {
 			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("unproven ZCode artifact remains at %s", lockPath))
@@ -701,11 +703,11 @@ func cleanupCreatedZcodePaths(entry artifact.Entry, configPath string, wrappers 
 		if !directory.created {
 			continue
 		}
-		if err := os.Remove(directory.path); err != nil && !os.IsNotExist(err) {
-			if entries, readErr := os.ReadDir(directory.path); readErr == nil && len(entries) > 0 {
-				continue
-			}
-			cleanupErr = errors.Join(cleanupErr, err)
+		retained, err := removeEmptyZcodeDirectory(directory.path)
+		cleanupErr = errors.Join(cleanupErr, err)
+		if retained && err == nil {
+			cleanupErr = errors.Join(cleanupErr,
+				fmt.Errorf("operator-owned ZCode artifact remains at %s", directory.path))
 		}
 	}
 	return cleanupErr
@@ -734,12 +736,11 @@ func rollbackCreatedZcodeMCPPaths(preimage zcodeMCPPathState, configPath string)
 		if !directory.created {
 			continue
 		}
-		removeErr := os.Remove(directory.path)
-		if removeErr != nil && !os.IsNotExist(removeErr) {
-			if entries, readErr := os.ReadDir(directory.path); readErr != nil || len(entries) == 0 {
-				err = errors.Join(err, removeErr)
-			}
+		retained, removeErr := removeEmptyZcodeDirectory(directory.path)
+		if retained && removeErr == nil {
+			removeErr = fmt.Errorf("operator-owned ZCode artifact remains at %s", directory.path)
 		}
+		err = errors.Join(err, removeErr)
 	}
 	return err
 }
@@ -752,14 +753,19 @@ func rollbackCreatedZcodeHookPaths(preimage zcodeHookPathState, configPath, wrap
 	root := filepath.Dir(filepath.Dir(wrapperPath))
 	var err error
 	if preimage.createdConfig {
-		_, removeErr := removeEmptyZcodeConfig(configPath)
+		retained, removeErr := removeEmptyZcodeConfig(configPath)
+		if retained && removeErr == nil {
+			removeErr = fmt.Errorf("operator-owned ZCode artifact remains at %s", configPath)
+		}
 		err = errors.Join(err, removeErr)
 	}
 	if preimage.createdLock {
-		removeErr := os.Remove(filepath.Join(root, ".roca-hooks.lock"))
-		if removeErr != nil && !os.IsNotExist(removeErr) {
-			err = errors.Join(err, removeErr)
+		lockPath := filepath.Join(root, ".roca-hooks.lock")
+		retained, removeErr := removeEmptyZcodeLock(lockPath)
+		if retained && removeErr == nil {
+			removeErr = fmt.Errorf("operator-owned ZCode artifact remains at %s", lockPath)
 		}
+		err = errors.Join(err, removeErr)
 	}
 	for _, directory := range []struct {
 		path    string
@@ -770,31 +776,26 @@ func rollbackCreatedZcodeHookPaths(preimage zcodeHookPathState, configPath, wrap
 		{root, preimage.createdRoot},
 	} {
 		if directory.created {
-			removeErr := os.Remove(directory.path)
-			if removeErr != nil && !os.IsNotExist(removeErr) {
-				if entries, readErr := os.ReadDir(directory.path); readErr != nil || len(entries) == 0 {
-					err = errors.Join(err, removeErr)
-				}
+			retained, removeErr := removeEmptyZcodeDirectory(directory.path)
+			if retained && removeErr == nil {
+				removeErr = fmt.Errorf("operator-owned ZCode artifact remains at %s", directory.path)
 			}
+			err = errors.Join(err, removeErr)
 		}
 	}
 	return err
 }
 
-func removeEmptyZcodeConfig(path string) (bool, error) {
-	return removeEmptyZcodeConfigAfterQuarantine(path, nil, os.Remove)
-}
+type zcodeArtifactVerifier func(string, os.FileInfo) (bool, error)
 
-func removeEmptyZcodeConfigAfterQuarantine(path string, afterRename func(), removeQuarantine func(string) error) (bool, error) {
-	info, err := os.Lstat(path)
-	if os.IsNotExist(err) {
+func removeOwnedZcodeArtifact(path string, verify zcodeArtifactVerifier, afterRename func(), removeQuarantine func(string) error) (bool, error) {
+	if _, err := os.Lstat(path); os.IsNotExist(err) {
 		return false, nil
-	}
-	if err != nil {
+	} else if err != nil {
 		return true, err
 	}
-	if !info.Mode().IsRegular() {
-		return true, fmt.Errorf("refuse to remove non-regular ZCode config %s", path)
+	if verify == nil {
+		return true, nil
 	}
 	temporary, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+"-remove-*")
 	if err != nil {
@@ -819,15 +820,19 @@ func removeEmptyZcodeConfigAfterQuarantine(path string, afterRename func(), remo
 	}
 	restore := func(cause error) (bool, error) {
 		if restoreErr := securefile.RenameNoReplace(quarantine, path); restoreErr != nil {
-			return true, errors.Join(cause, fmt.Errorf("restore ZCode config from %s: %w", quarantine, restoreErr))
+			return true, errors.Join(cause, fmt.Errorf("restore ZCode artifact from %s: %w", quarantine, restoreErr))
 		}
 		return true, cause
 	}
-	body, err := os.ReadFile(quarantine)
+	info, err := os.Lstat(quarantine)
 	if err != nil {
 		return restore(err)
 	}
-	if strings.TrimSpace(string(body)) != "{}" {
+	owned, err := verify(quarantine, info)
+	if err != nil {
+		return restore(err)
+	}
+	if !owned {
 		return restore(nil)
 	}
 	if err := removeQuarantine(quarantine); err != nil {
@@ -839,6 +844,47 @@ func removeEmptyZcodeConfigAfterQuarantine(path string, afterRename func(), remo
 		return true, err
 	}
 	return false, nil
+}
+
+func zcodeRegularFileVerifier(accept func([]byte) bool) zcodeArtifactVerifier {
+	return func(path string, info os.FileInfo) (bool, error) {
+		if !info.Mode().IsRegular() {
+			return false, nil
+		}
+		body, err := os.ReadFile(path)
+		if err != nil {
+			return false, err
+		}
+		return accept(body), nil
+	}
+}
+
+func zcodeEmptyDirectoryVerifier(path string, info os.FileInfo) (bool, error) {
+	if !info.IsDir() {
+		return false, nil
+	}
+	entries, err := os.ReadDir(path)
+	return len(entries) == 0, err
+}
+
+func removeEmptyZcodeConfig(path string) (bool, error) {
+	return removeEmptyZcodeConfigAfterQuarantine(path, nil, os.Remove)
+}
+
+func removeEmptyZcodeConfigAfterQuarantine(path string, afterRename func(), removeQuarantine func(string) error) (bool, error) {
+	return removeOwnedZcodeArtifact(path, zcodeRegularFileVerifier(func(body []byte) bool {
+		return strings.TrimSpace(string(body)) == "{}"
+	}), afterRename, removeQuarantine)
+}
+
+func removeEmptyZcodeLock(path string) (bool, error) {
+	return removeOwnedZcodeArtifact(path, zcodeRegularFileVerifier(func(body []byte) bool {
+		return len(body) == 0
+	}), nil, os.Remove)
+}
+
+func removeEmptyZcodeDirectory(path string) (bool, error) {
+	return removeOwnedZcodeArtifact(path, zcodeEmptyDirectoryVerifier, nil, os.Remove)
 }
 
 // removeHollowSkillDirs takes back the chain a skill withdrawal could not,
