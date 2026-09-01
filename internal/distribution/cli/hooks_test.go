@@ -494,6 +494,62 @@ func TestZcodeHookReinstallRepointsManagedWrapper(t *testing.T) {
 	}
 }
 
+func TestZcodeHookReinstallMergesNewEnablementOwnership(t *testing.T) {
+	home := skillTestHome(t)
+	config := filepath.Join(home, ".zcode", "cli", "config.json")
+	if err := os.MkdirAll(filepath.Dir(config), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config, []byte(`{"hooks":{"enabled":true}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	install := func() {
+		root := rootCommand(&cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}})
+		root.SetArgs([]string{"hooks", "install", "zcode", "--executable", filepath.Join(home, "roca")})
+		if err := root.Execute(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	install()
+	body, err := os.ReadFile(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(body, &document); err != nil {
+		t.Fatal(err)
+	}
+	delete(document["hooks"].(map[string]any), "enabled")
+	body, err = json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	install()
+	root := rootCommand(&cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}})
+	root.SetArgs([]string{"hooks", "uninstall", "zcode"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	body, err = os.ReadFile(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	document = nil
+	if err := json.Unmarshal(body, &document); err != nil {
+		t.Fatal(err)
+	}
+	hooks := document["hooks"].(map[string]any)
+	if _, found := hooks["enabled"]; found {
+		t.Fatalf("reinstall-owned hooks.enabled survived uninstall: %s", body)
+	}
+	if _, found := hooks["events"]; found {
+		t.Fatalf("managed hook survived uninstall: %s", body)
+	}
+}
+
 func TestFullUninstallWithdrawsRegisteredZcodeHome(t *testing.T) {
 	home := skillTestHome(t)
 	t.Chdir(home)

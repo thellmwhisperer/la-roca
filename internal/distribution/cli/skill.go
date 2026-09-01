@@ -766,12 +766,12 @@ func (env *cliEnv) recordZcodeWrapperState(path, executable string, preimage zco
 	_, err = mutateArtifactRegistry(paths.Artifacts, func(registry *artifact.Registry) (bool, error) {
 		prior, priorFound = registry.Find(artifactKindHook, agentcfg.RuntimeZcode, path)
 		if priorFound {
-			transaction.CreatedRoot = prior.CreatedRoot
-			transaction.CreatedConfigDir = prior.CreatedConfigDir
-			transaction.CreatedHooksDir = prior.CreatedHooksDir
-			transaction.CreatedConfig = prior.CreatedConfig
-			transaction.CreatedLock = prior.CreatedLock
-			transaction.CreatedHooksEnabled = prior.CreatedHooksEnabled
+			transaction.CreatedRoot = transaction.CreatedRoot || prior.CreatedRoot
+			transaction.CreatedConfigDir = transaction.CreatedConfigDir || prior.CreatedConfigDir
+			transaction.CreatedHooksDir = transaction.CreatedHooksDir || prior.CreatedHooksDir
+			transaction.CreatedConfig = transaction.CreatedConfig || prior.CreatedConfig
+			transaction.CreatedLock = transaction.CreatedLock || prior.CreatedLock
+			transaction.CreatedHooksEnabled = transaction.CreatedHooksEnabled || prior.CreatedHooksEnabled
 		}
 		registry.Upsert(transaction)
 		return true, nil
