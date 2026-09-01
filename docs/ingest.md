@@ -208,9 +208,10 @@ A `task_complete` event closes a Codex turn. Superseded, aborted, and still-open
 spans do not lend their tool calls to a replacement or recovered exchange;
 instead, those calls remain queryable as session-level `tool_uses` whose
 `exchange_number` is NULL. Completed spans keep their tools attached as before.
-If a later full reading unambiguously completes an open span, its existing tool
-rows move onto the matched exchange exactly once; a conflicting match leaves
-them at session level rather than dropping them. Incremental reads preserve
+If a later full reading completes an open span, its tools attach only when the
+matched exchange can be safely enriched. Otherwise, previously stored calls
+remain at session level rather than guessing identity or dropping telemetry;
+identity-based movement is tracked in issue #284. Incremental reads preserve
 previous session-level calls, and a late result for an earlier call triggers the
 full-rollout reading needed to update its verdict.
 
