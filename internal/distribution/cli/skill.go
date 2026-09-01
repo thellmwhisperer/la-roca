@@ -941,7 +941,8 @@ func (env *cliEnv) uninstallManagedZcodeHandoffHookLocked(configPath, wrapperPat
 			return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 		}
 		if !rootContinuous {
-			expected = nil
+			err = env.unregisterArtifactEntry(entry)
+			return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 		}
 	}
 	release, _, err := lockZcodeHookLifecycle(configPath, wrapperPath, false)
@@ -954,15 +955,9 @@ func (env *cliEnv) uninstallManagedZcodeHandoffHookLocked(configPath, wrapperPat
 			err = errors.Join(err, release())
 		}
 	}()
-	removeEnabled := found && rootContinuous && entry.CreatedHooksEnabled
+	removeEnabled := found && entry.CreatedHooksEnabled
 	outcome, warning, err = uninstallZcodeHandoffHookUnlocked(configPath, wrapperPath, expected, removeEnabled)
 	present, verified := zcodeManagedHookState(configPath)
-	if err == nil && found && !rootContinuous {
-		if verified && !present {
-			err = env.unregisterArtifactEntry(entry)
-		}
-		return outcome, warning, err
-	}
 	if err == nil && len(finalize) > 0 {
 		switch {
 		case !found:

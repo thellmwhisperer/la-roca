@@ -8,6 +8,7 @@ import (
 
 	"github.com/thellmwhisperer/la-roca/internal/artifact"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/agentcfg"
+	"github.com/thellmwhisperer/la-roca/internal/securefile"
 )
 
 func writeManagedSkill(t *testing.T) (string, string) {
@@ -26,7 +27,7 @@ func writeManagedSkill(t *testing.T) (string, string) {
 func TestUninstallPreservesReplacementPublishedAfterQuarantine(t *testing.T) {
 	path, managed := writeManagedSkill(t)
 	operator := []byte("operator replacement\n")
-	outcome, err := uninstallWithChecksum(agentcfg.RuntimeZcode, path, artifact.Checksum(managed), func() {
+	outcome, err := uninstallWithChecksum(agentcfg.RuntimeZcode, path, artifact.Checksum(managed), securefile.RenameNoReplace, func() {
 		if err := os.WriteFile(path, operator, 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -48,10 +49,44 @@ func TestUninstallPreservesReplacementPublishedAfterQuarantine(t *testing.T) {
 	}
 }
 
+func TestUninstallPrechecksDivergedSkillBeforeQuarantine(t *testing.T) {
+	path, managed := writeManagedSkill(t)
+	operator := []byte("operator skill\n")
+	if err := os.WriteFile(path, operator, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	outcome, err := uninstallWithChecksum(agentcfg.RuntimeZcode, path, artifact.Checksum(managed),
+		func(string, string) error {
+			t.Fatal("diverged skill reached quarantine")
+			return nil
+		}, nil, os.Remove)
+	if err != nil || outcome.Changed {
+		t.Fatalf("diverged skill uninstall: outcome=%+v err=%v", outcome, err)
+	}
+	body, readErr := os.ReadFile(path)
+	if readErr != nil || string(body) != string(operator) {
+		t.Fatalf("diverged skill changed: body=%q err=%v", body, readErr)
+	}
+}
+
+func TestUninstallFailsBeforeMovingWhenQuarantineUnsupported(t *testing.T) {
+	path, managed := writeManagedSkill(t)
+	unsupported := errors.New("unsupported quarantine")
+	outcome, err := uninstallWithChecksum(agentcfg.RuntimeZcode, path, artifact.Checksum(managed),
+		func(string, string) error { return unsupported }, nil, os.Remove)
+	if !errors.Is(err, unsupported) || outcome.Changed {
+		t.Fatalf("unsupported quarantine: outcome=%+v err=%v", outcome, err)
+	}
+	body, readErr := os.ReadFile(path)
+	if readErr != nil || string(body) != managed {
+		t.Fatalf("managed skill moved: body=%q err=%v", body, readErr)
+	}
+}
+
 func TestUninstallRestoresQuarantineWhenRemovalFails(t *testing.T) {
 	path, managed := writeManagedSkill(t)
 	failure := errors.New("synthetic removal failure")
-	outcome, err := uninstallWithChecksum(agentcfg.RuntimeZcode, path, artifact.Checksum(managed), nil,
+	outcome, err := uninstallWithChecksum(agentcfg.RuntimeZcode, path, artifact.Checksum(managed), securefile.RenameNoReplace, nil,
 		func(string) error { return failure })
 	if !errors.Is(err, failure) {
 		t.Fatalf("removal error = %v", err)

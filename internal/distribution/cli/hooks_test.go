@@ -860,13 +860,22 @@ func TestZcodePurgeDropsClaimsForReplacementTree(t *testing.T) {
 		t.Fatal(err)
 	}
 	report := purgeZcodeTestIntegrations(true)
-	errorsText := strings.Join(report.Errors, "\n")
-	if !strings.Contains(errorsText, "replacement ZCode tree") || !strings.Contains(errorsText, wrapper) {
-		t.Fatalf("replacement artifacts were not reported: %v", report.Errors)
+	if len(report.Errors) != 0 {
+		t.Fatalf("replacement tree produced purge errors: %v", report.Errors)
 	}
 	matched, err := agentcfg.ZcodeMCPMatches(config, filepath.Join(home, "roca"))
-	if err != nil || !matched || zcodeManagedHookPresent(config) {
+	if err != nil || !matched || !zcodeManagedHookPresent(config) {
 		t.Fatalf("replacement declaration state: mcp=%v hook=%v err=%v", matched, zcodeManagedHookPresent(config), err)
+	}
+	registry, err := artifact.LoadRegistry(filepath.Join(home, ".roca", "artifacts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, found := registry.Find(artifactKindMCP, agentcfg.RuntimeZcode, config); found {
+		t.Fatal("replacement MCP claim survived purge")
+	}
+	if _, found := registry.Find(artifactKindHook, agentcfg.RuntimeZcode, wrapper); found {
+		t.Fatal("replacement hook claim survived purge")
 	}
 	for _, path := range []string{rootPath, config, wrapper, lockPath} {
 		if _, err := os.Stat(path); err != nil {
@@ -900,7 +909,7 @@ func TestZcodeDirectUninstallRetainsReplacementArtifacts(t *testing.T) {
 	runZcodeTestCLI(t, "hooks", "uninstall", "zcode")
 	runZcodeTestCLI(t, "mcp", "uninstall", "zcode")
 	matched, err := agentcfg.ZcodeMCPMatches(config, filepath.Join(home, "roca"))
-	if err != nil || !matched || zcodeManagedHookPresent(config) {
+	if err != nil || !matched || !zcodeManagedHookPresent(config) {
 		t.Fatalf("replacement declaration state: mcp=%v hook=%v err=%v", matched, zcodeManagedHookPresent(config), err)
 	}
 	_, document := readZcodeTestJSON(t, config)
@@ -914,6 +923,9 @@ func TestZcodeDirectUninstallRetainsReplacementArtifacts(t *testing.T) {
 	}
 	if body, err := os.ReadFile(wrapper); err != nil || string(body) != string(managedWrapper) {
 		t.Fatalf("replacement wrapper changed: body=%q err=%v", body, err)
+	}
+	if _, err := os.Lstat(filepath.Join(rootPath, ".roca-hooks.lock")); !os.IsNotExist(err) {
+		t.Fatalf("replacement tree gained a local lock: %v", err)
 	}
 }
 
@@ -1629,6 +1641,43 @@ func TestZcodeConfigRemovalPreservesConcurrentReplacement(t *testing.T) {
 	}
 	if body, err := os.ReadFile(config); err != nil || string(body) != string(operator) {
 		t.Fatalf("operator replacement changed: body=%q err=%v", body, err)
+	}
+}
+
+func TestZcodeCleanupPrechecksDivergedArtifactBeforeQuarantine(t *testing.T) {
+	config := filepath.Join(t.TempDir(), "config.json")
+	operator := []byte(`{"operator":true}`)
+	if err := os.WriteFile(config, operator, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	retained, err := removeOwnedZcodeArtifactWithRename(config,
+		zcodeRegularFileVerifier(func(body []byte) bool { return strings.TrimSpace(string(body)) == "{}" }),
+		func(string, string) error {
+			t.Fatal("diverged config reached quarantine")
+			return nil
+		}, nil, os.Remove)
+	if err != nil || !retained {
+		t.Fatalf("diverged cleanup: retained=%v err=%v", retained, err)
+	}
+	if body, readErr := os.ReadFile(config); readErr != nil || string(body) != string(operator) {
+		t.Fatalf("diverged config changed: body=%q err=%v", body, readErr)
+	}
+}
+
+func TestZcodeCleanupFailsBeforeMovingWhenQuarantineUnsupported(t *testing.T) {
+	config := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(config, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	unsupported := errors.New("unsupported quarantine")
+	retained, err := removeOwnedZcodeArtifactWithRename(config,
+		zcodeRegularFileVerifier(func(body []byte) bool { return strings.TrimSpace(string(body)) == "{}" }),
+		func(string, string) error { return unsupported }, nil, os.Remove)
+	if !retained || !errors.Is(err, unsupported) {
+		t.Fatalf("unsupported cleanup: retained=%v err=%v", retained, err)
+	}
+	if body, readErr := os.ReadFile(config); readErr != nil || strings.TrimSpace(string(body)) != "{}" {
+		t.Fatalf("managed config moved: body=%q err=%v", body, readErr)
 	}
 }
 
