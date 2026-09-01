@@ -30,9 +30,11 @@ func lock(path string, disposition uint32) (func() error, error) {
 		return nil, &os.PathError{Op: "open", Path: path, Err: err}
 	}
 	file := os.NewFile(uintptr(handle), path)
-	if err := file.Chmod(0o600); err != nil {
-		file.Close()
-		return nil, err
+	if disposition != windows.OPEN_EXISTING {
+		if err := file.Chmod(0o600); err != nil {
+			file.Close()
+			return nil, err
+		}
 	}
 	overlapped := &windows.Overlapped{}
 	if err := windows.LockFileEx(windows.Handle(file.Fd()), windows.LOCKFILE_EXCLUSIVE_LOCK, 0, 1, 0, overlapped); err != nil {

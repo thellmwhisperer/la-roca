@@ -418,6 +418,66 @@ func TestZcodeHookPurgeRetainsReplacedLifecycleLock(t *testing.T) {
 	}
 }
 
+func TestZcodeHookInstallPreservesExistingLifecycleLock(t *testing.T) {
+	home := skillTestHome(t)
+	root := filepath.Join(home, ".zcode")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	lockPath := filepath.Join(root, ".roca-hooks.lock")
+	if err := os.WriteFile(lockPath, []byte("operator lock data\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(lockPath, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Lstat(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	installZcodeTestIntegration(t, "hooks", home)
+	after, err := os.Lstat(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(before, after) || after.Mode().Perm() != 0o640 || string(body) != "operator lock data\n" {
+		t.Fatalf("existing lifecycle lock changed: same=%v mode=%o body=%q",
+			os.SameFile(before, after), after.Mode().Perm(), body)
+	}
+}
+
+func TestZcodeHookInstallRejectsLifecycleLockSymlink(t *testing.T) {
+	home := skillTestHome(t)
+	root := filepath.Join(home, ".zcode")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(home, "operator-data")
+	if err := os.WriteFile(target, []byte("operator data\n"), 0o744); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(target, 0o744); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(root, ".roca-hooks.lock")); err != nil {
+		t.Fatal(err)
+	}
+	err := executeZcodeTestCLI("hooks", "install", "zcode", "--executable", filepath.Join(home, "roca"))
+	if err == nil || !strings.Contains(err.Error(), "non-regular ZCode lifecycle lock") {
+		t.Fatalf("symlink lifecycle lock error = %v", err)
+	}
+	info, statErr := os.Stat(target)
+	body, readErr := os.ReadFile(target)
+	if statErr != nil || readErr != nil || info.Mode().Perm() != 0o744 || string(body) != "operator data\n" {
+		t.Fatalf("symlink target changed: mode=%v body=%q statErr=%v readErr=%v",
+			info, body, statErr, readErr)
+	}
+}
+
 func TestZcodeFreshHookInstallEnablesHooksAndReportsIt(t *testing.T) {
 	home := skillTestHome(t)
 	var notices strings.Builder
@@ -442,6 +502,38 @@ func TestZcodeFreshHookInstallEnablesHooksAndReportsIt(t *testing.T) {
 	body, err = os.ReadFile(config)
 	if err != nil || strings.TrimSpace(string(body)) != "{}" {
 		t.Fatalf("created enablement survived uninstall: body=%q err=%v", body, err)
+	}
+}
+
+func TestZcodePurgeExpiresOwnershipAfterRuntimeReplacement(t *testing.T) {
+	for _, integration := range []string{"mcp", "hooks"} {
+		t.Run(integration, func(t *testing.T) {
+			home := skillTestHome(t)
+			installZcodeTestIntegration(t, integration, home)
+			root := filepath.Join(home, ".zcode")
+			config := filepath.Join(root, "cli", "config.json")
+			if err := os.RemoveAll(root); err != nil {
+				t.Fatal(err)
+			}
+			writeFile(t, config, `{}`)
+			report := purgeZcodeTestIntegrations(true)
+			if !strings.Contains(strings.Join(report.Errors, "\n"), config) {
+				t.Fatalf("retained replacement was not reported: %v", report.Errors)
+			}
+			if body, err := os.ReadFile(config); err != nil || string(body) != `{}` {
+				t.Fatalf("operator replacement changed: body=%q err=%v", body, err)
+			}
+			registry, err := artifact.LoadRegistry(filepath.Join(home, ".roca", "artifacts.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, entry := range registry.Entries {
+				if entry.Runtime == agentcfg.RuntimeZcode &&
+					(entry.Kind == artifactKindMCP || entry.Kind == artifactKindHook) {
+					t.Fatalf("stale ownership survived: %#v", entry)
+				}
+			}
+		})
 	}
 }
 

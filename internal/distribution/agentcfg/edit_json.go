@@ -293,7 +293,8 @@ func DeclareZcodeSessionStartHook(text, marker, command string, timeoutMs int) (
 	if err != nil {
 		return "", fmt.Errorf("SessionStart must be an array: %w", err)
 	}
-	for _, entry := range entries.values {
+	var ownedIndexes []int
+	for entryIndex, entry := range entries.values {
 		group, err := objectAt(view, entry.start)
 		if err != nil {
 			continue
@@ -302,13 +303,23 @@ func DeclareZcodeSessionStartHook(text, marker, command string, timeoutMs int) (
 		if !owned {
 			continue
 		}
-		managed := zcodeOwnedHookGroup(marker, recorded, command, timeoutMs)
-		pad := indentOf(view, entry.start)
+		preimage.Hooks = preimage.Hooks || recorded.Hooks
+		preimage.Events = preimage.Events || recorded.Events
+		preimage.SessionStart = preimage.SessionStart || recorded.SessionStart
+		ownedIndexes = append(ownedIndexes, entryIndex)
+	}
+	if len(ownedIndexes) > 0 {
+		first := entries.values[ownedIndexes[0]]
+		for index := len(ownedIndexes) - 1; index > 0; index-- {
+			text = entries.cut(text, ownedIndexes[index])
+		}
+		managed := zcodeOwnedHookGroup(marker, preimage, command, timeoutMs)
+		pad := indentOf(view, first.start)
 		rendered, err := json.MarshalIndent(managed, pad, indent)
 		if err != nil {
 			return "", err
 		}
-		return text[:entry.start] + string(rendered) + text[entry.end:], nil
+		return text[:first.start] + string(rendered) + text[first.end:], nil
 	}
 	owned := zcodeOwnedHookGroup(marker, preimage, command, timeoutMs)
 	pad := arrayPadUnder(view, entries,
