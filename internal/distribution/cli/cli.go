@@ -41,11 +41,12 @@ type Build struct {
 // answer either: it has a code of its own so a script can tell them apart
 // without reading prose.
 const (
-	ExitOK                = 0
-	ExitError             = 1
-	ExitRemoteUnreachable = 10
-	ExitRemoteRocaMissing = 11
-	ExitRemoteVersionSkew = 12
+	ExitOK                      = 0
+	ExitError                   = 1
+	ExitRemoteUnreachable       = 10
+	ExitRemoteRocaMissing       = 11
+	ExitRemoteVersionSkew       = 12
+	snapshotCoordinationTimeout = 10 * time.Second
 )
 
 type cliEnv struct {
@@ -954,9 +955,10 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 
 func snapshotTelemetryContext(ctx context.Context, dataDir string) context.Context {
 	writer := logfile.New(dataDir)
-	return store.WithSnapshotLogWriter(ctx, func(record map[string]any) error {
-		return writer.Append(logfile.Snapshots, record)
+	ctx = store.WithSnapshotLogWriter(ctx, func(ctx context.Context, record map[string]any) error {
+		return writer.AppendContext(ctx, logfile.Snapshots, record)
 	})
+	return store.WithSnapshotCoordinationTimeout(ctx, snapshotCoordinationTimeout)
 }
 
 func (env *cliEnv) finishIngestProgress() {

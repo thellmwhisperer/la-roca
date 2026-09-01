@@ -92,9 +92,10 @@ type snapshotArtifact struct {
 }
 
 type snapshotArtifactState struct {
-	exists  bool
-	size    int64
-	modTime int64
+	exists   bool
+	size     int64
+	modTime  int64
+	identity string
 }
 
 type snapshotSourceState [len(snapshotArtifacts)]snapshotArtifactState
@@ -117,7 +118,7 @@ type snapshotLease struct {
 }
 
 // SnapshotLogWriter records snapshot lifecycle telemetry.
-type SnapshotLogWriter func(map[string]any) error
+type SnapshotLogWriter func(context.Context, map[string]any) error
 
 type snapshotLogContextKey struct{}
 type snapshotCoordinationTimeoutContextKey struct{}
@@ -383,12 +384,14 @@ func createReadOnlySnapshot(ctx context.Context, abs string, before snapshotSour
 		if err == nil && before == final {
 			snapshot.lease = lease
 			snapshot.fingerprint = snapshotFingerprint(abs, final)
-			logSnapshotRecord(logger, map[string]any{
+			logCtx, cancelLog := snapshotCoordinationContext(ctx)
+			logSnapshotRecord(logCtx, logger, map[string]any{
 				"event":      "create",
 				"source":     abs,
 				"size_bytes": snapshotSourceSize(before),
 				"reason":     "copy",
 			})
+			cancelLog()
 			return snapshot, nil
 		}
 		closeErr := snapshot.database.Close()
@@ -580,8 +583,11 @@ func scavengeSnapshotRoot(ctx context.Context, root string) (resultErr error) {
 	if err != nil {
 		return fmt.Errorf("lock read-only snapshot namespace: %w", err)
 	}
+	released := false
 	defer func() {
-		resultErr = errors.Join(resultErr, releaseNamespace())
+		if !released {
+			resultErr = errors.Join(resultErr, releaseNamespace())
+		}
 	}()
 
 	entries, err := os.ReadDir(root)
@@ -651,15 +657,17 @@ func scavengeSnapshotRoot(ctx context.Context, root string) (resultErr error) {
 		reaped++
 		reclaimed += size
 	}
+	resultErr = errors.Join(errors.Join(reapErrors...), releaseNamespace())
+	released = true
 	if reaped > 0 {
-		logSnapshotRecord(snapshotLogWriterFromContext(ctx), map[string]any{
+		logSnapshotRecord(ctx, snapshotLogWriterFromContext(ctx), map[string]any{
 			"event":           "reap",
 			"count":           reaped,
 			"reclaimed_mb":    reclaimed / bytesPerMB,
 			"reclaimed_bytes": reclaimed,
 		})
 	}
-	return errors.Join(reapErrors...)
+	return resultErr
 }
 
 func snapshotReapCandidate(entry os.DirEntry) bool {
@@ -723,8 +731,12 @@ func inspectSnapshotSource(path string) (snapshotSourceState, error) {
 			if !info.Mode().IsRegular() {
 				return snapshotSourceState{}, fmt.Errorf("snapshot source %q is not a regular file", path+suffix)
 			}
+			identity, err := snapshotFileIdentity(path+suffix, info)
+			if err != nil {
+				return snapshotSourceState{}, fmt.Errorf("identify snapshot source %q: %w", path+suffix, err)
+			}
 			state[index] = snapshotArtifactState{
-				exists: true, size: info.Size(), modTime: info.ModTime().UnixNano(),
+				exists: true, size: info.Size(), modTime: info.ModTime().UnixNano(), identity: identity,
 			}
 			continue
 		}
@@ -739,7 +751,7 @@ func snapshotFingerprint(path string, state snapshotSourceState) string {
 	var builder strings.Builder
 	builder.WriteString(path)
 	for _, artifact := range state {
-		fmt.Fprintf(&builder, "|%t|%d|%d", artifact.exists, artifact.size, artifact.modTime)
+		fmt.Fprintf(&builder, "|%t|%d|%d|%s", artifact.exists, artifact.size, artifact.modTime, artifact.identity)
 	}
 	return builder.String()
 }
@@ -1052,12 +1064,12 @@ func snapshotCoordinationContext(ctx context.Context) (context.Context, context.
 	return context.WithCancel(ctx)
 }
 
-func logSnapshotRecord(writer SnapshotLogWriter, record map[string]any) {
+func logSnapshotRecord(ctx context.Context, writer SnapshotLogWriter, record map[string]any) {
 	if writer == nil {
 		return
 	}
 	record["timestamp"] = time.Now().UTC()
-	_ = writer(record)
+	_ = writer(ctx, record)
 }
 
 // -/ 7/7
