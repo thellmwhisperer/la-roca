@@ -141,10 +141,11 @@ easy and eats comments. It is measured the only way that is not a matter of
 opinion: installing and then withdrawing gives back the exact previous bytes
 (`internal/distribution/agentcfg/agentcfg_test.go`, every supported runtime).
 
-Two more things the shared spine gives every edit: the previous bytes are backed
-up first (`<file>.roca.bak`, and an earlier copy is never overwritten), and a file
-that changed underneath us aborts instead of clobbering the runtime that owns
-it.
+Three more things the shared spine gives every edit: the previous bytes are
+backed up first (`<file>.roca.bak`, and an earlier copy is never overwritten);
+an existing symlink or other non-regular path is refused before backup or
+mutation; and a file that changed underneath us aborts instead of clobbering the
+runtime that owns it.
 
 **One declared boundary.** A `codex` config that writes `mcp_servers` as an
 inline table is refused by name, with the remedy, instead of being edited.
