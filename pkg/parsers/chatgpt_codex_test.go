@@ -201,12 +201,15 @@ func TestChatGPTCodexDoesNotPairTurnsWithBlankIDs(t *testing.T) {
 	  {"id":"","role":"user","input_items":[{"type":"message","content":[{"content_type":"text","text":"Unlinked human."}]}]},
 	  {"id":"blank-assistant","role":"assistant","previous_turn_id":"","output_items":[{"type":"message","content":[{"content_type":"text","text":"Unlinked answer."}]}]},
 	  {"id":"linked-user","role":"user","input_items":[{"type":"message","content":[{"content_type":"text","text":"Linked human."}]}]},
-	  {"id":"linked-assistant","role":"assistant","previous_turn_id":"linked-user","output_items":[{"type":"message","content":[{"content_type":"text","text":"Linked answer."}]}]}
+	  {"id":"","role":"assistant","previous_turn_id":"linked-user","output_items":[{"type":"message","content":[{"content_type":"text","text":"Linked answer."}]}]}
 	]}]`
 	exchanges := parseChatGPTCodex(t, raw).Sessions[0].Exchanges
 	if len(exchanges) != 1 || exchanges[0].HumanText != "Linked human." ||
 		exchanges[0].AgentText != "Linked answer." {
 		t.Fatalf("exchanges = %+v, want only the explicitly linked turn", exchanges)
+	}
+	if exchanges[0].SourceID != "" {
+		t.Fatalf("source id = %q, want unknown", exchanges[0].SourceID)
 	}
 }
 

@@ -138,8 +138,9 @@ under the `codex-cloud` source, distinct from local `~/.codex/sessions`
 rollouts, and stamps Codex CLI as the harness. The file states no timestamps
 in the mid-2026 shape; those columns stay empty rather than being inferred.
 When a cloud conversation and a local rollout share an identity, the writer
-keeps the richer row: the local rollout's model, provider, and times fill or
-win, and the cloud title fills if the session had none.
+keeps the richer provenance row. Missing model, provider, or timestamps can be
+filled from the overlapping reading, but timestamps already stated are never
+overwritten. The cloud title fills if the session had none.
 
 `shared_conversations.json` and attachment files are counted in the ingest
 summary as out-of-scope exclusions and never warned about.

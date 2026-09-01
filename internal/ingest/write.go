@@ -1304,6 +1304,9 @@ func exchangeProvenanceValues(provenance parsers.Provenance) []any {
 func (w *writer) enrichExchange(ctx context.Context, sessionID string, stored storedExchange,
 	exchange parsers.Exchange, richer bool) (int, int, error) {
 	provenance := exchange.Provenance
+	humanTimestamp := firstNonEmpty(stored.humanTimestamp, exchange.HumanTimestamp)
+	agentTimestamp := firstNonEmpty(stored.agentTimestamp, exchange.AgentTimestamp)
+	effectiveLatency := latencyBetween(humanTimestamp, agentTimestamp)
 	provenanceColumns := `
 		  model = COALESCE(model, ?),
 		  provider = COALESCE(provider, ?),
@@ -1322,7 +1325,7 @@ func (w *writer) enrichExchange(ctx context.Context, sessionID string, stored st
 	}
 	values := []any{
 		nullIfEmpty(exchange.AgentText), nullIfEmpty(exchange.HumanTimestamp),
-		nullIfEmpty(exchange.AgentTimestamp), nullInt(exchange.LatencyMS),
+		nullIfEmpty(exchange.AgentTimestamp), nullInt(effectiveLatency),
 		boolToInt(exchange.IsAfterCompaction),
 	}
 	values = append(values, exchangeProvenanceValues(provenance)...)
@@ -1358,6 +1361,20 @@ func (w *writer) enrichExchange(ctx context.Context, sessionID string, stored st
 	}
 	tools, err := w.insertTools(ctx, sessionID, number, exchange.Tools)
 	return inserted, tools, err
+}
+
+func latencyBetween(human, agent string) *int {
+	humanInstant, humanOK := parseTimestampInstant(human)
+	agentInstant, agentOK := parseTimestampInstant(agent)
+	if !humanOK || !agentOK || !humanInstant.present || !agentInstant.present {
+		return nil
+	}
+	elapsed := instantTime(agentInstant).Sub(instantTime(humanInstant))
+	if elapsed < 0 {
+		return nil
+	}
+	milliseconds := int(elapsed.Milliseconds())
+	return &milliseconds
 }
 
 func (w *writer) insertTools(ctx context.Context, sessionID string, number int,

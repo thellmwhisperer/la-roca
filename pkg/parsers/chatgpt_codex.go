@@ -127,7 +127,7 @@ func parseChatGPTCodexConversation(payload chatGPTCodexConversation, record int,
 		}
 		exchange := Exchange{
 			Number:         len(exchanges) + 1,
-			SourceID:       firstNonEmpty(strings.TrimSpace(turn.ID), fmt.Sprintf("%s:%d", payload.ID, len(exchanges)+1)),
+			SourceID:       strings.TrimSpace(turn.ID),
 			HumanText:      humanText,
 			AgentText:      agentText,
 			HumanTimestamp: chatGPTInstant(human.CreateTime),

@@ -54,6 +54,44 @@ func TestDeclaredChatGPTExportIngestsCodexJSONUnderADistinctSource(t *testing.T)
 	}
 }
 
+func TestPartialTimestampEnrichmentDerivesLatencyFromStoredFirstPair(t *testing.T) {
+	db := rocaDatabase(t)
+	sessionID := "fixture-codex-partial-timing"
+	incomingLatency := 1000
+	cloud := parsers.Session{ID: sessionID, SourceAgent: "codex-cloud", Exchanges: []parsers.Exchange{{
+		Number: 1, HumanText: "Open the imaginary hatch.", AgentText: "The hatch is open.",
+		AgentTimestamp: "2026-08-01T12:00:03Z",
+	}}}
+	local := parsers.Session{ID: sessionID, SourceAgent: "codex", Exchanges: []parsers.Exchange{{
+		Number: 1, HumanText: "Open the imaginary hatch.", AgentText: "The hatch is open.",
+		HumanTimestamp: "2026-08-01T12:00:01Z", AgentTimestamp: "2026-08-01T12:00:02Z",
+		LatencyMS: &incomingLatency,
+	}}}
+	for _, session := range []parsers.Session{cloud, local} {
+		tx, err := db.SQL().Begin()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := WriteSessions(context.Background(), tx, []parsers.Session{session}); err != nil {
+			_ = tx.Rollback()
+			t.Fatal(err)
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var humanTS, agentTS string
+	var latency int
+	if err := db.SQL().QueryRow(`SELECT human_timestamp, agent_timestamp, response_latency_ms
+		FROM exchanges WHERE session_id = ?`, sessionID).Scan(&humanTS, &agentTS, &latency); err != nil {
+		t.Fatal(err)
+	}
+	if humanTS != "2026-08-01T12:00:01Z" || agentTS != "2026-08-01T12:00:03Z" || latency != 2000 {
+		t.Fatalf("effective timing = %q / %q / %dms, want stored-first pair and 2000ms",
+			humanTS, agentTS, latency)
+	}
+}
+
 func TestOverlappingLocalCodexRolloutKeepsTheRicherRow(t *testing.T) {
 	cloudID := "fixture-codex-overlap"
 	export := t.TempDir()

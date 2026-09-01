@@ -768,7 +768,8 @@ func read(ctx context.Context, opts Options, target Target, previous incremental
 
 	if target.Kind == parsers.KindClaudeWebConversations ||
 		target.Kind == parsers.KindClaudeWebMemories ||
-		target.Kind == parsers.KindChatGPTWebConversations {
+		target.Kind == parsers.KindChatGPTWebConversations ||
+		target.Kind == parsers.KindChatGPTCodex {
 		file, err := os.Open(target.Path)
 		if err != nil {
 			return parsers.Records{}, err.Error()
@@ -782,8 +783,10 @@ func read(ctx context.Context, opts Options, target Target, previous incremental
 			records, err = parsers.ParseClaudeWebConversations(file, meta)
 		} else if target.Kind == parsers.KindClaudeWebMemories {
 			records, err = parsers.ParseClaudeWebMemories(file, meta)
-		} else {
+		} else if target.Kind == parsers.KindChatGPTWebConversations {
 			records, err = parsers.ParseChatGPTWebConversations(file, meta)
+		} else {
+			records, err = parsers.ParseChatGPTCodex(file, meta)
 		}
 		if err != nil {
 			return parsers.Records{}, err.Error()
