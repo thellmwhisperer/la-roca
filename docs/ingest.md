@@ -10,7 +10,7 @@ without a La Roca login](lifecycle.md#install).
 | Claude Code | Sessions, subagent transcripts, and per-project memory files |
 | Claude Desktop and Cowork | Session stores and Claude memory files |
 | Claude web/Desktop export you point it at | Conversations, memories, projects, and design chats from the official Anthropic data export |
-| ChatGPT export you point it at | Conversations from the official OpenAI data export |
+| ChatGPT export you point it at | ChatGPT and cloud Codex conversations from the official OpenAI data export |
 | Codex | Sessions, memory, rule and skill files, and what matters from its state database |
 | Qwen Code | Project chat sessions, including tool calls and source-recorded models |
 | GLM | User skill documents and their supporting Markdown files |
@@ -135,12 +135,18 @@ is what decides which of two snapshots of it keeps the provenance.
 
 `codex.json` is the cloud Codex companion of the same export. La Roca reads it
 under the `codex-cloud` source, distinct from local `~/.codex/sessions`
-rollouts, and stamps Codex CLI as the harness. The file states no timestamps
-in the mid-2026 shape; those columns stay empty rather than being inferred.
-When a cloud conversation and a local rollout share an identity, the writer
-keeps the richer provenance row. Missing model, provider, or timestamps can be
-filled from the overlapping reading, but timestamps already stated are never
-overwritten. The cloud title fills if the session had none.
+rollouts, and stamps Codex CLI as the harness. Assistant turns pair to user
+turns by `previous_turn_id`; only text message content enters the exchange, and
+empty assistant turns are excluded by design. Optional conversation
+`create_time` and `update_time` values supply session boundaries, while optional
+paired-turn `create_time` values supply exchange timestamps. Missing values stay
+empty: turn times are never promoted to session boundaries.
+
+The export states no model or provider, so those columns remain empty unless an
+overlapping local rollout supplies them. When cloud and local content share an
+identity, the writer keeps the richer provenance row and fills missing fields;
+it never overwrites a timestamp already stated. The cloud title fills if the
+session had none, and no project is inferred from the export directory.
 
 `shared_conversations.json` and attachment files are counted in the ingest
 summary as out-of-scope exclusions and never warned about.
@@ -514,8 +520,8 @@ counts tokens and names no provider, a Codex rollout counts the reasoning tokens
 apart, Qwen Code names the model and counts each request in a tool loop, Cursor
 names the model and usage only when its answer bubbles do, Pi and OpenCode also
 price the turn, Hermes measures a whole session rather than a turn, the Claude
-web export states none of it, and the ChatGPT
-export names its model and provider without stating usage.
+web export and cloud Codex companion state none of it, and the ChatGPT
+conversation files name their model and provider without stating usage.
 
 Thinking text stays in `thinking_blocks`, keyed to its session and exchange; it
 is not duplicated onto `exchanges`. Codex reasoning now lands there on the
