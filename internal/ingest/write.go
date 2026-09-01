@@ -127,6 +127,20 @@ func (w *writer) sessions(ctx context.Context, sessions []parsers.Session) (Coun
 	return counts, nil
 }
 
+const (
+	timingOwnerMetadataKey = "_timing_owner"
+	localCodexTimingOwner  = "codex-local"
+	cloudCodexTimingOwner  = "codex-cloud"
+)
+
+type timingPolicy uint8
+
+const (
+	timingFill timingPolicy = iota
+	timingIncomingWins
+	timingStoredWins
+)
+
 // exchangeKey is what a source that numbers its own exchanges remembers about one
 // that already landed.
 type exchangeKey struct {
@@ -162,11 +176,7 @@ func (w *writer) sessionWithPolicy(ctx context.Context, session parsers.Session,
 	if err != nil {
 		return counts, err
 	}
-	currentSource := current.text("source_agent")
-	preferIncomingTimestamps := currentSource == "codex-cloud" &&
-		isLocalCodexSource(session.SourceAgent)
-	preserveStoredTimestamps := isLocalCodexSource(currentSource) &&
-		session.SourceAgent == "codex-cloud"
+	timing, timingOwner := reconcileTiming(session, current)
 	if exists && skipExisting {
 		counts.SessionsSkipped = 1
 		return counts, nil
@@ -195,13 +205,17 @@ func (w *writer) sessionWithPolicy(ctx context.Context, session parsers.Session,
 	if session.ParentID != "" {
 		metadata["parent_session_id"] = session.ParentID
 	}
+	delete(metadata, timingOwnerMetadataKey)
+	if timingOwner != "" {
+		metadata[timingOwnerMetadataKey] = timingOwner
+	}
 
 	// The exchanges are written first only in the sense that their identities are
 	// resolved first: the session row has to exist before any exchange can
 	// reference it.
 	if exists {
 		counts.SessionsUpdated = 1
-		if err := w.refreshSession(ctx, session, current); err != nil {
+		if err := w.refreshSession(ctx, session, current, timing); err != nil {
 			return counts, err
 		}
 	} else {
@@ -302,8 +316,7 @@ func (w *writer) sessionWithPolicy(ctx context.Context, session parsers.Session,
 			// Anything else, an unrecorded richness included, only fills what the
 			// row is missing.
 			richer := statedMore(exchange.Signal, known.Signal)
-			thinking, tools, err := w.enrichExchange(ctx, session.ID, matched, exchange, richer,
-				preferIncomingTimestamps, preserveStoredTimestamps)
+			thinking, tools, err := w.enrichExchange(ctx, session.ID, matched, exchange, richer, timing)
 			if err != nil {
 				return counts, err
 			}
@@ -1101,7 +1114,8 @@ func (w *writer) registerSession(ctx context.Context, session parsers.Session,
 //
 // The title never overwrites a title that is already there: the first writer with
 // a real one keeps it, or two sources would take turns renaming the session.
-func (w *writer) refreshSession(ctx context.Context, session parsers.Session, current row) error {
+func (w *writer) refreshSession(ctx context.Context, session parsers.Session, current row,
+	timing timingPolicy) error {
 	agent := w.agentAfterRefresh(session, current.text("source_agent"))
 	surface := any(nil)
 	if session.SourceSurface != "" {
@@ -1124,6 +1138,17 @@ func (w *writer) refreshSession(ctx context.Context, session parsers.Session, cu
 		session.DurationMinutes = mergedSessionDuration(current, session)
 		setStarted, setEnded, setDuration = "?", "?", "?"
 	}
+	timingValues := []any{
+		nullIfEmpty(session.StartedAt), nullIfEmpty(session.EndedAt),
+		nullInt(session.DurationMinutes),
+	}
+	switch timing {
+	case timingIncomingWins:
+		setStarted, setEnded, setDuration = "?", "?", "?"
+	case timingStoredWins:
+		setStarted, setEnded, setDuration = "started_at", "ended_at", "duration_minutes"
+		timingValues = nil
+	}
 	statement := fmt.Sprintf(`
 		UPDATE sessions SET
 		  source_agent = COALESCE(?, source_agent),
@@ -1136,10 +1161,10 @@ func (w *writer) refreshSession(ctx context.Context, session parsers.Session, cu
 		               WHEN TRIM(COALESCE(?, ''), CHAR(9,10,13,32,160)) <> '' THEN ?
 		               ELSE title END
 		WHERE session_id = ?`, setSurface, setProject, setStarted, setEnded, setDuration)
-	_, err := w.tx.ExecContext(ctx, statement,
-		nullIfEmpty(agent), surface, project, nullIfEmpty(session.StartedAt),
-		nullIfEmpty(session.EndedAt), nullInt(session.DurationMinutes),
-		nullIfEmpty(session.Title), nullIfEmpty(session.Title), session.ID)
+	values := []any{nullIfEmpty(agent), surface, project}
+	values = append(values, timingValues...)
+	values = append(values, nullIfEmpty(session.Title), nullIfEmpty(session.Title), session.ID)
+	_, err := w.tx.ExecContext(ctx, statement, values...)
 	if err != nil {
 		return fmt.Errorf("refresh the session %s: %w", session.ID, err)
 	}
@@ -1221,6 +1246,54 @@ func agentFamily(agent string) string {
 
 func isLocalCodexSource(agent string) bool {
 	return agent != "" && agent != "codex-cloud" && agentFamily(agent) == "codex"
+}
+
+func reconcileTiming(session parsers.Session, current row) (timingPolicy, string) {
+	storedOwner := timingOwnerFromMetadata(current.text("metadata"))
+	incomingOwner := ""
+	if sessionHasTiming(session) {
+		switch {
+		case isLocalCodexSource(session.SourceAgent):
+			incomingOwner = localCodexTimingOwner
+		case session.SourceAgent == "codex-cloud":
+			incomingOwner = cloudCodexTimingOwner
+		}
+	}
+	if incomingOwner == localCodexTimingOwner {
+		return timingIncomingWins, localCodexTimingOwner
+	}
+	if storedOwner == localCodexTimingOwner {
+		return timingStoredWins, localCodexTimingOwner
+	}
+	if incomingOwner != "" {
+		return timingFill, incomingOwner
+	}
+	return timingFill, storedOwner
+}
+
+func timingOwnerFromMetadata(metadata string) string {
+	var document map[string]any
+	if json.Unmarshal([]byte(metadata), &document) != nil {
+		return ""
+	}
+	owner, _ := document[timingOwnerMetadataKey].(string)
+	if owner == localCodexTimingOwner || owner == cloudCodexTimingOwner {
+		return owner
+	}
+	return ""
+}
+
+func sessionHasTiming(session parsers.Session) bool {
+	if session.StartedAt != "" || session.EndedAt != "" || session.DurationMinutes != nil {
+		return true
+	}
+	for _, exchange := range session.Exchanges {
+		if exchange.HumanTimestamp != "" || exchange.AgentTimestamp != "" ||
+			exchange.LatencyMS != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // exchangeIdentities reads what a source that numbers its own exchanges already
@@ -1311,8 +1384,7 @@ func exchangeProvenanceValues(provenance parsers.Provenance) []any {
 // reading that stated more about the answer own its provenance. A NULL remains
 // the absence of a statement, not a zero.
 func (w *writer) enrichExchange(ctx context.Context, sessionID string, stored storedExchange,
-	exchange parsers.Exchange, richer, preferIncomingTimestamps,
-	preserveStoredTimestamps bool) (int, int, error) {
+	exchange parsers.Exchange, richer bool, timing timingPolicy) (int, int, error) {
 	provenance := exchange.Provenance
 	provenanceColumns := `
 		  model = COALESCE(model, ?),
@@ -1338,14 +1410,13 @@ func (w *writer) enrichExchange(ctx context.Context, sessionID string, stored st
 		nullIfEmpty(exchange.HumanTimestamp), nullIfEmpty(exchange.AgentTimestamp),
 		nullInt(exchange.LatencyMS),
 	}
-	incomingHasTimestamps := exchange.HumanTimestamp != "" || exchange.AgentTimestamp != ""
-	if preferIncomingTimestamps && incomingHasTimestamps {
+	switch timing {
+	case timingIncomingWins:
 		timestampColumns = `
-		  human_timestamp = COALESCE(?, human_timestamp),
-		  agent_timestamp = COALESCE(?, agent_timestamp),
+		  human_timestamp = ?,
+		  agent_timestamp = ?,
 		  response_latency_ms = ?,`
-	} else if preserveStoredTimestamps &&
-		(stored.humanTimestamp != "" || stored.agentTimestamp != "") {
+	case timingStoredWins:
 		timestampColumns = ""
 		timestampValues = nil
 	}

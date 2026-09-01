@@ -35,12 +35,12 @@ func TestDeclaredChatGPTExportIngestsCodexJSONUnderADistinctSource(t *testing.T)
 	if result.Sources["codex-cloud"].Sessions != 1 || result.Sources["codex-cloud"].Exchanges != 1 {
 		t.Fatalf("codex-cloud counts = %+v", result.Sources["codex-cloud"])
 	}
-	var agent, surface, title, model, provider string
+	var agent, surface, title, model, provider, project string
 	if err := db.SQL().QueryRow(`SELECT source_agent, COALESCE(source_surface, ''), title,
-		COALESCE(e.model, ''), COALESCE(e.provider, '')
+		COALESCE(e.model, ''), COALESCE(e.provider, ''), COALESCE(s.project, '')
 		FROM sessions s JOIN exchanges e ON e.session_id = s.session_id
 		WHERE s.session_id = ?`, "60000000-0000-4000-8000-000000000001").
-		Scan(&agent, &surface, &title, &model, &provider); err != nil {
+		Scan(&agent, &surface, &title, &model, &provider, &project); err != nil {
 		t.Fatal(err)
 	}
 	if agent != "codex-cloud" || surface != "Codex CLI" || title != "Synthetic cloud Codex hatch" {
@@ -49,20 +49,22 @@ func TestDeclaredChatGPTExportIngestsCodexJSONUnderADistinctSource(t *testing.T)
 	if model != "" || provider != "" {
 		t.Fatalf("invented provenance = %q/%q", model, provider)
 	}
+	if project != "" {
+		t.Fatalf("project inferred from export directory = %q", project)
+	}
 }
 
 func TestOverlappingLocalCodexRolloutKeepsTheRicherRow(t *testing.T) {
 	cloudID := "fixture-codex-overlap"
-	export := t.TempDir()
-	if err := os.WriteFile(filepath.Join(export, "codex.json"), []byte(`[
-	  {"id":"`+cloudID+`","title":"Synthetic cloud title","archived":false,"turns":[
-	    {"id":"u","role":"user","create_time":1767225601.125,"input_items":[{"type":"message","role":"user","content":[{"content_type":"text","text":"Open the imaginary hatch."}]}]},
-	    {"id":"a","role":"assistant","previous_turn_id":"u","create_time":1767225602.625,"turn_status":"TaskTurnStatusEnum.COMPLETED","output_items":[
+	cloudDocument := func(humanTime, agentTime string) []byte {
+		return []byte(`[
+	  {"id":"` + cloudID + `","title":"Synthetic cloud title","archived":false,"turns":[
+	    {"id":"u","role":"user","create_time":` + humanTime + `,"input_items":[{"type":"message","role":"user","content":[{"content_type":"text","text":"Open the imaginary hatch."}]}]},
+	    {"id":"a","role":"assistant","previous_turn_id":"u","create_time":` + agentTime + `,"turn_status":"TaskTurnStatusEnum.COMPLETED","output_items":[
 	      {"type":"message","role":"assistant","content":[{"content_type":"text","text":"The hatch is open."}]}
 	    ]}
 	  ]}
-	]`), 0o600); err != nil {
-		t.Fatal(err)
+	]`)
 	}
 	rollout := `{"type":"session_meta","timestamp":"2026-08-01T12:00:00Z","payload":{"id":"` + cloudID + `","cwd":"/synthetic/lighthouse","timestamp":"2026-08-01T12:00:00Z","model_provider":"openai"}}
 {"type":"turn_context","timestamp":"2026-08-01T12:00:01Z","payload":{"model":"gpt-synthetic-local"}}
@@ -72,6 +74,11 @@ func TestOverlappingLocalCodexRolloutKeepsTheRicherRow(t *testing.T) {
 	for _, name := range []string{"cloud then local", "local then cloud"} {
 		t.Run(name, func(t *testing.T) {
 			db := rocaDatabase(t)
+			export := t.TempDir()
+			cloudPath := filepath.Join(export, "codex.json")
+			if err := os.WriteFile(cloudPath, cloudDocument("1767225601.125", "1767225602.625"), 0o600); err != nil {
+				t.Fatal(err)
+			}
 			home := t.TempDir()
 			sessions := filepath.Join(home, ".codex", "sessions", "2026", "08", "01")
 			if err := os.MkdirAll(sessions, 0o700); err != nil {
@@ -94,20 +101,29 @@ func TestOverlappingLocalCodexRolloutKeepsTheRicherRow(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			if err := os.WriteFile(cloudPath, cloudDocument("1767225701.125", "1767225702.625"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Run(context.Background(), db, registry(t), cloud); err != nil {
+				t.Fatal(err)
+			}
 			if got := countRows(t, db.SQL(), "sessions WHERE session_id = '"+cloudID+"'"); got != 1 {
 				t.Fatalf("sessions = %d, want 1 merged row", got)
 			}
 			if got := countRows(t, db.SQL(), "exchanges WHERE session_id = '"+cloudID+"'"); got != 1 {
 				t.Fatalf("exchanges = %d, want 1 merged row", got)
 			}
-			var title, model, provider, humanTS, agentTS string
-			var latency int
+			var title, model, provider, humanTS, agentTS, startedAt, endedAt, timingOwner string
+			var latency, duration int
 			if err := db.SQL().QueryRow(`SELECT s.title, COALESCE(e.model, ''), COALESCE(e.provider, ''),
 				COALESCE(e.human_timestamp, ''), COALESCE(e.agent_timestamp, ''),
-				COALESCE(e.response_latency_ms, -1)
+				COALESCE(e.response_latency_ms, -1), COALESCE(s.started_at, ''),
+				COALESCE(s.ended_at, ''), COALESCE(s.duration_minutes, -1),
+				COALESCE(json_extract(s.metadata, '$._timing_owner'), '')
 				FROM sessions s JOIN exchanges e ON e.session_id = s.session_id
 				WHERE s.session_id = ?`, cloudID).
-				Scan(&title, &model, &provider, &humanTS, &agentTS, &latency); err != nil {
+				Scan(&title, &model, &provider, &humanTS, &agentTS, &latency,
+					&startedAt, &endedAt, &duration, &timingOwner); err != nil {
 				t.Fatal(err)
 			}
 			if title != "Synthetic cloud title" {
@@ -117,8 +133,13 @@ func TestOverlappingLocalCodexRolloutKeepsTheRicherRow(t *testing.T) {
 				t.Errorf("kept provenance = %q/%q, want the richer local rollout", model, provider)
 			}
 			if humanTS != "2026-08-01T12:00:01Z" || agentTS != "2026-08-01T12:00:02Z" || latency != -1 {
-				t.Errorf("local timing = %q / %q / %d, want rollout times and unknown latency",
+				t.Errorf("local exchange timing = %q / %q / %d, want rollout timing",
 					humanTS, agentTS, latency)
+			}
+			if startedAt != "2026-08-01T12:00:00Z" || endedAt != "2026-08-01T12:00:02Z" ||
+				duration != 0 || timingOwner != "codex-local" {
+				t.Errorf("local session timing = %q / %q / %d owned by %q",
+					startedAt, endedAt, duration, timingOwner)
 			}
 		})
 	}
