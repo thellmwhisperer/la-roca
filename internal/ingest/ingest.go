@@ -849,7 +849,7 @@ func read(ctx context.Context, opts Options, target Target, previous incremental
 		return parsers.Parse(target.Kind, input, fileMeta)
 	}
 	records, err := parse(content, meta)
-	if seed.Incremental && (err != nil || incrementalParseNeedsPrefix(target.Kind, records)) {
+	if seed.Incremental && (err != nil || incrementalParseNeedsPrefix(target.Kind, content, records)) {
 		seed = harvestCursorSeed{}
 		meta = baseMeta
 		records, err = parse(fullContent, meta)
@@ -870,19 +870,45 @@ func read(ctx context.Context, opts Options, target Target, previous incremental
 	return records, ""
 }
 
-func incrementalParseNeedsPrefix(kind parsers.Kind, records parsers.Records) bool {
+func incrementalParseNeedsPrefix(kind parsers.Kind, content []byte, records parsers.Records) bool {
 	if kind != parsers.KindCodexSession {
 		return false
 	}
-	if records.Deferred > 0 {
+	if !codexTailHasCompletedEventTurn(content) {
 		return true
 	}
 	for _, discard := range records.Discards {
-		if discard.Category == "tool verdict has unknown call_id" || discard.Reason == "aborted turn" {
+		if discard.Category == "tool verdict has unknown call_id" {
 			return true
 		}
 	}
 	return false
+}
+
+func codexTailHasCompletedEventTurn(content []byte) bool {
+	open, completed := false, false
+	forEachNonBlankLine(content, func(raw []byte) bool {
+		var line struct {
+			Type    string `json:"type"`
+			Payload struct {
+				Type string `json:"type"`
+			} `json:"payload"`
+		}
+		if json.Unmarshal(raw, &line) != nil || line.Type != "event_msg" {
+			return true
+		}
+		switch line.Payload.Type {
+		case "user_message":
+			open = true
+		case "task_complete":
+			completed = open
+			open = false
+		case "turn_aborted":
+			open = false
+		}
+		return !completed
+	})
+	return completed
 }
 
 func cursorContent(target Target, previous incrementality.FileState,

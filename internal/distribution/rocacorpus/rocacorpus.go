@@ -17,7 +17,7 @@ const (
 	// BundledSource is what the installer records for this package, and it is
 	// what discovery reads to know the corpus attach alias is the kernel's own.
 	BundledSource = plugin.BundledSource
-	SchemaVersion = 6
+	SchemaVersion = 5
 	IndexVersion  = 3
 )
 
@@ -34,9 +34,6 @@ func ApplySchema(path string) error {
 
 func applySchema(ctx context.Context, path string) error {
 	if err := prepareIngestProvenance(path); err != nil {
-		return err
-	}
-	if err := prepareToolCallIdentity(ctx, path); err != nil {
 		return err
 	}
 	seals, err := snapshotMigrationSeals(path)
@@ -194,42 +191,6 @@ func prepareIngestProvenance(path string) error {
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit bundled %s provenance backfill: %w", Name, err)
-	}
-	return nil
-}
-
-func prepareToolCallIdentity(ctx context.Context, path string) error {
-	db, err := bundledplugin.OpenDatabase(path, false)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin bundled %s tool identity migration: %w", Name, err)
-	}
-	defer tx.Rollback()
-	for _, table := range []string{"tool_uses", "tool_use_versions"} {
-		present, err := tableExists(tx, table)
-		if err != nil {
-			return err
-		}
-		if !present {
-			continue
-		}
-		hasCallID, err := columnExists(ctx, tx, table, "call_id")
-		if err != nil {
-			return err
-		}
-		if hasCallID {
-			continue
-		}
-		if _, err := tx.Exec(`ALTER TABLE ` + table + ` ADD COLUMN call_id TEXT`); err != nil {
-			return fmt.Errorf("add %s.call_id: %w", table, err)
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit bundled %s tool identity migration: %w", Name, err)
 	}
 	return nil
 }

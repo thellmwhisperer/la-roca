@@ -383,7 +383,6 @@ type Thinking struct {
 
 // ToolUse is one tool call, with the verdict its result carried.
 type ToolUse struct {
-	CallID         string
 	Name           string
 	ParamsSummary  string
 	HadError       bool

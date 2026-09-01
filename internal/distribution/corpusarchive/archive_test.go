@@ -650,9 +650,9 @@ func seedCoreArchive(t *testing.T, db *sql.DB) {
 	seedExchange(t, db, 3, "divergent", 2, "core extra", "core extra answer")
 	seedExchange(t, db, 4, "core-only", 1, "core only", "core only answer")
 	execTest(t, db, `INSERT INTO tool_uses VALUES
-		(10, 'exact', 1, NULL, 'Read', 'shared params', 0, NULL, 'responsive'),
-		(11, 'exact', 1, NULL, 'Read', 'shared params', 0, NULL, 'responsive'),
-		(12, 'divergent', 1, NULL, 'Write', 'core params', 0, NULL, 'proactive')`)
+		(10, 'exact', 1, 'Read', 'shared params', 0, NULL, 'responsive'),
+		(11, 'exact', 1, 'Read', 'shared params', 0, NULL, 'responsive'),
+		(12, 'divergent', 1, 'Write', 'core params', 0, NULL, 'proactive')`)
 	execTest(t, db, `INSERT INTO thinking_blocks VALUES
 		(1, 'exact', 1, 1.0, 'medium', 0.1, 2, 0, 'sharedthought'),
 		(2, 'divergent', 1, 1.0, 'deep', 0.2, 2, 0, 'core thought')`)
@@ -668,8 +668,8 @@ func seedExistingCorpusArchive(t *testing.T, db *sql.DB) {
 	seedExchange(t, db, 101, "divergent", 1, "question", "corpus answer")
 	seedExchange(t, db, 102, "divergent", 3, "corpus extra", "corpus extra answer")
 	execTest(t, db, `INSERT INTO tool_uses VALUES
-		(10, 'exact', 1, NULL, 'Different', 'colliding integer id', 1, 'synthetic error', 'responsive'),
-		(99, 'exact', 1, NULL, 'Read', 'shared params', 0, NULL, 'responsive')`)
+		(10, 'exact', 1, 'Different', 'colliding integer id', 1, 'synthetic error', 'responsive'),
+		(99, 'exact', 1, 'Read', 'shared params', 0, NULL, 'responsive')`)
 	execTest(t, db, `INSERT INTO thinking_blocks VALUES
 		(1, 'exact', 1, 1.0, 'medium', 0.1, 2, 0, 'sharedthought')`)
 	seedState(t, db, "/shared/transcript", "corpus-newer")

@@ -460,7 +460,7 @@ func retainedCoordinateQuery(destinationTable string) (string, error) {
 			human_timestamp, agent_timestamp, response_latency_ms, model, provider,
 			tokens_in, tokens_out, tokens_reasoning, cost_usd FROM exchange_versions`, nil
 	case "tool_use_versions":
-		return `SELECT version_digest, session_id, exchange_number, call_id, tool_name, had_error,
+		return `SELECT version_digest, session_id, exchange_number, tool_name, had_error,
 			initiative_type FROM tool_use_versions`, nil
 	case "thinking_block_versions":
 		return `SELECT version_digest, session_id, exchange_number, position_in_session,
@@ -501,12 +501,12 @@ func scanRetainedCoordinateDigest(rows *sql.Rows, destinationTable string) (stri
 	case "tool_use_versions":
 		var sessionID string
 		var number, hadError sql.NullInt64
-		var callID, name, initiative sql.NullString
-		if err := rows.Scan(&stored, &sessionID, &number, &callID, &name, &hadError,
+		var name, initiative sql.NullString
+		if err := rows.Scan(&stored, &sessionID, &number, &name, &hadError,
 			&initiative); err != nil {
 			return "", "", err
 		}
-		values = []any{sessionID, number, callID, name, hadError, initiative}
+		values = []any{sessionID, number, name, hadError, initiative}
 	case "thinking_block_versions":
 		var sessionID string
 		var number, wordCount, compacted sql.NullInt64

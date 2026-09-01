@@ -1376,7 +1376,7 @@ func (w *writer) enrichExchange(ctx context.Context, sessionID string, stored st
 	}
 	if stored.agentText != "" || stored.agentTimestamp != "" {
 		if reconcileOrphans {
-			tools, err := w.reconcileOrphanedTools(ctx, sessionID, number, exchange.Tools)
+			tools, err := w.replaceExchangeTools(ctx, sessionID, number, exchange.Tools)
 			return inserted, tools, err
 		}
 		return inserted, 0, nil
@@ -1399,72 +1399,20 @@ func latencyBetween(human, agent string) *int {
 	return &milliseconds
 }
 
-func (w *writer) reconcileOrphanedTools(ctx context.Context, sessionID string, number int,
+func (w *writer) replaceExchangeTools(ctx context.Context, sessionID string, number int,
 	tools []parsers.ToolUse) (int, error) {
-	rows, err := w.tx.QueryContext(ctx, `
-		SELECT id, exchange_number, call_id
-		FROM tool_uses
-		WHERE session_id = ? AND (exchange_number = ? OR exchange_number IS NULL)
-		ORDER BY id`, sessionID, number)
+	stored, err := w.storedTools(ctx, sessionID, number)
 	if err != nil {
-		return 0, fmt.Errorf("read tools for orphan reconciliation of %s/%d: %w", sessionID, number, err)
+		return 0, err
 	}
-	attached := map[string]int{}
-	orphaned := map[string][]int64{}
-	for rows.Next() {
-		var id int64
-		var exchangeNumber sql.NullInt64
-		var callID sql.NullString
-		if err := rows.Scan(&id, &exchangeNumber, &callID); err != nil {
-			_ = rows.Close()
-			return 0, fmt.Errorf("scan tools for orphan reconciliation of %s/%d: %w",
-				sessionID, number, err)
-		}
-		if callID.String == "" {
-			continue
-		}
-		if exchangeNumber.Valid {
-			attached[callID.String]++
-		} else {
-			orphaned[callID.String] = append(orphaned[callID.String], id)
-		}
+	if equalToolUses(stored, tools) {
+		return 0, nil
 	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return 0, fmt.Errorf("iterate tools for orphan reconciliation of %s/%d: %w",
-			sessionID, number, err)
+	if _, err := w.tx.ExecContext(ctx,
+		`DELETE FROM tool_uses WHERE session_id = ? AND exchange_number = ?`, sessionID, number); err != nil {
+		return 0, fmt.Errorf("replace tools of %s/%d: %w", sessionID, number, err)
 	}
-	if err := rows.Close(); err != nil {
-		return 0, fmt.Errorf("close tools for orphan reconciliation of %s/%d: %w",
-			sessionID, number, err)
-	}
-	var missing []parsers.ToolUse
-	for _, tool := range tools {
-		if tool.CallID == "" {
-			missing = append(missing, tool)
-			continue
-		}
-		if attached[tool.CallID] > 0 {
-			attached[tool.CallID]--
-			continue
-		}
-		ids := orphaned[tool.CallID]
-		if len(ids) == 0 {
-			missing = append(missing, tool)
-			continue
-		}
-		id := ids[0]
-		orphaned[tool.CallID] = ids[1:]
-		if _, err := w.tx.ExecContext(ctx, `
-			UPDATE tool_uses SET exchange_number = ?, call_id = ?, tool_name = ?,
-			  tool_params_summary = ?, had_error = ?, error_message = ?, initiative_type = ?
-			WHERE id = ? AND session_id = ? AND exchange_number IS NULL`,
-			number, tool.CallID, tool.Name, nullIfEmpty(tool.ParamsSummary), boolToInt(tool.HadError),
-			nullIfEmpty(tool.ErrorMessage), nullIfEmpty(tool.InitiativeType), id, sessionID); err != nil {
-			return 0, fmt.Errorf("reconcile orphaned tool of %s/%d: %w", sessionID, number, err)
-		}
-	}
-	return w.insertTools(ctx, sessionID, number, missing)
+	return w.insertTools(ctx, sessionID, number, tools)
 }
 
 func (w *writer) insertTools(ctx context.Context, sessionID string, number any,
@@ -1473,10 +1421,10 @@ func (w *writer) insertTools(ctx context.Context, sessionID string, number any,
 	for _, tool := range tools {
 		_, err := w.tx.ExecContext(ctx, `
 			INSERT INTO tool_uses
-			  (session_id, exchange_number, call_id, tool_name, tool_params_summary, had_error,
+			  (session_id, exchange_number, tool_name, tool_params_summary, had_error,
 			   error_message, initiative_type)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-			sessionID, number, nullIfEmpty(tool.CallID), tool.Name, nullIfEmpty(tool.ParamsSummary),
+			VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			sessionID, number, tool.Name, nullIfEmpty(tool.ParamsSummary),
 			boolToInt(tool.HadError), nullIfEmpty(tool.ErrorMessage),
 			nullIfEmpty(tool.InitiativeType))
 		if err != nil {
@@ -1490,39 +1438,48 @@ func (w *writer) insertTools(ctx context.Context, sessionID string, number any,
 	return inserted, nil
 }
 
-// replaceOrphanedTools writes the authoritative session-level projection. A
-// full rollout can grow between reads, so these rows are compared as an ordered
-// list and replaced together instead of accumulating duplicates.
-func (w *writer) replaceOrphanedTools(ctx context.Context, sessionID string,
-	tools, unresolved []parsers.ToolUse) (int, error) {
+func (w *writer) storedTools(ctx context.Context, sessionID string,
+	number any) ([]parsers.ToolUse, error) {
 	rows, err := w.tx.QueryContext(ctx, `
-		SELECT call_id, tool_name, tool_params_summary, had_error, error_message, initiative_type
-		FROM tool_uses WHERE session_id = ? AND exchange_number IS NULL ORDER BY id`, sessionID)
+		SELECT tool_name, tool_params_summary, had_error, error_message, initiative_type
+		FROM tool_uses WHERE session_id = ? AND exchange_number IS ? ORDER BY id`, sessionID, number)
 	if err != nil {
-		return 0, fmt.Errorf("read orphaned tools of %s: %w", sessionID, err)
+		return nil, fmt.Errorf("read tools of %s/%v: %w", sessionID, number, err)
 	}
 	var stored []parsers.ToolUse
 	for rows.Next() {
 		var name string
-		var callID, params, message, initiative sql.NullString
+		var params, message, initiative sql.NullString
 		var hadError int
-		if err := rows.Scan(&callID, &name, &params, &hadError, &message, &initiative); err != nil {
+		if err := rows.Scan(&name, &params, &hadError, &message, &initiative); err != nil {
 			_ = rows.Close()
-			return 0, fmt.Errorf("scan orphaned tools of %s: %w", sessionID, err)
+			return nil, fmt.Errorf("scan tools of %s/%v: %w", sessionID, number, err)
 		}
 		stored = append(stored, parsers.ToolUse{
-			CallID: callID.String, Name: name, ParamsSummary: params.String, HadError: hadError != 0,
+			Name: name, ParamsSummary: params.String, HadError: hadError != 0,
 			ErrorMessage: message.String, InitiativeType: initiative.String,
 		})
 	}
 	if err := rows.Err(); err != nil {
 		_ = rows.Close()
-		return 0, fmt.Errorf("iterate orphaned tools of %s: %w", sessionID, err)
+		return nil, fmt.Errorf("iterate tools of %s/%v: %w", sessionID, number, err)
 	}
 	if err := rows.Close(); err != nil {
-		return 0, fmt.Errorf("close orphaned tools of %s: %w", sessionID, err)
+		return nil, fmt.Errorf("close tools of %s/%v: %w", sessionID, number, err)
 	}
-	tools = preserveUnresolvedOrphanTools(stored, tools, unresolved)
+	return stored, nil
+}
+
+// replaceOrphanedTools writes the authoritative session-level projection. A
+// full rollout can grow between reads, so these rows are compared as an ordered
+// list and replaced together instead of accumulating duplicates.
+func (w *writer) replaceOrphanedTools(ctx context.Context, sessionID string,
+	tools, unresolved []parsers.ToolUse) (int, error) {
+	stored, err := w.storedTools(ctx, sessionID, nil)
+	if err != nil {
+		return 0, err
+	}
+	tools = preserveUnresolvedOrphanTools(tools, unresolved)
 	if equalToolUses(stored, tools) {
 		return 0, nil
 	}
@@ -1533,38 +1490,9 @@ func (w *writer) replaceOrphanedTools(ctx context.Context, sessionID string,
 	return w.insertTools(ctx, sessionID, nil, tools)
 }
 
-func preserveUnresolvedOrphanTools(stored, desired,
-	unresolved []parsers.ToolUse) []parsers.ToolUse {
-	desiredIDs := map[string]bool{}
-	for _, tool := range desired {
-		if tool.CallID != "" {
-			desiredIDs[tool.CallID] = true
-		}
-	}
-	unresolvedByID := map[string]parsers.ToolUse{}
-	hasAnonymousUnresolved := false
-	for _, tool := range unresolved {
-		if tool.CallID == "" {
-			hasAnonymousUnresolved = true
-			continue
-		}
-		unresolvedByID[tool.CallID] = tool
-	}
+func preserveUnresolvedOrphanTools(desired, unresolved []parsers.ToolUse) []parsers.ToolUse {
 	result := append([]parsers.ToolUse(nil), desired...)
-	for _, tool := range stored {
-		if tool.CallID == "" {
-			if hasAnonymousUnresolved {
-				result = append(result, tool)
-			}
-			continue
-		}
-		unresolvedTool, exists := unresolvedByID[tool.CallID]
-		if exists && !desiredIDs[tool.CallID] {
-			result = append(result, unresolvedTool)
-			delete(unresolvedByID, tool.CallID)
-		}
-	}
-	return result
+	return append(result, unresolved...)
 }
 
 func equalToolUses(left, right []parsers.ToolUse) bool {

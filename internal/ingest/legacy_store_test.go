@@ -291,6 +291,25 @@ func TestLegacyStoreIngest(t *testing.T) {
 	}
 }
 
+func TestLegacyStoreKeepsSessionLevelTools(t *testing.T) {
+	session, discards := legacyStoreSession(row{"session_id": "legacy-orphan"}, nil, nil, []row{{
+		"id": float64(1), "session_id": "legacy-orphan", "exchange_number": nil,
+		"tool_name": "shell", "tool_params_summary": "inspect", "had_error": float64(1),
+		"error_message": "failed", "initiative_type": "reactive",
+	}})
+	if len(discards) != 0 {
+		t.Fatalf("session-level tool discards = %+v", discards)
+	}
+	if len(session.OrphanedTools) != 1 {
+		t.Fatalf("session-level tools = %+v", session.OrphanedTools)
+	}
+	tool := session.OrphanedTools[0]
+	if tool.Name != "shell" || tool.ParamsSummary != "inspect" || !tool.HadError ||
+		tool.ErrorMessage != "failed" || tool.InitiativeType != "reactive" {
+		t.Fatalf("session-level tool = %+v", tool)
+	}
+}
+
 func TestLegacyStoreSkipsFederatedOverlap(t *testing.T) {
 	t.Parallel()
 	path := seedLegacyStoreFixture(t)

@@ -261,6 +261,30 @@ func TestCompletedRecoveredCodexExchangeKeepsNewTool(t *testing.T) {
 	}
 }
 
+func TestFullToolProjectionDoesNotDuplicateAttachedTools(t *testing.T) {
+	db := corpusDatabase(t)
+	exchange := parsers.Exchange{
+		Number: 1, HumanText: "question", AgentText: "answer",
+		Tools: []parsers.ToolUse{{Name: "shell", ParamsSummary: "inspect"}},
+	}
+	writeHarvestRecords(t, db, parsers.Records{Sessions: []parsers.Session{{
+		ID: "existing-attached-tool", ExchangeNumbersAuthoritative: true,
+		Exchanges: []parsers.Exchange{exchange},
+	}}})
+	writeHarvestRecords(t, db, parsers.Records{Sessions: []parsers.Session{{
+		ID: "existing-attached-tool", ExchangeNumbersAuthoritative: true,
+		Exchanges: []parsers.Exchange{exchange}, OrphanedTools: []parsers.ToolUse{},
+	}}})
+	var count int
+	if err := db.SQL().QueryRow(`SELECT COUNT(*) FROM tool_uses
+		WHERE session_id = 'existing-attached-tool' AND exchange_number = 1`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("attached tool rows = %d, want 1", count)
+	}
+}
+
 func TestConflictedCodexCompletionPreservesRecoveredOrphan(t *testing.T) {
 	prefix := `{"type":"session_meta","payload":{"id":"conflicted-recovery"}}
 {"type":"event_msg","payload":{"type":"user_message","message":"question"}}
@@ -313,29 +337,30 @@ func TestConflictedCodexCompletionPreservesDistinctIdenticalCalls(t *testing.T) 
 		FileName: "rollout.jsonl", Kind: parsers.KindCodexSession,
 		SessionID: "conflicted-identical-calls", SourceAgent: "codex",
 	})
-	rows, err := db.SQL().Query(`SELECT call_id, exchange_number FROM tool_uses
-		WHERE session_id = ? ORDER BY call_id`, "conflicted-identical-calls")
+	rows, err := db.SQL().Query(`SELECT exchange_number, tool_name, tool_params_summary
+		FROM tool_uses WHERE session_id = ? ORDER BY id`, "conflicted-identical-calls")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer rows.Close()
-	var callIDs []string
+	count := 0
 	for rows.Next() {
-		var callID string
 		var exchangeNumber sql.NullInt64
-		if err := rows.Scan(&callID, &exchangeNumber); err != nil {
+		var name, params string
+		if err := rows.Scan(&exchangeNumber, &name, &params); err != nil {
 			t.Fatal(err)
 		}
-		if exchangeNumber.Valid {
-			t.Fatalf("conflicted call %q attached to exchange %d", callID, exchangeNumber.Int64)
+		if exchangeNumber.Valid || name != "shell" || params != `{"cmd":"inspect"}` {
+			t.Fatalf("conflicted tool = exchange:%v name:%q params:%q",
+				exchangeNumber, name, params)
 		}
-		callIDs = append(callIDs, callID)
+		count++
 	}
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
 	}
-	if len(callIDs) != 2 || callIDs[0] != "aborted" || callIDs[1] != "transitioning" {
-		t.Fatalf("preserved call identities = %v", callIDs)
+	if count != 2 {
+		t.Fatalf("preserved identical calls = %d, want 2", count)
 	}
 }
 
@@ -374,21 +399,25 @@ func TestIncrementalCodexInterruptedTailsFallBackToTheFullRollout(t *testing.T) 
 {"type":"event_msg","payload":{"type":"user_message","message":"complete question"}}
 {"type":"event_msg","payload":{"type":"task_complete","last_agent_message":"complete answer"}}
 `
-	interruptedTail := `{"type":"event_msg","payload":{"type":"user_message","message":"interrupted"}}
-{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"interrupted"}]}}
+	responseTail := `{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"interrupted"}]}}
 {"type":"response_item","payload":{"type":"function_call","call_id":"interrupted-call","name":"shell","arguments":"{}"}}
 {"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"partial"}]}}
 `
+	eventTail := `{"type":"event_msg","payload":{"type":"user_message","message":"interrupted"}}
+` + responseTail
+	abort := `{"type":"event_msg","payload":{"type":"turn_aborted"}}
+`
 	cases := []struct {
-		name, suffix string
+		name, tail string
 	}{
-		{name: "aborted", suffix: `{"type":"event_msg","payload":{"type":"turn_aborted"}}
-`},
-		{name: "open"},
+		{name: "aborted", tail: eventTail + abort},
+		{name: "open", tail: eventTail},
+		{name: "response only", tail: responseTail},
+		{name: "response only abort", tail: responseTail + abort},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
-			db, second := writeGrowingSessionInTwoPasses(t, prefix, interruptedTail+testCase.suffix, Target{
+			db, second := writeGrowingSessionInTwoPasses(t, prefix, testCase.tail, Target{
 				FileName: "rollout.jsonl", Kind: parsers.KindCodexSession,
 				SessionID: "interrupted-tail", SourceAgent: "codex",
 			})
