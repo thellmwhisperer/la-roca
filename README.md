@@ -53,7 +53,10 @@ detected, use `roca skill install codex` (or `claude`, `opencode`, `pi`, or
 
 If an already signed-in agent CLI is on `PATH` (`claude`, `codex`, ...),
 no login of any kind is needed: La Roca borrows the plan you already pay
-for. Supported on macOS, Linux, and native Windows.
+for. Supported on macOS and Linux. On Windows, use WSL (first class): Linux
+binaries and the curl installer work as-is there. The native `.exe` is
+manual and untested, and Windows-side agent paths (`/mnt/c`) are not
+auto-detected.
 [Install details and the full init flow.](docs/lifecycle.md)
 
 ## What you can do
