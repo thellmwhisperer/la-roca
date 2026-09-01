@@ -276,10 +276,13 @@ func encodedJSONString(t *testing.T, value string) string {
 // never be held hostage by a file the product never owned, so the withdrawal
 // changes nothing, succeeds, and names what to take out by hand.
 func TestMalformedClaudeSettingsRefuseInstallAndNeverBlockWithdrawal(t *testing.T) {
-	for _, test := range []struct{ name, body string }{
-		{"settings are not JSON", "{not json"},
-		{"hooks is not an object", `{"hooks":"none"}`},
-		{"PreToolUse is not an array", `{"hooks":{"PreToolUse":"none"}}`},
+	for _, test := range []struct {
+		name, body        string
+		sessionUnreadable bool
+	}{
+		{"settings are not JSON", "{not json", true},
+		{"hooks is not an object", `{"hooks":"none"}`, true},
+		{"PreToolUse is not an array", `{"hooks":{"PreToolUse":"none"}}`, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			home := skillTestHome(t)
@@ -307,7 +310,7 @@ func TestMalformedClaudeSettingsRefuseInstallAndNeverBlockWithdrawal(t *testing.
 			errOut.Reset()
 			report := lifecycle.Report{Purged: true, Deleted: []string{}}
 			env.withdrawTheIntegrations(&report, false)
-			assertClaudeWithdrawalWarning(t, errOut.String(), path)
+			assertClaudeProductWithdrawalWarnings(t, errOut.String(), path, test.sessionUnreadable)
 			for _, failure := range report.Errors {
 				if strings.Contains(failure, "signing hook") {
 					t.Errorf("foreign settings blocked the uninstall: %s", failure)
@@ -333,6 +336,237 @@ func assertClaudeWithdrawalWarning(t *testing.T, warned, path string) {
 	if !strings.Contains(warned, path) || !strings.Contains(warned, "hooks run claude") ||
 		!strings.Contains(warned, "PreToolUse") {
 		t.Fatalf("the warning does not name the file and the entry to remove: %q", warned)
+	}
+}
+
+func assertClaudeProductWithdrawalWarnings(t *testing.T, warned, path string, sessionUnreadable bool) {
+	t.Helper()
+	if !strings.Contains(warned, path) || !strings.Contains(warned, "PreToolUse") {
+		t.Fatalf("product withdrawal did not name the unreadable signing hook: %q", warned)
+	}
+	if sessionUnreadable {
+		for _, marker := range []string{"hooks.SessionStart", "hooks run claude-pills", "hooks run claude-handoff"} {
+			if !strings.Contains(warned, marker) {
+				t.Fatalf("product withdrawal warning does not name %q: %q", marker, warned)
+			}
+		}
+	}
+}
+
+func TestProductUninstallWithdrawsSessionHooksWhenPreToolUseIsUnreadable(t *testing.T) {
+	home := skillTestHome(t)
+	path := filepath.Join(home, ".claude", "settings.json")
+	binary := filepath.Join(home, "O'Brien Tools", "roca")
+	settings := map[string]any{"hooks": map[string]any{
+		"PreToolUse": "unreadable",
+		"SessionStart": []any{
+			map[string]any{"hooks": []any{map[string]any{"type": "command", "command": claudePillsHookCommand(binary)}}},
+			map[string]any{"hooks": []any{map[string]any{"type": "command", "command": claudeHandoffHookCommand(binary)}}},
+		},
+	}}
+	encoded, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, path, string(encoded))
+
+	var out, errOut strings.Builder
+	env := &cliEnv{out: &out, errOut: &errOut}
+	report := lifecycle.Report{Purged: true, Deleted: []string{}}
+	env.withdrawTheIntegrations(&report, false)
+	groups := readClaudeSessionStartHooks(t, path)
+	assertHookCommand(t, groups, "", claudePillsHookCommand(binary), 0)
+	assertHookCommand(t, groups, "", claudeHandoffHookCommand(binary), 0)
+	if !strings.Contains(errOut.String(), "PreToolUse") {
+		t.Fatalf("product uninstall did not warn about the unreadable signing hook: %q", errOut.String())
+	}
+}
+
+func TestSessionStartHooksInstallAndUninstallAreIdempotent(t *testing.T) {
+	home := skillTestHome(t)
+	binary := filepath.Join(home, "O'Brien Tools", "roca")
+	t.Setenv(EnvExecutable, binary)
+	path := filepath.Join(home, ".claude", "settings.json")
+	foreign := "/opt/acme pill"
+	writeFile(t, path,
+		`{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"/opt/acme pill"}]}]}}`)
+
+	pillsCommand := claudePillsHookCommand(binary)
+	handoffCommand := claudeHandoffHookCommand(binary)
+	var output strings.Builder
+	for range 2 {
+		runHookCLI(t, &output, nil, "install", "claude", "--pills", "--handoff")
+		settings := readClaudeHookSettings(t, path)
+		assertHookCommand(t, settings.Hooks["SessionStart"], "", foreign, 1)
+		assertHookCommand(t, settings.Hooks["SessionStart"], "", pillsCommand, 1)
+		assertHookCommand(t, settings.Hooks["SessionStart"], "", handoffCommand, 1)
+		assertHookCommand(t, settings.Hooks["PreToolUse"], "Bash", claudeHookCommand(binary), 0)
+	}
+	registry, err := artifact.LoadRegistry(filepath.Join(home, ".roca", "artifacts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, found := registry.Find("hook", "claude", path); found {
+		t.Fatal("session-hook install registered the signing hook")
+	}
+
+	runHookCLI(t, &output, nil, "uninstall", "claude", "--pills", "--handoff")
+	settings := readClaudeHookSettings(t, path)
+	assertHookCommand(t, settings.Hooks["SessionStart"], "", foreign, 1)
+	assertHookCommand(t, settings.Hooks["SessionStart"], "", pillsCommand, 0)
+	assertHookCommand(t, settings.Hooks["SessionStart"], "", handoffCommand, 0)
+	assertHookCommand(t, settings.Hooks["PreToolUse"], "Bash", claudeHookCommand(binary), 0)
+
+	runHookCLI(t, &output, nil, "uninstall", "claude", "--pills", "--handoff")
+	runHookCLI(t, &output, nil, "install", "claude")
+	settings = readClaudeHookSettings(t, path)
+	assertHookCommand(t, settings.Hooks["SessionStart"], "", pillsCommand, 0)
+	assertHookCommand(t, settings.Hooks["SessionStart"], "", handoffCommand, 0)
+	assertHookCommand(t, settings.Hooks["PreToolUse"], "Bash", claudeHookCommand(binary), 1)
+}
+
+func TestSessionHookInstallDoesNotInspectDivergedSigningHook(t *testing.T) {
+	home := skillTestHome(t)
+	binary := filepath.Join(home, "bin", "roca")
+	t.Setenv(EnvExecutable, binary)
+	path := filepath.Join(home, ".claude", "settings.json")
+	var output strings.Builder
+	runHookCLI(t, &output, nil, "install", "claude")
+	operatorCommand := claudeHookCommand(filepath.Join(home, "operator", "roca"))
+	body := readSettings(t, path)
+	body = strings.Replace(body, claudeHookCommand(binary), operatorCommand, 1)
+	writeFile(t, path, body)
+
+	var warning strings.Builder
+	runHookCLI(t, &output, &warning, "install", "claude", "--pills", "--handoff")
+	settings := readClaudeHookSettings(t, path)
+	assertHookCommand(t, settings.Hooks["PreToolUse"], "Bash", operatorCommand, 1)
+	assertHookCommand(t, settings.Hooks["SessionStart"], "", claudePillsHookCommand(binary), 1)
+	assertHookCommand(t, settings.Hooks["SessionStart"], "", claudeHandoffHookCommand(binary), 1)
+	if warning.String() != "" {
+		t.Fatalf("session-hook install inspected the signing hook: %q", warning.String())
+	}
+}
+
+func TestSessionHookInstallIgnoresMalformedPreToolUse(t *testing.T) {
+	home := skillTestHome(t)
+	binary := filepath.Join(home, "bin", "roca")
+	t.Setenv(EnvExecutable, binary)
+	path := filepath.Join(home, ".claude", "settings.json")
+	writeFile(t, path, `{"hooks":{"PreToolUse":"operator-owned"}}`)
+
+	var output strings.Builder
+	runHookCLI(t, &output, nil, "install", "claude", "--pills", "--handoff")
+	groups := readClaudeSessionStartHooks(t, path)
+	assertHookCommand(t, groups, "", claudePillsHookCommand(binary), 1)
+	assertHookCommand(t, groups, "", claudeHandoffHookCommand(binary), 1)
+	if got := readClaudeHookValue(t, path, "PreToolUse"); got != "operator-owned" {
+		t.Fatalf("session-hook install changed PreToolUse: %#v", got)
+	}
+}
+
+func TestCombinedSessionUninstallReportsBothOwnedMarkers(t *testing.T) {
+	home := skillTestHome(t)
+	path := filepath.Join(home, ".claude", "settings.json")
+	writeFile(t, path, `{"hooks":{"SessionStart":"operator-owned"}}`)
+
+	var output, warning strings.Builder
+	runHookCLI(t, &output, &warning, "uninstall", "claude", "--pills", "--handoff")
+	for _, marker := range []string{"hooks run claude-pills", "hooks run claude-handoff"} {
+		if !strings.Contains(warning.String(), marker) {
+			t.Fatalf("combined uninstall warning omitted %q: %q", marker, warning.String())
+		}
+	}
+	if got := readClaudeHookValue(t, path, "SessionStart"); got != "operator-owned" {
+		t.Fatalf("uninstall changed unreadable SessionStart settings: %#v", got)
+	}
+}
+
+func runHookCLI(t *testing.T, output, warnings *strings.Builder, args ...string) {
+	t.Helper()
+	root := rootCommand(&cliEnv{
+		out: output, errOut: warnings, build: Build{Version: "v1.2.3"},
+	})
+	root.SetArgs(append([]string{"hooks"}, args...))
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type claudeHookSettingsModel struct {
+	Hooks map[string][]claudeHookGroup `json:"hooks"`
+}
+
+type claudeHookGroup struct {
+	Matcher string              `json:"matcher"`
+	Hooks   []claudeCommandHook `json:"hooks"`
+}
+
+type claudeCommandHook struct {
+	Type    string `json:"type"`
+	Command string `json:"command"`
+}
+
+func readClaudeSessionStartHooks(t *testing.T, path string) []claudeHookGroup {
+	t.Helper()
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var settings struct {
+		Hooks struct {
+			SessionStart []claudeHookGroup `json:"SessionStart"`
+		} `json:"hooks"`
+	}
+	if err := json.Unmarshal(body, &settings); err != nil {
+		t.Fatalf("settings are no longer valid Claude SessionStart settings: %v", err)
+	}
+	return settings.Hooks.SessionStart
+}
+
+func readClaudeHookValue(t *testing.T, path, event string) any {
+	t.Helper()
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var settings struct {
+		Hooks map[string]any `json:"hooks"`
+	}
+	if err := json.Unmarshal(body, &settings); err != nil {
+		t.Fatalf("settings are no longer valid Claude hook settings: %v", err)
+	}
+	return settings.Hooks[event]
+}
+
+func readClaudeHookSettings(t *testing.T, path string) claudeHookSettingsModel {
+	t.Helper()
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var settings claudeHookSettingsModel
+	if err := json.Unmarshal(body, &settings); err != nil {
+		t.Fatalf("settings are no longer valid Claude hook settings: %v", err)
+	}
+	return settings
+}
+
+func assertHookCommand(t *testing.T, groups []claudeHookGroup, matcher, command string, want int) {
+	t.Helper()
+	got := 0
+	for _, group := range groups {
+		if group.Matcher != matcher {
+			continue
+		}
+		for _, hook := range group.Hooks {
+			if hook.Type == "command" && hook.Command == command {
+				got++
+			}
+		}
+	}
+	if got != want {
+		t.Fatalf("hook command %q with matcher %q occurs %d times, want %d: %+v", command, matcher, got, want, groups)
 	}
 }
 

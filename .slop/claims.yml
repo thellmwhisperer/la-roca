@@ -20,6 +20,10 @@ claims:
     contract:
       file: features/ingest/report.feature
       item: "Ingest ends with per-source counts and a total delta"
+  internal/distribution/cli/hooks_session.go:
+    contract:
+      file: features/distribution/skill.feature
+      item: "Nothing is ever installed into an agent without being asked"
   internal/distribution/cli/mcp.go:
     contract:
       file: features/distribution/mcp.feature
@@ -40,6 +44,10 @@ claims:
     contract:
       file: features/distribution/mcp-contract.feature
       item: "The server comes up on demand over stdio and announces who it is"
+  internal/distribution/cli/session.go:
+    contract:
+      file: features/distribution/cli.feature
+      item: "Help lists every command with one honest line each"
   internal/distribution/cli/skill.go:
     contract:
       file: features/distribution/skill.feature

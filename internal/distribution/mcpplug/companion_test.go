@@ -49,6 +49,9 @@ func TestMissingCompanionLeavesServeQueriesUnaffected(t *testing.T) {
 	set := startPluginCompanionsWithPolicy(root, data, notices, fastCompanionPolicy)
 	defer set.Close()
 	waitFor(t, func() bool { return strings.Contains(notices.String(), "plugin mirror companion did not start") })
+	if err := set.Close(); err != nil {
+		t.Fatal(err)
+	}
 	if set.alive() {
 		t.Fatal("missing companion started a process")
 	}

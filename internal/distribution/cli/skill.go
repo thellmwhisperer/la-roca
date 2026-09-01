@@ -27,8 +27,10 @@ var rocaStoreInvocation = regexp.MustCompile(
 // claudeHookInvocation recognizes La Roca's own PreToolUse entry whatever binary
 // path it was installed with, so a reinstall repoints it and an uninstall finds
 // it even after the operator moved the executable.
+const shellCommandExecutablePattern = `(?:'(?:[^']|'"'"')*'|"[^"]*"|\S+)`
+
 var claudeHookInvocation = regexp.MustCompile(
-	`^(?:'[^']*'|"[^"]*"|\S+)[ \t]+hooks[ \t]+run[ \t]+claude$`,
+	`^` + shellCommandExecutablePattern + `[ \t]+hooks[ \t]+run[ \t]+claude$`,
 )
 
 func claudeHookCommand(executable string) string {
@@ -490,66 +492,31 @@ func hooksEditCommand(env *cliEnv, use, short, verb string,
 
 func hooksInstallCommand(env *cliEnv) *cobra.Command {
 	var executable string
-	var force bool
+	var force, pills, handoff bool
 	cmd := hooksEditCommand(env, "install [runtime]",
-		"Install the Claude Code roca-store signing hook", "updated",
+		"Install Claude Code hooks for authorship signing and optional session context", "updated",
 		func(path string) (agentcfg.Outcome, string, error) {
-			declared := chosenExecutable(executable)
-			if !filepath.IsAbs(declared) {
-				return agentcfg.Outcome{Runtime: "claude", Path: path}, "",
-					fmt.Errorf("resolve the running executable %q to an absolute path", declared)
-			}
-			entry, registered, err := env.registeredArtifact(artifactKindHook, "claude", path)
-			if err != nil {
-				return agentcfg.Outcome{Runtime: "claude", Path: path}, "", err
-			}
-			var outcome agentcfg.Outcome
-			if registered {
-				refreshed, err := refreshClaudeHook(path, declared, entry.SystemSHA256, true, force)
-				outcome = agentcfg.Outcome{Runtime: "claude", Path: path,
-					Changed: refreshed.Changed, Backup: refreshed.Backup}
-				if err != nil {
-					return outcome, "", err
-				}
-				if refreshed.Diverged {
-					return outcome, fmt.Sprintf("warning: %s has edits in its SYSTEM fragment; run `roca hooks install claude --force` to replace it", path), nil
-				}
-				if !refreshed.Current {
-					return outcome, "", fmt.Errorf("the installed Claude hook was not found in %s", path)
-				}
-			} else {
-				// Installing into settings this product cannot read is refused, not
-				// warned about: an installer that cannot parse a file cannot edit it.
-				outcome, err = installClaudeAuthorshipHook(path, declared)
-				if err != nil {
-					return outcome, "", err
-				}
-			}
-			system, found, err := claudeHookSystem(path)
-			if err != nil || !found {
-				if err == nil {
-					err = fmt.Errorf("the installed Claude hook was not found in %s", path)
-				}
-				return outcome, "", err
-			}
-			return outcome, "", env.registerHook(path, "claude", system)
+			return installClaudeAuthorshipAndSessionHooks(
+				env, path, chosenExecutable(executable), force, pills, handoff)
 		})
 	cmd.Flags().StringVar(&executable, "executable", "",
 		"the binary the hook launches (default: this executable; override with "+EnvExecutable+")")
 	cmd.Flags().BoolVar(&force, "force", false, "replace an edited SYSTEM fragment")
+	cmd.Flags().BoolVar(&pills, "pills", false, "add a SessionStart hook that runs `roca pill`")
+	cmd.Flags().BoolVar(&handoff, "handoff", false, "add a SessionStart hook that runs `roca handoff latest`")
 	return cmd
 }
 
 func hooksUninstallCommand(env *cliEnv) *cobra.Command {
-	return hooksEditCommand(env, "uninstall [runtime]",
-		"Withdraw the Claude Code roca-store signing hook, leaving the rest of the settings as they were",
-		"withdrawn", func(path string) (agentcfg.Outcome, string, error) {
-			outcome, warning, err := uninstallClaudeAuthorshipHook(path)
-			if err == nil {
-				err = env.unregisterArtifact(artifactKindHook, "claude", path)
-			}
-			return outcome, warning, err
+	var pills, handoff bool
+	cmd := hooksEditCommand(env, "uninstall [runtime]",
+		"Withdraw Claude Code hooks this product installed", "withdrawn",
+		func(path string) (agentcfg.Outcome, string, error) {
+			return uninstallClaudeAuthorshipAndSessionHooks(env, path, pills, handoff)
 		})
+	cmd.Flags().BoolVar(&pills, "pills", false, "withdraw the SessionStart `roca pill` hook")
+	cmd.Flags().BoolVar(&handoff, "handoff", false, "withdraw the SessionStart `roca handoff latest` hook")
+	return cmd
 }
 
 func supportedHookRuntime(name string) error {
@@ -561,25 +528,31 @@ func supportedHookRuntime(name string) error {
 
 func hooksRunCommand(env *cliEnv) *cobra.Command {
 	command := &cobra.Command{
-		Use:    "run [runtime]",
+		Use:    "run [hook]",
 		Hidden: true,
 		Args:   cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := supportedHookRuntime(args[0]); err != nil {
-				return err
+			switch args[0] {
+			case "claude":
+				input, err := io.ReadAll(cmd.InOrStdin())
+				if err != nil {
+					return fmt.Errorf("read Claude hook input: %w", err)
+				}
+				output, err := runClaudeAuthorshipHook(input)
+				if err != nil {
+					return err
+				}
+				if len(output) > 0 {
+					fmt.Fprintln(env.out, string(output))
+				}
+				return nil
+			case "claude-pills":
+				return runPillList(cmd.Context(), env, "")
+			case "claude-handoff":
+				return runLatestHandoffs(cmd.Context(), env, "")
+			default:
+				return fmt.Errorf("unsupported hook %q", args[0])
 			}
-			input, err := io.ReadAll(cmd.InOrStdin())
-			if err != nil {
-				return fmt.Errorf("read Claude hook input: %w", err)
-			}
-			output, err := runClaudeAuthorshipHook(input)
-			if err != nil {
-				return err
-			}
-			if len(output) > 0 {
-				fmt.Fprintln(env.out, string(output))
-			}
-			return nil
 		},
 	}
 	return command
@@ -604,31 +577,10 @@ func claudeSettingsPath() (string, error) {
 // install` declares the server: Claude runs a PreToolUse hook in a
 // non-interactive shell, where a bare `roca` is whatever PATH happens to hold.
 func installClaudeAuthorshipHook(path, executable string) (agentcfg.Outcome, error) {
-	declared := chosenExecutable(executable)
-	if !filepath.IsAbs(declared) {
-		return agentcfg.Outcome{Runtime: "claude", Path: path},
-			fmt.Errorf("resolve the running executable %q to an absolute path", declared)
-	}
-	command := claudeHookCommand(declared)
-	return agentcfg.Edit("claude", path, func(previous string) (string, error) {
-		settings, hooks, entries, err := claudeHookSettings(previous)
-		if err != nil {
-			return "", err
-		}
-		if hooks == nil {
-			hooks = map[string]any{}
-			settings["hooks"] = hooks
-		}
-		found, repointed := adoptClaudeAuthorshipHook(entries, command)
-		if found && !repointed {
-			return previous, nil
-		}
-		if !found {
-			entries = append(entries, claudeAuthorshipHookEntry(command))
-		}
-		hooks["PreToolUse"] = entries
-		return encodeClaudeSettings(settings)
-	}, true)
+	return installClaudeHook(path, executable, claudeHookSpec{
+		event: "PreToolUse", invocation: claudeHookInvocation,
+		command: claudeHookCommand, entry: claudeAuthorshipHookEntry,
+	})
 }
 
 func claudeAuthorshipHookEntry(command string) map[string]any {
@@ -651,28 +603,9 @@ func claudeAuthorshipCommandHook(command string) map[string]any {
 // wrote. The edit is skipped, the command succeeds, and the returned warning
 // names the file and the entry to take out by hand. The caller prints it once.
 func uninstallClaudeAuthorshipHook(path string) (agentcfg.Outcome, string, error) {
-	var warning string
-	outcome, err := agentcfg.Edit("claude", path, func(previous string) (string, error) {
-		settings, hooks, entries, err := claudeHookSettings(previous)
-		if err != nil {
-			warning = foreignClaudeSettingsWarning(path)
-			return previous, nil
-		}
-		remaining, withdrawn := withoutClaudeAuthorshipHook(entries)
-		if !withdrawn {
-			return previous, nil
-		}
-		if len(remaining) == 0 {
-			delete(hooks, "PreToolUse")
-		} else {
-			hooks["PreToolUse"] = remaining
-		}
-		if len(hooks) == 0 {
-			delete(settings, "hooks")
-		}
-		return encodeClaudeSettings(settings)
-	}, false)
-	return outcome, warning, err
+	return uninstallClaudeHook(path, claudeHookSpec{
+		event: "PreToolUse", invocation: claudeHookInvocation,
+	}, foreignClaudeSettingsWarning(path))
 }
 
 // foreignClaudeSettingsWarning is the single line an operator gets when their
@@ -689,19 +622,7 @@ func foreignClaudeSettingsWarning(path string) string {
 // edits share this refusal and part company over what it means, so the reader
 // states the shape once and each caller decides whether to stop.
 func claudeHookSettings(previous string) (settings, hooks map[string]any, entries []any, err error) {
-	settings, err = claudeSettings(previous)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	hooks, ok := settings["hooks"].(map[string]any)
-	if settings["hooks"] != nil && !ok {
-		return nil, nil, nil, fmt.Errorf("Claude settings hooks must be an object")
-	}
-	entries, ok = hooks["PreToolUse"].([]any)
-	if hooks["PreToolUse"] != nil && !ok {
-		return nil, nil, nil, fmt.Errorf("Claude settings hooks.PreToolUse must be an array")
-	}
-	return settings, hooks, entries, nil
+	return claudeEventHookSettings(previous, "PreToolUse")
 }
 
 func claudeSettings(previous string) (map[string]any, error) {
@@ -724,55 +645,6 @@ func encodeClaudeSettings(settings map[string]any) (string, error) {
 		return "", fmt.Errorf("encode Claude settings: %w", err)
 	}
 	return string(append(encoded, '\n')), nil
-}
-
-// adoptClaudeAuthorshipHook repoints an entry this product already installed at
-// the currently resolved binary, so reinstalling after a move heals the command
-// instead of leaving a second one beside it.
-func adoptClaudeAuthorshipHook(entries []any, command string) (found, repointed bool) {
-	for _, entry := range entries {
-		for _, hook := range commandHooksOf(entry) {
-			if !claudeHookInvocation.MatchString(commandOf(hook)) {
-				continue
-			}
-			found = true
-			if commandOf(hook) != command {
-				hook["command"] = command
-				repointed = true
-			}
-		}
-	}
-	return found, repointed
-}
-
-func withoutClaudeAuthorshipHook(entries []any) ([]any, bool) {
-	remaining := make([]any, 0, len(entries))
-	withdrawn := false
-	for _, entry := range entries {
-		group, ok := entry.(map[string]any)
-		hooks, isList := group["hooks"].([]any)
-		if !ok || !isList {
-			remaining = append(remaining, entry)
-			continue
-		}
-		kept := make([]any, 0, len(hooks))
-		ours := false
-		for _, raw := range hooks {
-			hook, isHook := raw.(map[string]any)
-			if isHook && hook["type"] == "command" &&
-				claudeHookInvocation.MatchString(commandOf(hook)) {
-				ours, withdrawn = true, true
-				continue
-			}
-			kept = append(kept, raw)
-		}
-		if ours && len(kept) == 0 {
-			continue
-		}
-		group["hooks"] = kept
-		remaining = append(remaining, group)
-	}
-	return remaining, withdrawn
 }
 
 func commandHooksOf(entry any) []map[string]any {

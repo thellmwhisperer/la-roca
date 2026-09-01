@@ -74,9 +74,9 @@ func TestContentCarriesOperatingCraft(t *testing.T) {
 	body := skill.OperationsContent()
 	for _, needle := range []string{
 		`plugin_roca_ops.memories`,
-		"Start project work with the unqualified handoff one-liner",
+		"Start project work with `roca pill` and `roca handoff latest`",
 		"current handoff protocol",
-		"always store a handoff",
+		"Do not write a handoff unless the operator asked",
 		"Ask bare first",
 		"search the whole corpus",
 		"sessions` or `exchanges",
