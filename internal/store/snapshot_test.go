@@ -459,13 +459,7 @@ func TestLegacySnapshotNamespaceIsMigratedSafely(t *testing.T) {
 	live := startSnapshotHelper(t, tempRoot, "", "legacy-hold")
 	t.Cleanup(func() { _ = os.RemoveAll(live.directory) })
 
-	snapshot, err := OpenReadOnlySnapshot(context.Background(), fixtureDatabase(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := snapshot.Close(); err != nil {
-		t.Fatal(err)
-	}
+	openAndCloseSnapshot(t)
 	if _, err := os.Stat(orphan); !os.IsNotExist(err) {
 		t.Fatalf("legacy orphan still exists: %v", err)
 	}
@@ -478,13 +472,7 @@ func TestLegacySnapshotNamespaceIsMigratedSafely(t *testing.T) {
 	if err := live.wait(); err != nil {
 		t.Fatal(err)
 	}
-	next, err := OpenReadOnlySnapshot(context.Background(), fixtureDatabase(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := next.Close(); err != nil {
-		t.Fatal(err)
-	}
+	openAndCloseSnapshot(t)
 	if _, err := os.Stat(live.directory); !os.IsNotExist(err) {
 		t.Fatalf("closed legacy snapshot was not reaped: %v", err)
 	}
@@ -888,16 +876,10 @@ type snapshotHelper struct {
 	waited    bool
 }
 
-func startSnapshotHelper(t *testing.T, tmp, source, mode string) *snapshotHelper {
+func startIsolatedTestCommand(t *testing.T, tmp, testRun string, extraEnv ...string) (*exec.Cmd, io.ReadCloser, io.WriteCloser) {
 	t.Helper()
-	cmd := exec.Command(os.Args[0], "-test.run=^TestSnapshotHelperProcess$")
-	cmd.Env = append(os.Environ(),
-		"ROCA_SNAPSHOT_HELPER="+mode,
-		"ROCA_SNAPSHOT_SOURCE="+source,
-		"TMPDIR="+tmp,
-		"TMP="+tmp,
-		"TEMP="+tmp,
-	)
+	cmd := exec.Command(os.Args[0], "-test.run="+testRun)
+	cmd.Env = append(append(os.Environ(), extraEnv...), "TMPDIR="+tmp, "TMP="+tmp, "TEMP="+tmp)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -910,6 +892,15 @@ func startSnapshotHelper(t *testing.T, tmp, source, mode string) *snapshotHelper
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
+	return cmd, stdout, stdin
+}
+
+func startSnapshotHelper(t *testing.T, tmp, source, mode string) *snapshotHelper {
+	t.Helper()
+	cmd, stdout, stdin := startIsolatedTestCommand(t, tmp, "^TestSnapshotHelperProcess$",
+		"ROCA_SNAPSHOT_HELPER="+mode,
+		"ROCA_SNAPSHOT_SOURCE="+source,
+	)
 	helper := &snapshotHelper{cmd: cmd, stdin: stdin}
 	t.Cleanup(func() {
 		_ = helper.stdin.Close()
@@ -1009,6 +1000,17 @@ func captureSnapshotRecords() (context.Context, func() []map[string]any) {
 		mu.Lock()
 		defer mu.Unlock()
 		return append([]map[string]any(nil), records...)
+	}
+}
+
+func openAndCloseSnapshot(t *testing.T) {
+	t.Helper()
+	snapshot, err := OpenReadOnlySnapshot(context.Background(), fixtureDatabase(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := snapshot.Close(); err != nil {
+		t.Fatal(err)
 	}
 }
 
