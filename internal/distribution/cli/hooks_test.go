@@ -240,8 +240,8 @@ func TestZcodeInstallPreservesOperatorHookUsingSameWrapper(t *testing.T) {
 	if err != nil {
 		t.Fatalf("operator-referenced wrapper was removed: %v", err)
 	}
-	if !isManagedZcodeWrapper(wrapperBody) {
-		t.Fatalf("retained wrapper is not managed: %q", wrapperBody)
+	if string(wrapperBody) != zcodeWrapper(filepath.Join(home, "roca")) {
+		t.Fatalf("retained wrapper changed: %q", wrapperBody)
 	}
 	body, err = os.ReadFile(config)
 	if err != nil {
@@ -353,7 +353,7 @@ func TestZcodeHookRefusesPreexistingOperatorWrapper(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, _, err := installZcodeHandoffHook(config, wrapper, filepath.Join(home, "roca")); err == nil ||
-		!strings.Contains(err.Error(), "refuse to replace unrecognized") {
+		!strings.Contains(err.Error(), "refuse to replace operator-modified") {
 		t.Fatalf("install collision error = %v", err)
 	}
 	body, err := os.ReadFile(wrapper)
@@ -362,6 +362,30 @@ func TestZcodeHookRefusesPreexistingOperatorWrapper(t *testing.T) {
 	}
 	if _, err := os.Stat(config); !os.IsNotExist(err) {
 		t.Fatalf("refused install created config: %v", err)
+	}
+}
+
+func TestZcodeUninstallRetainsEditedCanonicalWrapper(t *testing.T) {
+	home := t.TempDir()
+	config := filepath.Join(home, "config.json")
+	wrapper := filepath.Join(home, "hooks", "roca-handoff.sh")
+	executable := filepath.Join(home, "roca")
+	if _, _, err := installZcodeHandoffHook(config, wrapper, executable); err != nil {
+		t.Fatal(err)
+	}
+	edited := []byte(zcodeWrapper(executable) + "# operator edit\n")
+	if err := os.WriteFile(wrapper, edited, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_, warning, err := uninstallZcodeHandoffHook(config, wrapper)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(warning, "kept operator-modified") {
+		t.Fatalf("edited wrapper warning = %q", warning)
+	}
+	if body, err := os.ReadFile(wrapper); err != nil || string(body) != string(edited) {
+		t.Fatalf("edited wrapper changed: body=%q err=%v", body, err)
 	}
 }
 

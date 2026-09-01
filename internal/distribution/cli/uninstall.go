@@ -260,16 +260,54 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 		}
 	}
 
+	removedMCPState := map[string]bool{}
+	processedMCPPaths := map[string]bool{}
+	withdrawMCP := func(runtime, path string) (agentcfg.Outcome, error) {
+		if runtime != agentcfg.RuntimeZcode {
+			return agentcfg.Uninstall(runtime, path)
+		}
+		preimage := agentcfg.ZcodeMCPPreimageNone
+		entry, found := registry.Find(artifactKindMCP, runtime, path)
+		if found {
+			var err error
+			preimage, err = zcodeMCPPreimageFromEntry(entry)
+			if err != nil {
+				return agentcfg.Outcome{Runtime: runtime, Path: path}, err
+			}
+		}
+		outcome, err := agentcfg.UninstallZcodeMCP(path, preimage)
+		if err == nil && found {
+			removedMCPState[entry.Key()] = true
+		}
+		return outcome, err
+	}
+
 	for _, runtime := range agentcfg.Runtimes() {
 		path, err := configFileOf(runtime, "")
 		if err != nil {
 			failed(report, "%s", err)
 			continue
 		}
-		outcome, err := env.uninstallMCP(runtime, path)
+		processedMCPPaths[runtime+"\x00"+path] = true
+		outcome, err := withdrawMCP(runtime, path)
 		withdrawn("roca from "+runtime, outcome, err)
 		if purge {
 			removeRecoveryBackups(report, path)
+		}
+	}
+	if registryErr == nil {
+		for _, entry := range registry.Entries {
+			key := entry.Runtime + "\x00" + entry.Path
+			if entry.Kind != artifactKindMCP || entry.Runtime != agentcfg.RuntimeZcode ||
+				processedMCPPaths[key] {
+				continue
+			}
+			processedMCPPaths[key] = true
+			outcome, err := withdrawMCP(entry.Runtime, entry.Path)
+			withdrawn("roca from "+entry.Runtime+" at "+entry.Path, outcome, err)
+			if purge {
+				removeRecoveryBackups(report, entry.Path)
+			}
 		}
 	}
 
@@ -366,7 +404,14 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 		}
 	}
 	if registryErr == nil && registryExists {
-		registry.RemoveKinds(artifactKindSkill, artifactKindSkillCatalog, artifactKindHook, artifactKindMCP)
+		kept := registry.Entries[:0]
+		for _, entry := range registry.Entries {
+			if !removedMCPState[entry.Key()] {
+				kept = append(kept, entry)
+			}
+		}
+		registry.Entries = kept
+		registry.RemoveKinds(artifactKindSkill, artifactKindSkillCatalog, artifactKindHook)
 		if err := artifact.SaveRegistry(registryPath, registry); err != nil {
 			failed(report, "update managed artifact registry: %v", err)
 		}

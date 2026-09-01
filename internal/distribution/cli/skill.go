@@ -636,15 +636,24 @@ func zcodeHookWrapperPath() (string, error) {
 
 const zcodeSessionStartMarker = "roca_session_start_marker"
 
-func installZcodeHandoffHook(configPath, wrapperPath, executable string) (agentcfg.Outcome, string, error) {
+func installZcodeHandoffHook(configPath, wrapperPath, executable string) (outcome agentcfg.Outcome, warning string, err error) {
+	release, err := lockZcodeHookLifecycle(configPath, wrapperPath, true)
+	if err != nil {
+		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
+	}
+	defer func() { err = errors.Join(err, release()) }()
+	return installZcodeHandoffHookUnlocked(configPath, wrapperPath, executable)
+}
+
+func installZcodeHandoffHookUnlocked(configPath, wrapperPath, executable string) (agentcfg.Outcome, string, error) {
 	state, err := readZcodeWrapperState(wrapperPath)
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
 	wrapper := zcodeWrapper(executable)
-	if state.exists && !isManagedZcodeWrapper(state.body) {
+	if state.exists && string(state.body) != wrapper {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "",
-			fmt.Errorf("refuse to replace unrecognized ZCode hook wrapper %s; move or remove it, then retry", wrapperPath)
+			fmt.Errorf("refuse to replace operator-modified ZCode hook wrapper %s; move or remove it, then retry", wrapperPath)
 	}
 	if err := writeZcodeWrapper(wrapperPath, wrapper, state); err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
@@ -669,7 +678,16 @@ func installZcodeHandoffHook(configPath, wrapperPath, executable string) (agentc
 	return outcome, "", nil
 }
 
-func uninstallZcodeHandoffHook(configPath, wrapperPath string) (agentcfg.Outcome, string, error) {
+func uninstallZcodeHandoffHook(configPath, wrapperPath string) (outcome agentcfg.Outcome, warning string, err error) {
+	release, err := lockZcodeHookLifecycle(configPath, wrapperPath, false)
+	if err != nil {
+		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
+	}
+	defer func() { err = errors.Join(err, release()) }()
+	return uninstallZcodeHandoffHookUnlocked(configPath, wrapperPath)
+}
+
+func uninstallZcodeHandoffHookUnlocked(configPath, wrapperPath string) (agentcfg.Outcome, string, error) {
 	var warning string
 	keepWrapper := false
 	command := zcodeOwnedHookCommand(wrapperPath)
@@ -707,10 +725,36 @@ func uninstallZcodeHandoffHook(configPath, wrapperPath string) (agentcfg.Outcome
 		}
 		return outcome, warning, nil
 	}
-	if removeErr := removeZcodeWrapper(wrapperPath); removeErr != nil {
+	retained, removeErr := removeZcodeWrapper(wrapperPath)
+	if removeErr != nil {
 		return outcome, warning, removeErr
 	}
+	if retained {
+		reason := fmt.Sprintf("kept operator-modified ZCode hook wrapper %s", wrapperPath)
+		if warning == "" {
+			warning = "warning: " + reason
+		} else {
+			warning += "; " + reason
+		}
+	}
 	return outcome, warning, nil
+}
+
+func lockZcodeHookLifecycle(configPath, wrapperPath string, create bool) (func() error, error) {
+	root := filepath.Dir(filepath.Dir(wrapperPath))
+	lockPath := filepath.Join(root, ".roca-hooks.lock")
+	if !create {
+		_, configErr := os.Stat(configPath)
+		_, wrapperErr := os.Stat(wrapperPath)
+		_, lockErr := os.Stat(lockPath)
+		if os.IsNotExist(configErr) && os.IsNotExist(wrapperErr) && os.IsNotExist(lockErr) {
+			return func() error { return nil }, nil
+		}
+	}
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		return nil, err
+	}
+	return securefile.Lock(lockPath)
 }
 
 type zcodeWrapperState struct {
@@ -784,38 +828,56 @@ fi
 
 func writeZcodeWrapper(path, content string, state zcodeWrapperState) error {
 	if state.exists {
-		if string(state.body) == content && state.mode == 0o700 {
-			return nil
+		if string(state.body) != content {
+			return fmt.Errorf("refuse to replace operator-modified ZCode hook wrapper %s", path)
 		}
-		if err := securefile.Replace(path, []byte(content), state.body); err != nil {
-			return err
+		if state.mode == 0o700 {
+			return nil
 		}
 		return os.Chmod(path, 0o700)
 	}
 	return securefile.CreatePreservingParentMode(path, []byte(content), 0o700, 0o700)
 }
 
-func removeZcodeWrapper(path string) error {
+func removeZcodeWrapper(path string) (bool, error) {
 	body, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		return nil
+		return false, nil
 	}
 	if err != nil {
-		return fmt.Errorf("read %s: %w", path, err)
+		return false, fmt.Errorf("read %s: %w", path, err)
 	}
-	if !isManagedZcodeWrapper(body) {
-		return nil
+	expected, managed := canonicalZcodeWrapper(body)
+	if !managed {
+		return true, nil
+	}
+	current, err := os.ReadFile(path)
+	if err != nil {
+		return false, fmt.Errorf("verify %s before removal: %w", path, err)
+	}
+	if string(current) != string(expected) {
+		return true, nil
 	}
 	if err := os.Remove(path); err != nil {
-		return fmt.Errorf("remove %s: %w", path, err)
+		return false, fmt.Errorf("remove %s: %w", path, err)
 	}
-	return nil
+	return false, nil
 }
 
-func isManagedZcodeWrapper(body []byte) bool {
+func canonicalZcodeWrapper(body []byte) ([]byte, bool) {
 	text := string(body)
-	return strings.HasPrefix(text, "#!/bin/bash\n# Managed by roca hooks install zcode.\n") &&
-		strings.Contains(text, " hooks run zcode 2>/dev/null")
+	prefix := "#!/bin/bash\n# Managed by roca hooks install zcode.\nset -euo pipefail\n\nif ! "
+	suffix := " hooks run zcode 2>/dev/null; then\n  printf '{\"additionalContext\":\"\"}\\n'\nfi\n"
+	if !strings.HasPrefix(text, prefix) || !strings.HasSuffix(text, suffix) {
+		return nil, false
+	}
+	declared := strings.TrimSuffix(strings.TrimPrefix(text, prefix), suffix)
+	words, ok := simpleShellWords(declared)
+	if !ok || len(words) != 1 {
+		return nil, false
+	}
+	expected := []byte(zcodeWrapper(words[0]))
+	return expected, string(expected) == text
 }
 
 func zcodeOwnedHookCommand(path string) string {

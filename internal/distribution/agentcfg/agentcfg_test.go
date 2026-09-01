@@ -184,6 +184,25 @@ func TestZcodeUsesTheNestedMCPServersShape(t *testing.T) {
 	}
 }
 
+func TestZcodeRejectsDuplicateConfigurationMembers(t *testing.T) {
+	mcp := `{"mcp":{"servers":{}},"mcp":{"servers":{}}}`
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(mcp), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := agentcfg.Install(agentcfg.RuntimeZcode, path, "roca"); err == nil {
+		t.Fatal("ZCode MCP install accepted duplicate mcp members")
+	}
+	if got := read(t, path); got != mcp {
+		t.Fatalf("duplicate MCP config changed: got %s", got)
+	}
+	hooks := `{"hooks":{"events":{}},"hooks":{"events":{}}}`
+	if _, err := agentcfg.DeclareZcodeSessionStartHook(hooks,
+		"roca_session_start_marker", "/home/operator/.zcode/hooks/roca-handoff.sh", 15000); err == nil {
+		t.Fatal("ZCode hook install accepted duplicate hooks members")
+	}
+}
+
 func TestZcodeHookRoundTripPreservesEmptySessionStartWhitespace(t *testing.T) {
 	before := "{\n  \"neighbor\": 9007199254740993,\n  \"hooks\": {\n    \"events\": {\n      \"SessionStart\": [\n        \n      ]\n    }\n  }\n}\n"
 	command := "/home/operator/.zcode/hooks/roca-handoff.sh"

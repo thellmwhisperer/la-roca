@@ -75,8 +75,8 @@ The command points to `~/.zcode/hooks/roca-handoff.sh`, an executable wrapper th
 `{"additionalContext":"..."}` JSON because ZCode discards plain-text hook
 stdout. It does not change the operator-owned `hooks.enabled`; when that value
 is false or absent, install warns that the hook is inactive and says to set it
-to true. A pre-existing unrecognized wrapper is left untouched and blocks the
-install with a clear remedy. Reinstalling is idempotent, and `roca hooks
+to true. A wrapper whose bytes differ from the exact generated wrapper is
+operator-owned, left untouched, and blocks replacement with a clear remedy. Reinstalling is idempotent, and `roca hooks
 uninstall zcode` removes only that marked entry. It removes the managed wrapper
 unless a remaining operator-owned hook references it; in that case it keeps the
 wrapper and reports why. The Bash wrapper limits hook installation to macOS and

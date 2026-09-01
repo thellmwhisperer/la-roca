@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/artifact"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/lifecycle"
 )
 
 // `--config` names ONE runtime's configuration file. Applied to every runtime it
@@ -72,6 +73,38 @@ func TestZcodeMCPStateRestoresContainerPreimage(t *testing.T) {
 	}
 	if string(after) != before {
 		t.Fatalf("ZCode MCP preimage changed: want %s, got %s", before, after)
+	}
+}
+
+func TestFullUninstallWithdrawsRegisteredCustomZcodeMCPPath(t *testing.T) {
+	home := skillTestHome(t)
+	path := filepath.Join(home, "custom", "zcode.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	before := `{"mcp":{}}`
+	if err := os.WriteFile(path, []byte(before), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := rootCommand(&cliEnv{out: io.Discard, build: Build{Version: "test"}})
+	root.SetArgs([]string{"mcp", "install", "zcode", "--config", path, "--executable", filepath.Join(home, "roca")})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	report := lifecycle.Report{Purged: true}
+	(&cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}}).withdrawTheIntegrations(&report, false)
+	if len(report.Errors) != 0 {
+		t.Fatalf("full uninstall errors = %v", report.Errors)
+	}
+	if body, err := os.ReadFile(path); err != nil || string(body) != before {
+		t.Fatalf("custom ZCode MCP config changed: body=%q err=%v", body, err)
+	}
+	registry, err := artifact.LoadRegistry(filepath.Join(home, ".roca", "artifacts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, found := registry.Find(artifactKindMCP, "zcode", path); found {
+		t.Fatal("full uninstall retained custom ZCode MCP ownership state")
 	}
 }
 
