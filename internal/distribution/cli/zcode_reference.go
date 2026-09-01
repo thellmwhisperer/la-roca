@@ -33,7 +33,9 @@ func zcodeHookCommandsReferenceWrapper(commands []string, wrapperPath string) (b
 			return false, fmt.Errorf("unsupported shell syntax in %q", command)
 		}
 		for index, word := range words {
-			candidate, relevant, err := zcodeCommandWordPath(word, index, home, filepath.Base(wrapper.clean))
+			nestedFragment := index > 0 && zcodeShellCommandOption(words[index-1])
+			candidate, relevant, err := zcodeCommandWordPath(
+				word, index, nestedFragment, home, filepath.Base(wrapper.clean))
 			if err != nil {
 				return false, fmt.Errorf("resolve %q in hook command %q: %w", word, command, err)
 			}
@@ -52,7 +54,7 @@ func zcodeHookCommandsReferenceWrapper(commands []string, wrapperPath string) (b
 	return false, nil
 }
 
-func zcodeCommandWordPath(word string, index int, home, wrapperBase string) (string, bool, error) {
+func zcodeCommandWordPath(word string, index int, nestedFragment bool, home, wrapperBase string) (string, bool, error) {
 	if word == "" {
 		return "", false, nil
 	}
@@ -70,6 +72,17 @@ func zcodeCommandWordPath(word string, index int, home, wrapperBase string) (str
 		return "", false, err
 	}
 	if filepath.IsAbs(expanded) {
+		if zcodeAbsoluteWordNeedsProof(expanded) {
+			if nestedFragment {
+				return "", false, fmt.Errorf("absolute shell word is not a proven standalone path")
+			}
+			if _, err := os.Lstat(expanded); err != nil {
+				if os.IsNotExist(err) {
+					return "", false, fmt.Errorf("absolute shell word is not a proven standalone path")
+				}
+				return "", false, err
+			}
+		}
 		return expanded, true, nil
 	}
 	if strings.ContainsAny(expanded, `/\\`) {
@@ -86,6 +99,17 @@ func zcodeCommandWordPath(word string, index int, home, wrapperBase string) (str
 		return "", false, fmt.Errorf("wrapper basename is not resolvable on PATH")
 	}
 	return "", false, nil
+}
+
+func zcodeShellCommandOption(word string) bool {
+	if word == "--command" {
+		return true
+	}
+	return strings.HasPrefix(word, "-") && !strings.HasPrefix(word, "--") && strings.Contains(word[1:], "c")
+}
+
+func zcodeAbsoluteWordNeedsProof(word string) bool {
+	return strings.IndexFunc(word, unicode.IsSpace) >= 0 || strings.ContainsAny(word, ";&|<>()*?[")
 }
 
 func expandZcodeCommandHome(path, home string) (string, error) {
