@@ -909,10 +909,18 @@ func (s *embeddingScheduler) run() error {
 		request := pending[selected]
 		delete(pending, selected)
 		database := request.database
-		_ = updateWorkerActivity(request.stateDir, "", &database)
+		if err := updateWorkerActivity(request.stateDir, "", &database); err != nil {
+			err = fmt.Errorf("record current vector database: %w", err)
+			request.reply <- embeddingReply{err: err}
+			return failPending(err)
+		}
 		vectors, err := s.embed(request.ctx, request.model, request.input)
 		database = ""
-		_ = updateWorkerActivity(request.stateDir, "", &database)
+		if clearErr := updateWorkerActivity(request.stateDir, "", &database); clearErr != nil {
+			clearErr = fmt.Errorf("clear current vector database: %w", clearErr)
+			request.reply <- embeddingReply{err: errors.Join(err, clearErr)}
+			return failPending(clearErr)
+		}
 		request.reply <- embeddingReply{vectors: vectors, err: err}
 		resetStall()
 	}

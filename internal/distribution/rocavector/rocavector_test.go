@@ -75,6 +75,21 @@ func TestBundledVectorRefreshAndCollisionPolicy(t *testing.T) {
 	}
 }
 
+func TestWorkerRunningReadsCurrentClaimFormat(t *testing.T) {
+	root := t.TempDir()
+	state := filepath.Join(root, rocavector.Name, rocavector.StateDir)
+	if err := os.MkdirAll(state, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(state, ".worker"),
+		[]byte(strconv.Itoa(os.Getpid())+" current-run\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !rocavector.WorkerRunning(root) {
+		t.Fatal("current worker claim was reported stopped")
+	}
+}
+
 func TestBundledVectorMigratesLegacyInstall(t *testing.T) {
 	for _, testCase := range []struct {
 		name, version, payload, wantError string
@@ -161,7 +176,7 @@ func TestBundledVectorMigratesLegacyInstall(t *testing.T) {
 			}
 			if testCase.activeWorker {
 				if err := os.WriteFile(filepath.Join(root, rocavector.LegacyName, rocavector.StateDir, ".worker"),
-					[]byte(strconv.Itoa(os.Getpid())+"\n"), 0o600); err != nil {
+					[]byte(strconv.Itoa(os.Getpid())+" current-run\n"), 0o600); err != nil {
 					t.Fatal(err)
 				}
 			}

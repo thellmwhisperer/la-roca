@@ -43,7 +43,7 @@ func WorkerRunning(root string) bool {
 		if err != nil {
 			continue
 		}
-		pid, _ := strconv.Atoi(strings.TrimSpace(string(raw)))
+		pid := workerPID(raw)
 		if pid > 0 && processAlive(pid) {
 			return true
 		}
@@ -167,7 +167,7 @@ func reserveWorker(state string) (workerReservation, error) {
 		if readErr != nil {
 			return workerReservation{}, fmt.Errorf("read vector worker claim: %w", readErr)
 		}
-		pid, _ := strconv.Atoi(strings.TrimSpace(string(raw)))
+		pid := workerPID(raw)
 		fresh := time.Since(info.ModTime()) < 5*time.Minute
 		if (pid > 0 && processAlive(pid)) || (pid == 0 && fresh) {
 			return workerReservation{}, fmt.Errorf("an active vector worker holds %s; retry the update after it finishes", state)
@@ -177,4 +177,13 @@ func reserveWorker(state string) (workerReservation, error) {
 		}
 	}
 	return workerReservation{}, fmt.Errorf("vector worker claim changed while it was inspected")
+}
+
+func workerPID(raw []byte) int {
+	fields := strings.Fields(string(raw))
+	if len(fields) == 0 {
+		return 0
+	}
+	pid, _ := strconv.Atoi(fields[0])
+	return pid
 }

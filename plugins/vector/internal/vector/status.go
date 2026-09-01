@@ -140,10 +140,11 @@ func inspectDatabase(ctx context.Context, pluginRoot string, database vectorData
 		return row
 	}
 	defer store.Close()
-	row.EmbeddedChunks = readEmbeddedChunks(ctx, store)
-	contract := optionalMeta(store, "contract")
-	fingerprint := optionalMeta(store, "source_fingerprint")
-	storedMarker := optionalMeta(store, sourceMarkerMetaKey)
+	snapshot, readable := readSidecarSnapshot(ctx, store)
+	if !readable {
+		return row
+	}
+	row.EmbeddedChunks = &snapshot.EmbeddedChunks
 	currentMarker, markerErr := sourceFileMarker(sourcePath)
 	var marker *string
 	if markerErr == nil {
@@ -152,19 +153,61 @@ func inspectDatabase(ctx context.Context, pluginRoot string, database vectorData
 		missing := "missing"
 		marker = &missing
 	}
-	row.State = classifySidecar(exists, true, workerActive, row.EmbeddedChunks, contract,
-		database.contractFingerprint(), fingerprint, storedMarker, marker)
+	row.State = classifySidecar(exists, true, workerActive, row.EmbeddedChunks, snapshot.Contract,
+		database.contractFingerprint(), snapshot.Fingerprint, snapshot.SourceMarker, marker)
 	return row
 }
 
-func readEmbeddedChunks(ctx context.Context, store *sql.DB) *int64 {
-	countCtx, cancel := boundContext(ctx, statusCountTimeout)
+type sidecarSnapshot struct {
+	EmbeddedChunks int64
+	Contract       string
+	Fingerprint    string
+	SourceMarker   string
+}
+
+func readSidecarSnapshot(ctx context.Context, store *sql.DB) (sidecarSnapshot, bool) {
+	snapshotCtx, cancel := boundContext(ctx, statusCountTimeout)
 	defer cancel()
-	var chunks int64
-	if err := store.QueryRowContext(countCtx, `SELECT COUNT(*) FROM chunks`).Scan(&chunks); err != nil {
-		return nil
+	tx, err := store.BeginTx(snapshotCtx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return sidecarSnapshot{}, false
 	}
-	return &chunks
+	defer tx.Rollback()
+	var snapshot sidecarSnapshot
+	if err := tx.QueryRowContext(snapshotCtx, `SELECT COUNT(*) FROM chunks`).Scan(&snapshot.EmbeddedChunks); err != nil {
+		return sidecarSnapshot{}, false
+	}
+	rows, err := tx.QueryContext(snapshotCtx, `SELECT key,value FROM meta WHERE key IN (?,?,?)`,
+		"contract", "source_fingerprint", sourceMarkerMetaKey)
+	if err != nil {
+		return sidecarSnapshot{}, false
+	}
+	for rows.Next() {
+		var key, value string
+		if err := rows.Scan(&key, &value); err != nil {
+			rows.Close()
+			return sidecarSnapshot{}, false
+		}
+		switch key {
+		case "contract":
+			snapshot.Contract = value
+		case "source_fingerprint":
+			snapshot.Fingerprint = value
+		case sourceMarkerMetaKey:
+			snapshot.SourceMarker = value
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return sidecarSnapshot{}, false
+	}
+	if err := rows.Close(); err != nil {
+		return sidecarSnapshot{}, false
+	}
+	if err := tx.Commit(); err != nil {
+		return sidecarSnapshot{}, false
+	}
+	return snapshot, true
 }
 
 func classifySidecar(exists, readable, workerActive bool, chunks *int64, storedContract,
@@ -230,14 +273,6 @@ func sidecarFileFacts(path string) (*int64, *string, bool, error) {
 	}
 	stamp := mtime.UTC().Format(time.RFC3339)
 	return &size, &stamp, true, nil
-}
-
-func optionalMeta(store *sql.DB, key string) string {
-	var value string
-	if err := store.QueryRow(`SELECT value FROM meta WHERE key=?`, key).Scan(&value); err != nil {
-		return ""
-	}
-	return value
 }
 
 func boundedCandidateCount(ctx context.Context, database vectorDatabase, path string) *int64 {

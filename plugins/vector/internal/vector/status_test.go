@@ -259,6 +259,31 @@ func TestEmbeddingSchedulerRecordsTheDatabaseItIsEmbedding(t *testing.T) {
 	}
 }
 
+func TestEmbeddingSchedulerStopsWhenDatabaseClearFails(t *testing.T) {
+	state := t.TempDir()
+	holdTestWorkerClaim(t, state, "clear-failure")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	scheduler := newEmbeddingScheduler(ctx, activityClearFailEmbedder{state: state}, 1)
+	runDone := make(chan error, 1)
+	go func() { runDone <- scheduler.run() }()
+	embedCtx := context.WithValue(ctx, sourceOrderKey{}, sourceOrder{id: "a"})
+	_, embedErr := (scheduledEmbedder{base: activityClearFailEmbedder{state: state}, id: 0,
+		scheduler: scheduler, database: "roca-corpus/corpus", stateDir: state}).Embed(
+		embedCtx, DefaultModel, []string{"alpha"})
+	if embedErr == nil {
+		cancel()
+		<-runDone
+		t.Fatal("scheduler continued after failing to clear the current database")
+	}
+	if !strings.Contains(embedErr.Error(), "clear current vector database") {
+		t.Fatalf("embed error = %v", embedErr)
+	}
+	if runErr := <-runDone; runErr == nil || !strings.Contains(runErr.Error(), "clear current vector database") {
+		t.Fatalf("scheduler error = %v", runErr)
+	}
+}
+
 func TestReportVectorizationCountsDeclaredChunksExactly(t *testing.T) {
 	root := t.TempDir()
 	maxChars, overlap := 4, 1
@@ -341,7 +366,7 @@ func TestReportVectorizationMarksChangedCompletedSourceOutdated(t *testing.T) {
 	}
 }
 
-func TestReadEmbeddedChunksReturnsUnknownInsteadOfHighestID(t *testing.T) {
+func TestReadSidecarSnapshotReturnsUnknownInsteadOfHighestID(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "index.db")
 	writeSidecarWithChunks(t, path, "roca-corpus/corpus", 3, nil)
 	store := openTestSQLite(t, path)
@@ -351,12 +376,39 @@ func TestReadEmbeddedChunksReturnsUnknownInsteadOfHighestID(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if count := readEmbeddedChunks(ctx, store); count != nil {
+	if snapshot, readable := readSidecarSnapshot(ctx, store); readable {
 		store.Close()
-		t.Fatalf("unreadable embedded count = %v, want unknown", *count)
+		t.Fatalf("unreadable sidecar snapshot = %+v, want unknown", snapshot)
 	}
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestReportVectorizationReturnsUnknownWhenSidecarSnapshotCannotBeRead(t *testing.T) {
+	root := t.TempDir()
+	database := vectorDatabase{
+		Plugin: "roca-corpus", Database: "corpus", Path: "roca-corpus.db", Alias: "corpus",
+		Tables: []vectorTable{{Name: "notes", IDColumn: "id", TextColumns: []string{"body"}}},
+	}
+	writeRegistry(t, root, vectorRegistry{Schema: 2, Databases: []vectorDatabase{database}})
+	sidecar := SidecarPath(filepath.Join(root, database.Plugin, database.Path))
+	writeSidecarWithChunks(t, sidecar, database.owner(), 2, nil)
+	store := openTestSQLite(t, sidecar)
+	if _, err := store.Exec(`DROP TABLE meta`); err != nil {
+		store.Close()
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	report, err := ReportVectorization(context.Background(), StatusRequest{PluginRoot: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := report.Databases[0]
+	if row.State != StateUnknown || row.EmbeddedChunks != nil {
+		t.Fatalf("partial sidecar snapshot was reported: %+v", row)
 	}
 }
 
@@ -430,6 +482,19 @@ func holdTestWorkerClaim(t *testing.T, state, runID string) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = release() })
+}
+
+type activityClearFailEmbedder struct {
+	state string
+}
+
+func (activityClearFailEmbedder) Pull(context.Context, string) error { return nil }
+
+func (e activityClearFailEmbedder) Embed(_ context.Context, _ string, input []string) ([][]float32, error) {
+	if err := os.Mkdir(filepath.Join(e.state, ".worker-status.tmp"), 0o700); err != nil {
+		return nil, err
+	}
+	return make([][]float32, len(input)), nil
 }
 
 func writeSidecarWithChunks(t *testing.T, path, owner string, n int, extraMeta map[string]string) {
