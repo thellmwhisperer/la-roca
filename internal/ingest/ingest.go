@@ -849,7 +849,7 @@ func read(ctx context.Context, opts Options, target Target, previous incremental
 		return parsers.Parse(target.Kind, input, fileMeta)
 	}
 	records, err := parse(content, meta)
-	if err != nil && seed.Incremental {
+	if seed.Incremental && (err != nil || incrementalParseNeedsPrefix(target.Kind, records)) {
 		seed = harvestCursorSeed{}
 		meta = baseMeta
 		records, err = parse(fullContent, meta)
@@ -868,6 +868,18 @@ func read(ctx context.Context, opts Options, target Target, previous incremental
 	}
 	resolveProjects(ctx, opts, target, &records)
 	return records, ""
+}
+
+func incrementalParseNeedsPrefix(kind parsers.Kind, records parsers.Records) bool {
+	if kind != parsers.KindCodexSession {
+		return false
+	}
+	for _, discard := range records.Discards {
+		if discard.Category == "tool verdict has unknown call_id" {
+			return true
+		}
+	}
+	return false
 }
 
 func cursorContent(target Target, previous incrementality.FileState,

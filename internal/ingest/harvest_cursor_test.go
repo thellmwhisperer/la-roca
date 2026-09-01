@@ -196,6 +196,59 @@ func TestAppendableSessionParsersUseStoredExchangeCursor(t *testing.T) {
 	}
 }
 
+func TestIncrementalCodexLateVerdictFallsBackToTheFullRollout(t *testing.T) {
+	prefix := `{"type":"session_meta","payload":{"id":"late-verdict"}}
+{"type":"event_msg","payload":{"type":"user_message","message":"first"}}
+{"type":"response_item","payload":{"type":"function_call","call_id":"old","name":"shell"}}
+{"type":"event_msg","payload":{"type":"user_message","message":"replacement"}}
+{"type":"event_msg","payload":{"type":"task_complete","last_agent_message":"done"}}
+`
+	tail := `{"type":"event_msg","payload":{"type":"user_message","message":"next"}}
+{"type":"response_item","payload":{"type":"function_call_output","call_id":"old","output":{"metadata":{"exit_code":1}}}}
+{"type":"event_msg","payload":{"type":"task_complete","last_agent_message":"done again"}}
+`
+	path := filepath.Join(t.TempDir(), "rollout.jsonl")
+	if err := os.WriteFile(path, []byte(prefix), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	target := Target{Path: path, FileName: filepath.Base(path), Kind: parsers.KindCodexSession,
+		SessionID: "late-verdict", SourceAgent: "codex"}
+	firstResult := Result{}
+	first, reason := read(t.Context(), Options{}, target, incrementality.FileState{}, &firstResult)
+	if reason != "" {
+		t.Fatal(reason)
+	}
+	db := corpusDatabase(t)
+	writeHarvestRecords(t, db, first)
+	metadata, err := json.Marshal(firstResult.harvestCursors[path])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(prefix+tail), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	secondResult := Result{}
+	second, reason := read(t.Context(), Options{}, target,
+		incrementality.FileState{Metadata: metadata}, &secondResult)
+	if reason != "" {
+		t.Fatal(reason)
+	}
+	if len(second.Sessions) != 1 || second.Sessions[0].Incremental {
+		t.Fatalf("late-verdict reading did not fall back to the full rollout: %+v", second.Sessions)
+	}
+	writeHarvestRecords(t, db, second)
+	var count, hadError int
+	var message string
+	if err := db.SQL().QueryRow(`SELECT COUNT(*), had_error, error_message FROM tool_uses
+		WHERE session_id = ? AND exchange_number IS NULL`, "late-verdict").
+		Scan(&count, &hadError, &message); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 || hadError != 1 || message != `{"metadata":{"exit_code":1}}` {
+		t.Fatalf("persisted late verdict = count:%d error:%d message:%q", count, hadError, message)
+	}
+}
+
 func TestIncrementalOrphanedToolsPreserveAndExtendTheFullProjection(t *testing.T) {
 	db := corpusDatabase(t)
 	const sessionID = "incremental-orphan-tools"
