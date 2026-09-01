@@ -83,6 +83,9 @@ func TestSignalCleanupHasABoundedFallback(t *testing.T) {
 	if err := next.Close(); err != nil {
 		t.Fatal(err)
 	}
+	if err := CloseReadOnlySnapshots(); err != nil {
+		t.Fatal(err)
+	}
 	if dirs := listSnapshotDirs(t, root); len(dirs) != 0 {
 		t.Fatalf("next open left snapshot dirs %v", dirs)
 	}

@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 	"github.com/thellmwhisperer/la-roca/internal/store"
 )
@@ -453,7 +454,11 @@ func treeSnapshot(t *testing.T, root string) map[string]treeSnapshotEntry {
 		if err != nil {
 			return err
 		}
-		if strings.Contains(filepath.ToSlash(rel), "/logs/") {
+		slash := filepath.ToSlash(rel)
+		logDir := filepath.ToSlash(filepath.Join(".roca", logfile.DirName))
+		if slash == logDir || filepath.Dir(slash) == logDir &&
+			(entry.Name() == ".roca.lock" || strings.HasPrefix(entry.Name(), logfile.Snapshots+"-") &&
+				strings.HasSuffix(entry.Name(), ".jsonl")) {
 			return nil
 		}
 		info, err := entry.Info()

@@ -88,6 +88,7 @@ type cliEnv struct {
 	observerRunner       toolcallobserver.CommandRunner
 	observerTerminal     func(toolcallobserver.TerminalRequest) error
 	observerExecutable   string
+	snapshotCleanup      func() error
 }
 
 // Execute runs the CLI and returns the process exit code.
@@ -101,17 +102,12 @@ func execute(build Build, out, errOut io.Writer, args []string) (int, error) {
 	return executeCommand(build, out, errOut, args, false)
 }
 
-func executeCommand(build Build, out, errOut io.Writer, args []string, plugins bool) (code int, resultErr error) {
-	defer func() {
-		if err := store.CloseReadOnlySnapshots(); err != nil {
-			resultErr = errors.Join(resultErr, fmt.Errorf("close read-only snapshots: %w", err))
-			if code == ExitOK {
-				code = ExitError
-			}
-		}
-	}()
+func executeCommand(build Build, out, errOut io.Writer, args []string, plugins bool) (int, error) {
 	started := time.Now()
-	env := &cliEnv{build: build, out: out, errOut: errOut, started: started}
+	env := &cliEnv{
+		build: build, out: out, errOut: errOut, started: started,
+		snapshotCleanup: store.CloseReadOnlySnapshots,
+	}
 	return executeWithOptions(env, args, nil, plugins)
 }
 
@@ -142,6 +138,7 @@ func executeWithOptions(env *cliEnv, args []string, in io.Reader, plugins bool) 
 		if handled, code, err := dispatchPlugin(env, root, args, env.features); handled {
 			env.auditCommand = args[0]
 			env.auditArgs = redactPluginArguments(args[1:])
+			code, err = env.finishSnapshotCleanup(code, err)
 			if err != nil {
 				err = logfile.Correlate(err)
 			} else if code != ExitOK {
@@ -176,6 +173,7 @@ func executeWithOptions(env *cliEnv, args []string, in io.Reader, plugins bool) 
 		}
 	}
 	code := env.code
+	code, err = env.finishSnapshotCleanup(code, err)
 	if err != nil {
 		if code == ExitOK {
 			code = ExitError
@@ -202,6 +200,21 @@ func executeWithOptions(env *cliEnv, args []string, in io.Reader, plugins bool) 
 		}
 	}
 	return code, err
+}
+
+func (env *cliEnv) finishSnapshotCleanup(code int, resultErr error) (int, error) {
+	if env.snapshotCleanup == nil {
+		return code, resultErr
+	}
+	cleanup := env.snapshotCleanup
+	env.snapshotCleanup = nil
+	if err := cleanup(); err != nil {
+		resultErr = errors.Join(resultErr, fmt.Errorf("close read-only snapshots: %w", err))
+		if code == ExitOK {
+			code = ExitError
+		}
+	}
+	return code, resultErr
 }
 
 func rootCommand(env *cliEnv) *cobra.Command {

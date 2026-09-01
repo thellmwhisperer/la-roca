@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
+	"github.com/thellmwhisperer/la-roca/internal/store"
 	_ "modernc.org/sqlite"
 )
 
@@ -91,6 +92,7 @@ func TestValidationPreservesInspectedFTS5Kind(t *testing.T) {
 }
 
 func TestValidationTimeoutStartsAfterPhysicalSnapshotOpen(t *testing.T) {
+	cleanupPluginSnapshots(t)
 	path := filepath.Join(t.TempDir(), "delayed.db")
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
@@ -121,6 +123,7 @@ func TestValidationTimeoutStartsAfterPhysicalSnapshotOpen(t *testing.T) {
 }
 
 func TestReadOnlyValidationTracksCommittedWALWithoutChangingSharedMemory(t *testing.T) {
+	cleanupPluginSnapshots(t)
 	path := filepath.Join(t.TempDir(), "live.db")
 	writer, err := sql.Open("sqlite", path)
 	if err != nil {
@@ -176,6 +179,18 @@ func TestReadOnlyValidationTracksCommittedWALWithoutChangingSharedMemory(t *test
 		filepath.Clean(uri.Path) == filepath.Clean(path) {
 		t.Fatalf("physical read-only URI did not isolate the source: %s", database.ReadOnlyURI())
 	}
+}
+
+func cleanupPluginSnapshots(t *testing.T) {
+	t.Helper()
+	if err := store.CloseReadOnlySnapshots(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := store.CloseReadOnlySnapshots(); err != nil {
+			t.Error(err)
+		}
+	})
 }
 
 func TestSemanticRelevanceIsStableAndBounded(t *testing.T) {

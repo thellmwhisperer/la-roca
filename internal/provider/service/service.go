@@ -183,7 +183,8 @@ func snapshotLogWriter(dataDir string) store.SnapshotLogWriter {
 }
 
 func (s *Service) snapshotContext(ctx context.Context) context.Context {
-	return store.WithSnapshotLogWriter(ctx, s.snapshotLog)
+	ctx = store.WithSnapshotLogWriter(ctx, s.snapshotLog)
+	return store.WithSnapshotCoordinationTimeout(ctx, residentInitializationTimeout)
 }
 
 func openWithContext(ctx context.Context, opts Options) (*Service, error) {

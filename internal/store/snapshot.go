@@ -1,5 +1,5 @@
 /**
- * @overview Creates leased read-only SQLite snapshots. ~1000 lines, 9 public symbols.
+ * @overview Creates leased read-only SQLite snapshots. ~1000 lines, 10 public symbols.
  *
  *   READING GUIDE
  *   -------------
@@ -17,6 +17,7 @@
  *   ReadOnlySnapshot         Leased read-only database copy.
  *   SnapshotLogWriter        Snapshot lifecycle telemetry sink.
  *   WithSnapshotLogWriter    Binds snapshot telemetry to an operation context.
+ *   WithSnapshotCoordinationTimeout bounds coordination phases.
  *   OpenReadOnlySnapshot     Opens or reuses a stable source snapshot.
  *   SnapshotDirectories      Lists snapshot directories the reaper owns.
  *   CloseReadOnlySnapshots   Closes every snapshot still held by the process.
@@ -27,11 +28,11 @@
  *   INTERNALS
  *   ---------
  *   snapshotArtifact, snapshotLease, snapshotInflight, snapshotNamespaceRoot
- *   createReadOnlySnapshot, scavengeReadOnlySnapshots, scavengeLegacyReadOnlySnapshots
+ *   createReadOnlySnapshot, scavengeReadOnlySnapshots
  *   claimSnapshotDirectory
  *   inspectSnapshotSource, copySnapshotSource, openCopiedSnapshot, cleanupHeldSnapshots
  *
- * @exports ReadOnlySnapshot, SnapshotLogWriter, WithSnapshotLogWriter, OpenReadOnlySnapshot, SnapshotDirectories, CloseReadOnlySnapshots, SQL, URI, Close
+ * @exports ReadOnlySnapshot, SnapshotLogWriter, WithSnapshotLogWriter, WithSnapshotCoordinationTimeout, OpenReadOnlySnapshot, SnapshotDirectories, CloseReadOnlySnapshots, SQL, URI, Close
  * @deps database/sql and modernc SQLite; internal/securefile; os/signal and filesystem
  */
 package store
@@ -67,7 +68,6 @@ const (
 	snapshotLeaseName          = "lease"
 	snapshotCopyBufferSize     = 128 * 1024
 	snapshotSignalCleanupLimit = 500 * time.Millisecond
-	legacySnapshotQuiescence   = time.Hour
 	bytesPerMB                 = 1024 * 1024
 )
 
@@ -120,6 +120,7 @@ type snapshotLease struct {
 type SnapshotLogWriter func(map[string]any) error
 
 type snapshotLogContextKey struct{}
+type snapshotCoordinationTimeoutContextKey struct{}
 
 var (
 	snapshotShuttingDown atomic.Bool
@@ -154,12 +155,16 @@ var (
 	removeSnapshotDirectoryFn        = os.RemoveAll
 	snapshotEntryInfoFn              = func(entry os.DirEntry) (os.FileInfo, error) { return entry.Info() }
 	snapshotUserIdentityFn           = snapshotUserIdentity
-	legacySnapshotHasOpenHandlesFn   = legacySnapshotHasOpenHandles
 )
 
 // WithSnapshotLogWriter binds snapshot lifecycle telemetry to ctx.
 func WithSnapshotLogWriter(ctx context.Context, writer SnapshotLogWriter) context.Context {
 	return context.WithValue(ctx, snapshotLogContextKey{}, writer)
+}
+
+// WithSnapshotCoordinationTimeout bounds snapshot coordination phases.
+func WithSnapshotCoordinationTimeout(ctx context.Context, timeout time.Duration) context.Context {
+	return context.WithValue(ctx, snapshotCoordinationTimeoutContextKey{}, timeout)
 }
 
 // SnapshotDirectories lists every directory under root that carries the
@@ -243,10 +248,9 @@ func OpenReadOnlySnapshot(ctx context.Context, path string) (*ReadOnlySnapshot, 
 		tempRoot := os.TempDir()
 		namespace, createErr := snapshotNamespaceRoot(tempRoot)
 		if createErr == nil {
-			createErr = scavengeLegacyReadOnlySnapshots(ctx, tempRoot, namespace)
-		}
-		if createErr == nil {
-			createErr = scavengeReadOnlySnapshots(ctx, namespace)
+			coordinationCtx, cancel := snapshotCoordinationContext(ctx)
+			createErr = scavengeReadOnlySnapshots(coordinationCtx, namespace)
+			cancel()
 		}
 		if createErr == nil {
 			created, createErr = createReadOnlySnapshot(ctx, abs, before, namespace, logger)
@@ -268,7 +272,7 @@ func OpenReadOnlySnapshot(ctx context.Context, path string) (*ReadOnlySnapshot, 
 				artifact = cached
 				duplicate = created
 			} else {
-				created.refs = 1
+				created.refs = 2
 				snapshotCache[created.fingerprint] = created
 				artifact = created
 			}
@@ -313,7 +317,9 @@ func isSnapshotContextError(err error) bool {
 func createReadOnlySnapshot(ctx context.Context, abs string, before snapshotSourceState, namespace string,
 	logger SnapshotLogWriter,
 ) (*snapshotArtifact, error) {
-	lease, directory, err := createSnapshotDirectory(ctx, namespace)
+	coordinationCtx, cancelCoordination := snapshotCoordinationContext(ctx)
+	lease, directory, err := createSnapshotDirectory(coordinationCtx, namespace)
+	cancelCoordination()
 	if err != nil {
 		return nil, err
 	}
@@ -359,7 +365,9 @@ func createReadOnlySnapshot(ctx context.Context, abs string, before snapshotSour
 			before = after
 			continue
 		}
-		snapshot, err := openCopiedSnapshot(ctx, destination, directory)
+		openCtx, cancelOpen := snapshotCoordinationContext(ctx)
+		snapshot, err := openCopiedSnapshot(openCtx, destination, directory)
+		cancelOpen()
 		if err != nil {
 			final, inspectErr := inspectSnapshotSource(abs)
 			if inspectErr == nil && before != final {
@@ -564,17 +572,11 @@ func (lease *snapshotLease) destroy(cause error) error {
 // -- 4/7 HELPER · Orphan reaping --
 
 func scavengeReadOnlySnapshots(ctx context.Context, root string) error {
-	return scavengeSnapshotRoot(ctx, root, root, root, false)
+	return scavengeSnapshotRoot(ctx, root)
 }
 
-func scavengeLegacyReadOnlySnapshots(ctx context.Context, tempRoot, namespace string) error {
-	return scavengeSnapshotRoot(ctx, namespace, tempRoot, namespace, true)
-}
-
-func scavengeSnapshotRoot(ctx context.Context, lockRoot, scanRoot, claimRoot string,
-	legacy bool,
-) (resultErr error) {
-	releaseNamespace, err := lockSnapshotNamespace(ctx, lockRoot)
+func scavengeSnapshotRoot(ctx context.Context, root string) (resultErr error) {
+	releaseNamespace, err := lockSnapshotNamespace(ctx, root)
 	if err != nil {
 		return fmt.Errorf("lock read-only snapshot namespace: %w", err)
 	}
@@ -582,7 +584,7 @@ func scavengeSnapshotRoot(ctx context.Context, lockRoot, scanRoot, claimRoot str
 		resultErr = errors.Join(resultErr, releaseNamespace())
 	}()
 
-	entries, err := os.ReadDir(scanRoot)
+	entries, err := os.ReadDir(root)
 	if err != nil {
 		return fmt.Errorf("inspect read-only snapshot directory: %w", err)
 	}
@@ -593,16 +595,12 @@ func scavengeSnapshotRoot(ctx context.Context, lockRoot, scanRoot, claimRoot str
 		if err := ctx.Err(); err != nil {
 			return errors.Join(err, errors.Join(reapErrors...))
 		}
-		path := filepath.Join(scanRoot, entry.Name())
-		candidate, err := snapshotReapCandidate(entry, path, legacy)
-		if err != nil {
-			reapErrors = append(reapErrors, fmt.Errorf("inspect snapshot candidate %q: %w", path, err))
-			continue
-		}
+		path := filepath.Join(root, entry.Name())
+		candidate := snapshotReapCandidate(entry)
 		if !candidate {
 			continue
 		}
-		release, orphan, err := snapshotOrphanLease(ctx, path, legacy)
+		release, orphan, err := snapshotOrphanLease(path)
 		if err != nil {
 			reapErrors = append(reapErrors, fmt.Errorf("inspect orphan snapshot %q: %w", path, err))
 			continue
@@ -610,7 +608,7 @@ func scavengeSnapshotRoot(ctx context.Context, lockRoot, scanRoot, claimRoot str
 		if !orphan {
 			continue
 		}
-		claimed, err := claimSnapshotDirectoryFn(claimRoot, path)
+		claimed, err := claimSnapshotDirectoryFn(root, path)
 		if err != nil {
 			if release != nil {
 				if releaseErr := release(); releaseErr != nil {
@@ -664,23 +662,10 @@ func scavengeSnapshotRoot(ctx context.Context, lockRoot, scanRoot, claimRoot str
 	return errors.Join(reapErrors...)
 }
 
-func snapshotReapCandidate(entry os.DirEntry, path string, legacy bool) (bool, error) {
-	if legacy {
-		if !strings.HasPrefix(entry.Name(), snapshotDirectoryPrefix) {
-			return false, nil
-		}
-		info, err := os.Lstat(path)
-		if os.IsNotExist(err) {
-			return false, nil
-		}
-		if err != nil {
-			return false, err
-		}
-		return info.Mode()&os.ModeSymlink == 0 && info.IsDir() && snapshotNamespaceOwned(path, info), nil
-	}
+func snapshotReapCandidate(entry os.DirEntry) bool {
 	return entry.IsDir() && (strings.HasPrefix(entry.Name(), snapshotDirectoryPrefix) ||
 		strings.HasPrefix(entry.Name(), snapshotStagingPrefix) ||
-		strings.HasPrefix(entry.Name(), snapshotReapPrefix)), nil
+		strings.HasPrefix(entry.Name(), snapshotReapPrefix))
 }
 
 func claimSnapshotDirectory(root, directory string) (string, error) {
@@ -705,55 +690,18 @@ func claimSnapshotDirectory(root, directory string) (string, error) {
 	return claimed, nil
 }
 
-func snapshotOrphanLease(ctx context.Context, directory string, legacy bool) (func() error, bool, error) {
+func snapshotOrphanLease(directory string) (func() error, bool, error) {
 	release, err := securefile.TryLock(filepath.Join(directory, snapshotLeaseName))
 	if err == nil {
 		return release, true, nil
 	}
 	if os.IsNotExist(err) {
-		if legacy {
-			quiescent, inspectErr := legacySnapshotIsQuiescent(directory, time.Now())
-			if inspectErr != nil || !quiescent {
-				return nil, false, nil
-			}
-			live, probeErr := legacySnapshotHasOpenHandlesFn(ctx, directory)
-			if probeErr != nil {
-				if ctx.Err() != nil {
-					return nil, false, ctx.Err()
-				}
-				return nil, false, nil
-			}
-			if live {
-				return nil, false, nil
-			}
-			quiescent, inspectErr = legacySnapshotIsQuiescent(directory, time.Now())
-			return nil, inspectErr == nil && quiescent, nil
-		}
 		return nil, true, nil
 	}
 	if errors.Is(err, securefile.ErrBusy) {
 		return nil, false, nil
 	}
 	return nil, false, err
-}
-
-func legacySnapshotIsQuiescent(directory string, now time.Time) (bool, error) {
-	cutoff := now.Add(-legacySnapshotQuiescence)
-	quiescent := true
-	err := filepath.WalkDir(directory, func(_ string, entry os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		info, err := entry.Info()
-		if err != nil {
-			return err
-		}
-		if info.ModTime().After(cutoff) {
-			quiescent = false
-		}
-		return nil
-	})
-	return quiescent, err
 }
 
 func cleanupSnapshotDirectory(directory string, cause error) error {
@@ -994,10 +942,8 @@ func releaseSnapshotArtifact(artifact *snapshotArtifact) error {
 	if artifact.refs > 0 {
 		artifact.refs--
 	}
-	destroy := artifact.refs == 0
-	if destroy && snapshotCache[artifact.fingerprint] == artifact {
-		delete(snapshotCache, artifact.fingerprint)
-	}
+	cached := snapshotCache[artifact.fingerprint] == artifact
+	destroy := artifact.refs == 0 && !cached
 	snapshotCacheMu.Unlock()
 	if !destroy {
 		return nil
@@ -1096,6 +1042,14 @@ func cleanupHeldSnapshots() error {
 func snapshotLogWriterFromContext(ctx context.Context) SnapshotLogWriter {
 	writer, _ := ctx.Value(snapshotLogContextKey{}).(SnapshotLogWriter)
 	return writer
+}
+
+func snapshotCoordinationContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	timeout, _ := ctx.Value(snapshotCoordinationTimeoutContextKey{}).(time.Duration)
+	if timeout > 0 {
+		return context.WithTimeout(ctx, timeout)
+	}
+	return context.WithCancel(ctx)
 }
 
 func logSnapshotRecord(writer SnapshotLogWriter, record map[string]any) {

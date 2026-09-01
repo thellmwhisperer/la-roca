@@ -6,8 +6,8 @@
  *   1. Start at TestReadOnlySnapshotLifecycle        <- baseline behavior
  *   2. TestSnapshotFlightsUseFinalSourceFingerprint <- concurrency contract
  *   3. TestKilledProcessOrphanIsReapedAndLiveSnapshotIsKept
- *   4. TestLegacySnapshotNamespaceIsMigratedSafely  <- upgrade contract
- *   5. TestSnapshotHelperProcess                    <- subprocess fixture
+ *   4. TestLeaseLessLegacySnapshotsArePreserved    <- upgrade contract
+ *   5. TestSnapshotHelperProcess                   <- subprocess fixture
  *
  *   MAIN FLOW
  *   ---------
@@ -58,14 +58,20 @@ func TestReadOnlySnapshotLifecycle(t *testing.T) {
 		}
 	})
 
-	t.Run("close removes the snapshot directory", func(t *testing.T) {
+	t.Run("close retains the process copy until cleanup", func(t *testing.T) {
 		root := isolateSnapshotTemp(t)
 		snapshot := openSnapshotExpectOneDir(t, root)
 		if err := snapshot.Close(); err != nil {
 			t.Fatal(err)
 		}
+		if dirs := listSnapshotDirs(t, root); len(dirs) != 1 {
+			t.Fatalf("close left snapshot dirs %v, want one cached copy", dirs)
+		}
+		if err := CloseReadOnlySnapshots(); err != nil {
+			t.Fatal(err)
+		}
 		if dirs := listSnapshotDirs(t, root); len(dirs) != 0 {
-			t.Fatalf("close left snapshot dirs %v, want none", dirs)
+			t.Fatalf("process cleanup left snapshot dirs %v", dirs)
 		}
 	})
 
@@ -105,8 +111,18 @@ func TestReadOnlySnapshotLifecycle(t *testing.T) {
 		if err := second.Close(); err != nil {
 			t.Fatal(err)
 		}
-		if dirs := listSnapshotDirs(t, root); len(dirs) != 0 {
-			t.Fatalf("last close left snapshot dirs %v, want none", dirs)
+		third, err := OpenReadOnlySnapshot(context.Background(), source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if third.directory != first.directory {
+			t.Fatalf("sequential open copied again: %q vs %q", third.directory, first.directory)
+		}
+		if err := third.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if dirs := listSnapshotDirs(t, root); len(dirs) != 1 {
+			t.Fatalf("sequential reuse left snapshot dirs %v, want one", dirs)
 		}
 	})
 
@@ -270,6 +286,26 @@ func TestSnapshotFlightsUseFinalSourceFingerprint(t *testing.T) {
 	}
 }
 
+func TestSnapshotCoordinationTimeoutExcludesCopying(t *testing.T) {
+	isolateSnapshotTemp(t)
+	source := fixtureDatabase(t)
+	originalCopy := copySnapshotSourceFn
+	t.Cleanup(func() { copySnapshotSourceFn = originalCopy })
+	copySnapshotSourceFn = func(ctx context.Context, source, destination string) error {
+		time.Sleep(300 * time.Millisecond)
+		return originalCopy(ctx, source, destination)
+	}
+
+	ctx := WithSnapshotCoordinationTimeout(context.Background(), 250*time.Millisecond)
+	snapshot, err := OpenReadOnlySnapshot(ctx, source)
+	if err != nil {
+		t.Fatalf("database copy consumed the coordination timeout: %v", err)
+	}
+	if err := snapshot.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestSnapshotFlightWaitersOwnTheirContexts(t *testing.T) {
 	t.Run("creator cancellation is retried", func(t *testing.T) {
 		isolateSnapshotTemp(t)
@@ -403,8 +439,7 @@ func TestSnapshotCacheAndSweepCoordination(t *testing.T) {
 		root := isolateSnapshotTemp(t)
 		source := fixtureDatabase(t)
 		unlock := lockNamespaceLease(t, root)
-		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-		defer cancel()
+		ctx := WithSnapshotCoordinationTimeout(context.Background(), 50*time.Millisecond)
 		result := make(chan error, 1)
 		go func() {
 			snapshot, err := OpenReadOnlySnapshot(ctx, source)
@@ -453,79 +488,17 @@ func TestKilledProcessOrphanIsReapedAndLiveSnapshotIsKept(t *testing.T) {
 	assertReapKeepsLiveAndRemovesOrphan(t, killed.directory, live.directory)
 }
 
-func TestLegacySnapshotNamespaceIsMigratedSafely(t *testing.T) {
+func TestLeaseLessLegacySnapshotsArePreserved(t *testing.T) {
 	tempRoot := isolateSnapshotTemp(t)
-	orphan := createLegacyOrphan(t, tempRoot, "legacy-orphan")
-	live := startSnapshotHelper(t, tempRoot, "", "legacy-hold")
-	t.Cleanup(func() { _ = os.RemoveAll(live.directory) })
-	ageLegacySnapshot(t, live.directory)
-	originalProbe := legacySnapshotHasOpenHandlesFn
-	liveHolding := true
-	legacySnapshotHasOpenHandlesFn = func(_ context.Context, directory string) (bool, error) {
-		return liveHolding && directory == live.directory, nil
-	}
-	t.Cleanup(func() { legacySnapshotHasOpenHandlesFn = originalProbe })
+	legacy := makeOrphanDir(t, tempRoot, "legacy-unowned")
+	writeOrphanFile(t, legacy, "payload", []byte("unknown owner"))
 
 	openAndCloseSnapshot(t)
-	if _, err := os.Stat(orphan); !os.IsNotExist(err) {
-		t.Fatalf("legacy orphan still exists: %v", err)
-	}
-	if _, err := os.Stat(live.directory); err != nil {
-		t.Fatalf("legacy live snapshot was reaped: %v", err)
-	}
-	if err := live.stdin.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := live.wait(); err != nil {
-		t.Fatal(err)
-	}
-	liveHolding = false
-	ageLegacySnapshot(t, live.directory)
-	openAndCloseSnapshot(t)
-	if _, err := os.Stat(live.directory); !os.IsNotExist(err) {
-		t.Fatalf("closed legacy snapshot was not reaped: %v", err)
-	}
-}
-
-func TestFreshLegacySnapshotIsPreservedUntilQuiescent(t *testing.T) {
-	tempRoot := isolateSnapshotTemp(t)
-	legacy := makeOrphanDir(t, tempRoot, "legacy-in-progress")
-	writeOrphanFile(t, legacy, "payload", []byte("copying"))
-	originalProbe := legacySnapshotHasOpenHandlesFn
-	legacySnapshotHasOpenHandlesFn = func(context.Context, string) (bool, error) { return false, nil }
-	t.Cleanup(func() { legacySnapshotHasOpenHandlesFn = originalProbe })
-
-	openAndCloseSnapshot(t)
-	if _, err := os.Stat(legacy); err != nil {
-		t.Fatalf("fresh legacy snapshot was removed: %v", err)
-	}
-
-	ageLegacySnapshot(t, legacy)
-	openAndCloseSnapshot(t)
-	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
-		t.Fatalf("quiescent legacy orphan was not removed: %v", err)
-	}
-}
-
-func TestLegacyProbeFailurePreservesSnapshot(t *testing.T) {
-	tempRoot := isolateSnapshotTemp(t)
-	legacy := createLegacyOrphan(t, tempRoot, "legacy-unprobeable")
-
-	original := legacySnapshotHasOpenHandlesFn
-	t.Cleanup(func() { legacySnapshotHasOpenHandlesFn = original })
-	legacySnapshotHasOpenHandlesFn = func(context.Context, string) (bool, error) {
-		return false, errors.New("lsof probe unavailable")
-	}
-
-	snapshot, err := OpenReadOnlySnapshot(context.Background(), fixtureDatabase(t))
-	if err != nil {
-		t.Fatalf("legacy probe failure failed the command: %v", err)
-	}
-	if err := snapshot.Close(); err != nil {
+	if err := CloseReadOnlySnapshots(); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(legacy); err != nil {
-		t.Fatalf("unprobeable legacy snapshot was removed: %v", err)
+		t.Fatalf("lease-less legacy snapshot was removed: %v", err)
 	}
 }
 
@@ -797,6 +770,9 @@ func TestSnapshotTelemetryStaysBoundToAcquisitionContext(t *testing.T) {
 	if got := snapshotCreateCount(recordsB()); got != 1 {
 		t.Fatalf("second acquisition logger create count = %d, want 1", got)
 	}
+	if err := CloseReadOnlySnapshots(); err != nil {
+		t.Fatal(err)
+	}
 	if dirs := listSnapshotDirs(t, root); len(dirs) != 0 {
 		t.Fatalf("telemetry acquisitions left snapshot dirs %v", dirs)
 	}
@@ -830,28 +806,6 @@ func TestSnapshotHelperProcess(t *testing.T) {
 	mode := os.Getenv("ROCA_SNAPSHOT_HELPER")
 	if mode == "" {
 		t.Skip("helper process")
-	}
-	if mode == "legacy-hold" {
-		directory, err := os.MkdirTemp(os.TempDir(), snapshotDirectoryPrefix)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "create legacy snapshot: %v\n", err)
-			os.Exit(1)
-		}
-		attempt := filepath.Join(directory, "0")
-		if err := os.Mkdir(attempt, 0o700); err != nil {
-			fmt.Fprintf(os.Stderr, "create legacy snapshot attempt: %v\n", err)
-			os.Exit(1)
-		}
-		file, err := os.OpenFile(filepath.Join(attempt, "database.db"), os.O_CREATE|os.O_RDWR, 0o600)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "open legacy snapshot: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Printf("READY %s\n", directory)
-		os.Stdout.Sync()
-		_, _ = io.Copy(io.Discard, os.Stdin)
-		_ = file.Close()
-		return
 	}
 	if mode == "signal-registration" {
 		snapshotAfterLeaseRegistrationFn = func(directory string) {
@@ -971,6 +925,14 @@ type snapshotResult struct {
 
 func isolateSnapshotTemp(t *testing.T) string {
 	t.Helper()
+	if err := cleanupHeldSnapshots(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := cleanupHeldSnapshots(); err != nil {
+			t.Error(err)
+		}
+	})
 	root := t.TempDir()
 	t.Setenv("TMPDIR", root)
 	t.Setenv("TMP", root)
@@ -1093,27 +1055,6 @@ func createPayloadOrphan(t *testing.T, root, name string, size int) string {
 	orphan := makeOrphanDir(t, root, name)
 	writeOrphanFile(t, orphan, "payload", make([]byte, size))
 	return orphan
-}
-
-func createLegacyOrphan(t *testing.T, root, name string) string {
-	t.Helper()
-	orphan := makeOrphanDir(t, root, name)
-	writeOrphanFile(t, orphan, "payload", []byte("orphan"))
-	ageLegacySnapshot(t, orphan)
-	return orphan
-}
-
-func ageLegacySnapshot(t *testing.T, directory string) {
-	t.Helper()
-	old := time.Now().Add(-legacySnapshotQuiescence - time.Minute)
-	if err := filepath.WalkDir(directory, func(path string, _ os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		return os.Chtimes(path, old, old)
-	}); err != nil {
-		t.Fatal(err)
-	}
 }
 
 func lockNamespaceLease(t *testing.T, root string) func() {

@@ -14,6 +14,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 	"github.com/thellmwhisperer/la-roca/internal/provider/query"
+	"github.com/thellmwhisperer/la-roca/internal/store"
 	"github.com/thellmwhisperer/la-roca/internal/store/search"
 )
 
@@ -134,6 +135,9 @@ func TestStableLayerDatabaseClosesAmbiguousPhysicalSnapshots(t *testing.T) {
 	selected, err := stableLayerDatabase(t.Context(), descriptors, true)
 	if selected != nil || err == nil || !strings.Contains(err.Error(), "no single durable layer registry") {
 		t.Fatalf("selected = %+v, error = %v", selected, err)
+	}
+	if err := store.CloseReadOnlySnapshots(); err != nil {
+		t.Fatal(err)
 	}
 	err = filepath.WalkDir(tempRoot, func(_ string, entry os.DirEntry, err error) error {
 		if err != nil {
