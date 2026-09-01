@@ -162,11 +162,6 @@ func (w *writer) sessionWithPolicy(ctx context.Context, session parsers.Session,
 	if err != nil {
 		return counts, err
 	}
-	currentSource := current.text("source_agent")
-	preferIncomingTimestamps := currentSource == "codex-cloud" &&
-		isLocalCodexSource(session.SourceAgent)
-	preserveStoredTimestamps := isLocalCodexSource(currentSource) &&
-		session.SourceAgent == "codex-cloud"
 	if exists && skipExisting {
 		counts.SessionsSkipped = 1
 		return counts, nil
@@ -302,8 +297,7 @@ func (w *writer) sessionWithPolicy(ctx context.Context, session parsers.Session,
 			// Anything else, an unrecorded richness included, only fills what the
 			// row is missing.
 			richer := statedMore(exchange.Signal, known.Signal)
-			thinking, tools, err := w.enrichExchange(ctx, session.ID, matched, exchange, richer,
-				preferIncomingTimestamps, preserveStoredTimestamps)
+			thinking, tools, err := w.enrichExchange(ctx, session.ID, matched, exchange, richer)
 			if err != nil {
 				return counts, err
 			}
@@ -1219,10 +1213,6 @@ func agentFamily(agent string) string {
 	return family
 }
 
-func isLocalCodexSource(agent string) bool {
-	return agent != "" && agent != "codex-cloud" && agentFamily(agent) == "codex"
-}
-
 // exchangeIdentities reads what a source that numbers its own exchanges already
 // landed, and where the next number starts.
 func (w *writer) exchangeIdentities(ctx context.Context, session parsers.Session,
@@ -1307,12 +1297,12 @@ func exchangeProvenanceValues(provenance parsers.Provenance) []any {
 	}
 }
 
-// enrichExchange reconciles a later reading of the same exchange and lets a
-// reading that stated more about the answer own its provenance. A NULL remains
-// the absence of a statement, not a zero.
+// enrichExchange fills what the row is missing from a later reading of the same
+// exchange, and lets a reading that stated more about the answer than the one the
+// row carries state its provenance instead. Even then it overwrites nothing the
+// source left unsaid: a NULL is the absence of a statement, not a zero.
 func (w *writer) enrichExchange(ctx context.Context, sessionID string, stored storedExchange,
-	exchange parsers.Exchange, richer, preferIncomingTimestamps,
-	preserveStoredTimestamps bool) (int, int, error) {
+	exchange parsers.Exchange, richer bool) (int, int, error) {
 	provenance := exchange.Provenance
 	provenanceColumns := `
 		  model = COALESCE(model, ?),
@@ -1330,34 +1320,19 @@ func (w *writer) enrichExchange(ctx context.Context, sessionID string, stored st
 		  tokens_reasoning = COALESCE(?, tokens_reasoning),
 		  cost_usd = COALESCE(?, cost_usd)`
 	}
-	timestampColumns := `
-		  human_timestamp = COALESCE(human_timestamp, ?),
-		  agent_timestamp = COALESCE(agent_timestamp, ?),
-		  response_latency_ms = COALESCE(response_latency_ms, ?),`
-	timestampValues := []any{
-		nullIfEmpty(exchange.HumanTimestamp), nullIfEmpty(exchange.AgentTimestamp),
-		nullInt(exchange.LatencyMS),
+	values := []any{
+		nullIfEmpty(exchange.AgentText), nullIfEmpty(exchange.HumanTimestamp),
+		nullIfEmpty(exchange.AgentTimestamp), nullInt(exchange.LatencyMS),
+		boolToInt(exchange.IsAfterCompaction),
 	}
-	incomingHasTimestamps := exchange.HumanTimestamp != "" || exchange.AgentTimestamp != ""
-	if preferIncomingTimestamps && incomingHasTimestamps {
-		timestampColumns = `
-		  human_timestamp = COALESCE(?, human_timestamp),
-		  agent_timestamp = COALESCE(?, agent_timestamp),
-		  response_latency_ms = ?,`
-	} else if preserveStoredTimestamps &&
-		(stored.humanTimestamp != "" || stored.agentTimestamp != "") {
-		timestampColumns = ""
-		timestampValues = nil
-	}
-	values := []any{nullIfEmpty(exchange.AgentText)}
-	values = append(values, timestampValues...)
-	values = append(values, boolToInt(exchange.IsAfterCompaction))
 	values = append(values, exchangeProvenanceValues(provenance)...)
 	values = append(values, stored.id, sessionID)
 	_, err := w.tx.ExecContext(ctx, `
 		UPDATE exchanges SET
-		  agent_text = COALESCE(agent_text, ?),`+
-		timestampColumns+`
+		  agent_text = COALESCE(agent_text, ?),
+		  human_timestamp = COALESCE(human_timestamp, ?),
+		  agent_timestamp = COALESCE(agent_timestamp, ?),
+		  response_latency_ms = COALESCE(response_latency_ms, ?),
 		  is_after_compaction = MAX(COALESCE(is_after_compaction, 0), ?),`+
 		provenanceColumns+`
 		WHERE id = ? AND session_id = ?`, values...)
