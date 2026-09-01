@@ -71,22 +71,29 @@ claude-handoff`) to delete by hand.
 
 `roca hooks install zcode` adds an opt-in, matcher-marked `SessionStart`
 handoff hook under ZCode's required nested `hooks.events.SessionStart` shape.
-The command points to `$ZCODE_HOME/hooks/roca-handoff.sh` (default
-`~/.zcode/hooks/roca-handoff.sh`), an executable wrapper that emits
+Its hook uses `type: "command"`, points `command` at the wrapper, and sets
+`timeoutMs` to 15000. The executable wrapper lives at
+`$ZCODE_HOME/hooks/roca-handoff.sh` (default
+`~/.zcode/hooks/roca-handoff.sh`) and emits
 `{"additionalContext":"..."}` JSON because ZCode discards plain-text hook
 stdout. When `hooks.enabled` is absent, install adds it as `true` and reports
-that activation. Uninstall removes that installer-owned activation only when no
-neighbouring hook commands remain; otherwise it keeps the shared setting. An
-explicit operator-owned `false` is preserved, so install writes the integration
-but returns non-zero with an "installed but inactive" error.
+that activation. Uninstall removes that activation only while the artifact
+state still proves La Roca created it, it remains `true`, the marked declaration
+is still present, and no neighbouring hook commands remain. Otherwise it keeps
+the shared setting and warns. An explicit operator-owned `false` is preserved,
+so install writes the integration but returns non-zero with an "installed but
+inactive" error.
 
 ZCode hook install deliberately rejects `--force`. A wrapper whose bytes differ
 from the registered generated wrapper is operator-owned, left untouched, and
 blocks replacement with a clear remedy. Reinstalling is idempotent. `roca hooks
-uninstall zcode` removes only the marked entry, and deletes the wrapper only
-while its artifact state and bytes still prove ownership and no remaining
-operator hook references it. Otherwise it keeps the wrapper and reports why;
-purge follows the same ownership gate rather than claiming operator changes.
+uninstall zcode` removes the marked entry only with continuous ownership proof,
+and deletes the wrapper only while its artifact state and bytes still prove
+ownership and no remaining operator hook references it. Otherwise it keeps the
+configuration or wrapper and reports why; purge follows the same ownership gate
+rather than claiming operator changes. Replacing the ZCode root retires stale
+claims and retains the operator-recreated tree.
+
 The Bash wrapper limits hook installation to macOS and Linux; ZCode skills and
 MCP remain available on their supported platforms. Neither init nor update
 installs or refreshes this integration.
