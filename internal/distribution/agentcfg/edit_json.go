@@ -253,51 +253,51 @@ func ZcodeHooksEnabled(text string) (bool, bool, error) {
 	return declared, enabled, nil
 }
 
-func ZcodeHookReferences(text string, references ...string) (bool, error) {
+func ZcodeHookCommands(text string) ([]string, error) {
 	if strings.TrimSpace(text) == "" {
-		return false, nil
+		return nil, nil
 	}
 	view, root, err := rootObject(runtime{kind: kindJSON}, text)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	events, ok, err := objectAtPath(view, root, []string{"hooks", "events"})
 	if err != nil || !ok {
-		return false, err
+		return nil, err
 	}
+	var commands []string
 	for _, event := range events.members {
 		entries, err := arrayAt(view, event.valueStart)
 		if err != nil {
-			return false, fmt.Errorf("%s must be an array: %w", event.key, err)
+			return nil, fmt.Errorf("%s must be an array: %w", event.key, err)
 		}
 		for _, entry := range entries.values {
 			group, err := objectAt(view, entry.start)
 			if err != nil {
-				continue
+				return nil, err
 			}
 			hooksIndex := group.find("hooks")
 			if hooksIndex < 0 {
-				continue
+				return nil, fmt.Errorf("%s hook group has no hooks array", event.key)
 			}
 			hooks, err := arrayAt(view, group.members[hooksIndex].valueStart)
 			if err != nil {
-				continue
+				return nil, err
 			}
 			for _, candidate := range hooks.values {
 				hook, err := objectAt(view, candidate.start)
 				if err != nil {
-					continue
+					return nil, err
 				}
 				command := jsonStringMember(view, hook, "command")
-				for _, reference := range references {
-					if reference != "" && strings.Contains(command, reference) {
-						return true, nil
-					}
+				if command == "" {
+					return nil, fmt.Errorf("%s hook has no command", event.key)
 				}
+				commands = append(commands, command)
 			}
 		}
 	}
-	return false, nil
+	return commands, nil
 }
 
 func RemoveZcodeSessionStartHook(text, marker string) (string, error) {

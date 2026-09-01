@@ -669,10 +669,16 @@ func uninstallZcodeHandoffHook(configPath, wrapperPath string) (agentcfg.Outcome
 			warning = fmt.Sprintf("warning: %s is not readable as zcode settings; remove the nested hooks.events.SessionStart entry whose matcher is %q and command is %s by hand", configPath, zcodeSessionStartMarker, command)
 			return previous, nil
 		}
-		referenced, referenceErr := agentcfg.ZcodeHookReferences(next, wrapperPath, shellQuote(wrapperPath))
+		commands, commandsErr := agentcfg.ZcodeHookCommands(next)
+		if commandsErr != nil {
+			keepWrapper = true
+			warning = fmt.Sprintf("warning: could not verify remaining ZCode hooks in %s: %v", configPath, commandsErr)
+			return next, nil
+		}
+		referenced, referenceErr := zcodeHookCommandsReferenceWrapper(commands, wrapperPath)
 		if referenceErr != nil {
 			keepWrapper = true
-			warning = fmt.Sprintf("warning: could not verify remaining ZCode hooks in %s: %v", configPath, referenceErr)
+			warning = fmt.Sprintf("warning: could not compare remaining ZCode hook paths in %s: %v", configPath, referenceErr)
 			return next, nil
 		}
 		keepWrapper = referenced
@@ -714,7 +720,7 @@ func readZcodeWrapperState(path string) (zcodeWrapperState, error) {
 	if err != nil {
 		return zcodeWrapperState{}, fmt.Errorf("stat %s: %w", path, err)
 	}
-	return zcodeWrapperState{body: body, mode: info.Mode().Perm(), exists: true}, nil
+	return zcodeWrapperState{body: body, mode: info.Mode(), exists: true}, nil
 }
 
 func restoreZcodeWrapper(path string, state zcodeWrapperState, installed []byte) error {
@@ -767,7 +773,7 @@ fi
 
 func writeZcodeWrapper(path, content string, state zcodeWrapperState) error {
 	if state.exists {
-		if string(state.body) == content && state.mode&0o100 != 0 {
+		if string(state.body) == content && state.mode == 0o700 {
 			return nil
 		}
 		if err := securefile.Replace(path, []byte(content), state.body); err != nil {
