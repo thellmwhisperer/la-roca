@@ -322,24 +322,48 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 			removeRecoveryBackups(report, settings)
 		}
 	}
-	if settings, err := hookConfigPath(agentcfg.RuntimeZcode); err != nil {
-		failed(report, "%s", err)
-	} else if wrapper, err := zcodeHookWrapperPath(); err != nil {
+	type zcodeHookTarget struct{ settings, wrapper string }
+	var zcodeHookTargets []zcodeHookTarget
+	seenZcodeWrappers := map[string]bool{}
+	addZcodeHookTarget := func(wrapper string) {
+		if seenZcodeWrappers[wrapper] {
+			return
+		}
+		settings, err := zcodeHookConfigForWrapper(wrapper)
+		if err != nil {
+			failed(report, "%s", err)
+			return
+		}
+		seenZcodeWrappers[wrapper] = true
+		zcodeHookTargets = append(zcodeHookTargets, zcodeHookTarget{settings: settings, wrapper: wrapper})
+	}
+	if wrapper, err := zcodeHookWrapperPath(); err != nil {
 		failed(report, "%s", err)
 	} else {
+		addZcodeHookTarget(wrapper)
+	}
+	if registryErr == nil {
+		for _, entry := range registry.Entries {
+			if entry.Kind == artifactKindHook && entry.Runtime == agentcfg.RuntimeZcode {
+				addZcodeHookTarget(entry.Path)
+			}
+		}
+	}
+	for _, target := range zcodeHookTargets {
 		var outcome agentcfg.Outcome
 		var warning string
+		var err error
 		if registryErr != nil {
 			err = fmt.Errorf("ownership registry unavailable")
 		} else {
-			outcome, warning, err = env.uninstallManagedZcodeHandoffHook(settings, wrapper)
+			outcome, warning, err = env.uninstallManagedZcodeHandoffHook(target.settings, target.wrapper)
 		}
 		if warning != "" {
 			fmt.Fprintln(env.errOut, warning)
 		}
-		withdrawn("the ZCode handoff hook from "+settings, outcome, err)
+		withdrawn("the ZCode handoff hook from "+target.settings, outcome, err)
 		if purge {
-			removeRecoveryBackups(report, settings)
+			removeRecoveryBackups(report, target.settings)
 		}
 	}
 
@@ -348,6 +372,8 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 		failed(report, "home: %v", err)
 		return outcomes
 	}
+	processedSkillPaths := map[string]bool{}
+	removedSkillState := map[string]artifact.Entry{}
 	for _, runtime := range skill.Runtimes() {
 		// Each embedded skill falls back to this build's own bytes when no
 		// registry entry names them. The generated catalog has no shipped bytes,
@@ -376,14 +402,19 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 			kind, path, fallback string
 		}{artifactKindSkillCatalog, catalogPath, ""})
 		for _, file := range withdrawals {
+			processedSkillPaths[file.kind+"\x00"+runtime+"\x00"+file.path] = true
 			checksum := file.fallback
-			if entry, found := registry.Find(file.kind, runtime, file.path); found {
-				checksum = entry.SystemSHA256
+			registeredEntry, registered := registry.Find(file.kind, runtime, file.path)
+			if registered {
+				checksum = registeredEntry.SystemSHA256
 			}
 			outcome, err := skill.UninstallWithChecksum(runtime, file.path, checksum)
 			if err != nil {
 				failed(report, "withdraw skill from %s: %v", runtime, err)
 				continue
+			}
+			if registered {
+				removedSkillState[registeredEntry.Key()] = registeredEntry
 			}
 			if outcome.Changed {
 				report.Deleted = append(report.Deleted, outcome.Removed...)
@@ -398,16 +429,38 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 			nameSurvivingBackups(report, file.path)
 		}
 	}
+	if registryErr == nil {
+		for _, entry := range registry.Entries {
+			key := entry.Kind + "\x00" + entry.Runtime + "\x00" + entry.Path
+			if entry.Runtime != agentcfg.RuntimeZcode || processedSkillPaths[key] ||
+				(entry.Kind != artifactKindSkill && entry.Kind != artifactKindSkillCatalog) {
+				continue
+			}
+			processedSkillPaths[key] = true
+			outcome, err := skill.UninstallWithChecksum(entry.Runtime, entry.Path, entry.SystemSHA256)
+			if err != nil {
+				failed(report, "withdraw skill from %s at %s: %v", entry.Runtime, entry.Path, err)
+				continue
+			}
+			removedSkillState[entry.Key()] = entry
+			if outcome.Changed {
+				report.Deleted = append(report.Deleted, outcome.Removed...)
+			}
+			if purge {
+				removeRecoveryBackups(report, entry.Path, outcome.Backup)
+				removeHollowSkillDirs(report, entry.Path)
+			}
+			nameSurvivingBackups(report, entry.Path)
+		}
+	}
 	if registryErr == nil && registryExists {
 		removable := map[string]artifact.Entry{}
+		for key, entry := range removedSkillState {
+			removable[key] = entry
+		}
 		for _, entry := range registry.Entries {
-			switch entry.Kind {
-			case artifactKindSkill, artifactKindSkillCatalog:
+			if entry.Kind == artifactKindHook && entry.Runtime != agentcfg.RuntimeZcode {
 				removable[entry.Key()] = entry
-			case artifactKindHook:
-				if entry.Runtime != agentcfg.RuntimeZcode {
-					removable[entry.Key()] = entry
-				}
 			}
 		}
 		_, err := mutateArtifactRegistry(registryPath, func(current *artifact.Registry) (bool, error) {
@@ -548,7 +601,7 @@ func ownedPaths(paths config.Paths) []string {
 	}
 	managed, err := artifact.OwnedPaths(paths.Artifacts)
 	if err != nil {
-		managed = []string{paths.Artifacts, paths.Artifacts + ".lock", paths.Artifacts + ".mcp.lock"}
+		managed = []string{paths.Artifacts, paths.Artifacts + ".lock", paths.Artifacts + ".mcp.lock", paths.Artifacts + ".hooks.lock"}
 	}
 	for _, path := range managed {
 		if !slices.Contains(owned, path) {
