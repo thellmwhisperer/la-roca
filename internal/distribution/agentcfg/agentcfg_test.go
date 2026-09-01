@@ -187,7 +187,8 @@ func TestZcodeUsesTheNestedMCPServersShape(t *testing.T) {
 func TestZcodeHookRoundTripPreservesEmptySessionStartWhitespace(t *testing.T) {
 	before := "{\n  \"neighbor\": 9007199254740993,\n  \"hooks\": {\n    \"events\": {\n      \"SessionStart\": [\n        \n      ]\n    }\n  }\n}\n"
 	command := "/home/operator/.zcode/hooks/roca-handoff.sh"
-	installed, err := agentcfg.DeclareZcodeSessionStartHook(before, command, 15000)
+	marker := "^(?:.*|roca_session_start_marker)$"
+	installed, err := agentcfg.DeclareZcodeSessionStartHook(before, marker, command, 15000)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +196,7 @@ func TestZcodeHookRoundTripPreservesEmptySessionStartWhitespace(t *testing.T) {
 	if err := json.Unmarshal([]byte(installed), &document); err != nil {
 		t.Fatalf("installed hook config is invalid JSON: %v", err)
 	}
-	withdrawn, err := agentcfg.RemoveZcodeSessionStartHook(installed, command)
+	withdrawn, err := agentcfg.RemoveZcodeSessionStartHook(installed, marker)
 	if err != nil {
 		t.Fatal(err)
 	}
