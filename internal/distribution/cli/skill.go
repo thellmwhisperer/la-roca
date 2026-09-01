@@ -552,7 +552,11 @@ func hooksRunCommand(env *cliEnv) *cobra.Command {
 		Args:   cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			switch args[0] {
-			case "claude":
+			case agentcfg.RuntimeZcode:
+				return env.printJSON(map[string]string{
+					"additionalContext": zcodeHandoffContext(cmd.Context(), env),
+				})
+			case agentcfg.RuntimeClaude:
 				input, err := io.ReadAll(cmd.InOrStdin())
 				if err != nil {
 					return fmt.Errorf("read Claude hook input: %w", err)
@@ -624,14 +628,15 @@ func installZcodeHandoffHook(configPath, wrapperPath, executable string) (agentc
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
-	if err := writeZcodeWrapper(wrapperPath, zcodeWrapper(executable)); err != nil {
+	wrapper := zcodeWrapper(executable)
+	if err := writeZcodeWrapper(wrapperPath, wrapper); err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
 	outcome, err := agentcfg.Edit(agentcfg.RuntimeZcode, configPath, func(previous string) (string, error) {
 		return agentcfg.DeclareZcodeSessionStartHook(previous, wrapperPath, 15000)
 	}, true)
 	if err != nil {
-		if restoreErr := restoreZcodeWrapper(wrapperPath, state); restoreErr != nil {
+		if restoreErr := restoreZcodeWrapper(wrapperPath, state, []byte(wrapper)); restoreErr != nil {
 			err = errors.Join(err, restoreErr)
 		}
 	}
@@ -678,21 +683,34 @@ func readZcodeWrapperState(path string) (zcodeWrapperState, error) {
 	return zcodeWrapperState{body: body, mode: info.Mode().Perm(), exists: true}, nil
 }
 
-func restoreZcodeWrapper(path string, state zcodeWrapperState) error {
+func restoreZcodeWrapper(path string, state zcodeWrapperState, installed []byte) error {
 	if !state.exists {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		if err := securefile.Remove(path, installed); err != nil {
 			return fmt.Errorf("roll back %s: %w", path, err)
 		}
 		return nil
 	}
-	current, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("read %s for rollback: %w", path, err)
-	}
-	if err := securefile.Replace(path, state.body, current); err != nil {
+	if err := securefile.Replace(path, state.body, installed); err != nil {
 		return fmt.Errorf("roll back %s: %w", path, err)
 	}
 	return os.Chmod(path, state.mode)
+}
+
+func zcodeHandoffContext(ctx context.Context, env *cliEnv) string {
+	svc, _, err := env.openService()
+	if err != nil {
+		return ""
+	}
+	defer svc.Close()
+	result, err := svc.Exec(ctx, service.ExecRequest{
+		SQL:      "SELECT content FROM plugin_roca_ops.memories WHERE layer='handoff' AND status='active' ORDER BY created_at DESC LIMIT 1",
+		MaxChars: 8000,
+	})
+	if err != nil || len(result.Rows) == 0 {
+		return ""
+	}
+	content, _ := result.Rows[0]["content"].(string)
+	return content
 }
 
 func zcodeWrapper(executable string) string {
@@ -700,14 +718,9 @@ func zcodeWrapper(executable string) string {
 # Managed by roca hooks install zcode.
 set -euo pipefail
 
-CONTENT=$(` + shellQuote(executable) + ` exec "SELECT content FROM plugin_roca_ops.memories WHERE layer='handoff' AND status='active' ORDER BY created_at DESC LIMIT 1" --max-chars 8000 --json 2>/dev/null \
-  | /usr/bin/python3 -c 'import json,sys
-d = json.load(sys.stdin)
-rows = d.get("rows") or []
-sys.stdout.write(rows[0]["content"] if rows else "")' 2>/dev/null || true)
-
-printf '%s' "$CONTENT" | /usr/bin/python3 -c 'import json,sys
-sys.stdout.write(json.dumps({"additionalContext": sys.stdin.read()}))'
+if ! ` + shellQuote(executable) + ` hooks run zcode 2>/dev/null; then
+  printf '{"additionalContext":""}\n'
+fi
 `
 }
 
