@@ -1214,6 +1214,7 @@ func resolveProjects(ctx context.Context, opts Options, target Target, records *
 		session := &records.Sessions[i]
 		if target.Kind == parsers.KindClaudeWebConversations ||
 			target.Kind == parsers.KindChatGPTWebConversations ||
+			target.Kind == parsers.KindChatGPTCodex ||
 			target.Kind == parsers.KindClaudeWebProjects ||
 			target.Kind == parsers.KindClaudeWebDesignChats ||
 			target.Kind == parsers.KindClaudeWebMemories {

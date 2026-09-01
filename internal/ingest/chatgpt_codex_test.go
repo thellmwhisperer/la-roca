@@ -35,12 +35,12 @@ func TestDeclaredChatGPTExportIngestsCodexJSONUnderADistinctSource(t *testing.T)
 	if result.Sources["codex-cloud"].Sessions != 1 || result.Sources["codex-cloud"].Exchanges != 1 {
 		t.Fatalf("codex-cloud counts = %+v", result.Sources["codex-cloud"])
 	}
-	var agent, surface, title, model, provider string
+	var agent, surface, title, model, provider, project string
 	if err := db.SQL().QueryRow(`SELECT source_agent, COALESCE(source_surface, ''), title,
-		COALESCE(e.model, ''), COALESCE(e.provider, '')
+		COALESCE(e.model, ''), COALESCE(e.provider, ''), COALESCE(s.project, '')
 		FROM sessions s JOIN exchanges e ON e.session_id = s.session_id
 		WHERE s.session_id = ?`, "60000000-0000-4000-8000-000000000001").
-		Scan(&agent, &surface, &title, &model, &provider); err != nil {
+		Scan(&agent, &surface, &title, &model, &provider, &project); err != nil {
 		t.Fatal(err)
 	}
 	if agent != "codex-cloud" || surface != "Codex CLI" || title != "Synthetic cloud Codex hatch" {
@@ -48,6 +48,9 @@ func TestDeclaredChatGPTExportIngestsCodexJSONUnderADistinctSource(t *testing.T)
 	}
 	if model != "" || provider != "" {
 		t.Fatalf("invented provenance = %q/%q", model, provider)
+	}
+	if project != "" {
+		t.Fatalf("project inferred from export directory = %q", project)
 	}
 }
 
