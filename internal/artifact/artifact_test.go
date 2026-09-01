@@ -124,7 +124,7 @@ func TestRegistryIsVersionedAndFeedsSafeOwnedPaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{skillPath, registryPath, registryPath + ".lock", registryPath + ".mcp.lock", registryPath + ".hooks.lock"} {
+	for _, path := range []string{skillPath, registryPath, registryPath + ".lock", registryPath + ".mcp.lock", registryPath + ".hooks.lock", registryPath + ".zcode.lock"} {
 		if !slices.Contains(owned, path) {
 			t.Fatalf("owned paths do not include %s: %v", path, owned)
 		}

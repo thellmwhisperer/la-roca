@@ -262,6 +262,14 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 		}
 	}
 
+	purgedMCPPaths := map[string]bool{}
+	purgedHookPaths := map[string]bool{}
+	if purge && registryErr == nil {
+		var zcodeOutcomes []agentcfg.Outcome
+		zcodeOutcomes, purgedMCPPaths, purgedHookPaths = env.purgeRegisteredZcodeIntegrations(report, registry)
+		outcomes = append(outcomes, zcodeOutcomes...)
+	}
+
 	processedMCPPaths := map[string]bool{}
 	withdrawMCP := func(runtime, path string) (agentcfg.Outcome, error) {
 		if runtime != agentcfg.RuntimeZcode {
@@ -285,7 +293,11 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 			failed(report, "%s", err)
 			continue
 		}
-		processedMCPPaths[runtime+"\x00"+path] = true
+		key := runtime + "\x00" + path
+		processedMCPPaths[key] = true
+		if purgedMCPPaths[key] {
+			continue
+		}
 		outcome, err := withdrawMCP(runtime, path)
 		withdrawn("roca from "+runtime, outcome, err)
 		if purge {
@@ -296,7 +308,7 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 		for _, entry := range registry.Entries {
 			key := entry.Runtime + "\x00" + entry.Path
 			if entry.Kind != artifactKindMCP || entry.Runtime != agentcfg.RuntimeZcode ||
-				processedMCPPaths[key] {
+				processedMCPPaths[key] || purgedMCPPaths[key] {
 				continue
 			}
 			processedMCPPaths[key] = true
@@ -366,7 +378,7 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 	}
 	if registryErr == nil {
 		for _, entry := range registry.Entries {
-			if entry.Kind == artifactKindHook && entry.Runtime == agentcfg.RuntimeZcode {
+			if entry.Kind == artifactKindHook && entry.Runtime == agentcfg.RuntimeZcode && !purgedHookPaths[entry.Path] {
 				addZcodeHookTarget(entry.Path, entry, true)
 			}
 		}
@@ -515,29 +527,163 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 	return outcomes
 }
 
-func cleanupCreatedZcodeMCPPaths(entry artifact.Entry, configPath string) error {
+type zcodePurgeGroup struct {
+	config string
+	mcp    []artifact.Entry
+	hooks  []artifact.Entry
+}
+
+func (env *cliEnv) purgeRegisteredZcodeIntegrations(report *lifecycle.Report, registry artifact.Registry) ([]agentcfg.Outcome, map[string]bool, map[string]bool) {
+	groups := map[string]*zcodePurgeGroup{}
+	mcpPaths := map[string]bool{}
+	hookPaths := map[string]bool{}
+	groupFor := func(config string) *zcodePurgeGroup {
+		group := groups[config]
+		if group == nil {
+			group = &zcodePurgeGroup{config: config}
+			groups[config] = group
+		}
+		return group
+	}
+	for _, entry := range registry.Entries {
+		if entry.Runtime != agentcfg.RuntimeZcode {
+			continue
+		}
+		switch entry.Kind {
+		case artifactKindMCP:
+			groupFor(entry.Path).mcp = append(groupFor(entry.Path).mcp, entry)
+			mcpPaths[entry.Runtime+"\x00"+entry.Path] = true
+		case artifactKindHook:
+			config, err := zcodeHookConfigForWrapper(entry.Path)
+			if err != nil {
+				failed(report, "%s", err)
+				continue
+			}
+			groupFor(config).hooks = append(groupFor(config).hooks, entry)
+			hookPaths[entry.Path] = true
+		}
+	}
+	configs := make([]string, 0, len(groups))
+	for config := range groups {
+		configs = append(configs, config)
+	}
+	slices.Sort(configs)
+	var outcomes []agentcfg.Outcome
+	for _, config := range configs {
+		group := groups[config]
+		stableRelease, err := env.lockManagedZcodeLifecycle()
+		if err != nil {
+			failed(report, "lock ZCode lifecycle for %s: %v", config, err)
+			continue
+		}
+		groupErr := func() (err error) {
+			defer func() { err = errors.Join(err, stableRelease()) }()
+			aggregate := artifact.Entry{}
+			wrappers := make([]string, 0, len(group.hooks))
+			for _, entry := range group.hooks {
+				expected, expectedErr := zcodeWrapperExpectedFromEntry(entry)
+				if expectedErr != nil {
+					return expectedErr
+				}
+				outcome, warning, uninstallErr := uninstallZcodeHandoffHookUnlocked(
+					config, entry.Path, expected, entry.CreatedHooksEnabled)
+				if warning != "" {
+					fmt.Fprintln(env.errOut, warning)
+				}
+				if uninstallErr != nil {
+					return fmt.Errorf("withdraw the ZCode handoff hook from %s: %w", config, uninstallErr)
+				}
+				if outcome.Changed {
+					outcomes = append(outcomes, outcome)
+				}
+				removeRecoveryBackups(report, config)
+				aggregateZcodeProvenance(&aggregate, entry)
+				wrappers = append(wrappers, entry.Path)
+			}
+			for _, entry := range group.mcp {
+				preimage, preimageErr := zcodeMCPPreimageFromEntry(entry)
+				if preimageErr != nil {
+					return preimageErr
+				}
+				outcome, uninstallErr := agentcfg.UninstallZcodeMCP(config, preimage)
+				if uninstallErr != nil {
+					return fmt.Errorf("withdraw roca from zcode at %s: %w", config, uninstallErr)
+				}
+				if outcome.Changed {
+					outcomes = append(outcomes, outcome)
+				}
+				removeRecoveryBackups(report, config)
+				aggregateZcodeProvenance(&aggregate, entry)
+			}
+			if err := cleanupCreatedZcodePaths(aggregate, config, wrappers); err != nil {
+				return err
+			}
+			for _, entry := range append(append([]artifact.Entry{}, group.hooks...), group.mcp...) {
+				if err := env.unregisterArtifactEntry(entry); err != nil {
+					return err
+				}
+			}
+			return nil
+		}()
+		if groupErr != nil {
+			failed(report, "purge ZCode integrations at %s: %v", config, groupErr)
+		}
+	}
+	return outcomes, mcpPaths, hookPaths
+}
+
+func aggregateZcodeProvenance(target *artifact.Entry, entry artifact.Entry) {
+	target.CreatedRoot = target.CreatedRoot || entry.CreatedRoot
+	target.CreatedConfigDir = target.CreatedConfigDir || entry.CreatedConfigDir
+	target.CreatedHooksDir = target.CreatedHooksDir || entry.CreatedHooksDir
+	target.CreatedConfig = target.CreatedConfig || entry.CreatedConfig
+	target.CreatedLock = target.CreatedLock || entry.CreatedLock
+}
+
+func cleanupCreatedZcodePaths(entry artifact.Entry, configPath string, wrappers []string) error {
 	configDir := filepath.Dir(configPath)
 	root := filepath.Dir(configDir)
+	var cleanupErr error
 	if entry.CreatedConfig {
 		retained, err := removeEmptyZcodeConfig(configPath)
-		if err != nil {
-			return err
-		}
-		if retained {
-			return fmt.Errorf("operator configuration remains in proven-created ZCode config %s", configPath)
+		cleanupErr = errors.Join(cleanupErr, err)
+		if retained && err == nil {
+			cleanupErr = errors.Join(cleanupErr,
+				fmt.Errorf("operator configuration remains in proven-created ZCode config %s", configPath))
 		}
 	} else if body, err := os.ReadFile(configPath); err == nil && strings.TrimSpace(string(body)) == "{}" {
-		return fmt.Errorf("unproven ZCode artifact remains at %s", configPath)
+		cleanupErr = errors.Join(cleanupErr, fmt.Errorf("unproven ZCode artifact remains at %s", configPath))
 	} else if err != nil && !os.IsNotExist(err) {
-		return err
+		cleanupErr = errors.Join(cleanupErr, err)
 	}
-	for _, directory := range []struct {
+	if entry.CreatedLock || len(wrappers) > 0 {
+		lockPath := filepath.Join(root, ".roca-hooks.lock")
+		if entry.CreatedLock {
+			if err := os.Remove(lockPath); err != nil && !os.IsNotExist(err) {
+				cleanupErr = errors.Join(cleanupErr, err)
+			}
+		} else if _, err := os.Lstat(lockPath); err == nil {
+			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("unproven ZCode artifact remains at %s", lockPath))
+		} else if !os.IsNotExist(err) {
+			cleanupErr = errors.Join(cleanupErr, err)
+		}
+	}
+	directories := []struct {
 		path    string
 		created bool
-	}{
-		{configDir, entry.CreatedConfigDir},
-		{root, entry.CreatedRoot},
-	} {
+	}{{configDir, entry.CreatedConfigDir}, {root, entry.CreatedRoot}}
+	seen := map[string]bool{}
+	for _, wrapper := range wrappers {
+		directory := filepath.Dir(wrapper)
+		if !seen[directory] {
+			directories = append([]struct {
+				path    string
+				created bool
+			}{{directory, entry.CreatedHooksDir}}, directories...)
+			seen[directory] = true
+		}
+	}
+	for _, directory := range directories {
 		if !directory.created {
 			continue
 		}
@@ -545,10 +691,14 @@ func cleanupCreatedZcodeMCPPaths(entry artifact.Entry, configPath string) error 
 			if entries, readErr := os.ReadDir(directory.path); readErr == nil && len(entries) > 0 {
 				continue
 			}
-			return err
+			cleanupErr = errors.Join(cleanupErr, err)
 		}
 	}
-	return nil
+	return cleanupErr
+}
+
+func cleanupCreatedZcodeMCPPaths(entry artifact.Entry, configPath string) error {
+	return cleanupCreatedZcodePaths(entry, configPath, nil)
 }
 
 func rollbackCreatedZcodeMCPPaths(preimage zcodeMCPPathState, configPath string) error {
@@ -581,41 +731,7 @@ func rollbackCreatedZcodeMCPPaths(preimage zcodeMCPPathState, configPath string)
 }
 
 func cleanupCreatedZcodeHookPaths(entry artifact.Entry, configPath, wrapperPath string) error {
-	root := filepath.Dir(filepath.Dir(wrapperPath))
-	if entry.CreatedConfig {
-		if _, err := removeEmptyZcodeConfig(configPath); err != nil {
-			return err
-		}
-	}
-	lockPath := filepath.Join(root, ".roca-hooks.lock")
-	if entry.CreatedLock {
-		if err := os.Remove(lockPath); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-	} else if _, err := os.Lstat(lockPath); err == nil {
-		return fmt.Errorf("unproven ZCode artifact remains at %s", lockPath)
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-	for _, directory := range []struct {
-		path    string
-		created bool
-	}{
-		{filepath.Dir(wrapperPath), entry.CreatedHooksDir},
-		{filepath.Dir(configPath), entry.CreatedConfigDir},
-		{root, entry.CreatedRoot},
-	} {
-		if !directory.created {
-			continue
-		}
-		if err := os.Remove(directory.path); err != nil && !os.IsNotExist(err) {
-			if entries, readErr := os.ReadDir(directory.path); readErr == nil && len(entries) > 0 {
-				continue
-			}
-			return err
-		}
-	}
-	return nil
+	return cleanupCreatedZcodePaths(entry, configPath, []string{wrapperPath})
 }
 
 func rollbackCreatedZcodeHookPaths(preimage zcodeHookPathState, configPath, wrapperPath string) error {
@@ -829,7 +945,7 @@ func ownedPaths(paths config.Paths) []string {
 	}
 	managed, err := artifact.OwnedPaths(paths.Artifacts)
 	if err != nil {
-		managed = []string{paths.Artifacts, paths.Artifacts + ".lock", paths.Artifacts + ".mcp.lock", paths.Artifacts + ".hooks.lock"}
+		managed = []string{paths.Artifacts, paths.Artifacts + ".lock", paths.Artifacts + ".mcp.lock", paths.Artifacts + ".hooks.lock", paths.Artifacts + ".zcode.lock"}
 	}
 	for _, path := range managed {
 		if !slices.Contains(owned, path) {

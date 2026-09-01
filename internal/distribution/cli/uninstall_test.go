@@ -224,7 +224,7 @@ func TestPurgeReconciliationKeepsTheOriginalReasonForAPath(t *testing.T) {
 func TestPurgeRemovesArtifactRegistryLocks(t *testing.T) {
 	home := t.TempDir()
 	paths := resolvedIn(t, home)
-	locks := []string{paths.Artifacts + ".lock", paths.Artifacts + ".mcp.lock", paths.Artifacts + ".hooks.lock"}
+	locks := []string{paths.Artifacts + ".lock", paths.Artifacts + ".mcp.lock", paths.Artifacts + ".hooks.lock", paths.Artifacts + ".zcode.lock"}
 	for _, path := range locks {
 		writeFile(t, path, "")
 	}

@@ -141,9 +141,10 @@ surgical text-range edits and not a parse-and-reserialize round trip, which is
 easy and eats comments. ZCode records the parent-container preimage in La
 Roca's artifact state, never in the runtime entry, so withdrawal removes only
 containers that installation created rather than inferring ownership from an
-empty object. It is measured
-the only way that is not a matter of opinion: installing and then withdrawing gives back the exact previous bytes
-(`internal/distribution/agentcfg/agentcfg_test.go`, five runtimes).
+empty object. Claude and Claude Desktop do not yet record that container
+preimage: withdrawal may remove a pre-existing empty `mcpServers` map. Exact
+empty-container restoration for those runtimes remains follow-up ownership
+work. Other neighboring configuration remains untouched.
 
 Two more things the shared spine gives every edit: the previous bytes are backed
 up first (`<file>.roca.bak`, and an earlier copy is never overwritten), and a file

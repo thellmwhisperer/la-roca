@@ -818,17 +818,6 @@ func zcodeWrapperExpectedFromEntry(entry artifact.Entry) ([]byte, error) {
 	return expected, nil
 }
 
-func (env *cliEnv) lockManagedZcodeHookLifecycle() (func() error, error) {
-	paths, err := env.resolvePaths()
-	if err != nil {
-		return nil, err
-	}
-	if err := os.MkdirAll(filepath.Dir(paths.Artifacts), 0o700); err != nil {
-		return nil, err
-	}
-	return securefile.Lock(paths.Artifacts + ".hooks.lock")
-}
-
 func (env *cliEnv) installManagedZcodeHandoffHook(configPath, wrapperPath, executable string) (outcome agentcfg.Outcome, warning string, err error) {
 	configPath, err = filepath.Abs(configPath)
 	if err != nil {
@@ -838,7 +827,7 @@ func (env *cliEnv) installManagedZcodeHandoffHook(configPath, wrapperPath, execu
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
-	stableRelease, err := env.lockManagedZcodeHookLifecycle()
+	stableRelease, err := env.lockManagedZcodeLifecycle()
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
@@ -889,7 +878,7 @@ func (env *cliEnv) installManagedZcodeHandoffHook(configPath, wrapperPath, execu
 		err = fmt.Errorf("ZCode hook installed but inactive in %s; set hooks.enabled to true to enable SessionStart", configPath)
 		warning = ""
 	} else if err == nil && pathPreimage.createdHooksEnabled {
-		warning = fmt.Sprintf("set hooks.enabled to true in %s", configPath)
+		warning = fmt.Sprintf("enabled ZCode hooks by adding hooks.enabled: true in %s", configPath)
 	}
 	return outcome, warning, err
 }
@@ -903,7 +892,7 @@ func (env *cliEnv) uninstallManagedZcodeHandoffHook(configPath, wrapperPath stri
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
-	stableRelease, err := env.lockManagedZcodeHookLifecycle()
+	stableRelease, err := env.lockManagedZcodeLifecycle()
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
@@ -1020,25 +1009,27 @@ func uninstallZcodeHandoffHookUnlocked(configPath, wrapperPath string, expected 
 	keepWrapper := false
 	command := zcodeOwnedHookCommand(wrapperPath)
 	outcome, err := agentcfg.Edit(agentcfg.RuntimeZcode, configPath, func(previous string) (string, error) {
-		next := previous
-		var editErr error
-		if len(removeEnabled) > 0 && removeEnabled[0] {
-			next, editErr = agentcfg.RemoveCreatedZcodeHooksEnabled(next)
-			if editErr != nil {
-				return previous, editErr
-			}
-		}
-		next, editErr = agentcfg.RemoveZcodeSessionStartHook(next, zcodeSessionStartMarker)
+		withoutManaged, editErr := agentcfg.RemoveZcodeSessionStartHook(previous, zcodeSessionStartMarker)
 		if editErr != nil {
 			keepWrapper = true
 			warning = fmt.Sprintf("warning: %s is not readable as zcode settings; remove the nested hooks.events.SessionStart entry carrying La Roca marker %q and command %s by hand", configPath, zcodeSessionStartMarker, command)
 			return previous, nil
 		}
-		commands, commandsErr := agentcfg.ZcodeHookCommands(next)
+		commands, commandsErr := agentcfg.ZcodeHookCommands(withoutManaged)
 		if commandsErr != nil {
 			keepWrapper = true
 			warning = fmt.Sprintf("warning: could not verify remaining ZCode hooks in %s: %v", configPath, commandsErr)
-			return next, nil
+			return withoutManaged, nil
+		}
+		next := withoutManaged
+		if len(removeEnabled) > 0 && removeEnabled[0] && len(commands) == 0 {
+			next, editErr = agentcfg.RemoveCreatedZcodeHooksEnabled(previous)
+			if editErr == nil {
+				next, editErr = agentcfg.RemoveZcodeSessionStartHook(next, zcodeSessionStartMarker)
+			}
+		}
+		if editErr != nil {
+			return previous, editErr
 		}
 		referenced, referenceErr := zcodeHookCommandsReferenceWrapper(commands, wrapperPath)
 		if referenceErr != nil {

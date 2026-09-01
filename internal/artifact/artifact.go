@@ -324,7 +324,7 @@ func OwnedPaths(registryPath string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	owned := []string{registryPath, registryPath + ".lock", registryPath + ".mcp.lock", registryPath + ".hooks.lock"}
+	owned := []string{registryPath, registryPath + ".lock", registryPath + ".mcp.lock", registryPath + ".hooks.lock", registryPath + ".zcode.lock"}
 	for _, entry := range registry.Entries {
 		if entry.Kind == "hook" {
 			continue

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/artifact"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/agentcfg"
@@ -207,6 +208,49 @@ func TestFullUninstallSkipsZcodeMCPWhenOwnershipStateIsUnreadable(t *testing.T) 
 	}
 	if string(after) != string(before) {
 		t.Fatalf("ZCode MCP changed without ownership state:\nwant %s\n got %s", before, after)
+	}
+}
+
+func TestZcodeMCPAndHooksShareLifecycleLock(t *testing.T) {
+	home := skillTestHome(t)
+	env := &cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}}
+	config := filepath.Join(home, ".zcode", "cli", "config.json")
+	wrapper := filepath.Join(home, ".zcode", "hooks", "roca-handoff.sh")
+	if err := os.MkdirAll(filepath.Dir(config), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	release, err := env.lockManagedZcodeLifecycle()
+	if err != nil {
+		t.Fatal(err)
+	}
+	results := make(chan error, 2)
+	go func() {
+		_, installErr := env.installZcodeMCP(config, filepath.Join(home, "roca"))
+		results <- installErr
+	}()
+	go func() {
+		_, _, installErr := env.installManagedZcodeHandoffHook(config, wrapper, filepath.Join(home, "roca"))
+		results <- installErr
+	}()
+	select {
+	case err := <-results:
+		t.Fatalf("ZCode edit bypassed shared lifecycle lock: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	if err := release(); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := <-results; err != nil {
+			t.Fatal(err)
+		}
+	}
+	configured, err := agentcfg.ZcodeMCPMatches(config, filepath.Join(home, "roca"))
+	if err != nil || !configured || !zcodeManagedHookPresent(config) {
+		t.Fatalf("serialized integrations missing: mcp=%v hook=%v err=%v", configured, zcodeManagedHookPresent(config), err)
 	}
 }
 
