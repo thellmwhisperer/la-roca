@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -18,6 +17,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/agentcfg"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/lifecycle"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
+	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
 func executeZcodeTestCLI(args ...string) error {
@@ -196,13 +196,19 @@ func TestZcodeHookInstallerWritesNestedSessionStartAndJSONWrapper(t *testing.T) 
 	if err := os.MkdirAll(filepath.Dir(binary), 0o700); err != nil {
 		t.Fatal(err)
 	}
+	handoffJSON := `{"project":"demo","handoffs":[{"content":"synthetic handoff"}]}`
 	fake := `#!/bin/sh
+if [ "$1 $2 $3" = "handoff latest --json" ]; then
+  printf '%s\n' '` + handoffJSON + `'
+  exit 0
+fi
 if [ "$1 $2 $3" = "hooks run zcode" ]; then
-  printf '%s\n' '{"additionalContext":"synthetic handoff"}'
+  [ "$(cat)" = '` + handoffJSON + `' ] || exit 1
+  printf '%s\n' '{"additionalContext":"{\"project\":\"demo\",\"handoffs\":[{\"content\":\"synthetic handoff\"}]}"}'
   exit 0
 fi
 if [ "$1 $2" = "hooks validate-zcode-output" ]; then
-  [ "$(cat)" = '{"additionalContext":"synthetic handoff"}' ] || exit 1
+  [ "$(cat)" = '{"additionalContext":"{\"project\":\"demo\",\"handoffs\":[{\"content\":\"synthetic handoff\"}]}"}' ] || exit 1
   printf '%s\n' 'roca-zcode-output-valid-v1'
   exit 0
 fi
@@ -281,7 +287,7 @@ exit 1
 	if err := json.Unmarshal(output, &context); err != nil {
 		t.Fatalf("wrapper stdout is not JSON: %v\n%s", err, output)
 	}
-	if context["additionalContext"] != "synthetic handoff" {
+	if context["additionalContext"] != handoffJSON {
 		t.Fatalf("wrapper context = %#v", context)
 	}
 	if err := os.WriteFile(binary, []byte("#!/bin/sh\nprintf 'partial output'\nexit 1\n"), 0o700); err != nil {
@@ -299,7 +305,12 @@ exit 1
 		t.Fatalf("degraded wrapper context = %#v", context)
 	}
 	invalid := `#!/bin/sh
+if [ "$1 $2 $3" = "handoff latest --json" ]; then
+  printf '{}'
+  exit 0
+fi
 if [ "$1 $2 $3" = "hooks run zcode" ]; then
+  cat >/dev/null
   printf 'not json'
   exit 0
 fi
@@ -864,6 +875,48 @@ func TestZcodePurgeWithdrawsDeclarationsFromReplacementTree(t *testing.T) {
 	}
 }
 
+func TestZcodeDirectUninstallRetainsReplacementArtifacts(t *testing.T) {
+	home := skillTestHome(t)
+	rootPath := filepath.Join(home, ".zcode")
+	config, wrapper := zcodeTestConfigAndWrapper(home)
+	installZcodeTestIntegration(t, "mcp", home)
+	installZcodeTestIntegration(t, "hooks", home)
+	managedConfig, err := os.ReadFile(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	managedWrapper, err := os.ReadFile(wrapper)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(rootPath); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, config, string(managedConfig))
+	writeFile(t, wrapper, string(managedWrapper))
+	if err := os.Chmod(wrapper, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	runZcodeTestCLI(t, "hooks", "uninstall", "zcode")
+	runZcodeTestCLI(t, "mcp", "uninstall", "zcode")
+	matched, err := agentcfg.ZcodeMCPMatches(config, filepath.Join(home, "roca"))
+	if err != nil || matched || zcodeManagedHookPresent(config) {
+		t.Fatalf("replacement declarations survived: mcp=%v hook=%v err=%v", matched, zcodeManagedHookPresent(config), err)
+	}
+	_, document := readZcodeTestJSON(t, config)
+	hooks := document["hooks"].(map[string]any)
+	if enabled, found := hooks["enabled"].(bool); !found || !enabled {
+		t.Fatalf("replacement hooks.enabled changed: %#v", document)
+	}
+	mcp := document["mcp"].(map[string]any)
+	if _, found := mcp["servers"]; !found {
+		t.Fatalf("replacement MCP containers changed: %#v", document)
+	}
+	if body, err := os.ReadFile(wrapper); err != nil || string(body) != string(managedWrapper) {
+		t.Fatalf("replacement wrapper changed: body=%q err=%v", body, err)
+	}
+}
+
 func TestZcodeHooksRejectClaudeOnlyFlags(t *testing.T) {
 	for _, operation := range []string{"install", "uninstall"} {
 		for _, flag := range []string{"--pills", "--handoff"} {
@@ -1163,6 +1216,31 @@ func TestZcodeHookUninstallTreatsMissingWrapperAsAbsent(t *testing.T) {
 	}
 }
 
+func TestZcodeHookUninstallIgnoresMissingForeignHookPath(t *testing.T) {
+	home := skillTestHome(t)
+	config, wrapper := zcodeTestConfigAndWrapper(home)
+	missing := filepath.Join(home, "operator", "deleted-hook.sh")
+	writeFile(t, config, zcodeOperatorHookConfig(missing))
+	installZcodeTestIntegration(t, "hooks", home)
+	var errOut strings.Builder
+	env := &cliEnv{out: io.Discard, errOut: &errOut}
+	root := rootCommand(env)
+	root.SetArgs([]string{"hooks", "uninstall", "zcode"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if errOut.Len() != 0 {
+		t.Fatalf("missing foreign hook produced a warning: %s", errOut.String())
+	}
+	if _, err := os.Stat(wrapper); !os.IsNotExist(err) {
+		t.Fatalf("managed wrapper survived: %v", err)
+	}
+	body, err := os.ReadFile(config)
+	if err != nil || !strings.Contains(string(body), missing) {
+		t.Fatalf("foreign hook changed: body=%q err=%v", body, err)
+	}
+}
+
 func TestZcodeUnreadableHookKeepsOwnershipForRetry(t *testing.T) {
 	home := skillTestHome(t)
 	config := filepath.Join(home, ".zcode", "cli", "config.json")
@@ -1219,7 +1297,12 @@ func TestZcodeHookCommandExecutesWhenWrapperPathContainsSpaces(t *testing.T) {
 	wrapper := filepath.Join(home, "ZCode Home", "hooks", "roca-handoff.sh")
 	binary := filepath.Join(home, "fake-roca")
 	fake := `#!/bin/sh
+if [ "$1 $2 $3" = "handoff latest --json" ]; then
+  printf '%s\n' '{"project":"space-safe","handoffs":[]}'
+  exit 0
+fi
 if [ "$1 $2 $3" = "hooks run zcode" ]; then
+  [ "$(cat)" = '{"project":"space-safe","handoffs":[]}' ] || exit 1
   printf '%s\n' '{"additionalContext":"space-safe"}'
   exit 0
 fi
@@ -1621,10 +1704,12 @@ func TestFullUninstallDoesNotCreateUnselectedZcodeState(t *testing.T) {
 	}
 }
 
-func TestZcodeHookRunnerAlwaysEmitsAdditionalContext(t *testing.T) {
-	home := skillTestHome(t)
+func TestZcodeHookRunnerWrapsLatestHandoffJSON(t *testing.T) {
+	skillTestHome(t)
+	input := `{"project":"demo","handoffs":[]}`
 	var output strings.Builder
 	root := rootCommand(&cliEnv{out: &output, build: Build{Version: "test"}})
+	root.SetIn(strings.NewReader(input))
 	root.SetArgs([]string{"hooks", "run", "zcode"})
 	if err := root.Execute(); err != nil {
 		t.Fatal(err)
@@ -1633,29 +1718,61 @@ func TestZcodeHookRunnerAlwaysEmitsAdditionalContext(t *testing.T) {
 	if err := json.Unmarshal([]byte(output.String()), &context); err != nil {
 		t.Fatalf("zcode hook runner output is not JSON: %v", err)
 	}
-	if context["additionalContext"] != "" {
-		t.Fatalf("unexpected handoff from empty home %s: %#v", home, context)
+	if context["additionalContext"] != input {
+		t.Fatalf("wrapped handoff = %#v", context)
 	}
 }
 
-func TestZcodeHandoffChoosesNewestIDWhenTimestampsTie(t *testing.T) {
+func TestZcodeHandoffUsesProjectScopedLatestCommand(t *testing.T) {
 	fixture := fixtureInstallation(t)
+	projectDir := filepath.Join(fixture.home, "project-b")
+	if err := os.Mkdir(projectDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(projectDir)
 	database, err := sql.Open("sqlite", filepath.Join(fixture.home, ".roca", "plugins",
 		rocaops.Name, rocaops.DatabaseFilename))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.Exec(`INSERT INTO memories (layer, content, origin, status, created_at)
-		VALUES ('handoff', 'older', 'agent', 'active', '9999-01-01 00:00:00'),
-		       ('handoff', 'newer', 'agent', 'active', '9999-01-01 00:00:00')`); err != nil {
+	if _, err := database.Exec(`INSERT INTO memories (layer, content, origin, project, status, created_at)
+		VALUES ('handoff', 'project-a-private', 'agent', 'project-a', 'active', '9999-01-03 00:00:00')`); err != nil {
+		database.Close()
+		t.Fatal(err)
+	}
+	result, err := database.Exec(`INSERT INTO memories (layer, content, origin, project, status, created_at)
+		VALUES ('handoff', 'obsolete-project-b', 'agent', 'project-b', 'active', '9999-01-01 00:00:00')`)
+	if err != nil {
+		database.Close()
+		t.Fatal(err)
+	}
+	obsolete, err := result.LastInsertId()
+	if err != nil {
+		database.Close()
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`INSERT INTO memories (layer, content, origin, project, status, created_at, supersedes)
+		VALUES ('handoff', 'current-project-b', 'agent', 'project-b', 'active', '9999-01-02 00:00:00', ?)`, obsolete); err != nil {
 		database.Close()
 		t.Fatal(err)
 	}
 	if err := database.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if got := zcodeHandoffContext(context.Background(), &cliEnv{build: Build{Version: "test"}}); got != "newer" {
-		t.Fatalf("handoff context = %q, want newest inserted row", got)
+	var output strings.Builder
+	env := &cliEnv{out: &output, build: Build{Version: "test"}}
+	root := rootCommand(env)
+	root.SetArgs([]string{"handoff", "latest", "--json"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	var handoffs service.HandoffList
+	if err := json.Unmarshal([]byte(output.String()), &handoffs); err != nil {
+		t.Fatal(err)
+	}
+	if handoffs.Project != "project-b" || len(handoffs.Handoffs) != 1 ||
+		handoffs.Handoffs[0].Content != "current-project-b" {
+		t.Fatalf("project handoffs = %+v", handoffs)
 	}
 }
 

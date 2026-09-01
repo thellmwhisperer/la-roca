@@ -594,9 +594,14 @@ func hooksRunCommand(env *cliEnv) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			switch args[0] {
 			case agentcfg.RuntimeZcode:
-				return env.printJSON(map[string]string{
-					"additionalContext": zcodeHandoffContext(cmd.Context(), env),
-				})
+				input, err := io.ReadAll(cmd.InOrStdin())
+				if err != nil {
+					return fmt.Errorf("read ZCode handoff input: %w", err)
+				}
+				if len(input) > 0 && !json.Valid(input) {
+					return fmt.Errorf("read ZCode handoff input: invalid JSON")
+				}
+				return env.printJSON(map[string]string{"additionalContext": string(input)})
 			case agentcfg.RuntimeClaude:
 				input, err := io.ReadAll(cmd.InOrStdin())
 				if err != nil {
@@ -929,6 +934,16 @@ func (env *cliEnv) uninstallManagedZcodeHandoffHookLocked(configPath, wrapperPat
 	if !found && !zcodeManagedHookPresent(configPath) {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", nil
 	}
+	rootContinuous := true
+	if found {
+		rootContinuous, _, err = zcodeRootContinuity(configPath, entry)
+		if err != nil {
+			return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
+		}
+		if !rootContinuous {
+			expected = nil
+		}
+	}
 	release, _, err := lockZcodeHookLifecycle(configPath, wrapperPath, false)
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
@@ -939,8 +954,15 @@ func (env *cliEnv) uninstallManagedZcodeHandoffHookLocked(configPath, wrapperPat
 			err = errors.Join(err, release())
 		}
 	}()
-	outcome, warning, err = uninstallZcodeHandoffHookUnlocked(configPath, wrapperPath, expected, entry.CreatedHooksEnabled)
+	removeEnabled := found && rootContinuous && entry.CreatedHooksEnabled
+	outcome, warning, err = uninstallZcodeHandoffHookUnlocked(configPath, wrapperPath, expected, removeEnabled)
 	present, verified := zcodeManagedHookState(configPath)
+	if err == nil && found && !rootContinuous {
+		if verified && !present {
+			err = env.unregisterArtifactEntry(entry)
+		}
+		return outcome, warning, err
+	}
 	if err == nil && len(finalize) > 0 {
 		switch {
 		case !found:
@@ -1202,29 +1224,13 @@ func restoreZcodeWrapper(path string, state zcodeWrapperState, installed []byte)
 	return os.Chmod(path, state.mode)
 }
 
-func zcodeHandoffContext(ctx context.Context, env *cliEnv) string {
-	svc, _, err := env.openService()
-	if err != nil {
-		return ""
-	}
-	defer svc.Close()
-	result, err := svc.Exec(ctx, service.ExecRequest{
-		SQL:      "SELECT content FROM plugin_roca_ops.memories WHERE layer='handoff' AND status='active' ORDER BY created_at DESC, id DESC LIMIT 1",
-		MaxChars: 8000,
-	})
-	if err != nil || len(result.Rows) == 0 {
-		return ""
-	}
-	content, _ := result.Rows[0]["content"].(string)
-	return content
-}
-
 func zcodeWrapper(executable string) string {
 	return `#!/bin/bash
 # Managed by roca hooks install zcode.
 set -euo pipefail
 
-if output=$(` + shellQuote(executable) + ` hooks run zcode 2>/dev/null) &&
+if handoff=$(` + shellQuote(executable) + ` handoff latest --json 2>/dev/null) &&
+  output=$(printf '%s' "$handoff" | ` + shellQuote(executable) + ` hooks run zcode 2>/dev/null) &&
   validation=$(printf '%s' "$output" | ` + shellQuote(executable) + ` hooks validate-zcode-output 2>/dev/null) &&
   [ "$validation" = ` + shellQuote(zcodeOutputValidationToken) + ` ]; then
   printf '%s\n' "$output"

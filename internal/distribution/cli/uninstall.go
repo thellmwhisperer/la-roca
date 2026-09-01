@@ -110,7 +110,7 @@ func (env *cliEnv) uninstall(cmd *cobra.Command, in io.Reader, purge bool) (retu
 	if err != nil {
 		return err
 	}
-	lockTimeout := 5 * time.Second
+	lockTimeout := env.zcodeLockTimeout()
 	if ctx := cmd.Context(); ctx != nil {
 		if deadline, ok := ctx.Deadline(); ok {
 			if remaining := time.Until(deadline); remaining < lockTimeout {
@@ -133,11 +133,21 @@ func (env *cliEnv) uninstall(cmd *cobra.Command, in io.Reader, purge bool) (retu
 	}()
 	report := lifecycle.Report{Purged: true, Deleted: []string{}}
 	runtimes := env.withdrawTheIntegrations(&report, purge)
+	withdrawalFailed := len(report.Errors) > 0
 
 	// A binary that cannot say where it is is one this command leaves alone: the
 	// rest of the uninstall still happens and the operator deletes one file.
 	running, _ := os.Executable()
-	plan := lifecycle.Plan{Binary: running}
+	binary := running
+	if withdrawalFailed {
+		binary = ""
+		if running != "" {
+			report.Kept = append(report.Kept, lifecycle.Kept{
+				Path: running, Reason: "integration withdrawal failed; retained to keep active declarations callable",
+			})
+		}
+	}
+	plan := lifecycle.Plan{Binary: binary}
 	var applied lifecycle.Report
 	dataDir := dirOf(paths.DB)
 	if purge {
@@ -164,7 +174,7 @@ func (env *cliEnv) uninstall(cmd *cobra.Command, in io.Reader, purge bool) (retu
 			owned := slices.DeleteFunc(ownedPaths(paths), func(path string) bool {
 				return path == zcodeLockPath
 			})
-			return lifecycle.Plan{Binary: running,
+			return lifecycle.Plan{Binary: binary,
 				Owned: append(owned, archives...), DataDir: dataDir}
 		})
 		if len(keptArchives) > 0 {
@@ -276,7 +286,7 @@ func (env *cliEnv) lockManagedZcodeLifecycleWithin(timeout time.Duration) (func(
 	acquired := make(chan zcodeLifecycleLockResult)
 	cancelled := make(chan struct{})
 	go func() {
-		release, err := env.lockManagedZcodeLifecycle()
+		release, err := env.lockManagedZcodeLifecycleUnbounded()
 		result := zcodeLifecycleLockResult{release: release, err: err}
 		select {
 		case acquired <- result:

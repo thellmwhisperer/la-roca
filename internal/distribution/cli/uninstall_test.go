@@ -434,6 +434,42 @@ func TestSkillUninstallRetainsDivergedOwnershipForRetry(t *testing.T) {
 	}
 }
 
+func TestSkillUninstallRetainsOperatorSymlinkOwnership(t *testing.T) {
+	home := skillTestHome(t)
+	root := filepath.Join(home, "zcode")
+	t.Setenv("ZCODE_HOME", root)
+	runZcodeTestCLI(t, "skill", "install", "zcode")
+	path := filepath.Join(root, "skills", "roca", "SKILL.md")
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(home, "shared-skill.md")
+	if err := os.WriteFile(target, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, path); err != nil {
+		t.Skipf("symlinks are unavailable: %v", err)
+	}
+	purgeZcodeTestIntegrations(false)
+	if info, err := os.Lstat(path); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("operator symlink changed: info=%v err=%v", info, err)
+	}
+	if got, err := os.ReadFile(target); err != nil || string(got) != string(body) {
+		t.Fatalf("shared skill changed: body=%q err=%v", got, err)
+	}
+	registry, err := artifact.LoadRegistry(filepath.Join(home, ".roca", "artifacts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, found := registry.Find(artifactKindSkill, "zcode", path); !found {
+		t.Fatal("operator symlink lost retry ownership")
+	}
+}
+
 func TestUninstallLeavesAnUnregisteredCatalogFileAlone(t *testing.T) {
 	home := t.TempDir()
 	isolateRuntimeDirs(t, home)
