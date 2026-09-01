@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -243,7 +244,16 @@ func jsonObject(previous string) (map[string]any, error) {
 	if strings.TrimSpace(previous) == "" {
 		return settings, nil
 	}
-	if err := json.Unmarshal([]byte(previous), &settings); err != nil {
+	decoder := json.NewDecoder(strings.NewReader(previous))
+	decoder.UseNumber()
+	if err := decoder.Decode(&settings); err != nil {
+		return nil, fmt.Errorf("read zcode settings: %w", err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return nil, fmt.Errorf("read zcode settings: multiple JSON values")
+		}
 		return nil, fmt.Errorf("read zcode settings: %w", err)
 	}
 	if settings == nil {

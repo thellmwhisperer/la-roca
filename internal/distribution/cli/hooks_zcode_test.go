@@ -378,3 +378,42 @@ func TestZcodeHookUninstallPreservesGroupMetadata(t *testing.T) {
 		t.Fatalf("uninstall did not remove only the Roca command: %#v", group)
 	}
 }
+
+func TestZcodeHookLifecyclePreservesLargeOperatorNumbers(t *testing.T) {
+	home := skillTestHome(t)
+	config := filepath.Join(home, ".zcode", "cli", "config.json")
+	if err := os.MkdirAll(filepath.Dir(config), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	initial := `{"hooks":{"enabled":true,"events":{"SessionStart":[{"operatorSequence":9007199254740993,"hooks":[{"type":"command","command":"operator-hook","timeoutMs":5000}]}]}}}`
+	if err := os.WriteFile(config, []byte(initial), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"hooks", "install", "zcode"}, {"hooks", "uninstall", "zcode"}} {
+		root := rootCommand(&cliEnv{out: io.Discard, build: Build{Version: "test"}})
+		root.SetArgs(args)
+		if err := root.Execute(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	body, err := os.ReadFile(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(body)))
+	decoder.UseNumber()
+	var document map[string]any
+	if err := decoder.Decode(&document); err != nil {
+		t.Fatal(err)
+	}
+	hooks := document["hooks"].(map[string]any)
+	events := hooks["events"].(map[string]any)
+	groups := events["SessionStart"].([]any)
+	if len(groups) != 1 {
+		t.Fatalf("SessionStart groups = %d, want operator group", len(groups))
+	}
+	sequence, ok := groups[0].(map[string]any)["operatorSequence"].(json.Number)
+	if !ok || sequence.String() != "9007199254740993" {
+		t.Fatalf("operatorSequence = %#v", sequence)
+	}
+}
