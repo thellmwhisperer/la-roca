@@ -1,6 +1,7 @@
 package artifact_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -140,33 +141,37 @@ func TestRegistryIsVersionedAndFeedsSafeOwnedPaths(t *testing.T) {
 	}
 }
 
-func TestRegistryMigratesV1WithRecoveryBackup(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "artifacts.json")
-	before := `{"schema":1,"artifacts":[{"kind":"hook","runtime":"zcode","path":"/tmp/hook","created_root":true,"root_identity":"7:9","created_hooks_enabled":true}]}`
-	write(t, path, before)
-	registry, err := artifact.LoadRegistry(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if registry.Schema != artifact.RegistrySchema || len(registry.Entries) != 1 ||
-		!registry.Entries[0].CreatedRoot || !registry.Entries[0].CreatedHooksEnabled {
-		t.Fatalf("migrated registry = %+v", registry)
-	}
-	if err := artifact.SaveRegistry(path, registry); err != nil {
-		t.Fatal(err)
-	}
-	if backup := read(t, path+".roca.bak"); backup != before {
-		t.Fatalf("migration backup = %q", backup)
-	}
-	migrated, err := artifact.LoadRegistry(path)
-	if err != nil || migrated.Schema != artifact.RegistrySchema {
-		t.Fatalf("saved migration = %+v, err=%v", migrated, err)
+func TestRegistryMigratesOlderSchemasWithRecoveryBackup(t *testing.T) {
+	for _, schema := range []int{1, 2} {
+		t.Run(fmt.Sprintf("schema-%d", schema), func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "artifacts.json")
+			before := fmt.Sprintf(`{"schema":%d,"artifacts":[{"kind":"hook","runtime":"zcode","path":"/tmp/hook","created_root":true,"root_identity":"7:9","created_hooks_enabled":true}]}`, schema)
+			write(t, path, before)
+			registry, err := artifact.LoadRegistry(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if registry.Schema != artifact.RegistrySchema || len(registry.Entries) != 1 ||
+				!registry.Entries[0].CreatedRoot || !registry.Entries[0].CreatedHooksEnabled {
+				t.Fatalf("migrated registry = %+v", registry)
+			}
+			if err := artifact.SaveRegistry(path, registry); err != nil {
+				t.Fatal(err)
+			}
+			if backup := read(t, path+".roca.bak"); backup != before {
+				t.Fatalf("migration backup = %q", backup)
+			}
+			migrated, err := artifact.LoadRegistry(path)
+			if err != nil || migrated.Schema != artifact.RegistrySchema {
+				t.Fatalf("saved migration = %+v, err=%v", migrated, err)
+			}
+		})
 	}
 }
 
 func TestRegistryRefusesUnknownSchemaWithoutChangingIt(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "artifacts.json")
-	before := `{"schema":3,"artifacts":[]}`
+	before := `{"schema":4,"artifacts":[]}`
 	write(t, path, before)
 	if _, err := artifact.LoadRegistry(path); err == nil {
 		t.Fatal("newer registry schema was accepted for ownership reads")

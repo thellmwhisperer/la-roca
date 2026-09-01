@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -216,6 +217,48 @@ func TestZcodeMCPReinstallDropsOwnershipOnRecreatedManagedTree(t *testing.T) {
 	}
 }
 
+func TestZcodeMCPUninstallPreservesDivergedManagedEntry(t *testing.T) {
+	home := skillTestHome(t)
+	config := filepath.Join(home, ".zcode", "cli", "config.json")
+	installZcodeTestIntegration(t, "mcp", home)
+	_, document := readZcodeTestJSON(t, config)
+	entry := document["mcp"].(map[string]any)["servers"].(map[string]any)[agentcfg.ServerName].(map[string]any)
+	entry["operator"] = true
+	before := writeZcodeTestJSON(t, config, document)
+	var output strings.Builder
+	env := &cliEnv{out: &output, errOut: &output}
+	root := rootCommand(env)
+	root.SetArgs([]string{"mcp", "uninstall", "zcode"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(config)
+	if err != nil || string(after) != string(before) {
+		t.Fatalf("diverged MCP changed: err=%v", err)
+	}
+	if !strings.Contains(output.String(), "diverged") {
+		t.Fatalf("diverged MCP was not explained: %s", output.String())
+	}
+	registry, err := artifact.LoadRegistry(filepath.Join(home, ".roca", "artifacts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, found := registry.Find(artifactKindMCP, agentcfg.RuntimeZcode, config); !found {
+		t.Fatal("diverged MCP lost recovery ownership")
+	}
+	output.Reset()
+	if err := env.uninstall(uninstallCommand(env), strings.NewReader(""), false); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "integration withdrawal failed") {
+		t.Fatalf("full uninstall did not retain the binary: %s", output.String())
+	}
+	after, err = os.ReadFile(config)
+	if err != nil || string(after) != string(before) {
+		t.Fatalf("full uninstall changed diverged MCP: err=%v", err)
+	}
+}
+
 func TestZcodeMCPPersistsAbsoluteConfigPath(t *testing.T) {
 	home := skillTestHome(t)
 	first := t.TempDir()
@@ -253,7 +296,7 @@ func TestZcodeMCPStateRollbackPreservesConcurrentRegistryEntries(t *testing.T) {
 	home := skillTestHome(t)
 	env := &cliEnv{build: Build{Version: "test"}}
 	path := filepath.Join(home, "zcode.json")
-	rollback, err := env.recordZcodeMCPPreimage(path, "/bin/roca", agentcfg.ZcodeMCPPreimageMCPServers, false)
+	rollback, err := env.recordZcodeMCPPreimage(path, path, "/bin/roca", agentcfg.ZcodeMCPPreimageMCPServers, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -319,7 +362,7 @@ func TestNewerArtifactRegistryDegradesStatusAndBlocksUninstall(t *testing.T) {
 		t.Fatal(err)
 	}
 	registryPath := filepath.Join(home, ".roca", "artifacts.json")
-	writeFile(t, registryPath, `{"schema":3,"artifacts":[]}`)
+	writeFile(t, registryPath, `{"schema":4,"artifacts":[]}`)
 	env := &cliEnv{out: io.Discard, errOut: io.Discard}
 	status := rootCommand(env)
 	status.SetArgs([]string{"mcp", "status", "zcode"})
@@ -328,7 +371,7 @@ func TestNewerArtifactRegistryDegradesStatusAndBlocksUninstall(t *testing.T) {
 	}
 	uninstall := rootCommand(env)
 	uninstall.SetArgs([]string{"mcp", "uninstall", "zcode"})
-	if err := uninstall.Execute(); err == nil || !strings.Contains(err.Error(), "schema 3") {
+	if err := uninstall.Execute(); err == nil || !strings.Contains(err.Error(), "schema 4") {
 		t.Fatalf("destructive uninstall accepted newer ownership schema: %v", err)
 	}
 	matched, err := agentcfg.ZcodeMCPMatches(config, executable)
@@ -560,7 +603,7 @@ func TestZcodePurgeDiscoversRegistryUnderLifecycleLock(t *testing.T) {
 	if _, err := agentcfg.InstallZcodeMCP(custom, filepath.Join(home, "roca"), nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := env.recordZcodeMCPPreimage(custom, filepath.Join(home, "roca"), agentcfg.ZcodeMCPPreimageMCPServers, false, preimage); err != nil {
+	if _, err := env.recordZcodeMCPPreimage(custom, custom, filepath.Join(home, "roca"), agentcfg.ZcodeMCPPreimageMCPServers, false, preimage); err != nil {
 		t.Fatal(err)
 	}
 	if err := release(); err != nil {
@@ -627,7 +670,7 @@ func TestZcodeFullUninstallDiscoversRegistryUnderLifecycleLock(t *testing.T) {
 	if _, err := agentcfg.InstallZcodeMCP(custom, filepath.Join(home, "roca"), nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := env.recordZcodeMCPPreimage(custom, filepath.Join(home, "roca"),
+	if _, err := env.recordZcodeMCPPreimage(custom, custom, filepath.Join(home, "roca"),
 		agentcfg.ZcodeMCPPreimageMCPServers, false, preimage); err != nil {
 		t.Fatal(err)
 	}
@@ -697,38 +740,111 @@ func TestManagedArtifactLocksRejectSymlinksWithoutChangingTargets(t *testing.T) 
 	}
 }
 
-func TestPurgeCleanupRemovesResolvedConfigBackups(t *testing.T) {
+func TestPurgeUsesRecordedConfigTargetAfterSymlinkRetarget(t *testing.T) {
 	for _, runtime := range []string{agentcfg.RuntimeZcode, agentcfg.RuntimeClaudeDesktop} {
 		t.Run(runtime, func(t *testing.T) {
-			dir := t.TempDir()
-			target := filepath.Join(dir, "shared.json")
-			link := filepath.Join(dir, "config.json")
-			if err := os.WriteFile(target, []byte("{}"), 0o600); err != nil {
+			home := skillTestHome(t)
+			dir := filepath.Join(home, runtime)
+			if err := os.MkdirAll(dir, 0o700); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.Symlink(target, link); err != nil {
+			original := filepath.Join(dir, "original.json")
+			replacement := filepath.Join(dir, "replacement.json")
+			link := filepath.Join(dir, "config.json")
+			writeFile(t, original, "{}")
+			writeFile(t, replacement, "{}")
+			if err := os.Symlink(original, link); err != nil {
 				t.Skipf("symlinks are unavailable: %v", err)
 			}
-			if _, err := agentcfg.Install(runtime, link, "/opt/roca"); err != nil {
+			env := &cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}}
+			var err error
+			if runtime == agentcfg.RuntimeZcode {
+				_, err = env.installZcodeMCP(link, filepath.Join(home, "roca"))
+			} else {
+				_, err = env.installTrackedMCP(runtime, link, filepath.Join(home, "roca"))
+			}
+			if err != nil {
 				t.Fatal(err)
 			}
-			backups, err := filepath.Glob(target + ".roca.bak*")
+			registry, err := artifact.LoadRegistry(filepath.Join(home, ".roca", "artifacts.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			entry, found := registry.Find(artifactKindMCP, runtime, link)
+			resolvedOriginal, err := filepath.EvalSymlinks(original)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !found || entry.MutationPath != resolvedOriginal {
+				t.Fatalf("recorded mutation target = %#v, found=%v", entry, found)
+			}
+			backups, err := filepath.Glob(original + ".roca.bak*")
 			if err != nil || len(backups) == 0 {
-				t.Fatalf("resolved target backups = %v, err=%v", backups, err)
+				t.Fatalf("original target backups = %v, err=%v", backups, err)
+			}
+			if err := os.Remove(link); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(replacement, link); err != nil {
+				t.Fatal(err)
 			}
 			report := lifecycle.Report{Purged: true, Deleted: []string{}}
-			removeRuntimeRecoveryBackups(&report, runtime, link)
-			if len(report.Errors) != 0 {
-				t.Fatalf("backup cleanup errors = %v", report.Errors)
-			}
-			backups, err = filepath.Glob(target + ".roca.bak*")
+			env.withdrawTheIntegrations(&report, true)
+			backups, err = filepath.Glob(original + ".roca.bak*")
 			if err != nil || len(backups) != 0 {
-				t.Fatalf("resolved target backups survived: %v, err=%v", backups, err)
+				t.Fatalf("original target backups survived: %v, err=%v", backups, err)
 			}
-			if info, err := os.Lstat(link); err != nil || info.Mode()&os.ModeSymlink == 0 {
-				t.Fatalf("backup cleanup changed symlink: info=%v err=%v", info, err)
+			if body, err := os.ReadFile(replacement); err != nil || string(body) != "{}" {
+				t.Fatalf("replacement target changed: body=%q err=%v", body, err)
 			}
 		})
+	}
+}
+
+func TestPurgeRetainsBackupWhenRecordedConfigTargetIsMissing(t *testing.T) {
+	home := skillTestHome(t)
+	dir := filepath.Join(home, "claude-desktop")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(dir, "target.json")
+	link := filepath.Join(dir, "config.json")
+	writeFile(t, target, "{}")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks are unavailable: %v", err)
+	}
+	var warnings strings.Builder
+	env := &cliEnv{out: io.Discard, errOut: &warnings, build: Build{Version: "test"}}
+	if _, err := env.installTrackedMCP(agentcfg.RuntimeClaudeDesktop, link, filepath.Join(home, "roca")); err != nil {
+		t.Fatal(err)
+	}
+	registryPath := filepath.Join(home, ".roca", "artifacts.json")
+	registry, err := artifact.LoadRegistry(registryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, found := registry.Find(artifactKindMCP, agentcfg.RuntimeClaudeDesktop, link)
+	if !found {
+		t.Fatal("tracked MCP entry is missing")
+	}
+	entry.MutationPath = ""
+	registry.Upsert(entry)
+	if err := artifact.SaveRegistry(registryPath, registry); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	report := lifecycle.Report{Purged: true, Deleted: []string{}}
+	env.withdrawTheIntegrations(&report, true)
+	backups, err := filepath.Glob(target + ".roca.bak*")
+	if err != nil || len(backups) == 0 {
+		t.Fatalf("untracked target backup was not retained: %v, err=%v", backups, err)
+	}
+	if !slices.ContainsFunc(report.Kept, func(kept lifecycle.Kept) bool {
+		return kept.Path == link && strings.Contains(kept.Reason, "not recorded")
+	}) || !strings.Contains(warnings.String(), "was not recorded") {
+		t.Fatalf("missing target warning = %#v, output=%q", report.Kept, warnings.String())
 	}
 }
 

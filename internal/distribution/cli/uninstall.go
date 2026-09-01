@@ -377,7 +377,7 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 		}
 		if purge {
 			return env.uninstallZcodeMCP(path, func(entry artifact.Entry, identity os.FileInfo) error {
-				removeRuntimeRecoveryBackups(report, runtime, path)
+				removeRuntimeRecoveryBackups(env.errOut, report, runtime, path, entry.MutationPath)
 				warnRetainedUnownedEmptyZcodeConfig(env.errOut, entry, path)
 				return cleanupCreatedZcodeMCPPaths(entry, path, identity)
 			})
@@ -413,17 +413,22 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 		if purgedMCPPaths[key] {
 			continue
 		}
+		entry, registered := artifact.Entry{}, false
+		if registryErr == nil {
+			entry, registered = registry.Find(artifactKindMCP, runtime, path)
+		}
 		outcome, err := withdrawMCP(runtime, path)
 		err = verifyMCPWithdrawal(runtime, path, err)
 		withdrawn("roca from "+runtime, outcome, err)
-		if purge {
-			removeRuntimeRecoveryBackups(report, runtime, path)
+		if purge && (runtime != agentcfg.RuntimeZcode && runtime != agentcfg.RuntimeClaudeDesktop || registered) {
+			removeRuntimeRecoveryBackups(env.errOut, report, runtime, path, entry.MutationPath)
 		}
 	}
 	if registryErr == nil {
 		for _, entry := range registry.Entries {
 			key := entry.Runtime + "\x00" + entry.Path
-			if entry.Kind != artifactKindMCP || entry.Runtime != agentcfg.RuntimeZcode ||
+			if entry.Kind != artifactKindMCP ||
+				(entry.Runtime != agentcfg.RuntimeZcode && entry.Runtime != agentcfg.RuntimeClaudeDesktop) ||
 				processedMCPPaths[key] || purgedMCPPaths[key] {
 				continue
 			}
@@ -432,7 +437,7 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 			err = verifyMCPWithdrawal(entry.Runtime, entry.Path, err)
 			withdrawn("roca from "+entry.Runtime+" at "+entry.Path, outcome, err)
 			if purge {
-				removeRuntimeRecoveryBackups(report, entry.Runtime, entry.Path)
+				removeRuntimeRecoveryBackups(env.errOut, report, entry.Runtime, entry.Path, entry.MutationPath)
 			}
 		}
 	}
@@ -508,7 +513,7 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 			err = fmt.Errorf("ownership registry unavailable")
 		} else if purge && target.registered {
 			finalize := func(entry artifact.Entry, identity os.FileInfo) error {
-				removeRuntimeRecoveryBackups(report, agentcfg.RuntimeZcode, target.settings)
+				removeRuntimeRecoveryBackups(env.errOut, report, agentcfg.RuntimeZcode, target.settings, entry.MutationPath)
 				warnRetainedUnownedEmptyZcodeConfig(env.errOut, entry, target.settings)
 				if cleanupErr := cleanupCreatedZcodeHookPaths(entry, target.settings, target.wrapper, identity); cleanupErr != nil {
 					return cleanupErr
@@ -519,8 +524,8 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 				target.settings, target.wrapper, finalize)
 		} else {
 			outcome, warning, err = env.uninstallManagedZcodeHandoffHook(target.settings, target.wrapper)
-			if purge {
-				removeRuntimeRecoveryBackups(report, agentcfg.RuntimeZcode, target.settings)
+			if purge && target.registered {
+				removeRuntimeRecoveryBackups(env.errOut, report, agentcfg.RuntimeZcode, target.settings, target.entry.MutationPath)
 			}
 		}
 		if warning != "" {
@@ -880,6 +885,7 @@ func (env *cliEnv) purgeRegisteredZcodeIntegrations(report *lifecycle.Report, re
 					return continuityErr
 				}
 				if !continuous {
+					removeRuntimeRecoveryBackups(env.errOut, report, agentcfg.RuntimeZcode, config, entry.MutationPath)
 					if unregisterErr := env.unregisterArtifactEntry(entry); unregisterErr != nil {
 						return unregisterErr
 					}
@@ -902,7 +908,7 @@ func (env *cliEnv) purgeRegisteredZcodeIntegrations(report *lifecycle.Report, re
 					outcomes = append(outcomes, outcome)
 					configIdentity = outcome.FileIdentity
 				}
-				removeRuntimeRecoveryBackups(report, agentcfg.RuntimeZcode, config)
+				removeRuntimeRecoveryBackups(env.errOut, report, agentcfg.RuntimeZcode, config, entry.MutationPath)
 				if err := env.unregisterArtifactEntry(entry); err != nil {
 					return err
 				}
@@ -928,7 +934,7 @@ func (env *cliEnv) purgeRegisteredZcodeIntegrations(report *lifecycle.Report, re
 					outcomes = append(outcomes, outcome)
 					configIdentity = outcome.FileIdentity
 				}
-				removeRuntimeRecoveryBackups(report, agentcfg.RuntimeZcode, config)
+				removeRuntimeRecoveryBackups(env.errOut, report, agentcfg.RuntimeZcode, config, entry.MutationPath)
 				aggregateZcodeProvenance(&aggregate, entry)
 				wrappers = append(wrappers, entry.Path)
 			}
@@ -945,7 +951,7 @@ func (env *cliEnv) purgeRegisteredZcodeIntegrations(report *lifecycle.Report, re
 					outcomes = append(outcomes, outcome)
 					configIdentity = outcome.FileIdentity
 				}
-				removeRuntimeRecoveryBackups(report, agentcfg.RuntimeZcode, config)
+				removeRuntimeRecoveryBackups(env.errOut, report, agentcfg.RuntimeZcode, config, entry.MutationPath)
 				aggregateZcodeProvenance(&aggregate, entry)
 			}
 			if retainedOperatorConfig {
@@ -1297,7 +1303,11 @@ func keepTheBackup(report *lifecycle.Report, outcome agentcfg.Outcome) {
 	if outcome.Backup != "" {
 		os.Remove(outcome.Backup)
 	}
-	nameSurvivingBackups(report, outcome.Path)
+	path := outcome.Path
+	if outcome.MutationPath != "" {
+		path = outcome.MutationPath
+	}
+	nameSurvivingBackups(report, path)
 }
 
 // removeRecoveryBackups applies the purge consent to the recovery copies La
@@ -1309,30 +1319,21 @@ func keepTheBackup(report *lifecycle.Report, outcome agentcfg.Outcome) {
 // operator wrote is never this product's to delete, whatever it was authorized
 // to remove of its own. It is the same rule that keeps a prompt.md with content
 // in its USER zone out of the owned-path inventory.
-func removeRuntimeRecoveryBackups(report *lifecycle.Report, runtime, configFile string) {
-	removeRecoveryBackups(report, configFile)
+func removeRuntimeRecoveryBackups(w io.Writer, report *lifecycle.Report, runtime, configFile, mutationPath string) {
 	if runtime != agentcfg.RuntimeZcode && runtime != agentcfg.RuntimeClaudeDesktop {
+		removeRecoveryBackups(report, configFile)
 		return
 	}
-	info, err := os.Lstat(configFile)
-	if os.IsNotExist(err) {
+	if mutationPath == "" {
+		if w != nil {
+			fmt.Fprintf(w, "warning: recovery backup location for %s was not recorded; any backup was retained\n", configFile)
+		}
+		report.Kept = append(report.Kept, lifecycle.Kept{
+			Path: configFile, Reason: "recovery backup location was not recorded; any backup was retained",
+		})
 		return
 	}
-	if err != nil {
-		failed(report, "inspect configuration path %s: %v", configFile, err)
-		return
-	}
-	if info.Mode()&os.ModeSymlink == 0 {
-		return
-	}
-	resolved, err := filepath.EvalSymlinks(configFile)
-	if err != nil {
-		failed(report, "resolve configuration symlink %s: %v", configFile, err)
-		return
-	}
-	if resolved != configFile {
-		removeRecoveryBackups(report, resolved)
-	}
+	removeRecoveryBackups(report, mutationPath)
 }
 
 func removeRecoveryBackups(report *lifecycle.Report, configFile string, spared ...string) {

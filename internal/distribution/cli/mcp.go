@@ -55,9 +55,12 @@ func mcpInstallCommand(env *cliEnv) *cobra.Command {
 				return fmt.Errorf("resolve the running executable %q to an absolute path", declared)
 			}
 			var outcome agentcfg.Outcome
-			if args[0] == agentcfg.RuntimeZcode {
+			switch args[0] {
+			case agentcfg.RuntimeZcode:
 				outcome, err = env.installZcodeMCP(path, declared)
-			} else {
+			case agentcfg.RuntimeClaudeDesktop:
+				outcome, err = env.installTrackedMCP(args[0], path, declared)
+			default:
 				outcome, err = agentcfg.Install(args[0], path, declared)
 			}
 			if err != nil {
@@ -222,9 +225,10 @@ func (env *cliEnv) installZcodeMCPLocked(path, executable string) (outcome agent
 	}
 	var rollback func() error
 	outcome, err = agentcfg.InstallZcodeMCP(path, executable,
-		func(preimage string, configured, existed bool) error {
+		func(preimage string, configured, existed bool, mutationPath string) error {
 			pathPreimage.createdConfig = !existed
-			rollback, err = env.recordZcodeMCPPreimage(path, executable, preimage, configured, pathPreimage)
+			rollback, err = env.recordZcodeMCPPreimage(
+				path, mutationPath, executable, preimage, configured, pathPreimage)
 			return err
 		})
 	if err != nil {
@@ -236,6 +240,47 @@ func (env *cliEnv) installZcodeMCPLocked(path, executable string) (outcome agent
 		err = errors.Join(err, rollbackCreatedZcodeMCPPaths(cleanup, path))
 	}
 	return outcome, err
+}
+
+func (env *cliEnv) installTrackedMCP(runtime, path, executable string) (outcome agentcfg.Outcome, err error) {
+	var rollback func() error
+	outcome, err = agentcfg.InstallWithMutationPath(runtime, path, executable, func(mutationPath string) error {
+		rollback, err = env.recordMCPMutationPath(runtime, path, mutationPath, executable)
+		return err
+	})
+	if err != nil && rollback != nil {
+		err = errors.Join(err, rollback())
+	}
+	return outcome, err
+}
+
+func (env *cliEnv) recordMCPMutationPath(runtime, path, mutationPath, executable string) (func() error, error) {
+	paths, err := env.resolvePaths()
+	if err != nil {
+		return nil, err
+	}
+	transaction := artifact.Entry{
+		Kind: artifactKindMCP, Runtime: runtime, Path: path, MutationPath: mutationPath,
+		InstalledVersion: env.build.Version, AvailableVersion: env.build.Version,
+		Executable: executable,
+	}
+	var prior artifact.Entry
+	var priorFound bool
+	changed, err := env.mutateArtifactRegistry(paths.Artifacts, func(registry *artifact.Registry) (bool, error) {
+		prior, priorFound = registry.Find(artifactKindMCP, runtime, path)
+		if priorFound && prior == transaction {
+			return false, nil
+		}
+		registry.Upsert(transaction)
+		return true, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if !changed {
+		return nil, nil
+	}
+	return env.artifactRegistryRollback(paths.Artifacts, transaction, prior, priorFound), nil
 }
 
 func ensureZcodeDirectory(path string) (bool, error) {
@@ -290,13 +335,13 @@ func continuousZcodeOwnership(prior, current artifact.Entry) bool {
 	return prior.RootIdentity != "" && prior.RootIdentity == current.RootIdentity
 }
 
-func (env *cliEnv) recordZcodeMCPPreimage(path, executable, preimage string, configured bool, pathStates ...zcodeMCPPathState) (func() error, error) {
+func (env *cliEnv) recordZcodeMCPPreimage(path, mutationPath, executable, preimage string, configured bool, pathStates ...zcodeMCPPathState) (func() error, error) {
 	paths, err := env.resolvePaths()
 	if err != nil {
 		return nil, err
 	}
 	transaction := artifact.Entry{
-		Kind: artifactKindMCP, Runtime: agentcfg.RuntimeZcode, Path: path,
+		Kind: artifactKindMCP, Runtime: agentcfg.RuntimeZcode, Path: path, MutationPath: mutationPath,
 		InstalledVersion: env.build.Version, AvailableVersion: env.build.Version,
 		Format: zcodeMCPPreimageFormat + preimage, Executable: executable,
 	}
@@ -500,6 +545,16 @@ func (env *cliEnv) uninstallZcodeMCPLocked(path string, finalize ...func(artifac
 		}
 		err = env.unregisterArtifactEntry(entry)
 		return outcome, err
+	}
+	continuous, continuityErr := zcodeMCPContinuity(path, entry)
+	if continuityErr != nil {
+		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: path}, continuityErr
+	}
+	if !continuous {
+		if env.errOut != nil {
+			fmt.Fprintf(env.errOut, "warning: managed ZCode MCP declaration in %s diverged; left operator configuration unchanged\n", path)
+		}
+		return outcome, nil
 	}
 	preimage, err := zcodeMCPPreimageFromEntry(entry)
 	if err != nil {
