@@ -173,8 +173,8 @@ func ContentForPath(path string) (string, string) {
 	}
 }
 
-// Runtimes are the supported skill seats, sorted. Five of them are also the
-// MCP runtimes agentcfg knows; grok, qwen, and cursor are skill seats only.
+// Runtimes are the supported skill seats, sorted. Six are also MCP runtimes;
+// grok, qwen, and cursor are skill seats only.
 func Runtimes() []string {
 	names := make([]string, 0, len(rootOf))
 	for name := range rootOf {
