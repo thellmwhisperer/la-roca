@@ -503,14 +503,22 @@ func hooksInstallCommand(env *cliEnv) *cobra.Command {
 		func(runtime, path string) (agentcfg.Outcome, string, error) {
 			declared := chosenExecutable(executable)
 			if runtime == agentcfg.RuntimeZcode {
-				if err := zcodeHookPlatformError(goruntime.GOOS); err != nil {
+				if err := zcodeHookPlatformError(goruntime.GOOS, os.Stat); err != nil {
 					return agentcfg.Outcome{Runtime: runtime, Path: path}, "", err
 				}
 				wrapper, err := zcodeHookWrapperPath()
 				if err != nil {
 					return agentcfg.Outcome{Runtime: runtime, Path: path}, "", err
 				}
-				return installZcodeHandoffHook(path, wrapper, declared)
+				rollback, err := env.recordZcodeWrapperState(wrapper, declared)
+				if err != nil {
+					return agentcfg.Outcome{Runtime: runtime, Path: path}, "", err
+				}
+				outcome, warning, err := installZcodeHandoffHook(path, wrapper, declared)
+				if err != nil && rollback != nil {
+					err = errors.Join(err, rollback())
+				}
+				return outcome, warning, err
 			}
 			return installClaudeAuthorshipAndSessionHooks(
 				env, path, declared, force, pills, handoff)
@@ -533,7 +541,15 @@ func hooksUninstallCommand(env *cliEnv) *cobra.Command {
 				if err != nil {
 					return agentcfg.Outcome{Runtime: runtime, Path: path}, "", err
 				}
-				return uninstallZcodeHandoffHook(path, wrapper)
+				expected, entry, found, err := env.zcodeWrapperExpected(wrapper)
+				if err != nil {
+					return agentcfg.Outcome{Runtime: runtime, Path: path}, "", err
+				}
+				outcome, warning, err := uninstallZcodeHandoffHook(path, wrapper, expected)
+				if err == nil && found {
+					err = env.unregisterArtifactEntry(entry)
+				}
+				return outcome, warning, err
 			}
 			return uninstallClaudeAuthorshipAndSessionHooks(env, path, pills, handoff)
 		})
@@ -542,11 +558,15 @@ func hooksUninstallCommand(env *cliEnv) *cobra.Command {
 	return cmd
 }
 
-func zcodeHookPlatformError(goos string) error {
-	if goos == "darwin" || goos == "linux" {
-		return nil
+func zcodeHookPlatformError(goos string, stat func(string) (os.FileInfo, error)) error {
+	if goos != "darwin" && goos != "linux" {
+		return fmt.Errorf("ZCode hooks are unsupported on %s because the installed wrapper requires /bin/bash", goos)
 	}
-	return fmt.Errorf("ZCode hooks are unsupported on %s because the installed wrapper requires /bin/bash", goos)
+	info, err := stat("/bin/bash")
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
+		return fmt.Errorf("ZCode hooks require executable /bin/bash")
+	}
+	return nil
 }
 
 func supportedHookRuntime(name string) error {
@@ -634,7 +654,68 @@ func zcodeHookWrapperPath() (string, error) {
 	return filepath.Join(root, "hooks", "roca-handoff.sh"), nil
 }
 
-const zcodeSessionStartMarker = "roca_session_start_marker"
+const (
+	zcodeSessionStartMarker = "roca_session_start_marker"
+	zcodeWrapperStateFormat = "zcode-wrapper-v1"
+)
+
+func (env *cliEnv) recordZcodeWrapperState(path, executable string) (func() error, error) {
+	paths, err := env.resolvePaths()
+	if err != nil {
+		return nil, err
+	}
+	expected := zcodeWrapper(executable)
+	transaction := artifact.Entry{
+		Kind: artifactKindHook, Runtime: agentcfg.RuntimeZcode, Path: path,
+		InstalledVersion: env.build.Version, AvailableVersion: env.build.Version,
+		SystemSHA256: artifact.Checksum(expected), Format: zcodeWrapperStateFormat,
+		Executable: executable,
+	}
+	var prior artifact.Entry
+	var priorFound bool
+	_, err = mutateArtifactRegistry(paths.Artifacts, func(registry *artifact.Registry) (bool, error) {
+		prior, priorFound = registry.Find(artifactKindHook, agentcfg.RuntimeZcode, path)
+		registry.Upsert(transaction)
+		return true, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return func() error {
+		_, err := mutateArtifactRegistry(paths.Artifacts, func(registry *artifact.Registry) (bool, error) {
+			current, found := registry.Find(artifactKindHook, agentcfg.RuntimeZcode, path)
+			if !found || current != transaction {
+				return false, nil
+			}
+			removeArtifactEntry(registry, transaction.Key())
+			if priorFound {
+				registry.Upsert(prior)
+			}
+			return true, nil
+		})
+		return err
+	}, nil
+}
+
+func (env *cliEnv) zcodeWrapperExpected(path string) ([]byte, artifact.Entry, bool, error) {
+	entry, found, err := env.registeredArtifact(artifactKindHook, agentcfg.RuntimeZcode, path)
+	if err != nil || !found {
+		return nil, entry, found, err
+	}
+	expected, err := zcodeWrapperExpectedFromEntry(entry)
+	return expected, entry, true, err
+}
+
+func zcodeWrapperExpectedFromEntry(entry artifact.Entry) ([]byte, error) {
+	if entry.Format != zcodeWrapperStateFormat || !filepath.IsAbs(entry.Executable) {
+		return nil, fmt.Errorf("ZCode wrapper ownership state for %s is invalid", entry.Path)
+	}
+	expected := []byte(zcodeWrapper(entry.Executable))
+	if artifact.Checksum(string(expected)) != entry.SystemSHA256 {
+		return nil, fmt.Errorf("ZCode wrapper ownership checksum for %s is invalid", entry.Path)
+	}
+	return expected, nil
+}
 
 func installZcodeHandoffHook(configPath, wrapperPath, executable string) (outcome agentcfg.Outcome, warning string, err error) {
 	release, err := lockZcodeHookLifecycle(configPath, wrapperPath, true)
@@ -678,16 +759,20 @@ func installZcodeHandoffHookUnlocked(configPath, wrapperPath, executable string)
 	return outcome, "", nil
 }
 
-func uninstallZcodeHandoffHook(configPath, wrapperPath string) (outcome agentcfg.Outcome, warning string, err error) {
+func uninstallZcodeHandoffHook(configPath, wrapperPath string, expected ...[]byte) (outcome agentcfg.Outcome, warning string, err error) {
 	release, err := lockZcodeHookLifecycle(configPath, wrapperPath, false)
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
 	defer func() { err = errors.Join(err, release()) }()
-	return uninstallZcodeHandoffHookUnlocked(configPath, wrapperPath)
+	var expectedBytes []byte
+	if len(expected) > 0 {
+		expectedBytes = expected[0]
+	}
+	return uninstallZcodeHandoffHookUnlocked(configPath, wrapperPath, expectedBytes)
 }
 
-func uninstallZcodeHandoffHookUnlocked(configPath, wrapperPath string) (agentcfg.Outcome, string, error) {
+func uninstallZcodeHandoffHookUnlocked(configPath, wrapperPath string, expected []byte) (agentcfg.Outcome, string, error) {
 	var warning string
 	keepWrapper := false
 	command := zcodeOwnedHookCommand(wrapperPath)
@@ -725,7 +810,7 @@ func uninstallZcodeHandoffHookUnlocked(configPath, wrapperPath string) (agentcfg
 		}
 		return outcome, warning, nil
 	}
-	retained, removeErr := removeZcodeWrapper(wrapperPath)
+	retained, removeErr := removeZcodeWrapper(wrapperPath, expected)
 	if removeErr != nil {
 		return outcome, warning, removeErr
 	}
@@ -839,7 +924,7 @@ func writeZcodeWrapper(path, content string, state zcodeWrapperState) error {
 	return securefile.CreatePreservingParentMode(path, []byte(content), 0o700, 0o700)
 }
 
-func removeZcodeWrapper(path string) (bool, error) {
+func removeZcodeWrapper(path string, expected []byte) (bool, error) {
 	body, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return false, nil
@@ -847,8 +932,7 @@ func removeZcodeWrapper(path string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("read %s: %w", path, err)
 	}
-	expected, managed := canonicalZcodeWrapper(body)
-	if !managed {
+	if len(expected) == 0 || string(body) != string(expected) {
 		return true, nil
 	}
 	current, err := os.ReadFile(path)
@@ -862,22 +946,6 @@ func removeZcodeWrapper(path string) (bool, error) {
 		return false, fmt.Errorf("remove %s: %w", path, err)
 	}
 	return false, nil
-}
-
-func canonicalZcodeWrapper(body []byte) ([]byte, bool) {
-	text := string(body)
-	prefix := "#!/bin/bash\n# Managed by roca hooks install zcode.\nset -euo pipefail\n\nif ! "
-	suffix := " hooks run zcode 2>/dev/null; then\n  printf '{\"additionalContext\":\"\"}\\n'\nfi\n"
-	if !strings.HasPrefix(text, prefix) || !strings.HasSuffix(text, suffix) {
-		return nil, false
-	}
-	declared := strings.TrimSuffix(strings.TrimPrefix(text, prefix), suffix)
-	words, ok := simpleShellWords(declared)
-	if !ok || len(words) != 1 {
-		return nil, false
-	}
-	expected := []byte(zcodeWrapper(words[0]))
-	return expected, string(expected) == text
 }
 
 func zcodeOwnedHookCommand(path string) string {

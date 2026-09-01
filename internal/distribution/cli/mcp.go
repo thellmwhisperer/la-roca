@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/thellmwhisperer/la-roca/internal/artifact"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/agentcfg"
+	"github.com/thellmwhisperer/la-roca/internal/securefile"
 )
 
 // EnvExecutable is an explicit test and operator override. Without it, the
@@ -52,13 +53,16 @@ func mcpInstallCommand(env *cliEnv) *cobra.Command {
 				return fmt.Errorf("resolve the running executable %q to an absolute path", declared)
 			}
 			var rollback func() error
+			var outcome agentcfg.Outcome
 			if args[0] == agentcfg.RuntimeZcode {
-				rollback, err = env.recordZcodeMCPPreimage(path)
-				if err != nil {
-					return err
-				}
+				outcome, err = agentcfg.InstallZcodeMCP(path, declared,
+					func(preimage string, configured bool) error {
+						rollback, err = env.recordZcodeMCPPreimage(path, preimage, configured)
+						return err
+					})
+			} else {
+				outcome, err = agentcfg.Install(args[0], path, declared)
 			}
-			outcome, err := agentcfg.Install(args[0], path, declared)
 			if err != nil {
 				if rollback != nil {
 					err = errors.Join(err, rollback())
@@ -164,57 +168,90 @@ func mcpStatusCommand(env *cliEnv) *cobra.Command {
 
 const zcodeMCPPreimageFormat = "zcode-mcp-preimage-v1:"
 
-func (env *cliEnv) recordZcodeMCPPreimage(path string) (func() error, error) {
-	registryPath, registry, err := env.artifactRegistry()
+func (env *cliEnv) recordZcodeMCPPreimage(path, preimage string, configured bool) (func() error, error) {
+	paths, err := env.resolvePaths()
 	if err != nil {
 		return nil, err
 	}
-	if entry, found := registry.Find(artifactKindMCP, agentcfg.RuntimeZcode, path); found {
-		status, statusErr := agentcfg.Status(agentcfg.RuntimeZcode, path)
-		if statusErr != nil {
-			return nil, statusErr
-		}
-		if status.State == agentcfg.StateConfigured {
-			if _, err := zcodeMCPPreimageFromEntry(entry); err != nil {
-				return nil, err
-			}
-			return nil, nil
-		}
-	}
-	body, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		body = nil
-	} else if err != nil {
-		return nil, err
-	}
-	preimage, err := agentcfg.ZcodeMCPPreimage(string(body))
-	if err != nil {
-		return nil, err
-	}
-	before := registry
-	before.Entries = append([]artifact.Entry(nil), registry.Entries...)
-	_, statErr := os.Stat(registryPath)
-	registryExisted := statErr == nil
-	if statErr != nil && !os.IsNotExist(statErr) {
-		return nil, statErr
-	}
-	registry.Upsert(artifact.Entry{
+	transaction := artifact.Entry{
 		Kind: artifactKindMCP, Runtime: agentcfg.RuntimeZcode, Path: path,
 		InstalledVersion: env.build.Version, AvailableVersion: env.build.Version,
 		Format: zcodeMCPPreimageFormat + preimage,
+	}
+	var prior artifact.Entry
+	var priorFound bool
+	changed, err := mutateArtifactRegistry(paths.Artifacts, func(registry *artifact.Registry) (bool, error) {
+		prior, priorFound = registry.Find(artifactKindMCP, agentcfg.RuntimeZcode, path)
+		if priorFound && configured {
+			_, err := zcodeMCPPreimageFromEntry(prior)
+			return false, err
+		}
+		registry.Upsert(transaction)
+		return true, nil
 	})
-	if err := artifact.SaveRegistry(registryPath, registry); err != nil {
+	if err != nil || !changed {
 		return nil, err
 	}
 	return func() error {
-		if registryExisted {
-			return artifact.SaveRegistry(registryPath, before)
-		}
-		if err := os.Remove(registryPath); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-		return nil
+		_, err := mutateArtifactRegistry(paths.Artifacts, func(registry *artifact.Registry) (bool, error) {
+			current, found := registry.Find(artifactKindMCP, agentcfg.RuntimeZcode, path)
+			if !found || current != transaction {
+				return false, nil
+			}
+			removeArtifactEntry(registry, transaction.Key())
+			if priorFound {
+				registry.Upsert(prior)
+			}
+			return true, nil
+		})
+		return err
 	}, nil
+}
+
+func mutateArtifactRegistry(path string, mutate func(*artifact.Registry) (bool, error)) (changed bool, err error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return false, err
+	}
+	release, err := securefile.Lock(path + ".lock")
+	if err != nil {
+		return false, err
+	}
+	defer func() { err = errors.Join(err, release()) }()
+	registry, err := artifact.LoadRegistry(path)
+	if err != nil {
+		return false, err
+	}
+	changed, err = mutate(&registry)
+	if err != nil || !changed {
+		return changed, err
+	}
+	return true, artifact.SaveRegistry(path, registry)
+}
+
+func (env *cliEnv) unregisterArtifactEntry(entry artifact.Entry) error {
+	paths, err := env.resolvePaths()
+	if err != nil {
+		return err
+	}
+	_, err = mutateArtifactRegistry(paths.Artifacts, func(registry *artifact.Registry) (bool, error) {
+		current, found := registry.Find(entry.Kind, entry.Runtime, entry.Path)
+		if !found || current != entry {
+			return false, nil
+		}
+		removeArtifactEntry(registry, entry.Key())
+		return true, nil
+	})
+	return err
+}
+
+func removeArtifactEntry(registry *artifact.Registry, key string) {
+	kept := registry.Entries[:0]
+	for _, entry := range registry.Entries {
+		if entry.Key() != key {
+			kept = append(kept, entry)
+		}
+	}
+	registry.Entries = kept
 }
 
 func zcodeMCPPreimageFromEntry(entry artifact.Entry) (string, error) {
@@ -249,7 +286,18 @@ func (env *cliEnv) uninstallMCP(runtime, path string) (agentcfg.Outcome, error) 
 		return outcome, err
 	}
 	if found {
-		err = env.unregisterArtifact(artifactKindMCP, runtime, path)
+		paths, pathsErr := env.resolvePaths()
+		if pathsErr != nil {
+			return outcome, pathsErr
+		}
+		_, err = mutateArtifactRegistry(paths.Artifacts, func(registry *artifact.Registry) (bool, error) {
+			current, exists := registry.Find(artifactKindMCP, runtime, path)
+			if !exists || current != entry {
+				return false, nil
+			}
+			removeArtifactEntry(registry, entry.Key())
+			return true, nil
+		})
 	}
 	return outcome, err
 }

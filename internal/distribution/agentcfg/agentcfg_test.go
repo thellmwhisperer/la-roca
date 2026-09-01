@@ -224,6 +224,28 @@ func TestZcodeHookRoundTripPreservesEmptySessionStartWhitespace(t *testing.T) {
 	}
 }
 
+func TestZcodeMCPPreimageUsesComparedInstallSnapshot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	concurrent := `{"mcp":{"servers":{}}}`
+	var recorded string
+	_, err := agentcfg.InstallZcodeMCP(path, "roca", func(preimage string, _ bool) error {
+		recorded = preimage
+		return os.WriteFile(path, []byte(concurrent), 0o600)
+	})
+	if err == nil {
+		t.Fatal("ZCode MCP install accepted a config changed after its preimage snapshot")
+	}
+	if recorded != agentcfg.ZcodeMCPPreimageMCPServers {
+		t.Fatalf("recorded preimage = %q", recorded)
+	}
+	if got := read(t, path); got != concurrent {
+		t.Fatalf("concurrent config changed: got %s", got)
+	}
+}
+
 func TestZcodeWithdrawalRestoresMCPContainerPreimage(t *testing.T) {
 	for _, before := range []string{
 		`{}`,

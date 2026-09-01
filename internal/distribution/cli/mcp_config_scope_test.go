@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/artifact"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/agentcfg"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/lifecycle"
 )
 
@@ -76,6 +77,39 @@ func TestZcodeMCPStateRestoresContainerPreimage(t *testing.T) {
 	}
 }
 
+func TestZcodeMCPStateRollbackPreservesConcurrentRegistryEntries(t *testing.T) {
+	home := skillTestHome(t)
+	env := &cliEnv{build: Build{Version: "test"}}
+	path := filepath.Join(home, "zcode.json")
+	rollback, err := env.recordZcodeMCPPreimage(path, agentcfg.ZcodeMCPPreimageMCPServers, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registryPath := filepath.Join(home, ".roca", "artifacts.json")
+	registry, err := artifact.LoadRegistry(registryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	skillEntry := artifact.Entry{Kind: artifactKindSkill, Runtime: "claude", Path: filepath.Join(home, "skill.md")}
+	registry.Upsert(skillEntry)
+	if err := artifact.SaveRegistry(registryPath, registry); err != nil {
+		t.Fatal(err)
+	}
+	if err := rollback(); err != nil {
+		t.Fatal(err)
+	}
+	registry, err = artifact.LoadRegistry(registryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, found := registry.Find(skillEntry.Kind, skillEntry.Runtime, skillEntry.Path); !found {
+		t.Fatal("MCP rollback removed a concurrent skill ownership entry")
+	}
+	if _, found := registry.Find(artifactKindMCP, "zcode", path); found {
+		t.Fatal("MCP rollback retained its own ownership entry")
+	}
+}
+
 func TestFullUninstallWithdrawsRegisteredCustomZcodeMCPPath(t *testing.T) {
 	home := skillTestHome(t)
 	path := filepath.Join(home, "custom", "zcode.json")
@@ -105,6 +139,37 @@ func TestFullUninstallWithdrawsRegisteredCustomZcodeMCPPath(t *testing.T) {
 	}
 	if _, found := registry.Find(artifactKindMCP, "zcode", path); found {
 		t.Fatal("full uninstall retained custom ZCode MCP ownership state")
+	}
+}
+
+func TestFullUninstallSkipsZcodeMCPWhenOwnershipStateIsUnreadable(t *testing.T) {
+	home := skillTestHome(t)
+	path := filepath.Join(home, ".zcode", "cli", "config.json")
+	if _, err := agentcfg.Install(agentcfg.RuntimeZcode, path, filepath.Join(home, "roca")); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registryPath := filepath.Join(home, ".roca", "artifacts.json")
+	if err := os.MkdirAll(filepath.Dir(registryPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(registryPath, []byte("{broken"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	report := lifecycle.Report{Purged: true}
+	(&cliEnv{out: io.Discard, errOut: io.Discard}).withdrawTheIntegrations(&report, false)
+	if len(report.Errors) == 0 {
+		t.Fatal("full uninstall accepted unreadable ownership state")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("ZCode MCP changed without ownership state:\nwant %s\n got %s", before, after)
 	}
 }
 

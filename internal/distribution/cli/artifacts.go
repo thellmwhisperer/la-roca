@@ -58,7 +58,7 @@ func (env *cliEnv) artifactRegistry() (string, artifact.Registry, error) {
 }
 
 func (env *cliEnv) registerZonedArtifact(kind, runtime, path, desiredSystem string) error {
-	registryPath, registry, err := env.artifactRegistry()
+	paths, err := env.resolvePaths()
 	if err != nil {
 		return err
 	}
@@ -68,21 +68,24 @@ func (env *cliEnv) registerZonedArtifact(kind, runtime, path, desiredSystem stri
 	}
 	desiredChecksum := artifact.Checksum(desiredSystem)
 	currentChecksum := artifact.Checksum(zones.System)
-	entry, exists := registry.Find(kind, runtime, path)
-	if !exists {
-		entry = artifact.Entry{Kind: kind, Runtime: runtime, Path: path}
-	}
-	entry.AvailableVersion = env.build.Version
-	entry.Format = "zoned-v1"
-	if currentChecksum == desiredChecksum {
-		entry.InstalledVersion = env.build.Version
-		entry.SystemSHA256 = currentChecksum
-	} else if !exists {
-		entry.InstalledVersion = "unknown"
-		entry.SystemSHA256 = desiredChecksum
-	}
-	registry.Upsert(entry)
-	return artifact.SaveRegistry(registryPath, registry)
+	_, err = mutateArtifactRegistry(paths.Artifacts, func(registry *artifact.Registry) (bool, error) {
+		entry, exists := registry.Find(kind, runtime, path)
+		if !exists {
+			entry = artifact.Entry{Kind: kind, Runtime: runtime, Path: path}
+		}
+		entry.AvailableVersion = env.build.Version
+		entry.Format = "zoned-v1"
+		if currentChecksum == desiredChecksum {
+			entry.InstalledVersion = env.build.Version
+			entry.SystemSHA256 = currentChecksum
+		} else if !exists {
+			entry.InstalledVersion = "unknown"
+			entry.SystemSHA256 = desiredChecksum
+		}
+		registry.Upsert(entry)
+		return true, nil
+	})
+	return err
 }
 
 func (env *cliEnv) registeredArtifact(kind, runtime, path string) (artifact.Entry, bool, error) {
@@ -95,40 +98,38 @@ func (env *cliEnv) registeredArtifact(kind, runtime, path string) (artifact.Entr
 }
 
 func (env *cliEnv) unregisterArtifact(kind, runtime, path string) error {
-	registryPath, registry, err := env.artifactRegistry()
+	paths, err := env.resolvePaths()
 	if err != nil {
 		return err
 	}
-	if _, err := os.Stat(registryPath); os.IsNotExist(err) {
+	if _, err := os.Stat(paths.Artifacts); os.IsNotExist(err) {
 		return nil
 	} else if err != nil {
 		return err
 	}
 	key := (artifact.Entry{Kind: kind, Runtime: runtime, Path: path}).Key()
-	kept := registry.Entries[:0]
-	for _, entry := range registry.Entries {
-		if entry.Key() != key {
-			kept = append(kept, entry)
-		}
-	}
-	if len(kept) == len(registry.Entries) {
-		return nil
-	}
-	registry.Entries = kept
-	return artifact.SaveRegistry(registryPath, registry)
+	_, err = mutateArtifactRegistry(paths.Artifacts, func(registry *artifact.Registry) (bool, error) {
+		before := len(registry.Entries)
+		removeArtifactEntry(registry, key)
+		return len(registry.Entries) != before, nil
+	})
+	return err
 }
 
 func (env *cliEnv) registerHook(path, runtime, system string) error {
-	registryPath, registry, err := env.artifactRegistry()
+	paths, err := env.resolvePaths()
 	if err != nil {
 		return err
 	}
-	registry.Upsert(artifact.Entry{
-		Kind: artifactKindHook, Runtime: runtime, Path: path,
-		InstalledVersion: env.build.Version, AvailableVersion: env.build.Version,
-		SystemSHA256: artifact.Checksum(system), Format: "json-fragment-v1",
+	_, err = mutateArtifactRegistry(paths.Artifacts, func(registry *artifact.Registry) (bool, error) {
+		registry.Upsert(artifact.Entry{
+			Kind: artifactKindHook, Runtime: runtime, Path: path,
+			InstalledVersion: env.build.Version, AvailableVersion: env.build.Version,
+			SystemSHA256: artifact.Checksum(system), Format: "json-fragment-v1",
+		})
+		return true, nil
 	})
-	return artifact.SaveRegistry(registryPath, registry)
+	return err
 }
 
 func claudeHookSystem(path string) (string, bool, error) {
