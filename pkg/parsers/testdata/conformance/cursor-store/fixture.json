@@ -18,7 +18,13 @@
         "exchanges": [
           {
             "human_text": "map the synthetic harbor",
-            "agent_text": "The synthetic harbor is mapped."
+            "agent_text": "The synthetic harbor is mapped.",
+            "tools": [
+              {
+                "name": "Read",
+                "params_summary": "{\"path\":\"/synthetic/harbor/map.md\"}"
+              }
+            ]
           },
           {
             "human_text": "confirm the invented beacon color",

@@ -1376,9 +1376,8 @@ func (w *writer) enrichExchange(ctx context.Context, sessionID string, stored st
 	}
 	if stored.agentText != "" || stored.agentTimestamp != "" {
 		if reconcileOrphans {
-			if err := w.reconcileOrphanedTools(ctx, sessionID, number, exchange.Tools); err != nil {
-				return inserted, 0, err
-			}
+			tools, err := w.reconcileOrphanedTools(ctx, sessionID, number, exchange.Tools)
+			return inserted, tools, err
 		}
 		return inserted, 0, nil
 	}
@@ -1405,14 +1404,14 @@ type toolIdentity struct {
 }
 
 func (w *writer) reconcileOrphanedTools(ctx context.Context, sessionID string, number int,
-	tools []parsers.ToolUse) error {
+	tools []parsers.ToolUse) (int, error) {
 	rows, err := w.tx.QueryContext(ctx, `
 		SELECT id, exchange_number, tool_name, tool_params_summary, initiative_type
 		FROM tool_uses
 		WHERE session_id = ? AND (exchange_number = ? OR exchange_number IS NULL)
 		ORDER BY id`, sessionID, number)
 	if err != nil {
-		return fmt.Errorf("read tools for orphan reconciliation of %s/%d: %w", sessionID, number, err)
+		return 0, fmt.Errorf("read tools for orphan reconciliation of %s/%d: %w", sessionID, number, err)
 	}
 	attached := map[toolIdentity]int{}
 	orphaned := map[toolIdentity][]int64{}
@@ -1423,7 +1422,7 @@ func (w *writer) reconcileOrphanedTools(ctx context.Context, sessionID string, n
 		var params, initiative sql.NullString
 		if err := rows.Scan(&id, &exchangeNumber, &name, &params, &initiative); err != nil {
 			_ = rows.Close()
-			return fmt.Errorf("scan tools for orphan reconciliation of %s/%d: %w",
+			return 0, fmt.Errorf("scan tools for orphan reconciliation of %s/%d: %w",
 				sessionID, number, err)
 		}
 		identity := toolIdentity{name: name, params: params.String, initiative: initiative.String}
@@ -1435,13 +1434,14 @@ func (w *writer) reconcileOrphanedTools(ctx context.Context, sessionID string, n
 	}
 	if err := rows.Err(); err != nil {
 		_ = rows.Close()
-		return fmt.Errorf("iterate tools for orphan reconciliation of %s/%d: %w",
+		return 0, fmt.Errorf("iterate tools for orphan reconciliation of %s/%d: %w",
 			sessionID, number, err)
 	}
 	if err := rows.Close(); err != nil {
-		return fmt.Errorf("close tools for orphan reconciliation of %s/%d: %w",
+		return 0, fmt.Errorf("close tools for orphan reconciliation of %s/%d: %w",
 			sessionID, number, err)
 	}
+	var missing []parsers.ToolUse
 	for _, tool := range tools {
 		identity := toolIdentity{name: tool.Name, params: tool.ParamsSummary,
 			initiative: tool.InitiativeType}
@@ -1451,6 +1451,7 @@ func (w *writer) reconcileOrphanedTools(ctx context.Context, sessionID string, n
 		}
 		ids := orphaned[identity]
 		if len(ids) == 0 {
+			missing = append(missing, tool)
 			continue
 		}
 		id := ids[0]
@@ -1461,10 +1462,10 @@ func (w *writer) reconcileOrphanedTools(ctx context.Context, sessionID string, n
 			WHERE id = ? AND session_id = ? AND exchange_number IS NULL`,
 			number, tool.Name, nullIfEmpty(tool.ParamsSummary), boolToInt(tool.HadError),
 			nullIfEmpty(tool.ErrorMessage), nullIfEmpty(tool.InitiativeType), id, sessionID); err != nil {
-			return fmt.Errorf("reconcile orphaned tool of %s/%d: %w", sessionID, number, err)
+			return 0, fmt.Errorf("reconcile orphaned tool of %s/%d: %w", sessionID, number, err)
 		}
 	}
-	return nil
+	return w.insertTools(ctx, sessionID, number, missing)
 }
 
 func (w *writer) insertTools(ctx context.Context, sessionID string, number any,

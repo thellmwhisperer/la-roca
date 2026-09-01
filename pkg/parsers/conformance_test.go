@@ -38,10 +38,11 @@ type conformanceExchange struct {
 }
 
 type conformanceTool struct {
-	Name          string `json:"name"`
-	ParamsSummary string `json:"params_summary,omitempty"`
-	HadError      bool   `json:"had_error,omitempty"`
-	ErrorMessage  string `json:"error_message,omitempty"`
+	Name           string `json:"name"`
+	ParamsSummary  string `json:"params_summary,omitempty"`
+	HadError       bool   `json:"had_error,omitempty"`
+	ErrorMessage   string `json:"error_message,omitempty"`
+	InitiativeType string `json:"initiative_type,omitempty"`
 }
 
 type conformanceMemory struct {
@@ -158,7 +159,7 @@ func TestRegisteredParsersConform(t *testing.T) {
 						memory.FilePath, memory.SourceSurface, want)
 				}
 			}
-			if got := conformanceProjection(records, fixture.Want); !reflect.DeepEqual(got, fixture.Want) {
+			if got := conformanceProjection(records); !reflect.DeepEqual(got, fixture.Want) {
 				gotJSON, _ := json.MarshalIndent(got, "", "  ")
 				wantJSON, _ := json.MarshalIndent(fixture.Want, "", "  ")
 				t.Fatalf("normalized records differ\ngot:  %s\nwant: %s", gotJSON, wantJSON)
@@ -422,30 +423,23 @@ func readConformanceFixture(t *testing.T, path string) conformanceFixture {
 	return fixture
 }
 
-func conformanceProjection(records Records, want conformanceWant) conformanceWant {
+func conformanceProjection(records Records) conformanceWant {
 	got := conformanceWant{
 		Sessions: make([]conformanceSession, 0, len(records.Sessions)),
 		Memories: make([]conformanceMemory, 0, len(records.Memories)),
 	}
-	for sessionIndex, session := range records.Sessions {
+	for _, session := range records.Sessions {
 		projected := conformanceSession{
 			ID: session.ID, SourceAgent: session.SourceAgent, Project: session.Project,
 			Title: session.Title, ParentID: session.ParentID,
-			Exchanges: make([]conformanceExchange, 0, len(session.Exchanges)),
+			OrphanedTools: projectConformanceTools(session.OrphanedTools),
+			Exchanges:     make([]conformanceExchange, 0, len(session.Exchanges)),
 		}
-		if sessionIndex < len(want.Sessions) && want.Sessions[sessionIndex].OrphanedTools != nil {
-			projected.OrphanedTools = projectConformanceTools(session.OrphanedTools)
-		}
-		for exchangeIndex, exchange := range session.Exchanges {
-			projectedExchange := conformanceExchange{
+		for _, exchange := range session.Exchanges {
+			projected.Exchanges = append(projected.Exchanges, conformanceExchange{
 				HumanText: exchange.HumanText, AgentText: exchange.AgentText,
-			}
-			if sessionIndex < len(want.Sessions) &&
-				exchangeIndex < len(want.Sessions[sessionIndex].Exchanges) &&
-				want.Sessions[sessionIndex].Exchanges[exchangeIndex].Tools != nil {
-				projectedExchange.Tools = projectConformanceTools(exchange.Tools)
-			}
-			projected.Exchanges = append(projected.Exchanges, projectedExchange)
+				Tools: projectConformanceTools(exchange.Tools),
+			})
 		}
 		got.Sessions = append(got.Sessions, projected)
 	}
@@ -459,12 +453,47 @@ func conformanceProjection(records Records, want conformanceWant) conformanceWan
 }
 
 func projectConformanceTools(tools []ToolUse) []conformanceTool {
+	if tools == nil {
+		return nil
+	}
 	projected := make([]conformanceTool, 0, len(tools))
 	for _, tool := range tools {
 		projected = append(projected, conformanceTool{
 			Name: tool.Name, ParamsSummary: tool.ParamsSummary,
 			HadError: tool.HadError, ErrorMessage: tool.ErrorMessage,
+			InitiativeType: tool.InitiativeType,
 		})
 	}
 	return projected
+}
+
+func TestConformanceProjectionExposesToolTelemetry(t *testing.T) {
+	records := Records{Sessions: []Session{
+		{ID: "nil", Exchanges: []Exchange{{}}},
+		{ID: "empty", OrphanedTools: []ToolUse{},
+			Exchanges: []Exchange{{Tools: []ToolUse{}}}},
+		{ID: "populated", OrphanedTools: []ToolUse{{
+			Name: "orphan", ParamsSummary: "session params", HadError: true,
+			ErrorMessage: "session failure", InitiativeType: "proactive",
+		}}, Exchanges: []Exchange{{Tools: []ToolUse{{
+			Name: "attached", ParamsSummary: "exchange params", HadError: true,
+			ErrorMessage: "exchange failure", InitiativeType: "reactive",
+		}}}}},
+	}}
+
+	got := conformanceProjection(records)
+	if got.Sessions[0].OrphanedTools != nil || got.Sessions[0].Exchanges[0].Tools != nil {
+		t.Fatalf("nil tools changed shape: %+v", got.Sessions[0])
+	}
+	if got.Sessions[1].OrphanedTools == nil || got.Sessions[1].Exchanges[0].Tools == nil {
+		t.Fatalf("empty tools changed shape: %+v", got.Sessions[1])
+	}
+	wantOrphan := conformanceTool{Name: "orphan", ParamsSummary: "session params",
+		HadError: true, ErrorMessage: "session failure", InitiativeType: "proactive"}
+	wantAttached := conformanceTool{Name: "attached", ParamsSummary: "exchange params",
+		HadError: true, ErrorMessage: "exchange failure", InitiativeType: "reactive"}
+	if !reflect.DeepEqual(got.Sessions[2].OrphanedTools, []conformanceTool{wantOrphan}) ||
+		!reflect.DeepEqual(got.Sessions[2].Exchanges[0].Tools, []conformanceTool{wantAttached}) {
+		t.Fatalf("projected tools = %+v", got.Sessions[2])
+	}
 }

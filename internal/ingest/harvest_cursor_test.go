@@ -230,6 +230,37 @@ func TestCompletedCodexTurnMovesRecoveredOrphanOntoMatchedExchange(t *testing.T)
 	}
 }
 
+func TestCompletedRecoveredCodexExchangeKeepsNewTool(t *testing.T) {
+	prefix := `{"type":"session_meta","payload":{"id":"completed-new-tool"}}
+{"type":"event_msg","payload":{"type":"user_message","message":"question"}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"question"}]}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer"}]}}
+`
+	tail := `{"type":"response_item","payload":{"type":"function_call","call_id":"late","name":"shell","arguments":"{\"cmd\":\"finish\"}"}}
+{"type":"event_msg","payload":{"type":"task_complete","last_agent_message":"answer"}}
+`
+	db, second := writeGrowingSessionInTwoPasses(t, prefix, tail, Target{
+		FileName: "rollout.jsonl", Kind: parsers.KindCodexSession,
+		SessionID: "completed-new-tool", SourceAgent: "codex",
+	})
+	if len(second.Sessions) != 1 || second.Sessions[0].Incremental {
+		t.Fatalf("completed rollout did not fall back to a full read: %+v", second.Sessions)
+	}
+	var count, exchangeNumber, orphaned int
+	var name, params string
+	if err := db.SQL().QueryRow(`SELECT COUNT(*), COALESCE(MAX(exchange_number), 0),
+		SUM(exchange_number IS NULL), MAX(tool_name), MAX(tool_params_summary)
+		FROM tool_uses WHERE session_id = ?`, "completed-new-tool").
+		Scan(&count, &exchangeNumber, &orphaned, &name, &params); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 || exchangeNumber != 1 || orphaned != 0 || name != "shell" ||
+		params != `{"cmd":"finish"}` {
+		t.Fatalf("completed new tool = count:%d exchange:%d orphaned:%d name:%q params:%q",
+			count, exchangeNumber, orphaned, name, params)
+	}
+}
+
 func TestConflictedCodexCompletionPreservesRecoveredOrphan(t *testing.T) {
 	prefix := `{"type":"session_meta","payload":{"id":"conflicted-recovery"}}
 {"type":"event_msg","payload":{"type":"user_message","message":"question"}}
