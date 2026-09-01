@@ -100,6 +100,30 @@ func TestAPlatformTheChannelDoesNotBuildForIsNamed(t *testing.T) {
 // GitHub being down, and it is not the same thing as a repository that is
 // private. What the installer owes here is to name the request that failed and
 // to leave the prefix exactly as it found it.
+func TestWindowsRecommendsWSLAndNamesNativeLimitations(t *testing.T) {
+	fake := t.TempDir()
+	uname := "#!/bin/sh\ncase \"$1\" in -s) echo Windows_NT;; -m) echo x86_64;; esac\n"
+	if err := os.WriteFile(filepath.Join(fake, "uname"), []byte(uname), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	output, err := runTheInstaller(t, []string{"PATH=" + fake + ":" + os.Getenv("PATH")},
+		"--repo", "owner/name")
+	if err == nil {
+		t.Fatal("the native Windows installer unexpectedly succeeded")
+	}
+	for _, wanted := range []string{
+		"use WSL (first class)",
+		"Linux binaries and this curl installer work as-is there",
+		"native .exe is manual and untested",
+		"Windows-side agent paths (/mnt/c) are not auto-detected",
+	} {
+		if !strings.Contains(output, wanted) {
+			t.Errorf("the Windows guidance does not include %q:\n%s", wanted, output)
+		}
+	}
+}
+
 func TestAChannelThatDoesNotAnswerLeavesThePrefixAlone(t *testing.T) {
 	prefix := t.TempDir()
 	theirs := filepath.Join(prefix, "roca")
