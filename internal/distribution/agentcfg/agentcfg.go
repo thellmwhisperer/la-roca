@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"sort"
 	"strings"
 
@@ -22,11 +23,13 @@ import (
 
 // The supported runtimes.
 const (
-	RuntimeCodex    = "codex"
-	RuntimeClaude   = "claude"
-	RuntimeOpencode = "opencode"
-	RuntimeHermes   = "hermes"
-	RuntimePi       = "pi"
+	RuntimeCodex         = "codex"
+	RuntimeClaude        = "claude"
+	RuntimeClaudeDesktop = "claude-desktop"
+	RuntimeOpencode      = "opencode"
+	RuntimeHermes        = "hermes"
+	RuntimePi            = "pi"
+	RuntimeZcode         = "zcode"
 )
 
 // Skill seats whose user skill directory this product measured but whose MCP
@@ -74,6 +77,8 @@ type runtime struct {
 	pathVar string
 	// serversKey is the member holding the map of MCP servers.
 	serversKey string
+	// parents are JSON objects traversed before serversKey.
+	parents []string
 	// entry renders the value Roca owns inside that map.
 	entry func(executable string) fields
 }
@@ -106,6 +111,12 @@ var runtimes = map[string]runtime{
 			return append(fields{{"type", "stdio"}}, commandAndArgs(e)...)
 		},
 	},
+	RuntimeClaudeDesktop: {
+		kind: kindJSON, serversKey: "mcpServers",
+		entry: func(e string) fields {
+			return append(fields{{"type", "stdio"}}, commandAndArgs(e)...)
+		},
+	},
 	RuntimeOpencode: {
 		kind: kindJSONC, dir: []string{".config", "opencode"}, file: "opencode.json",
 		pathVar: "OPENCODE_CONFIG", serversKey: "mcp",
@@ -122,6 +133,13 @@ var runtimes = map[string]runtime{
 	RuntimePi: {
 		kind: kindJSONC, dirVar: "PI_CODING_AGENT_DIR", dir: []string{".pi", "agent"},
 		file: "mcp.json", serversKey: "mcpServers", entry: commandAndArgs,
+	},
+	RuntimeZcode: {
+		kind: kindJSON, dir: []string{".zcode", "cli"},
+		file: "config.json", parents: []string{"mcp"}, serversKey: "servers",
+		entry: func(e string) fields {
+			return append(fields{{"type", "stdio"}}, commandAndArgs(e)...)
+		},
 	},
 }
 
@@ -159,9 +177,37 @@ type Report struct {
 // ConfigPath resolves where one runtime keeps its configuration: the home
 // first, then the environment, which wins.
 func ConfigPath(name, home string, env func(string) string) (string, error) {
+	return ConfigPathForOS(name, home, goruntime.GOOS, env)
+}
+
+// ConfigPathForOS is ConfigPath with an explicit platform for deterministic
+// path resolution tests and installers that plan a different target platform.
+func ConfigPathForOS(name, home, goos string, env func(string) string) (string, error) {
 	r, err := find(name)
 	if err != nil {
 		return "", err
+	}
+	if name == RuntimeClaudeDesktop {
+		switch goos {
+		case "darwin":
+			return filepath.Join(home, "Library", "Application Support", "Claude",
+				"claude_desktop_config.json"), nil
+		case "windows":
+			root := env("APPDATA")
+			if root == "" {
+				root = filepath.Join(home, "AppData", "Roaming")
+			}
+			return filepath.Join(root, "Claude", "claude_desktop_config.json"), nil
+		default:
+			return "", fmt.Errorf("claude-desktop MCP configuration is supported on macOS and Windows")
+		}
+	}
+	if name == RuntimeZcode {
+		root := filepath.Join(home, ".zcode")
+		if declared := env("ZCODE_HOME"); declared != "" {
+			root = Expand(declared, home)
+		}
+		return filepath.Join(root, "cli", "config.json"), nil
 	}
 	if r.pathVar != "" {
 		if declared := env(r.pathVar); declared != "" {

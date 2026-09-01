@@ -1,6 +1,7 @@
 package agentcfg_test
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -37,6 +38,17 @@ args = ["--stdio"]
   "theme": "dark"
 }
 `,
+	agentcfg.RuntimeClaudeDesktop: `{
+  "numStartups": 42,
+  "mcpServers": {
+    "some-other-server": {
+      "type": "stdio",
+      "command": "other-binary"
+    }
+  },
+  "theme": "dark"
+}
+`,
 	agentcfg.RuntimeOpencode: `{
   // OpenCode reads JSONC, so this comment has to survive
   "$schema": "https://opencode.ai/config.json",
@@ -63,6 +75,18 @@ logging: verbose
   "mcpServers": {
     "some-other-server": {
       "command": "other-binary"
+    }
+  }
+}
+`,
+	agentcfg.RuntimeZcode: `{
+  "theme": "dark",
+  "mcp": {
+    "servers": {
+      "some-other-server": {
+        "type": "stdio",
+        "command": "other-binary"
+      }
     }
   }
 }
@@ -130,6 +154,32 @@ func TestInstallingAndWithdrawingGivesBackTheExactPreviousBytes(t *testing.T) {
 					before, after)
 			}
 		})
+	}
+}
+
+func TestZcodeUsesTheNestedMCPServersShape(t *testing.T) {
+	path := fixtureFile(t, agentcfg.RuntimeZcode)
+	if _, err := agentcfg.Install(agentcfg.RuntimeZcode, path, "roca"); err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal([]byte(read(t, path)), &document); err != nil {
+		t.Fatal(err)
+	}
+	mcp, ok := document["mcp"].(map[string]any)
+	if !ok {
+		t.Fatal("zcode config has no mcp object")
+	}
+	servers, ok := mcp["servers"].(map[string]any)
+	if !ok {
+		t.Fatal("zcode config has no nested mcp.servers object")
+	}
+	roca, ok := servers[agentcfg.ServerName].(map[string]any)
+	if !ok || roca["type"] != "stdio" || roca["command"] != "roca" {
+		t.Fatalf("zcode roca server = %#v", servers[agentcfg.ServerName])
+	}
+	if _, flat := document["servers"]; flat {
+		t.Fatal("zcode config wrote a flat servers member")
 	}
 }
 
@@ -462,10 +512,13 @@ func TestTheConfigPathComesFromTheHomeAndTheEnvironment(t *testing.T) {
 		{agentcfg.RuntimeCodex, map[string]string{"CODEX_HOME": "/elsewhere"},
 			"/elsewhere/config.toml"},
 		{agentcfg.RuntimeClaude, nil, filepath.Join(home, ".claude.json")},
+		{agentcfg.RuntimeClaudeDesktop, nil,
+			filepath.Join(home, "Library", "Application Support", "Claude", "claude_desktop_config.json")},
 		{agentcfg.RuntimeOpencode, nil,
 			filepath.Join(home, ".config", "opencode", "opencode.json")},
 		{agentcfg.RuntimeHermes, nil, filepath.Join(home, ".hermes", "config.yaml")},
 		{agentcfg.RuntimePi, nil, filepath.Join(home, ".pi", "agent", "mcp.json")},
+		{agentcfg.RuntimeZcode, nil, filepath.Join(home, ".zcode", "cli", "config.json")},
 	}
 	for _, tc := range cases {
 		t.Run(tc.runtime, func(t *testing.T) {
@@ -477,6 +530,34 @@ func TestTheConfigPathComesFromTheHomeAndTheEnvironment(t *testing.T) {
 				t.Errorf("path = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestClaudeDesktopConfigPathResolvesWindowsAppData(t *testing.T) {
+	home := t.TempDir()
+	appData := filepath.Join(home, "AppData", "Roaming")
+	got, err := agentcfg.ConfigPathForOS(agentcfg.RuntimeClaudeDesktop, home, "windows",
+		lookup(map[string]string{"APPDATA": appData}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(appData, "Claude", "claude_desktop_config.json")
+	if got != want {
+		t.Fatalf("path = %q, want %q", got, want)
+	}
+}
+
+func TestZcodeConfigPathTreatsZcodeHomeAsTheRuntimeRoot(t *testing.T) {
+	home := t.TempDir()
+	root := filepath.Join(home, "elsewhere")
+	got, err := agentcfg.ConfigPathForOS(agentcfg.RuntimeZcode, home, "darwin",
+		lookup(map[string]string{"ZCODE_HOME": root}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(root, "cli", "config.json")
+	if got != want {
+		t.Fatalf("path = %q, want %q", got, want)
 	}
 }
 

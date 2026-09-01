@@ -18,6 +18,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/skill"
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
+	"github.com/thellmwhisperer/la-roca/internal/securefile"
 )
 
 var rocaStoreInvocation = regexp.MustCompile(
@@ -465,7 +466,7 @@ func hooksCommand(env *cliEnv) *cobra.Command {
 // that has something to say about a file it left alone returns one warning line,
 // printed here and only here so it cannot be doubled.
 func hooksEditCommand(env *cliEnv, use, short, verb string,
-	edit func(path string) (agentcfg.Outcome, string, error)) *cobra.Command {
+	edit func(runtime, path string) (agentcfg.Outcome, string, error)) *cobra.Command {
 	return &cobra.Command{
 		Use:   use,
 		Short: short,
@@ -474,11 +475,11 @@ func hooksEditCommand(env *cliEnv, use, short, verb string,
 			if err := supportedHookRuntime(args[0]); err != nil {
 				return err
 			}
-			path, err := claudeSettingsPath()
+			path, err := hookConfigPath(args[0])
 			if err != nil {
 				return err
 			}
-			outcome, warning, err := edit(path)
+			outcome, warning, err := edit(args[0], path)
 			if err != nil {
 				return err
 			}
@@ -494,10 +495,18 @@ func hooksInstallCommand(env *cliEnv) *cobra.Command {
 	var executable string
 	var force, pills, handoff bool
 	cmd := hooksEditCommand(env, "install [runtime]",
-		"Install Claude Code hooks for authorship signing and optional session context", "updated",
-		func(path string) (agentcfg.Outcome, string, error) {
+		"Install a runtime's La Roca hook", "updated",
+		func(runtime, path string) (agentcfg.Outcome, string, error) {
+			declared := chosenExecutable(executable)
+			if runtime == agentcfg.RuntimeZcode {
+				wrapper, err := zcodeHookWrapperPath()
+				if err != nil {
+					return agentcfg.Outcome{Runtime: runtime, Path: path}, "", err
+				}
+				return installZcodeHandoffHook(path, wrapper, declared)
+			}
 			return installClaudeAuthorshipAndSessionHooks(
-				env, path, chosenExecutable(executable), force, pills, handoff)
+				env, path, declared, force, pills, handoff)
 		})
 	cmd.Flags().StringVar(&executable, "executable", "",
 		"the binary the hook launches (default: this executable; override with "+EnvExecutable+")")
@@ -510,8 +519,15 @@ func hooksInstallCommand(env *cliEnv) *cobra.Command {
 func hooksUninstallCommand(env *cliEnv) *cobra.Command {
 	var pills, handoff bool
 	cmd := hooksEditCommand(env, "uninstall [runtime]",
-		"Withdraw Claude Code hooks this product installed", "withdrawn",
-		func(path string) (agentcfg.Outcome, string, error) {
+		"Withdraw a runtime's La Roca hook, leaving its other settings in place",
+		"withdrawn", func(runtime, path string) (agentcfg.Outcome, string, error) {
+			if runtime == agentcfg.RuntimeZcode {
+				wrapper, err := zcodeHookWrapperPath()
+				if err != nil {
+					return agentcfg.Outcome{Runtime: runtime, Path: path}, "", err
+				}
+				return uninstallZcodeHandoffHook(path, wrapper)
+			}
 			return uninstallClaudeAuthorshipAndSessionHooks(env, path, pills, handoff)
 		})
 	cmd.Flags().BoolVar(&pills, "pills", false, "withdraw the SessionStart `roca pill` hook")
@@ -520,8 +536,8 @@ func hooksUninstallCommand(env *cliEnv) *cobra.Command {
 }
 
 func supportedHookRuntime(name string) error {
-	if name != "claude" {
-		return fmt.Errorf("unsupported hook runtime %q (want claude)", name)
+	if name != agentcfg.RuntimeClaude && name != agentcfg.RuntimeZcode {
+		return fmt.Errorf("unsupported hook runtime %q (want claude, zcode)", name)
 	}
 	return nil
 }
@@ -568,6 +584,206 @@ func claudeSettingsPath() (string, error) {
 		root = filepath.Join(home, ".claude")
 	}
 	return filepath.Join(root, "settings.json"), nil
+}
+
+func hookConfigPath(runtime string) (string, error) {
+	if runtime == agentcfg.RuntimeClaude {
+		return claudeSettingsPath()
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("I do not know where your HOME is")
+	}
+	return agentcfg.ConfigPath(runtime, home, os.Getenv)
+}
+
+func zcodeRoot() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("I do not know where your HOME is")
+	}
+	if declared := os.Getenv("ZCODE_HOME"); declared != "" {
+		return agentcfg.Expand(declared, home), nil
+	}
+	return filepath.Join(home, ".zcode"), nil
+}
+
+func zcodeHookWrapperPath() (string, error) {
+	root, err := zcodeRoot()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(root, "hooks", "roca-handoff.sh"), nil
+}
+
+func installZcodeHandoffHook(configPath, wrapperPath, executable string) (agentcfg.Outcome, string, error) {
+	wrapper := zcodeWrapper(executable)
+	if err := writeZcodeWrapper(wrapperPath, wrapper); err != nil {
+		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
+	}
+	outcome, err := agentcfg.Edit(agentcfg.RuntimeZcode, configPath, func(previous string) (string, error) {
+		settings, hooks, events, entries, err := zcodeHookSettings(previous)
+		if err != nil {
+			return "", err
+		}
+		if hooks == nil {
+			hooks = map[string]any{}
+			settings["hooks"] = hooks
+		}
+		hooks["enabled"] = true
+		if events == nil {
+			events = map[string]any{}
+			hooks["events"] = events
+		}
+		found := false
+		for _, raw := range entries {
+			for _, hook := range commandHooksOf(raw) {
+				if commandOf(hook) == wrapperPath {
+					hook["type"] = "command"
+					hook["timeoutMs"] = float64(15000)
+					found = true
+				}
+			}
+		}
+		if !found {
+			entries = append(entries, map[string]any{"hooks": []any{map[string]any{
+				"type": "command", "command": wrapperPath, "timeoutMs": 15000,
+			}}})
+		}
+		events["SessionStart"] = entries
+		return encodeClaudeSettings(settings)
+	}, true)
+	return outcome, "", err
+}
+
+func uninstallZcodeHandoffHook(configPath, wrapperPath string) (agentcfg.Outcome, string, error) {
+	var warning string
+	outcome, err := agentcfg.Edit(agentcfg.RuntimeZcode, configPath, func(previous string) (string, error) {
+		settings, hooks, events, entries, err := zcodeHookSettings(previous)
+		if err != nil {
+			warning = fmt.Sprintf("warning: %s is not readable as zcode settings; remove the nested hooks.events.SessionStart command %s by hand", configPath, wrapperPath)
+			return previous, nil
+		}
+		remaining := make([]any, 0, len(entries))
+		for _, raw := range entries {
+			group, ok := raw.(map[string]any)
+			groupHooks, isList := group["hooks"].([]any)
+			if !ok || !isList {
+				remaining = append(remaining, raw)
+				continue
+			}
+			kept := make([]any, 0, len(groupHooks))
+			for _, candidate := range groupHooks {
+				hook, ok := candidate.(map[string]any)
+				if ok && hook["type"] == "command" && commandOf(hook) == wrapperPath {
+					continue
+				}
+				kept = append(kept, candidate)
+			}
+			if len(kept) == 0 {
+				continue
+			}
+			group["hooks"] = kept
+			remaining = append(remaining, group)
+		}
+		if len(remaining) == 0 {
+			delete(events, "SessionStart")
+		} else {
+			events["SessionStart"] = remaining
+		}
+		if len(events) == 0 {
+			delete(hooks, "events")
+		}
+		if len(hooks) == 1 && hooks["enabled"] == true {
+			delete(settings, "hooks")
+		}
+		return encodeClaudeSettings(settings)
+	}, false)
+	if err != nil {
+		return outcome, warning, err
+	}
+	if removeErr := removeZcodeWrapper(wrapperPath); removeErr != nil {
+		return outcome, warning, removeErr
+	}
+	return outcome, warning, nil
+}
+
+func zcodeHookSettings(previous string) (settings, hooks, events map[string]any, entries []any, err error) {
+	settings, err = claudeSettings(previous)
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("read zcode settings: %w", err)
+	}
+	hooks, ok := settings["hooks"].(map[string]any)
+	if settings["hooks"] != nil && !ok {
+		return nil, nil, nil, nil, fmt.Errorf("zcode settings hooks must be an object")
+	}
+	events, ok = hooks["events"].(map[string]any)
+	if hooks["events"] != nil && !ok {
+		return nil, nil, nil, nil, fmt.Errorf("zcode settings hooks.events must be an object")
+	}
+	entries, ok = events["SessionStart"].([]any)
+	if events["SessionStart"] != nil && !ok {
+		return nil, nil, nil, nil, fmt.Errorf("zcode settings hooks.events.SessionStart must be an array")
+	}
+	return settings, hooks, events, entries, nil
+}
+
+func zcodeWrapper(executable string) string {
+	return `#!/bin/bash
+# Managed by roca hooks install zcode.
+set -euo pipefail
+
+CONTENT=$(` + shellQuote(executable) + ` exec "SELECT content FROM plugin_roca_ops.memories WHERE layer='handoff' AND status='active' ORDER BY created_at DESC LIMIT 1" --max-chars 8000 --json 2>/dev/null \
+  | /usr/bin/python3 -c 'import json,sys
+d = json.load(sys.stdin)
+rows = d.get("rows") or []
+sys.stdout.write(rows[0]["content"] if rows else "")' 2>/dev/null || true)
+
+if [ -z "$CONTENT" ]; then
+  printf '{}\n'
+else
+  printf '%s' "$CONTENT" | /usr/bin/python3 -c 'import json,sys
+sys.stdout.write(json.dumps({"additionalContext": sys.stdin.read()}))'
+fi
+`
+}
+
+func writeZcodeWrapper(path, content string) error {
+	previous, err := os.ReadFile(path)
+	if err == nil && string(previous) == content {
+		return os.Chmod(path, 0o700)
+	}
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	if err == nil {
+		if _, backupErr := securefile.BackUp(path, previous); backupErr != nil {
+			return backupErr
+		}
+		if err := securefile.Replace(path, []byte(content), previous); err != nil {
+			return err
+		}
+	} else if err := securefile.Write(path, []byte(content), 0o700, 0o700); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0o700)
+}
+
+func removeZcodeWrapper(path string) error {
+	body, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	if !strings.Contains(string(body), "# Managed by roca hooks install zcode.") {
+		return fmt.Errorf("refuse to remove unrecognized zcode hook wrapper %s", path)
+	}
+	if err := os.Remove(path); err != nil {
+		return fmt.Errorf("remove %s: %w", path, err)
+	}
+	return nil
 }
 
 // The hook is intentionally one hard-coded Claude artifact. Its command object
