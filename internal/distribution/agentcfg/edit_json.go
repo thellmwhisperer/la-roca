@@ -429,7 +429,7 @@ func arrayPadUnder(view string, values array, fallback string) string {
 
 func (a array) insert(text, rendered, closePad string) string {
 	if len(a.values) == 0 {
-		return text[:a.open+1] + "\n" + rendered + "\n" + closePad + text[a.close:]
+		return text[:a.open+1] + "\n" + rendered + text[a.open+1:]
 	}
 	last := a.values[len(a.values)-1].end
 	return text[:last] + ",\n" + rendered + text[last:]
@@ -438,7 +438,7 @@ func (a array) insert(text, rendered, closePad string) string {
 func (a array) cut(text string, i int) string {
 	switch {
 	case len(a.values) == 1:
-		return text[:a.open+1] + text[a.close:]
+		return text[:a.open+1] + text[a.values[i].end:]
 	case i > 0:
 		return text[:a.values[i-1].end] + text[a.values[i].end:]
 	default:

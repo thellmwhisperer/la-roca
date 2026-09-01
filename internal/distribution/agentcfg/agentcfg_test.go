@@ -184,6 +184,26 @@ func TestZcodeUsesTheNestedMCPServersShape(t *testing.T) {
 	}
 }
 
+func TestZcodeHookRoundTripPreservesEmptySessionStartWhitespace(t *testing.T) {
+	before := "{\n  \"neighbor\": 9007199254740993,\n  \"hooks\": {\n    \"events\": {\n      \"SessionStart\": [\n        \n      ]\n    }\n  }\n}\n"
+	command := "/home/operator/.zcode/hooks/roca-handoff.sh"
+	installed, err := agentcfg.DeclareZcodeSessionStartHook(before, command, 15000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal([]byte(installed), &document); err != nil {
+		t.Fatalf("installed hook config is invalid JSON: %v", err)
+	}
+	withdrawn, err := agentcfg.RemoveZcodeSessionStartHook(installed, command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withdrawn != before {
+		t.Fatalf("empty SessionStart bytes changed:\nwant %q\n got %q", before, withdrawn)
+	}
+}
+
 func TestZcodeWithdrawalPreservesPreexistingMCPParents(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	before := `{"numeric_spelling":9007199254740993,"mcp":{}}`

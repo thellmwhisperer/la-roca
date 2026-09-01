@@ -35,6 +35,22 @@ func Replace(path string, data, previous []byte) error {
 	return publish(path, data, previous, mode, 0o700, false, false)
 }
 
+func Remove(path string, expected []byte) error {
+	current, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if string(current) != string(expected) {
+		return fmt.Errorf(
+			"%s changed while it was being edited: close the runtime that owns it and try again",
+			path)
+	}
+	return os.Remove(path)
+}
+
 // BackUp preserves previous bytes beside path without overwriting older copies.
 func BackUp(path string, previous []byte) (string, error) {
 	for index := 0; ; index++ {

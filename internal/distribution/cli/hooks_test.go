@@ -20,7 +20,11 @@ func TestZcodeHookInstallerWritesNestedSessionStartAndJSONWrapper(t *testing.T) 
 		t.Fatal(err)
 	}
 	fake := `#!/bin/sh
-printf '%s\n' '{"rows":[{"content":"synthetic handoff"}]}'
+if [ "$1 $2 $3" = "hooks run zcode" ]; then
+  printf '%s\n' '{"additionalContext":"synthetic handoff"}'
+  exit 0
+fi
+exit 1
 `
 	if err := os.WriteFile(binary, []byte(fake), 0o700); err != nil {
 		t.Fatal(err)
@@ -135,6 +139,23 @@ printf '%s\n' '{"rows":[{"content":"synthetic handoff"}]}'
 	}
 }
 
+func TestZcodeHookRunnerAlwaysEmitsAdditionalContext(t *testing.T) {
+	home := skillTestHome(t)
+	var output strings.Builder
+	root := rootCommand(&cliEnv{out: &output, build: Build{Version: "test"}})
+	root.SetArgs([]string{"hooks", "run", "zcode"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	var context map[string]string
+	if err := json.Unmarshal([]byte(output.String()), &context); err != nil {
+		t.Fatalf("zcode hook runner output is not JSON: %v", err)
+	}
+	if context["additionalContext"] != "" {
+		t.Fatalf("unexpected handoff from empty home %s: %#v", home, context)
+	}
+}
+
 func TestZcodeHookInstallRollsBackWrapperWhenConfigEditFails(t *testing.T) {
 	for _, test := range []struct {
 		name, previous string
@@ -169,6 +190,37 @@ func TestZcodeHookInstallRollsBackWrapperWhenConfigEditFails(t *testing.T) {
 			}
 			if err != nil || string(body) != test.previous {
 				t.Fatalf("failed install did not restore wrapper: body=%q err=%v", body, err)
+			}
+		})
+	}
+}
+
+func TestZcodeWrapperRollbackPreservesConcurrentChanges(t *testing.T) {
+	installed := []byte("installed wrapper\n")
+	for _, test := range []struct {
+		name  string
+		state zcodeWrapperState
+	}{
+		{name: "new wrapper"},
+		{name: "replaced wrapper", state: zcodeWrapperState{
+			body: []byte("previous wrapper\n"), mode: 0o600, exists: true,
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "roca-handoff.sh")
+			if err := os.WriteFile(path, installed, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			concurrent := []byte("operator changed this\n")
+			if err := os.WriteFile(path, concurrent, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := restoreZcodeWrapper(path, test.state, installed); err == nil {
+				t.Fatal("rollback accepted concurrently changed wrapper bytes")
+			}
+			body, err := os.ReadFile(path)
+			if err != nil || string(body) != string(concurrent) {
+				t.Fatalf("rollback clobbered concurrent bytes: body=%q err=%v", body, err)
 			}
 		})
 	}

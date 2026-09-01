@@ -194,9 +194,10 @@ runtime receives `skills/roca/SKILL.md`, `skills/roca-operations/SKILL.md`,
 | `qwen` | `$QWEN_HOME`/`~/.qwen` |
 | `zcode` | `$ZCODE_HOME`/`~/.zcode` |
 
-Only those files are created or refreshed. ZCode is explicit opt-in: init does
-not install its skills merely because `~/.zcode` exists; use `roca skill
-install zcode`. Explicit markers divide the shipped
+Only those files are created or refreshed. ZCode is explicit opt-in: init and
+update never install or refresh its skills merely because `~/.zcode` exists;
+plugin lifecycle changes do not refresh its catalog either. Use `roca skill
+install zcode` whenever its skills or catalog should change. Explicit markers divide the shipped
 SYSTEM zone from the operator's USER zone. Re-running is a no-op when SYSTEM
 already matches; otherwise USER is transplanted verbatim and the previous file
 is backed up. An edited SYSTEM zone is left alone unless the operator passes
@@ -206,8 +207,8 @@ is backed up. An edited SYSTEM zone is left alone unless the operator passes
 `internal/distribution/skill/VECTOR.md`, and ship inside the
 binary via `go:embed`; the catalog body is composed at install time from the semantic
 fragments of the installed plugin manifests, the same fragments the query
-catalog composes, and every `roca plugin install`, `update` and `uninstall`
-regenerates it in each runtime where it is registered.
+catalog composes. Except for opt-in ZCode, every `roca plugin install`, `update`
+and `uninstall` regenerates it in each runtime where it is registered.
 
 ### How a runtime earns a skill seat
 
