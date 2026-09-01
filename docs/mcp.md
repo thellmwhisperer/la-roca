@@ -148,10 +148,21 @@ preimage: withdrawal may remove a pre-existing empty server map such as
 `mcpServers`. Exact empty-container restoration for those runtimes remains
 follow-up ownership work. Other neighbouring configuration remains untouched.
 
+ZCode withdrawal is ownership-gated. A missing or unreadable ownership registry
+and a diverged managed declaration are never guessed: La Roca retains the
+operator configuration and warns or fails. If the ZCode root was replaced, it
+retires the stale claim; purge names the retained operator-recreated state. A
+full uninstall also retains the binary while a selected declaration remains
+active. A pre-existing empty ZCode config with no ownership claim is a
+successful no-op with a warning.
+
 Two more things the shared spine gives every edit: the previous bytes are backed
 up first (`<file>.roca.bak`, and an earlier copy is never overwritten), and a file
 that changed underneath us aborts instead of clobbering the runtime that owns
-it.
+it. For symlinked ZCode and Claude Desktop configurations, La Roca preserves the
+symlink, edits and backs up its resolved regular-file target, and records that
+target so purge never guesses where recovery copies live. If an older ownership
+record has no target, purge retains any such backup and warns.
 
 **One declared boundary.** A `codex` config that writes `mcp_servers` as an
 inline table is refused by name, with the remedy, instead of being edited.
@@ -202,9 +213,10 @@ runtime receives `skills/roca/SKILL.md`, `skills/roca-operations/SKILL.md`,
 
 Only those files are created or refreshed. ZCode is explicit opt-in: init and
 update never install or refresh its skills merely because `~/.zcode` exists;
-plugin lifecycle changes do not refresh its catalog either. Use `roca skill
-install zcode` whenever its skills or catalog should change. Explicit markers divide the shipped
-SYSTEM zone from the operator's USER zone. Re-running is a no-op when SYSTEM
+post-init ingest and plugin lifecycle changes do not refresh its skills or
+catalog either. Use `roca skill install zcode` whenever they should change.
+Explicit markers divide the shipped SYSTEM zone from the operator's USER zone.
+Re-running is a no-op when SYSTEM
 already matches; otherwise USER is transplanted verbatim and the previous file
 is backed up. An edited SYSTEM zone is left alone unless the operator passes
 `--force`. The embedded skill sources live in

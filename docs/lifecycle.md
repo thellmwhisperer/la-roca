@@ -180,16 +180,18 @@ comes with its whole story: the how, the why, and the failed attempts behind
 the final answer, one question away.
 
 `roca init` ships the three embedded skills (`roca`, `roca-operations`,
-`roca-vector`) into every detected skill seat, and with them `roca-semantica`,
-a catalog of every installed plugin's tables and example questions generated
-from the same fragments natural-language search uses. `roca skill install`
-writes the same four for a runtime init did not detect. An agent installed
-after init receives the three embedded skills after
-the next successful non-dry-run ingest, whether plain or nightly. Each
-installed skill and the generated prompt keep shipped SYSTEM content separate
-from an operator-owned USER zone, and `roca update` tracks their
-release in `~/.roca/artifacts.json`. Automatic refresh is available behind the
-default-off `features.artifact_refresh` key.
+`roca-vector`) into every detected automatically managed skill seat, and with
+them `roca-semantica`, a catalog of every installed plugin's tables and example
+questions generated from the same fragments natural-language search uses.
+`roca skill install` writes the same four for an explicitly selected runtime.
+An automatically managed agent installed after init receives the three embedded
+skills after the next successful non-dry-run ingest, whether plain or nightly.
+Each installed skill and the generated prompt keep shipped SYSTEM content
+separate from an operator-owned USER zone. For automatically managed seats,
+`roca update` tracks their release in `~/.roca/artifacts.json`; automatic refresh
+is available behind the default-off `features.artifact_refresh` key. ZCode's
+explicit-only exception is defined in
+[The MCP plug](mcp.md#3-three-adoption-layers).
 
 The `pill` layer is built for what comes next: condensed artifacts distilled
 from your own history and injected through hooks, charging an agent with
@@ -216,12 +218,17 @@ place. If bundled placement or verification fails, the previous core remains
 active.
 
 The `roca`, `roca-operations`, and `roca-vector` skills, the generated
-`roca-semantica` catalog skill, `prompt.md`, and
-the Claude authorship hook are registered in the schema-versioned
-`~/.roca/artifacts.json`. Each entry records its harness,
-path, installed release, available release, format, and SYSTEM checksum. The
-same registry feeds uninstall's central owned-path inventory; an artifact with
-operator bytes in its USER zone is not claimed as a whole file.
+`roca-semantica` catalog skill, `prompt.md`, the Claude authorship hook, and
+ownership state for explicitly installed ZCode and Claude Desktop integrations
+are registered in the schema-versioned `~/.roca/artifacts.json`. Each entry
+records the ownership fields applicable to that artifact, including its runtime,
+path, release, format, checksum, executable, or actual configuration mutation
+target. Older supported schemas are backed up before migration. An unknown or
+newer schema fails closed for ownership-dependent withdrawal: operator files
+are retained, and full uninstall does not remove the binary while an active
+integration cannot be safely withdrawn. The same registry feeds uninstall's
+central owned-path inventory; an artifact with operator bytes in its USER zone
+is not claimed as a whole file.
 
 Automatic artifact refresh is a default-off rollout:
 
@@ -262,10 +269,12 @@ and forcing it rewrites the whole file rather than preserving USER. Every
 changed file gets a named `.roca.bak` recovery copy before publication, and that
 copy is where the replaced bytes survive.
 
-The hook uses the same ownership split inside Claude's settings: the one entry
-whose command ends in `hooks run claude` is the explicitly marked SYSTEM
-fragment, while the surrounding settings and other hook entries are USER. No
-new harness target is introduced by this lifecycle.
+The Claude hook uses the same ownership split inside Claude's settings: the one
+entry whose command ends in `hooks run claude` is the explicitly marked SYSTEM
+fragment, while the surrounding settings and other hook entries are USER.
+Automatic refresh does not opt ZCode into skill or hook installation; its
+explicit integration lifecycle is documented under
+[Memory authorship](operations.md#memory-authorship).
 
 This registry is only for the artifacts La Roca itself ships. Third-party
 skills, skill marketplaces, and remote artifact distribution are not part of
@@ -335,8 +344,9 @@ database, configuration, indexes, logs, generated prompt, backups, skills, and
 integration recovery copies, plus the credential files and model catalogue cache
 that older releases left behind. The recovery copies a refresh left beside a
 managed artifact belong to the same family: a regular uninstall names them as
-kept, and a purge takes them with the rest, so the directory holding them can be
-taken back too.
+kept, and a purge takes every copy whose location its ownership state proves.
+An older ZCode or Claude Desktop record with no actual configuration mutation
+target is retained and warned about rather than guessed.
 
 A pre-zone skill an older release installed is recognized by its opening rather
 than by a checksum, so withdrawing one leaves a recovery copy of the file before
@@ -367,9 +377,11 @@ command names each archive with its size and removes it only after an explicit
 `y`. Declining, and any run with nobody at the terminal or with `--json`, leaves
 the archives untouched and names where each one remains.
 
-Uninstall edits each supported agent configuration surgically, preserving all
-unrelated bytes. It refuses to delete files it cannot identify as product-owned
-and reports them with a reason. Re-running uninstall is safe.
+Uninstall edits each supported agent configuration surgically, preserving
+neighbouring operator entries subject to the documented
+[MCP empty-container and formatting limits](mcp.md#2-roca-mcp-declaring-the-server-in-an-agents-config).
+It refuses to delete files it cannot identify as product-owned and reports them
+with a reason. Re-running uninstall is safe.
 
 ## Release ownership
 
