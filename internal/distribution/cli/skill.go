@@ -629,7 +629,12 @@ func installZcodeHandoffHook(configPath, wrapperPath, executable string) (agentc
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
 	wrapper := zcodeWrapper(executable)
-	if err := writeZcodeWrapper(wrapperPath, wrapper); err != nil {
+	if state.exists && !isManagedZcodeWrapper(state.body) {
+		if _, err := backUpZcodeOperatorWrapper(wrapperPath, state); err != nil {
+			return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
+		}
+	}
+	if err := writeZcodeWrapper(wrapperPath, wrapper, state); err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
 	command := shellQuote(wrapperPath)
@@ -726,25 +731,14 @@ fi
 `
 }
 
-func writeZcodeWrapper(path, content string) error {
-	previous, err := os.ReadFile(path)
-	if err == nil && string(previous) == content {
-		return os.Chmod(path, 0o700)
-	}
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("read %s: %w", path, err)
-	}
-	if err == nil {
-		if _, backupErr := securefile.BackUp(path, previous); backupErr != nil {
-			return backupErr
+func writeZcodeWrapper(path, content string, state zcodeWrapperState) error {
+	if state.exists {
+		if string(state.body) == content && state.mode&0o100 != 0 {
+			return nil
 		}
-		if err := securefile.Replace(path, []byte(content), previous); err != nil {
-			return err
-		}
-	} else if err := securefile.Write(path, []byte(content), 0o700, 0o700); err != nil {
-		return err
+		return securefile.ReplaceExact(path, []byte(content), state.body, 0o700)
 	}
-	return os.Chmod(path, 0o700)
+	return securefile.CreatePreservingParentMode(path, []byte(content), 0o700, 0o700)
 }
 
 func removeZcodeWrapper(path string) error {
@@ -755,13 +749,82 @@ func removeZcodeWrapper(path string) error {
 	if err != nil {
 		return fmt.Errorf("read %s: %w", path, err)
 	}
-	if !strings.Contains(string(body), "# Managed by roca hooks install zcode.") {
-		return fmt.Errorf("refuse to remove unrecognized zcode hook wrapper %s", path)
+	if !isManagedZcodeWrapper(body) {
+		return nil
 	}
-	if err := os.Remove(path); err != nil {
-		return fmt.Errorf("remove %s: %w", path, err)
+	backup, found, err := latestZcodeOperatorBackup(path)
+	if err != nil {
+		return err
+	}
+	if !found {
+		if err := securefile.Remove(path, body); err != nil {
+			return fmt.Errorf("remove %s: %w", path, err)
+		}
+		return nil
+	}
+	state, err := readZcodeWrapperState(backup)
+	if err != nil {
+		return err
+	}
+	if err := securefile.ReplaceExact(path, state.body, body, state.mode); err != nil {
+		return fmt.Errorf("restore operator wrapper %s from %s: %w", path, backup, err)
 	}
 	return nil
+}
+
+func isManagedZcodeWrapper(body []byte) bool {
+	return strings.Contains(string(body), "# Managed by roca hooks install zcode.")
+}
+
+func backUpZcodeOperatorWrapper(path string, state zcodeWrapperState) (string, error) {
+	base := path + ".roca.operator.bak"
+	for index := 0; ; index++ {
+		candidate := base
+		if index > 0 {
+			candidate = fmt.Sprintf("%s.%d", base, index)
+		}
+		body, err := os.ReadFile(candidate)
+		if err == nil {
+			info, statErr := os.Stat(candidate)
+			if statErr == nil && string(body) == string(state.body) && info.Mode().Perm() == state.mode {
+				return candidate, nil
+			}
+			continue
+		}
+		if !os.IsNotExist(err) {
+			return "", fmt.Errorf("read operator wrapper backup %s: %w", candidate, err)
+		}
+		if err := securefile.CreatePreservingParentMode(candidate, state.body, state.mode, 0o700); err != nil {
+			if os.IsExist(err) {
+				continue
+			}
+			return "", err
+		}
+		return candidate, nil
+	}
+}
+
+func latestZcodeOperatorBackup(path string) (string, bool, error) {
+	base := path + ".roca.operator.bak"
+	matches, err := filepath.Glob(base + "*")
+	if err != nil {
+		return "", false, err
+	}
+	latest, latestIndex := "", -1
+	for _, candidate := range matches {
+		index := 0
+		if candidate != base {
+			var parsed int
+			if _, err := fmt.Sscanf(strings.TrimPrefix(candidate, base), ".%d", &parsed); err != nil {
+				continue
+			}
+			index = parsed + 1
+		}
+		if index > latestIndex {
+			latest, latestIndex = candidate, index
+		}
+	}
+	return latest, latest != "", nil
 }
 
 // The hook is intentionally one hard-coded Claude artifact. Its command object

@@ -183,6 +183,70 @@ func TestZcodeHookCommandExecutesWhenWrapperPathContainsSpaces(t *testing.T) {
 	}
 }
 
+func TestZcodeHookRestoresPreexistingWrapperAndKeepsItsBackup(t *testing.T) {
+	home := skillTestHome(t)
+	wrapper := filepath.Join(home, ".zcode", "hooks", "roca-handoff.sh")
+	original := []byte("#!/bin/sh\nprintf 'operator wrapper\\n'\n")
+	if err := os.MkdirAll(filepath.Dir(wrapper), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(wrapper, original, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(home, "bin", "roca")
+	for _, full := range []bool{false, true} {
+		root := rootCommand(&cliEnv{out: io.Discard, build: Build{Version: "test"}})
+		root.SetArgs([]string{"hooks", "install", "zcode", "--executable", binary})
+		if err := root.Execute(); err != nil {
+			t.Fatal(err)
+		}
+		backup, found, err := latestZcodeOperatorBackup(wrapper)
+		if err != nil || !found {
+			t.Fatalf("operator wrapper backup: found=%v err=%v", found, err)
+		}
+		if full {
+			report := lifecycle.Report{Purged: true, Deleted: []string{}}
+			(&cliEnv{out: io.Discard, errOut: io.Discard}).withdrawTheIntegrations(&report, true)
+		} else {
+			root = rootCommand(&cliEnv{out: io.Discard, build: Build{Version: "test"}})
+			root.SetArgs([]string{"hooks", "uninstall", "zcode"})
+			if err := root.Execute(); err != nil {
+				t.Fatal(err)
+			}
+		}
+		body, err := os.ReadFile(wrapper)
+		if err != nil || string(body) != string(original) {
+			t.Fatalf("operator wrapper not restored: body=%q err=%v", body, err)
+		}
+		backupBody, err := os.ReadFile(backup)
+		if err != nil || string(backupBody) != string(original) {
+			t.Fatalf("operator backup did not survive uninstall: body=%q err=%v", backupBody, err)
+		}
+	}
+}
+
+func TestZcodeWrapperInstallUsesCapturedPreimage(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "roca-handoff.sh")
+	if err := os.WriteFile(path, []byte("captured\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	state, err := readZcodeWrapperState(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	concurrent := []byte("operator changed this\n")
+	if err := os.WriteFile(path, concurrent, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeZcodeWrapper(path, zcodeWrapper("/bin/roca"), state); err == nil {
+		t.Fatal("wrapper install accepted a stale preimage")
+	}
+	body, err := os.ReadFile(path)
+	if err != nil || string(body) != string(concurrent) {
+		t.Fatalf("wrapper install changed concurrent bytes: body=%q err=%v", body, err)
+	}
+}
+
 func TestZcodeHookRunnerAlwaysEmitsAdditionalContext(t *testing.T) {
 	home := skillTestHome(t)
 	var output strings.Builder
