@@ -525,8 +525,8 @@ func find(name string) (runtime, error) {
 // Expand turns a leading ~ into home. Shared by every installer that resolves
 // an operator-declared path against the same home.
 func Expand(path, home string) string {
-	if path == "~" || strings.HasPrefix(path, "~/") {
-		return filepath.Join(home, strings.TrimPrefix(path, "~"))
+	if path == "~" || strings.HasPrefix(path, "~/") || strings.HasPrefix(path, `~\`) {
+		return filepath.Join(home, strings.TrimLeft(strings.TrimPrefix(path, "~"), `/\`))
 	}
 	return path
 }

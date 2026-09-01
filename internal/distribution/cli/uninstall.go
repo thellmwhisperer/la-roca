@@ -123,10 +123,6 @@ func (env *cliEnv) uninstall(cmd *cobra.Command, in io.Reader, purge bool) (retu
 		return fmt.Errorf("lock ZCode lifecycle for uninstall: %w", err)
 	}
 	zcodeLockPath := paths.Artifacts + ".zcode.lock"
-	zcodeLockIdentity, identityErr := os.Lstat(zcodeLockPath)
-	if identityErr != nil {
-		return errors.Join(identityErr, releaseZcode())
-	}
 	env.zcodeLifecycleLocked = true
 	releasedZcode := false
 	defer func() {
@@ -174,6 +170,11 @@ func (env *cliEnv) uninstall(cmd *cobra.Command, in io.Reader, purge bool) (retu
 		if len(keptArchives) > 0 {
 			applied.Kept = exceptCustodyTree(applied.Kept, custodyRoot(paths))
 		}
+		for index := range applied.Kept {
+			if applied.Kept[index].Path == zcodeLockPath {
+				applied.Kept[index].Reason = "retained so concurrent ZCode operations remain serialized"
+			}
+		}
 	} else {
 		applied = plan.Apply()
 	}
@@ -182,18 +183,6 @@ func (env *cliEnv) uninstall(cmd *cobra.Command, in io.Reader, purge bool) (retu
 	report.Errors = append(report.Errors, applied.Errors...)
 	report.Purged = report.Purged && applied.Purged
 
-	if purge {
-		if err := cleanupCreatedZcodeLifecycleLock(zcodeLockPath, zcodeLockIdentity); err != nil {
-			failed(&report, "remove ZCode lifecycle lock: %v", err)
-		} else if _, err := os.Lstat(zcodeLockPath); err == nil {
-			failed(&report, "retained ZCode lifecycle lock at %s", zcodeLockPath)
-		} else if !os.IsNotExist(err) {
-			failed(&report, "inspect ZCode lifecycle lock after purge: %v", err)
-		} else {
-			report.Deleted = append(report.Deleted, zcodeLockPath)
-		}
-		report = reconcilePurge(report, lifecycle.Plan{DataDir: dataDir}.Apply(), zcodeLockPath)
-	}
 	env.zcodeLifecycleLocked = false
 	if err := releaseZcode(); err != nil {
 		failed(&report, "release ZCode lifecycle lock: %v", err)

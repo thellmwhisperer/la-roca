@@ -899,6 +899,19 @@ func TestZcodeConfigPathTreatsZcodeHomeAsTheRuntimeRoot(t *testing.T) {
 	}
 }
 
+func TestZcodeConfigPathExpandsWindowsHomePrefix(t *testing.T) {
+	home := t.TempDir()
+	got, err := agentcfg.ConfigPathForOS(agentcfg.RuntimeZcode, home, "windows",
+		lookup(map[string]string{"ZCODE_HOME": `~\.zcode-custom`}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(home, ".zcode-custom", "cli", "config.json")
+	if got != want {
+		t.Fatalf("path = %q, want %q", got, want)
+	}
+}
+
 // --- the harness ---
 
 func fixtureFile(t *testing.T, runtime string) string {
