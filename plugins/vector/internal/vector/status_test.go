@@ -199,10 +199,10 @@ func TestReportVectorizationUnknownNeverBecomesZeroOnAHungSourceCount(t *testing
 	previous := candidateCountTimeout
 	candidateCountTimeout = 30 * time.Millisecond
 	t.Cleanup(func() { candidateCountTimeout = previous })
-	countDeclaredChunks = func(context.Context, vectorDatabase, string) (*int64, error) {
+	countDeclaredChunks = func(context.Context, vectorDatabase, string) (candidateChunkSnapshot, error) {
 		time.Sleep(200 * time.Millisecond)
 		zero := int64(0)
-		return &zero, nil
+		return candidateChunkSnapshot{Chunks: &zero, SourceMarker: "unreadable"}, nil
 	}
 	t.Cleanup(func() { countDeclaredChunks = readDeclaredChunkCount })
 
@@ -320,6 +320,123 @@ func TestReportVectorizationCountsDeclaredChunksExactly(t *testing.T) {
 	candidate := report.Databases[0].CandidateChunks
 	if candidate == nil || *candidate != 5 {
 		t.Fatalf("candidate chunks = %v, want 5", candidate)
+	}
+}
+
+func TestReportVectorizationHidesCandidateCountFromOlderSourceSnapshot(t *testing.T) {
+	root := t.TempDir()
+	database := vectorDatabase{
+		Plugin: "roca-corpus", Database: "corpus", Path: "roca-corpus.db", Alias: "corpus",
+		Tables: []vectorTable{{Name: "notes", IDColumn: "id", TextColumns: []string{"body"}}},
+	}
+	writeRegistry(t, root, vectorRegistry{Schema: 2, Databases: []vectorDatabase{database}})
+	path := filepath.Join(root, database.Plugin, database.Path)
+	writeSourceRows(t, path, `CREATE TABLE notes(id TEXT PRIMARY KEY, body TEXT);
+		INSERT INTO notes VALUES ('a','alpha');`)
+	marker, err := sourceFileMarker(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initialMarker := marker
+	writeSidecarWithChunks(t, SidecarPath(path), database.owner(), 1, map[string]string{
+		"contract": database.contractFingerprint(), "source_fingerprint": "sealed",
+		sourceMarkerMetaKey: marker,
+	})
+
+	type countResult struct {
+		snapshot candidateChunkSnapshot
+		err      error
+	}
+	counted := make(chan countResult, 1)
+	release := make(chan struct{})
+	released := false
+	defer func() {
+		if !released {
+			close(release)
+		}
+	}()
+	countDeclaredChunks = func(ctx context.Context, database vectorDatabase, path string) (candidateChunkSnapshot, error) {
+		snapshot, err := readDeclaredChunkCount(ctx, database, path)
+		counted <- countResult{snapshot: snapshot, err: err}
+		<-release
+		return snapshot, err
+	}
+	t.Cleanup(func() { countDeclaredChunks = readDeclaredChunkCount })
+	type reportResult struct {
+		report Vectorization
+		err    error
+	}
+	reported := make(chan reportResult, 1)
+	go func() {
+		report, err := ReportVectorization(context.Background(), StatusRequest{PluginRoot: root})
+		reported <- reportResult{report: report, err: err}
+	}()
+	count := <-counted
+	if count.err != nil {
+		t.Fatal(count.err)
+	}
+	if count.snapshot.Chunks == nil || *count.snapshot.Chunks != 1 {
+		t.Fatalf("candidate snapshot = %+v, want 1", count.snapshot)
+	}
+	source := openTestSQLite(t, path)
+	if _, err := source.Exec(`INSERT INTO notes VALUES ('b','bravo')`); err != nil {
+		source.Close()
+		t.Fatal(err)
+	}
+	if err := source.Close(); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stamp := info.ModTime().Add(time.Second)
+	if err := os.Chtimes(path, stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
+	marker, err = sourceFileMarker(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if marker == initialMarker {
+		t.Fatal("source marker did not change after the source commit")
+	}
+	sidecar := openTestSQLite(t, SidecarPath(path))
+	tx, err := sidecar.Begin()
+	if err != nil {
+		sidecar.Close()
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(`INSERT INTO chunks(source_kind,source_id,text_column,chunk_index,fingerprint,locator)
+		VALUES('notes','id-1','body',0,'fp','loc-1')`); err != nil {
+		tx.Rollback()
+		sidecar.Close()
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(`INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)`, sourceMarkerMetaKey, marker); err != nil {
+		tx.Rollback()
+		sidecar.Close()
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		sidecar.Close()
+		t.Fatal(err)
+	}
+	if err := sidecar.Close(); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	released = true
+	result := <-reported
+	if result.err != nil {
+		t.Fatal(result.err)
+	}
+	row := result.report.Databases[0]
+	if row.State != StateComplete || row.EmbeddedChunks == nil || *row.EmbeddedChunks != 2 {
+		t.Fatalf("updated sidecar snapshot = %+v, want complete with 2 chunks", row)
+	}
+	if row.CandidateChunks != nil {
+		t.Fatalf("older candidate snapshot was reported: %+v", row)
 	}
 }
 

@@ -127,11 +127,12 @@ func inspectDatabase(ctx context.Context, pluginRoot string, database vectorData
 	sidecarPath := SidecarPath(sourcePath)
 	bytes, lastWrite, exists, statErr := sidecarFileFacts(sidecarPath)
 	row.SidecarBytes, row.LastWrite = bytes, lastWrite
-	row.CandidateChunks = boundedCandidateCount(ctx, database, sourcePath)
+	candidate := boundedCandidateCount(ctx, database, sourcePath)
 	if statErr != nil {
 		return row
 	}
 	if !exists {
+		row.CandidateChunks = candidateCountForMarker(candidate, currentSourceMarker(sourcePath))
 		row.State = StateEmpty
 		return row
 	}
@@ -145,14 +146,8 @@ func inspectDatabase(ctx context.Context, pluginRoot string, database vectorData
 		return row
 	}
 	row.EmbeddedChunks = &snapshot.EmbeddedChunks
-	currentMarker, markerErr := sourceFileMarker(sourcePath)
-	var marker *string
-	if markerErr == nil {
-		marker = &currentMarker
-	} else if os.IsNotExist(markerErr) {
-		missing := "missing"
-		marker = &missing
-	}
+	marker := currentSourceMarker(sourcePath)
+	row.CandidateChunks = candidateCountForMarker(candidate, marker)
 	row.State = classifySidecar(exists, true, workerActive, row.EmbeddedChunks, snapshot.Contract,
 		database.contractFingerprint(), snapshot.Fingerprint, snapshot.SourceMarker, marker)
 	return row
@@ -275,43 +270,49 @@ func sidecarFileFacts(path string) (*int64, *string, bool, error) {
 	return &size, &stamp, true, nil
 }
 
-func boundedCandidateCount(ctx context.Context, database vectorDatabase, path string) *int64 {
+type candidateChunkSnapshot struct {
+	Chunks       *int64
+	SourceMarker string
+}
+
+func boundedCandidateCount(ctx context.Context, database vectorDatabase, path string) candidateChunkSnapshot {
 	ctx, cancel := boundContext(ctx, candidateCountTimeout)
 	defer cancel()
 	type reply struct {
-		n   *int64
-		err error
+		snapshot candidateChunkSnapshot
+		err      error
 	}
 	ch := make(chan reply, 1)
 	go func() {
-		n, err := countDeclaredChunks(ctx, database, path)
-		ch <- reply{n, err}
+		snapshot, err := countDeclaredChunks(ctx, database, path)
+		ch <- reply{snapshot, err}
 	}()
 	select {
 	case got := <-ch:
 		if got.err != nil {
-			return nil
+			return candidateChunkSnapshot{}
 		}
-		return got.n
+		return got.snapshot
 	case <-ctx.Done():
-		return nil
+		return candidateChunkSnapshot{}
 	}
 }
 
-func readDeclaredChunkCount(ctx context.Context, database vectorDatabase, path string) (*int64, error) {
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return nil, nil
+func readDeclaredChunkCount(ctx context.Context, database vectorDatabase, path string) (candidateChunkSnapshot, error) {
+	before, err := sourceFileMarker(path)
+	if os.IsNotExist(err) {
+		return candidateChunkSnapshot{}, nil
 	} else if err != nil {
-		return nil, err
+		return candidateChunkSnapshot{}, err
 	}
 	store, err := openSQLiteBusy(path, true, int(candidateCountTimeout/time.Millisecond))
 	if err != nil {
-		return nil, err
+		return candidateChunkSnapshot{}, err
 	}
 	defer store.Close()
 	tx, err := store.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
-		return nil, err
+		return candidateChunkSnapshot{}, err
 	}
 	defer tx.Rollback()
 	var total int64
@@ -324,7 +325,7 @@ func readDeclaredChunkCount(ctx context.Context, database vectorDatabase, path s
 			` WHERE ` + declaredSourcePredicate("", table)
 		rows, err := tx.QueryContext(ctx, statement)
 		if err != nil {
-			return nil, err
+			return candidateChunkSnapshot{}, err
 		}
 		for rows.Next() {
 			values := make([]string, len(columns))
@@ -334,7 +335,7 @@ func readDeclaredChunkCount(ctx context.Context, database vectorDatabase, path s
 			}
 			if err := rows.Scan(targets...); err != nil {
 				rows.Close()
-				return nil, err
+				return candidateChunkSnapshot{}, err
 			}
 			for _, value := range values {
 				text := strings.TrimSpace(value)
@@ -349,16 +350,42 @@ func readDeclaredChunkCount(ctx context.Context, database vectorDatabase, path s
 		}
 		if err := rows.Err(); err != nil {
 			rows.Close()
-			return nil, err
+			return candidateChunkSnapshot{}, err
 		}
 		if err := rows.Close(); err != nil {
-			return nil, err
+			return candidateChunkSnapshot{}, err
 		}
 	}
 	if err := tx.Commit(); err != nil {
-		return nil, err
+		return candidateChunkSnapshot{}, err
 	}
-	return &total, nil
+	after, err := sourceFileMarker(path)
+	if err != nil {
+		return candidateChunkSnapshot{}, err
+	}
+	if before != after {
+		return candidateChunkSnapshot{}, errSourceChanged
+	}
+	return candidateChunkSnapshot{Chunks: &total, SourceMarker: after}, nil
+}
+
+func currentSourceMarker(path string) *string {
+	marker, err := sourceFileMarker(path)
+	if err == nil {
+		return &marker
+	}
+	if os.IsNotExist(err) {
+		missing := "missing"
+		return &missing
+	}
+	return nil
+}
+
+func candidateCountForMarker(candidate candidateChunkSnapshot, marker *string) *int64 {
+	if candidate.Chunks == nil || marker == nil || candidate.SourceMarker != *marker {
+		return nil
+	}
+	return candidate.Chunks
 }
 
 type workerActivity struct {
