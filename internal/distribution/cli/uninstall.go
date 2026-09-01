@@ -260,8 +260,6 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 		}
 	}
 
-	removedMCPState := map[string]artifact.Entry{}
-	removedHookState := map[string]artifact.Entry{}
 	processedMCPPaths := map[string]bool{}
 	withdrawMCP := func(runtime, path string) (agentcfg.Outcome, error) {
 		if runtime != agentcfg.RuntimeZcode {
@@ -270,20 +268,7 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 		if registryErr != nil {
 			return agentcfg.Outcome{Runtime: runtime, Path: path}, fmt.Errorf("ownership registry unavailable")
 		}
-		preimage := agentcfg.ZcodeMCPPreimageNone
-		entry, found := registry.Find(artifactKindMCP, runtime, path)
-		if found {
-			var err error
-			preimage, err = zcodeMCPPreimageFromEntry(entry)
-			if err != nil {
-				return agentcfg.Outcome{Runtime: runtime, Path: path}, err
-			}
-		}
-		outcome, err := agentcfg.UninstallZcodeMCP(path, preimage)
-		if err == nil && found {
-			removedMCPState[entry.Key()] = entry
-		}
-		return outcome, err
+		return env.uninstallZcodeMCP(path)
 	}
 
 	for _, runtime := range agentcfg.Runtimes() {
@@ -342,24 +327,15 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 	} else if wrapper, err := zcodeHookWrapperPath(); err != nil {
 		failed(report, "%s", err)
 	} else {
-		var expected []byte
-		var wrapperEntry artifact.Entry
-		var wrapperRegistered bool
-		if registryErr == nil {
-			wrapperEntry, wrapperRegistered = registry.Find(artifactKindHook, agentcfg.RuntimeZcode, wrapper)
-			if wrapperRegistered {
-				expected, err = zcodeWrapperExpectedFromEntry(wrapperEntry)
-				if err != nil {
-					failed(report, "read ZCode wrapper ownership state: %v", err)
-				}
-			}
+		var outcome agentcfg.Outcome
+		var warning string
+		if registryErr != nil {
+			err = fmt.Errorf("ownership registry unavailable")
+		} else {
+			outcome, warning, err = env.uninstallManagedZcodeHandoffHook(settings, wrapper)
 		}
-		outcome, warning, err := uninstallZcodeHandoffHook(settings, wrapper, expected)
 		if warning != "" {
 			fmt.Fprintln(env.errOut, warning)
-		}
-		if err == nil && wrapperRegistered {
-			removedHookState[wrapperEntry.Key()] = wrapperEntry
 		}
 		withdrawn("the ZCode handoff hook from "+settings, outcome, err)
 		if purge {
@@ -433,12 +409,6 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 					removable[entry.Key()] = entry
 				}
 			}
-		}
-		for key, entry := range removedMCPState {
-			removable[key] = entry
-		}
-		for key, entry := range removedHookState {
-			removable[key] = entry
 		}
 		_, err := mutateArtifactRegistry(registryPath, func(current *artifact.Registry) (bool, error) {
 			kept := current.Entries[:0]
@@ -578,7 +548,7 @@ func ownedPaths(paths config.Paths) []string {
 	}
 	managed, err := artifact.OwnedPaths(paths.Artifacts)
 	if err != nil {
-		managed = []string{paths.Artifacts}
+		managed = []string{paths.Artifacts, paths.Artifacts + ".lock", paths.Artifacts + ".mcp.lock"}
 	}
 	for _, path := range managed {
 		if !slices.Contains(owned, path) {

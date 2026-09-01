@@ -3,7 +3,7 @@ package artifact_test
 import (
 	"os"
 	"path/filepath"
-	"strings"
+	"slices"
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/artifact"
@@ -124,8 +124,10 @@ func TestRegistryIsVersionedAndFeedsSafeOwnedPaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(owned, "\n") != strings.Join([]string{skillPath, registryPath}, "\n") {
-		t.Fatalf("owned paths = %v", owned)
+	for _, path := range []string{skillPath, registryPath, registryPath + ".lock", registryPath + ".mcp.lock"} {
+		if !slices.Contains(owned, path) {
+			t.Fatalf("owned paths do not include %s: %v", path, owned)
+		}
 	}
 
 	write(t, skillPath, artifact.Zoned("system\n", "mine\n"))
@@ -133,7 +135,7 @@ func TestRegistryIsVersionedAndFeedsSafeOwnedPaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(owned) != 1 || owned[0] != registryPath {
+	if slices.Contains(owned, skillPath) {
 		t.Fatalf("operator-owned zone was claimed: %v", owned)
 	}
 }

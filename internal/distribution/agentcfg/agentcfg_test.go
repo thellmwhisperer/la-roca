@@ -224,6 +224,23 @@ func TestZcodeHookRoundTripPreservesEmptySessionStartWhitespace(t *testing.T) {
 	}
 }
 
+func TestZcodeEditorsRejectTrailingGarbage(t *testing.T) {
+	invalid := `{} trailing`
+	if _, err := agentcfg.DeclareZcodeSessionStartHook(invalid, "marker", "/bin/hook", 15000); err == nil {
+		t.Fatal("ZCode hook editor accepted trailing garbage")
+	}
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(invalid), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := agentcfg.Install(agentcfg.RuntimeZcode, path, "/bin/roca"); err == nil {
+		t.Fatal("ZCode MCP editor accepted trailing garbage")
+	}
+	if got := read(t, path); got != invalid {
+		t.Fatalf("invalid config changed: got %q", got)
+	}
+}
+
 func TestZcodeMCPPreimageUsesComparedInstallSnapshot(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	if err := os.WriteFile(path, []byte(`{}`), 0o600); err != nil {
@@ -243,6 +260,19 @@ func TestZcodeMCPPreimageUsesComparedInstallSnapshot(t *testing.T) {
 	}
 	if got := read(t, path); got != concurrent {
 		t.Fatalf("concurrent config changed: got %s", got)
+	}
+}
+
+func TestZcodeWithdrawalRemovesOwnedEmptyContainersWithoutServer(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{"mcp":{"servers":{}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := agentcfg.UninstallZcodeMCP(path, agentcfg.ZcodeMCPPreimageMCPServers); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(t, path); got != `{}` {
+		t.Fatalf("owned empty containers remained: %s", got)
 	}
 }
 

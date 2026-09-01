@@ -404,6 +404,30 @@ func TestZcodeUninstallRetainsWrapperWithEditedExecutable(t *testing.T) {
 	}
 }
 
+func TestZcodeWrapperRemovalPreservesConcurrentReplacement(t *testing.T) {
+	home := t.TempDir()
+	wrapper := filepath.Join(home, "roca-handoff.sh")
+	expected := []byte(zcodeWrapper(filepath.Join(home, "roca")))
+	operator := []byte("#!/bin/sh\nprintf 'operator replacement\\n'\n")
+	if err := os.WriteFile(wrapper, expected, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	retained, err := removeZcodeWrapperAfterQuarantine(wrapper, expected, func() {
+		if writeErr := os.WriteFile(wrapper, operator, 0o700); writeErr != nil {
+			t.Error(writeErr)
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !retained {
+		t.Fatal("concurrent operator replacement was not reported as retained")
+	}
+	if body, err := os.ReadFile(wrapper); err != nil || string(body) != string(operator) {
+		t.Fatalf("concurrent operator replacement changed: body=%q err=%v", body, err)
+	}
+}
+
 func TestZcodeWrapperInstallUsesCapturedPreimage(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "roca-handoff.sh")
 	if err := os.WriteFile(path, []byte("captured\n"), 0o640); err != nil {

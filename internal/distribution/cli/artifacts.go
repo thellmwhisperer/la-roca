@@ -188,7 +188,7 @@ type artifactRefreshReport struct {
 	Proposals []string          `json:"proposals"`
 }
 
-func (env *cliEnv) refreshManagedArtifacts(executable string, force bool) (artifactRefreshReport, error) {
+func (env *cliEnv) refreshManagedArtifacts(executable string, force bool) (report artifactRefreshReport, err error) {
 	paths, err := env.resolvePaths()
 	if err != nil {
 		return artifactRefreshReport{}, err
@@ -197,11 +197,16 @@ func (env *cliEnv) refreshManagedArtifacts(executable string, force bool) (artif
 	if err != nil {
 		return artifactRefreshReport{}, err
 	}
+	release, err := lockArtifactRegistry(paths.Artifacts)
+	if err != nil {
+		return artifactRefreshReport{}, err
+	}
+	defer func() { err = errors.Join(err, release()) }()
 	registry, err := artifact.LoadRegistry(paths.Artifacts)
 	if err != nil {
 		return artifactRefreshReport{}, err
 	}
-	report := artifactRefreshReport{Enabled: file.Features.ArtifactRefresh,
+	report = artifactRefreshReport{Enabled: file.Features.ArtifactRefresh,
 		Diverged: []divergedArtifact{}, Failed: []artifactFailure{},
 		Backups: []string{}, Proposals: []string{}}
 	if err := env.adoptLegacyArtifacts(paths, executable, &registry, &report); err != nil {

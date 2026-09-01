@@ -35,6 +35,10 @@ func Replace(path string, data, previous []byte) error {
 	return publish(path, data, previous, mode, 0o700, false, false)
 }
 
+func RenameNoReplace(source, target string) error {
+	return renameNoReplaceFile(source, target)
+}
+
 // BackUp preserves previous bytes beside path without overwriting older copies.
 func BackUp(path string, previous []byte) (string, error) {
 	for index := 0; ; index++ {

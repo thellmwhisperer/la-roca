@@ -510,15 +510,7 @@ func hooksInstallCommand(env *cliEnv) *cobra.Command {
 				if err != nil {
 					return agentcfg.Outcome{Runtime: runtime, Path: path}, "", err
 				}
-				rollback, err := env.recordZcodeWrapperState(wrapper, declared)
-				if err != nil {
-					return agentcfg.Outcome{Runtime: runtime, Path: path}, "", err
-				}
-				outcome, warning, err := installZcodeHandoffHook(path, wrapper, declared)
-				if err != nil && rollback != nil {
-					err = errors.Join(err, rollback())
-				}
-				return outcome, warning, err
+				return env.installManagedZcodeHandoffHook(path, wrapper, declared)
 			}
 			return installClaudeAuthorshipAndSessionHooks(
 				env, path, declared, force, pills, handoff)
@@ -541,15 +533,7 @@ func hooksUninstallCommand(env *cliEnv) *cobra.Command {
 				if err != nil {
 					return agentcfg.Outcome{Runtime: runtime, Path: path}, "", err
 				}
-				expected, entry, found, err := env.zcodeWrapperExpected(wrapper)
-				if err != nil {
-					return agentcfg.Outcome{Runtime: runtime, Path: path}, "", err
-				}
-				outcome, warning, err := uninstallZcodeHandoffHook(path, wrapper, expected)
-				if err == nil && found {
-					err = env.unregisterArtifactEntry(entry)
-				}
-				return outcome, warning, err
+				return env.uninstallManagedZcodeHandoffHook(path, wrapper)
 			}
 			return uninstallClaudeAuthorshipAndSessionHooks(env, path, pills, handoff)
 		})
@@ -715,6 +699,40 @@ func zcodeWrapperExpectedFromEntry(entry artifact.Entry) ([]byte, error) {
 		return nil, fmt.Errorf("ZCode wrapper ownership checksum for %s is invalid", entry.Path)
 	}
 	return expected, nil
+}
+
+func (env *cliEnv) installManagedZcodeHandoffHook(configPath, wrapperPath, executable string) (outcome agentcfg.Outcome, warning string, err error) {
+	release, err := lockZcodeHookLifecycle(configPath, wrapperPath, true)
+	if err != nil {
+		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
+	}
+	defer func() { err = errors.Join(err, release()) }()
+	rollback, err := env.recordZcodeWrapperState(wrapperPath, executable)
+	if err != nil {
+		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
+	}
+	outcome, warning, err = installZcodeHandoffHookUnlocked(configPath, wrapperPath, executable)
+	if err != nil && rollback != nil {
+		err = errors.Join(err, rollback())
+	}
+	return outcome, warning, err
+}
+
+func (env *cliEnv) uninstallManagedZcodeHandoffHook(configPath, wrapperPath string) (outcome agentcfg.Outcome, warning string, err error) {
+	release, err := lockZcodeHookLifecycle(configPath, wrapperPath, false)
+	if err != nil {
+		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
+	}
+	defer func() { err = errors.Join(err, release()) }()
+	expected, entry, found, err := env.zcodeWrapperExpected(wrapperPath)
+	if err != nil {
+		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
+	}
+	outcome, warning, err = uninstallZcodeHandoffHookUnlocked(configPath, wrapperPath, expected)
+	if err == nil && found {
+		err = env.unregisterArtifactEntry(entry)
+	}
+	return outcome, warning, err
 }
 
 func installZcodeHandoffHook(configPath, wrapperPath, executable string) (outcome agentcfg.Outcome, warning string, err error) {
@@ -925,25 +943,60 @@ func writeZcodeWrapper(path, content string, state zcodeWrapperState) error {
 }
 
 func removeZcodeWrapper(path string, expected []byte) (bool, error) {
-	body, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("read %s: %w", path, err)
-	}
-	if len(expected) == 0 || string(body) != string(expected) {
+	return removeZcodeWrapperAfterQuarantine(path, expected, nil)
+}
+
+func removeZcodeWrapperAfterQuarantine(path string, expected []byte, afterRename func()) (bool, error) {
+	if len(expected) == 0 {
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			return false, nil
+		} else if err != nil {
+			return false, fmt.Errorf("stat %s: %w", path, err)
+		}
 		return true, nil
 	}
-	current, err := os.ReadFile(path)
+	temporary, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+"-remove-*")
 	if err != nil {
-		return false, fmt.Errorf("verify %s before removal: %w", path, err)
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("prepare removal of %s: %w", path, err)
 	}
-	if string(current) != string(expected) {
+	quarantine := temporary.Name()
+	if err := temporary.Close(); err != nil {
+		os.Remove(quarantine)
+		return false, err
+	}
+	if err := os.Remove(quarantine); err != nil {
+		return false, err
+	}
+	if err := os.Rename(path, quarantine); err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("quarantine %s: %w", path, err)
+	}
+	if afterRename != nil {
+		afterRename()
+	}
+	body, err := os.ReadFile(quarantine)
+	if err != nil {
+		restoreErr := securefile.RenameNoReplace(quarantine, path)
+		return true, errors.Join(fmt.Errorf("verify quarantined wrapper %s: %w", quarantine, err), restoreErr)
+	}
+	if string(body) != string(expected) {
+		if restoreErr := securefile.RenameNoReplace(quarantine, path); restoreErr != nil {
+			return true, fmt.Errorf("restore operator-modified wrapper from %s: %w", quarantine, restoreErr)
+		}
 		return true, nil
 	}
-	if err := os.Remove(path); err != nil {
-		return false, fmt.Errorf("remove %s: %w", path, err)
+	if err := os.Remove(quarantine); err != nil {
+		return false, fmt.Errorf("remove %s: %w", quarantine, err)
+	}
+	if _, err := os.Stat(path); err == nil {
+		return true, nil
+	} else if !os.IsNotExist(err) {
+		return false, fmt.Errorf("inspect %s after removal: %w", path, err)
 	}
 	return false, nil
 }

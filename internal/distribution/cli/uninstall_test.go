@@ -221,6 +221,23 @@ func TestPurgeReconciliationKeepsTheOriginalReasonForAPath(t *testing.T) {
 	}
 }
 
+func TestPurgeRemovesArtifactRegistryLocks(t *testing.T) {
+	home := t.TempDir()
+	paths := resolvedIn(t, home)
+	for _, path := range []string{paths.Artifacts + ".lock", paths.Artifacts + ".mcp.lock"} {
+		writeFile(t, path, "")
+	}
+	report := lifecycle.Plan{Owned: ownedPaths(paths), DataDir: dirOf(paths.DB)}.Apply()
+	if len(report.Errors) != 0 {
+		t.Fatalf("purge errors = %v", report.Errors)
+	}
+	for _, path := range []string{paths.Artifacts + ".lock", paths.Artifacts + ".mcp.lock"} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("registry lock survived purge: %s", path)
+		}
+	}
+}
+
 func TestPurgeReportsForeignLogSurvivorsOnce(t *testing.T) {
 	home := t.TempDir()
 	paths := resolvedIn(t, home)
