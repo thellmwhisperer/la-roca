@@ -331,8 +331,23 @@ func (env *cliEnv) lockManagedZcodeLifecycleUnbounded() (func() error, error) {
 	return lockManagedFile(paths.Artifacts + ".lock")
 }
 
+const zcodeReplacedRootIdentityPrefix = "operator-replaced-root:"
+
+func zcodeComparableRootIdentity(identity string) string {
+	return strings.TrimPrefix(identity, zcodeReplacedRootIdentityPrefix)
+}
+
+func zcodeReplacedRootClaim(entry artifact.Entry) bool {
+	return strings.HasPrefix(entry.RootIdentity, zcodeReplacedRootIdentityPrefix)
+}
+
 func continuousZcodeOwnership(prior, current artifact.Entry) bool {
-	return prior.RootIdentity != "" && prior.RootIdentity == current.RootIdentity
+	priorIdentity := zcodeComparableRootIdentity(prior.RootIdentity)
+	return priorIdentity != "" && priorIdentity == zcodeComparableRootIdentity(current.RootIdentity)
+}
+
+func zcodeRootClaimAllowsWithdrawal(entry artifact.Entry) bool {
+	return entry.RootIdentity == ""
 }
 
 func (env *cliEnv) recordZcodeMCPPreimage(path, mutationPath, executable, preimage string, configured bool, pathStates ...zcodeMCPPathState) (func() error, error) {
@@ -355,6 +370,12 @@ func (env *cliEnv) recordZcodeMCPPreimage(path, mutationPath, executable, preima
 	var priorFound bool
 	changed, err := env.mutateArtifactRegistry(paths.Artifacts, func(registry *artifact.Registry) (bool, error) {
 		prior, priorFound = registry.Find(artifactKindMCP, agentcfg.RuntimeZcode, path)
+		if priorFound && continuousZcodeOwnership(prior, transaction) && zcodeReplacedRootClaim(prior) {
+			transaction.RootIdentity = prior.RootIdentity
+		} else if priorFound && prior.RootIdentity != "" && !transaction.CreatedConfig &&
+			!continuousZcodeOwnership(prior, transaction) {
+			transaction.RootIdentity = zcodeReplacedRootIdentityPrefix + transaction.RootIdentity
+		}
 		if priorFound && continuousZcodeOwnership(prior, transaction) {
 			transaction.CreatedRoot = transaction.CreatedRoot || prior.CreatedRoot
 			transaction.CreatedConfigDir = transaction.CreatedConfigDir || prior.CreatedConfigDir
@@ -539,7 +560,7 @@ func (env *cliEnv) uninstallZcodeMCPLocked(path string, finalize ...func(artifac
 	if continuityErr != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: path}, continuityErr
 	}
-	if !rootContinuous {
+	if !rootContinuous && (!rootExists || !zcodeRootClaimAllowsWithdrawal(entry)) {
 		if !rootExists && env.errOut != nil {
 			fmt.Fprintf(env.errOut, "warning: ZCode MCP root is absent; removed stale ownership for %s\n", path)
 		}

@@ -807,6 +807,12 @@ func (env *cliEnv) recordZcodeWrapperState(path, mutationPath, executable string
 	var priorFound bool
 	_, err = env.mutateArtifactRegistry(paths.Artifacts, func(registry *artifact.Registry) (bool, error) {
 		prior, priorFound = registry.Find(artifactKindHook, agentcfg.RuntimeZcode, path)
+		if priorFound && continuousZcodeOwnership(prior, transaction) && zcodeReplacedRootClaim(prior) {
+			transaction.RootIdentity = prior.RootIdentity
+		} else if priorFound && prior.RootIdentity != "" && !transaction.CreatedConfig &&
+			!continuousZcodeOwnership(prior, transaction) {
+			transaction.RootIdentity = zcodeReplacedRootIdentityPrefix + transaction.RootIdentity
+		}
 		if priorFound && continuousZcodeOwnership(prior, transaction) {
 			transaction.CreatedRoot = transaction.CreatedRoot || prior.CreatedRoot
 			transaction.CreatedConfigDir = transaction.CreatedConfigDir || prior.CreatedConfigDir
@@ -947,11 +953,11 @@ func (env *cliEnv) uninstallManagedZcodeHandoffHookLocked(configPath, wrapperPat
 		warning = fmt.Sprintf("warning: no managed ZCode hook ownership for %s; left operator configuration unchanged", configPath)
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, warning, nil
 	}
-	rootContinuous, _, err := zcodeRootContinuity(configPath, entry)
+	rootContinuous, rootExists, err := zcodeRootContinuity(configPath, entry)
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
-	if !rootContinuous {
+	if !rootContinuous && (!rootExists || !zcodeRootClaimAllowsWithdrawal(entry)) {
 		err = env.unregisterArtifactEntry(entry)
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
