@@ -1,0 +1,53 @@
+[
+  {
+    "id": "fixture-codex-cloud",
+    "title": "Synthetic GitHub mention hatch",
+    "archived": false,
+    "turns": [
+      {
+        "id": "turn-user-1",
+        "role": "user",
+        "custom_instructions": "Stay inside the invented lighthouse.",
+        "input_items": [
+          {
+            "type": "message",
+            "role": "user",
+            "content": [{"content_type": "text", "text": "Open the imaginary hatch."}]
+          },
+          {
+            "type": "pull_request_info",
+            "title": "Synthetic PR",
+            "body": "Invented pull request body",
+            "base_ref": "main",
+            "head_ref": "synthetic-branch",
+            "merge_commit_sha": null
+          }
+        ]
+      },
+      {
+        "id": "turn-asst-1",
+        "role": "assistant",
+        "previous_turn_id": "turn-user-1",
+        "branch": "synthetic-codex-cloud",
+        "branch_name": null,
+        "external_pull_request_id": "pr-synthetic-1",
+        "pull_request_status": "created",
+        "turn_status": "TaskTurnStatusEnum.COMPLETED",
+        "output_items": [
+          {
+            "type": "message",
+            "role": "assistant",
+            "content": [
+              {"content_type": "text", "text": "The hatch is open."},
+              {"content_type": "repo_file_citation", "path": "README.md", "line_range_start": 1, "line_range_end": 2}
+            ]
+          },
+          {
+            "type": "partial_repo_snapshot",
+            "files": [{"path": "README.md", "contents": null, "missing_reason": null, "line_range_contents": []}]
+          }
+        ]
+      }
+    ]
+  }
+]
