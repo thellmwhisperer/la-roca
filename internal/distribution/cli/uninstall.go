@@ -284,6 +284,13 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 			fmt.Fprintln(env.errOut, warning)
 		}
 		withdrawn("the Claude signing hook from "+settings, outcome, err)
+		for _, kind := range []string{"pills", "handoff"} {
+			session, sessionWarning, sessionErr := uninstallClaudeSessionHook(settings, kind)
+			if sessionWarning != "" {
+				fmt.Fprintln(env.errOut, sessionWarning)
+			}
+			withdrawn("the Claude SessionStart "+kind+" hook from "+settings, session, sessionErr)
+		}
 		if purge {
 			removeRecoveryBackups(report, settings)
 		}

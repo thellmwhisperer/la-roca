@@ -116,7 +116,7 @@ func TestStoreKeepsTheCallerMetadataAndRefusesTheReservedKeys(t *testing.T) {
 	svc, _ := serviceWithPaths(t)
 
 	result, err := svc.Store(context.Background(), service.StoreRequest{
-		Layer: "handoff", Content: "a handoff with its own notes",
+		Layer: "discovery", Content: "a memory with its own notes",
 		Metadata: map[string]any{"session_id": "abc-123", "trigger": "session_end"},
 	})
 	if err != nil {
@@ -135,7 +135,7 @@ func TestStoreKeepsTheCallerMetadataAndRefusesTheReservedKeys(t *testing.T) {
 	// columns, and a write that quietly loses a tag says it stored something else.
 	for _, key := range []string{"agent", "model", "surface"} {
 		refused, err := svc.Store(context.Background(), service.StoreRequest{
-			Layer: "handoff", Content: "a handoff naming " + key,
+			Layer: "discovery", Content: "a memory naming " + key,
 			Metadata: map[string]any{key: "forged", "session_id": "abc-123"},
 		})
 		if err == nil {
@@ -357,9 +357,9 @@ func TestStoreTreatsSupersedesAsPartOfTheExactPayload(t *testing.T) {
 func TestStoreNormalizesTheLayerThroughTheRegistryAliases(t *testing.T) {
 	svc, _ := serviceWithPaths(t)
 
-	result, err := svc.Store(context.Background(), service.StoreRequest{
-		Layer: "handover", Content: "an alias of handoff",
-	})
+	request := sessionHandoff("an alias of handoff")
+	request.Layer = "handover"
+	result, err := svc.Store(context.Background(), request)
 	if err != nil {
 		t.Fatalf("Store: %v", err)
 	}

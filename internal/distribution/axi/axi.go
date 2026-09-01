@@ -53,8 +53,14 @@ func RowOutput(columns []string, rows []map[string]any, terms ...string) string 
 
 	order := columnOrder(columns, rows)
 	term := strings.Join(terms, "+")
+	return toonRows("rows", order, rows, func(value any) string {
+		return toonValue(value, term)
+	})
+}
+
+func toonRows(name string, order []string, rows []map[string]any, format func(any) string) string {
 	var out strings.Builder
-	fmt.Fprintf(&out, "rows[%d]{", len(rows))
+	fmt.Fprintf(&out, "%s[%d]{", name, len(rows))
 	for i, column := range order {
 		if i > 0 {
 			out.WriteByte(',')
@@ -68,7 +74,7 @@ func RowOutput(columns []string, rows []map[string]any, terms ...string) string 
 			if i > 0 {
 				out.WriteByte(',')
 			}
-			out.WriteString(toonValue(row[column], term))
+			out.WriteString(format(row[column]))
 		}
 	}
 	return out.String()
