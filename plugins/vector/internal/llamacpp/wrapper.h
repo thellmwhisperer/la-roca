@@ -15,6 +15,8 @@ int roca_llama_embed(roca_llama_engine * engine, const char * text, size_t text_
                      int * dimensions, int * token_count, char ** error);
 void roca_llama_close(roca_llama_engine * engine);
 void roca_llama_release(void * memory);
+void roca_llama_request_abort(void);
+void roca_llama_clear_abort(void);
 
 #ifdef __cplusplus
 }

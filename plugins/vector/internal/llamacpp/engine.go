@@ -20,6 +20,10 @@ const (
 	BackendCPU   = "cpu"
 )
 
+func RequestAbort() { C.roca_llama_request_abort() }
+
+func ClearAbort() { C.roca_llama_clear_abort() }
+
 type Engine struct {
 	engine         *C.roca_llama_engine
 	Backend        string
@@ -30,6 +34,7 @@ func Open(model string, threads, gpuLayers int) (*Engine, error) {
 	if threads <= 0 {
 		threads = runtime.NumCPU()
 	}
+	ClearAbort()
 	path := C.CString(model)
 	defer C.free(unsafe.Pointer(path))
 	var message *C.char
@@ -78,6 +83,7 @@ func (e *Engine) Close() {
 }
 
 func (e *Engine) Embed(text string) ([]float32, int, error) {
+	ClearAbort()
 	input := C.CString(text)
 	defer C.free(unsafe.Pointer(input))
 	var raw *C.float

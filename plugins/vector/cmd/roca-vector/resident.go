@@ -37,7 +37,12 @@ func residentCommand(env *environment) *cobra.Command {
 				return err
 			}
 			if err := prewarmEmbedder(command.Context(), embedder); err != nil {
-				_ = encoder.Encode(engine.Error("prewarm", productError(err)))
+				if encodeErr := encoder.Encode(engine.Error("prewarm", productError(err))); encodeErr != nil {
+					return encodeErr
+				}
+				if terminalErr := residentTerminalError(embedder); terminalErr != nil {
+					return terminalErr
+				}
 			} else {
 				event := engine.Result("prewarm", "semantic search: ready")
 				event.Extra = map[string]any{"prewarm_ms": time.Since(started).Milliseconds()}
@@ -82,10 +87,20 @@ func residentCommand(env *environment) *cobra.Command {
 				if err := encoder.Encode(response); err != nil {
 					return err
 				}
+				if terminalErr := residentTerminalError(embedder); terminalErr != nil {
+					return terminalErr
+				}
 			}
 			return scanner.Err()
 		},
 	}
+}
+
+func residentTerminalError(embedder vector.Embedder) error {
+	if reporter, ok := embedder.(interface{ TerminalError() error }); ok {
+		return reporter.TerminalError()
+	}
+	return nil
 }
 
 func prewarmEmbedder(ctx context.Context, embedder vector.Embedder) error {
