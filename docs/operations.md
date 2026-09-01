@@ -365,8 +365,7 @@ keep-or-delete decision.
 
 These cases stay out of automatic deletion because they would break those rules:
 
-- Leftovers from binaries that never wrote a lease, including lease-less
-  directories left by today's published builds
+- Leftovers from binaries that did not write leases
 - Directories whose owner liveness cannot be proven
 - PID reuse while a lease has no start time and a new process occupies that PID
 - A failed `RemoveAll` (the next pass retries the same directory; we do not
