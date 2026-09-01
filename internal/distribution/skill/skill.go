@@ -10,6 +10,7 @@
 package skill
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -275,53 +276,76 @@ func pathOf(name, home string, env func(string) string, skillName string) (strin
 // behind: os.Remove is the whole guard, since another skill's directory keeps
 // it from being empty.
 func UninstallWithChecksum(name, path, systemSHA256 string) (Outcome, error) {
+	return uninstallWithChecksum(name, path, systemSHA256, nil)
+}
+
+func uninstallWithChecksum(name, path, systemSHA256 string, afterQuarantine func()) (Outcome, error) {
 	if _, ok := rootOf[name]; !ok {
 		return Outcome{}, unknown(name)
 	}
 	out := Outcome{Runtime: name, Path: path}
-	if _, err := os.Stat(path); os.IsNotExist(err) {
+	if _, err := os.Lstat(path); os.IsNotExist(err) {
 		return out, nil
-	}
-	previous, err := os.ReadFile(path)
-	if err != nil {
-		return out, fmt.Errorf("read %s: %w", path, err)
-	}
-	user, unproven := "", false
-	if zones, err := artifact.Parse(string(previous)); err == nil {
-		if artifact.Checksum(zones.System) != systemSHA256 {
-			return out, nil
-		}
-		user = zones.User
-	} else if artifact.Checksum(string(previous)) != systemSHA256 {
-		_, legacy := ContentForPath(path)
-		if legacy == "" || !strings.HasPrefix(string(previous), legacy) {
-			return out, nil
-		}
-		unproven = true
+	} else if err != nil {
+		return out, err
 	}
 	dir := filepath.Dir(path)
 	if !ownedDir(filepath.Base(dir)) {
 		return out, nil
 	}
-	// Two states hold bytes that exist nowhere else. A pre-zone file recognized
-	// by its opening alone is ours by convention, not by checksum, so anything an
-	// operator appended before the zones existed is only here; and a USER zone
-	// they wrote into is theirs outright. Both leave in a named recovery copy
-	// rather than at SKILL.md: a file kept there without its frontmatter is a
-	// broken skill the runtime goes on loading after La Roca is gone.
+	temporary, err := os.CreateTemp(dir, "."+filepath.Base(path)+"-remove-*")
+	if err != nil {
+		return out, fmt.Errorf("prepare removal of %s: %w", path, err)
+	}
+	quarantine := temporary.Name()
+	if err := temporary.Close(); err != nil {
+		os.Remove(quarantine)
+		return out, err
+	}
+	if err := os.Remove(quarantine); err != nil {
+		return out, err
+	}
+	if err := os.Rename(path, quarantine); err != nil {
+		if os.IsNotExist(err) {
+			return out, nil
+		}
+		return out, fmt.Errorf("quarantine %s: %w", path, err)
+	}
+	if afterQuarantine != nil {
+		afterQuarantine()
+	}
+	restore := func(cause error) error {
+		if err := securefile.RenameNoReplace(quarantine, path); err != nil {
+			return errors.Join(cause, fmt.Errorf("restore %s from %s: %w", path, quarantine, err))
+		}
+		return cause
+	}
+	previous, err := os.ReadFile(quarantine)
+	if err != nil {
+		return out, restore(fmt.Errorf("read %s: %w", quarantine, err))
+	}
+	user, unproven := "", false
+	if zones, err := artifact.Parse(string(previous)); err == nil {
+		if artifact.Checksum(zones.System) != systemSHA256 {
+			return out, restore(nil)
+		}
+		user = zones.User
+	} else if artifact.Checksum(string(previous)) != systemSHA256 {
+		_, legacy := ContentForPath(path)
+		if legacy == "" || !strings.HasPrefix(string(previous), legacy) {
+			return out, restore(nil)
+		}
+		unproven = true
+	}
 	if unproven || user != "" {
 		backup, err := securefile.BackUp(path, previous)
 		if err != nil {
-			return out, err
+			return out, restore(err)
 		}
 		out.Backup = backup
 	}
-	// The canonical file is ours and goes. The directory only follows when
-	// nothing else is left in it: RemoveAll took whatever the operator had put
-	// beside the skill, which is the half of D-7 that says what La Roca did not
-	// create is never deleted. Remove is the same shape the parent already used.
-	if err := os.Remove(path); err != nil {
-		return out, fmt.Errorf("remove %s: %w", path, err)
+	if err := os.Remove(quarantine); err != nil {
+		return out, fmt.Errorf("remove %s: %w", quarantine, err)
 	}
 	out.Changed = true
 	out.Removed = []string{path}

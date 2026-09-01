@@ -277,6 +277,26 @@ func Uninstall(name, path string) (Outcome, error) {
 	}, false)
 }
 
+func ZcodeMCPMatches(path, executable string) (bool, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return false, err
+	}
+	r := runtimes[RuntimeZcode]
+	document, err := editors[r.kind].decode(r, string(body))
+	if err != nil {
+		return false, err
+	}
+	mcp, _ := document["mcp"].(map[string]any)
+	servers, _ := mcp["servers"].(map[string]any)
+	entry, _ := servers[ServerName].(map[string]any)
+	if len(entry) != 3 || entry["type"] != "stdio" || entry["command"] != executable {
+		return false, nil
+	}
+	args, _ := entry["args"].([]any)
+	return len(args) == 2 && args[0] == "mcp" && args[1] == "serve", nil
+}
+
 func UninstallZcodeMCP(path, preimage string) (Outcome, error) {
 	if preimage != ZcodeMCPPreimageNone && preimage != ZcodeMCPPreimageServers &&
 		preimage != ZcodeMCPPreimageMCPServers {

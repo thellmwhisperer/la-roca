@@ -187,7 +187,9 @@ func simpleShellWords(command string) ([]string, bool) {
 			flush()
 		case current == '#' && !started:
 			flush()
-			return words, true
+			for index < len(runes) && runes[index] != '\n' {
+				index++
+			}
 		case current == '\'' || current == '"':
 			quote = current
 			started = true

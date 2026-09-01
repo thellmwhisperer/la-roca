@@ -33,6 +33,36 @@ func TestZcodeHookPlatformSupportRequiresBash(t *testing.T) {
 	}
 }
 
+func TestZcodeOutputValidatorRequiresOneContextObject(t *testing.T) {
+	for _, test := range []struct {
+		name, input string
+		valid       bool
+	}{
+		{name: "valid", input: `{"additionalContext":"handoff"}`, valid: true},
+		{name: "empty"},
+		{name: "plain", input: `handoff`},
+		{name: "multiple", input: `{"additionalContext":"a"} {"additionalContext":"b"}`},
+		{name: "extra member", input: `{"additionalContext":"a","other":true}`},
+		{name: "duplicate member", input: `{"additionalContext":"a","additionalContext":"b"}`},
+		{name: "wrong type", input: `{"additionalContext":3}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var out strings.Builder
+			root := rootCommand(&cliEnv{out: &out})
+			root.SetIn(strings.NewReader(test.input))
+			root.SetArgs([]string{"hooks", "validate-zcode-output"})
+			err := root.Execute()
+			if test.valid {
+				if err != nil || strings.TrimSpace(out.String()) != zcodeOutputValidationToken {
+					t.Fatalf("validation: output=%q err=%v", out.String(), err)
+				}
+			} else if err == nil {
+				t.Fatalf("invalid payload accepted: %q", test.input)
+			}
+		})
+	}
+}
+
 func TestZcodeHookInstallerWritesNestedSessionStartAndJSONWrapper(t *testing.T) {
 	home := skillTestHome(t)
 	binary := filepath.Join(home, "bin", "roca")
@@ -42,6 +72,11 @@ func TestZcodeHookInstallerWritesNestedSessionStartAndJSONWrapper(t *testing.T) 
 	fake := `#!/bin/sh
 if [ "$1 $2 $3" = "hooks run zcode" ]; then
   printf '%s\n' '{"additionalContext":"synthetic handoff"}'
+  exit 0
+fi
+if [ "$1 $2" = "hooks validate-zcode-output" ]; then
+  [ "$(cat)" = '{"additionalContext":"synthetic handoff"}' ] || exit 1
+  printf '%s\n' 'roca-zcode-output-valid-v1'
   exit 0
 fi
 exit 1
@@ -135,6 +170,28 @@ exit 1
 	}
 	if context["additionalContext"] != "" {
 		t.Fatalf("degraded wrapper context = %#v", context)
+	}
+	invalid := `#!/bin/sh
+if [ "$1 $2 $3" = "hooks run zcode" ]; then
+  printf 'not json'
+  exit 0
+fi
+if [ "$1 $2" = "hooks validate-zcode-output" ]; then
+  printf 'wrong-token\n'
+  exit 0
+fi
+exit 1
+`
+	if err := os.WriteFile(binary, []byte(invalid), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	output, err = exec.Command(wrapper).Output()
+	if err != nil {
+		t.Fatalf("wrapper should reject successful invalid output: %v", err)
+	}
+	context = nil
+	if err := json.Unmarshal(output, &context); err != nil || context["additionalContext"] != "" {
+		t.Fatalf("invalid child output escaped wrapper validation: %q err=%v", output, err)
 	}
 
 	root := rootCommand(&cliEnv{out: io.Discard, build: Build{Version: "test"}})
@@ -305,7 +362,19 @@ func TestZcodeHookCommandExecutesWhenWrapperPathContainsSpaces(t *testing.T) {
 	config := filepath.Join(home, "config.json")
 	wrapper := filepath.Join(home, "ZCode Home", "hooks", "roca-handoff.sh")
 	binary := filepath.Join(home, "fake-roca")
-	if err := os.WriteFile(binary, []byte("#!/bin/sh\nprintf '%s\\n' '{\"additionalContext\":\"space-safe\"}'\n"), 0o700); err != nil {
+	fake := `#!/bin/sh
+if [ "$1 $2 $3" = "hooks run zcode" ]; then
+  printf '%s\n' '{"additionalContext":"space-safe"}'
+  exit 0
+fi
+if [ "$1 $2" = "hooks validate-zcode-output" ]; then
+  [ "$(cat)" = '{"additionalContext":"space-safe"}' ] || exit 1
+  printf '%s\n' 'roca-zcode-output-valid-v1'
+  exit 0
+fi
+exit 1
+`
+	if err := os.WriteFile(binary, []byte(fake), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if _, warning, err := installZcodeHandoffHook(config, wrapper, binary); err != nil {
@@ -408,6 +477,9 @@ func TestZcodeUninstallKeepsWrapperForEquivalentOperatorPaths(t *testing.T) {
 		}},
 		{name: "nested command fragment", command: func(_, wrapper string) (string, error) {
 			return "sh -c " + shellQuote(wrapper+" --flag"), nil
+		}},
+		{name: "multiline after comment", command: func(_, wrapper string) (string, error) {
+			return "echo ok # note\n" + shellQuote(wrapper), nil
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {

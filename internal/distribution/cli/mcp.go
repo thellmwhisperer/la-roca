@@ -177,10 +177,9 @@ func (env *cliEnv) installZcodeMCP(path, executable string) (outcome agentcfg.Ou
 			return err
 		})
 	if err != nil && rollback != nil {
-		report, statusErr := agentcfg.Status(agentcfg.RuntimeZcode, path)
-		published := statusErr == nil && report.State == agentcfg.StateConfigured && report.Instance == executable
+		published, matchErr := agentcfg.ZcodeMCPMatches(path, executable)
 		if !published {
-			err = errors.Join(err, rollback())
+			err = errors.Join(err, matchErr, rollback())
 		}
 	}
 	return outcome, err
