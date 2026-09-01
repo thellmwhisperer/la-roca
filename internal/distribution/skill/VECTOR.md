@@ -31,19 +31,17 @@ Word search keeps answering while the meaning pass runs in the background.
 
 ## Watch progress
 
-`roca vector status` reports one row per declared database: plugin, tables,
-embedded chunks, candidate chunks, sidecar size, last write, and an honest
-state. A number that cannot be read is unknown, never 0. One worker line names
-whether a pass is running, its pid, backend, and current database.
+Use `roca vector status` for the bounded per-database report. Preserve `null`
+facts as unknown when reporting them; never turn them into zero.
 
 ```sh
 roca vector status
 ```
 
 The bounded status contract is in `docs/vector.md#the-one-command-path`.
-A pass that stopped partway is not an
-empty product: the rows it already wrote are queryable, and word search covers
-the rest. Never report a machine with rows on disk as having nothing.
+A pass that stopped partway is not an empty product: the rows it already wrote
+are queryable, and word search covers the rest. Never report a machine with
+rows on disk as having nothing.
 
 `completion.json` under the plugin state directory records `started_at`,
 `finished_at`, and `exit_status` for the last pass. Read it to say whether the
