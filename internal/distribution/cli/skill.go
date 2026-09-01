@@ -660,17 +660,35 @@ func installZcodeHandoffHook(configPath, wrapperPath, executable string) (agentc
 
 func uninstallZcodeHandoffHook(configPath, wrapperPath string) (agentcfg.Outcome, string, error) {
 	var warning string
+	keepWrapper := false
 	command := zcodeOwnedHookCommand(wrapperPath)
 	outcome, err := agentcfg.Edit(agentcfg.RuntimeZcode, configPath, func(previous string) (string, error) {
 		next, editErr := agentcfg.RemoveZcodeSessionStartHook(previous, zcodeSessionStartMarker)
 		if editErr != nil {
+			keepWrapper = true
 			warning = fmt.Sprintf("warning: %s is not readable as zcode settings; remove the nested hooks.events.SessionStart entry whose matcher is %q and command is %s by hand", configPath, zcodeSessionStartMarker, command)
 			return previous, nil
 		}
+		referenced, referenceErr := agentcfg.ZcodeHookReferences(next, wrapperPath, shellQuote(wrapperPath))
+		if referenceErr != nil {
+			keepWrapper = true
+			warning = fmt.Sprintf("warning: could not verify remaining ZCode hooks in %s: %v", configPath, referenceErr)
+			return next, nil
+		}
+		keepWrapper = referenced
 		return next, nil
 	}, false)
 	if err != nil {
 		return outcome, warning, err
+	}
+	if keepWrapper {
+		retained := fmt.Sprintf("kept %s because a remaining operator-owned hook references it", wrapperPath)
+		if warning == "" {
+			warning = "warning: " + retained
+		} else {
+			warning += "; " + retained
+		}
+		return outcome, warning, nil
 	}
 	if removeErr := removeZcodeWrapper(wrapperPath); removeErr != nil {
 		return outcome, warning, removeErr

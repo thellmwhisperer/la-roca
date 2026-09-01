@@ -441,6 +441,29 @@ func TestWithdrawingDoesNotCreateAConfigThatIsNotThere(t *testing.T) {
 	}
 }
 
+func TestFreshEditDoesNotReplaceConcurrentlyCreatedConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	operator := `{"hooks":{"enabled":true}}`
+	outcome, err := agentcfg.Edit(agentcfg.RuntimeZcode, path, func(previous string) (string, error) {
+		if previous != "" {
+			t.Fatalf("fresh edit previous bytes = %q", previous)
+		}
+		if err := os.WriteFile(path, []byte(operator), 0o640); err != nil {
+			t.Fatal(err)
+		}
+		return `{"mcp":{"servers":{"roca":{"type":"stdio","command":"roca","args":["mcp","serve"]}}}}`, nil
+	}, true)
+	if err == nil {
+		t.Fatal("fresh edit replaced a concurrently created config")
+	}
+	if outcome.Changed {
+		t.Fatal("failed fresh edit reported a change")
+	}
+	if got := read(t, path); got != operator {
+		t.Fatalf("concurrently created config changed: got %s", got)
+	}
+}
+
 // A config Roca cannot parse is a config Roca must not edit. It is reported
 // with the file, the reason and no write at all.
 func TestABrokenConfigIsReportedAndNotEdited(t *testing.T) {

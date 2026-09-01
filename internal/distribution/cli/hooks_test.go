@@ -218,8 +218,19 @@ func TestZcodeInstallPreservesOperatorHookUsingSameWrapper(t *testing.T) {
 	if len(entries) != 2 {
 		t.Fatalf("SessionStart entries = %d, want operator and managed hooks", len(entries))
 	}
-	if _, _, err := uninstallZcodeHandoffHook(config, wrapper); err != nil {
+	_, warning, err := uninstallZcodeHandoffHook(config, wrapper)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if !strings.Contains(warning, "remaining operator-owned hook references it") {
+		t.Fatalf("wrapper retention warning = %q", warning)
+	}
+	wrapperBody, err := os.ReadFile(wrapper)
+	if err != nil {
+		t.Fatalf("operator-referenced wrapper was removed: %v", err)
+	}
+	if !isManagedZcodeWrapper(wrapperBody) {
+		t.Fatalf("retained wrapper is not managed: %q", wrapperBody)
 	}
 	body, err = os.ReadFile(config)
 	if err != nil {

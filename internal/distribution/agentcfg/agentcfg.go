@@ -359,10 +359,11 @@ func edit(name, path string, transform, backupTransform func(string) (string, er
 		}
 		outcome.Backup = backup
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return outcome, fmt.Errorf("create the directory of %s: %w", path, err)
-	}
-	if err := securefile.Replace(path, []byte(next), previous); err != nil {
+	if previous == nil {
+		if err := securefile.CreatePreservingParentMode(path, []byte(next), 0o600, 0o700); err != nil {
+			return outcome, err
+		}
+	} else if err := securefile.Replace(path, []byte(next), previous); err != nil {
 		return outcome, err
 	}
 	outcome.Changed = true
