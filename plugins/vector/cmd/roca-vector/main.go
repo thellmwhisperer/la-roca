@@ -193,20 +193,24 @@ type indexStatus struct {
 func statusCommand(env *environment) *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
-		Short: "Report how much of your history has been read for meaning",
+		Short: "Report per-database vectorization without waiting for the model",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			status, err := env.indexStatus(command.Context())
+			report, err := env.vectorizationStatus(command.Context())
 			if err != nil {
 				return err
 			}
+			help := statusHelp(report)
+			out := command.OutOrStdout()
 			if env.json {
-				return printJSON(status)
+				return printJSONTo(out, map[string]any{
+					"worker":    report.Worker,
+					"databases": report.Databases,
+					"help":      help,
+				})
 			}
-			for _, line := range statusLines(status) {
-				fmt.Println(line)
-			}
-			return nil
+			_, err = fmt.Fprintln(out, renderVectorization(report, help))
+			return err
 		},
 	}
 }

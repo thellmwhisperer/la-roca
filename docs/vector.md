@@ -32,17 +32,21 @@ not rewrite an existing configuration. On those machines the pass starts at the
 plugin instead, with `roca vector install`. There is no `--vectors` flag: a run
 nobody answered has not consented to a download.
 
-Progress is reported as a fraction of the history on this machine:
+`roca vector status` reports one row per database declared in
+`vector-registry.json`: plugin, database, declared tables, embedded chunks,
+candidate chunks, sidecar size, last write, and an honest state (`building`,
+`complete`, `empty`, `outdated`, or `unknown`). A number that cannot be read is
+`unknown`, never `0`. One worker line says whether a pass is running, its pid,
+backend (`cpu` or `metal`), and current database. Status does not wait for the
+model and does not block on a large COUNT. Default output is bounded AXI;
+`--json` is the complete envelope; `help[]` names the next command.
 
 ```sh
 roca vector status
 ```
 
-It says whether a pass is reading right now, how much it has read, and what
-stopped it if it stopped. Progress counting has a 30-second deadline; if the
-counts cannot finish, status reports that progress is unavailable instead of
-waiting indefinitely. A pass that stopped partway leaves the rows it already
-wrote queryable; those rows answer, and full text answers for the rest.
+A pass that stopped partway leaves the rows it already wrote queryable; those
+rows answer, and full text answers for the rest.
 
 The rest of this document is the contract underneath, for operators who want
 each step separately or who are on a machine the one command cannot serve.
