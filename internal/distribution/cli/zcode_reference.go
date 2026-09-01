@@ -21,6 +21,9 @@ func zcodeHookCommandsReferenceWrapper(commands []string, wrapperPath string) (b
 		return false, err
 	}
 	wrapper, err := zcodeFileIdentityFor(wrapperPath, home)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
 	if err != nil {
 		return false, fmt.Errorf("resolve wrapper %s: %w", wrapperPath, err)
 	}

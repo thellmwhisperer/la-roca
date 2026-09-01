@@ -1134,6 +1134,35 @@ func TestZcodePurgeReconcilesExactWrapperAfterDeclarationRemoval(t *testing.T) {
 	}
 }
 
+func TestZcodeHookUninstallTreatsMissingWrapperAsAbsent(t *testing.T) {
+	home := skillTestHome(t)
+	installZcodeTestIntegration(t, "hooks", home)
+	config, wrapper := zcodeTestConfigAndWrapper(home)
+	if err := os.Remove(wrapper); err != nil {
+		t.Fatal(err)
+	}
+	var errOut strings.Builder
+	env := &cliEnv{out: io.Discard, errOut: &errOut}
+	root := rootCommand(env)
+	root.SetArgs([]string{"hooks", "uninstall", "zcode"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if errOut.Len() != 0 {
+		t.Fatalf("missing wrapper produced a warning: %s", errOut.String())
+	}
+	if zcodeManagedHookPresent(config) {
+		t.Fatal("managed declaration survived missing-wrapper uninstall")
+	}
+	registry, err := artifact.LoadRegistry(filepath.Join(home, ".roca", "artifacts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, found := registry.Find(artifactKindHook, agentcfg.RuntimeZcode, wrapper); found {
+		t.Fatal("missing wrapper retained stale ownership")
+	}
+}
+
 func TestZcodeUnreadableHookKeepsOwnershipForRetry(t *testing.T) {
 	home := skillTestHome(t)
 	config := filepath.Join(home, ".zcode", "cli", "config.json")

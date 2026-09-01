@@ -447,8 +447,8 @@ func TestInstallWritesTheSkillAndIsIdempotent(t *testing.T) {
 			if err != nil {
 				t.Fatalf("re-uninstall: %v", err)
 			}
-			if reuninstall.Changed {
-				t.Fatal("re-uninstall of an already removed skill claims change")
+			if reuninstall.Changed || !reuninstall.Missing {
+				t.Fatalf("re-uninstall outcome = %+v", reuninstall)
 			}
 		})
 	}

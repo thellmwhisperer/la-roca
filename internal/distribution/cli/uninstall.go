@@ -536,7 +536,7 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 				failed(report, "withdraw skill from %s: %v", runtime, err)
 				continue
 			}
-			if registered {
+			if registered && (outcome.Changed || outcome.Missing) {
 				removedSkillState[registeredEntry.Key()] = registeredEntry
 			}
 			if outcome.Changed {
@@ -565,7 +565,9 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 				failed(report, "withdraw skill from %s at %s: %v", entry.Runtime, entry.Path, err)
 				continue
 			}
-			removedSkillState[entry.Key()] = entry
+			if outcome.Changed || outcome.Missing {
+				removedSkillState[entry.Key()] = entry
+			}
 			if outcome.Changed {
 				report.Deleted = append(report.Deleted, outcome.Removed...)
 			}
