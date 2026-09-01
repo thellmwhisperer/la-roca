@@ -377,7 +377,8 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 		}
 		if purge {
 			return env.uninstallZcodeMCP(path, func(entry artifact.Entry, identity os.FileInfo) error {
-				removeRecoveryBackups(report, path)
+				removeRuntimeRecoveryBackups(report, runtime, path)
+				warnRetainedUnownedEmptyZcodeConfig(env.errOut, entry, path)
 				return cleanupCreatedZcodeMCPPaths(entry, path, identity)
 			})
 		}
@@ -398,7 +399,7 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 		outcome, err := withdrawMCP(runtime, path)
 		withdrawn("roca from "+runtime, outcome, err)
 		if purge {
-			removeRecoveryBackups(report, path)
+			removeRuntimeRecoveryBackups(report, runtime, path)
 		}
 	}
 	if registryErr == nil {
@@ -412,7 +413,7 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 			outcome, err := withdrawMCP(entry.Runtime, entry.Path)
 			withdrawn("roca from "+entry.Runtime+" at "+entry.Path, outcome, err)
 			if purge {
-				removeRecoveryBackups(report, entry.Path)
+				removeRuntimeRecoveryBackups(report, entry.Runtime, entry.Path)
 			}
 		}
 	}
@@ -488,7 +489,8 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 			err = fmt.Errorf("ownership registry unavailable")
 		} else if purge && target.registered {
 			finalize := func(entry artifact.Entry, identity os.FileInfo) error {
-				removeRecoveryBackups(report, target.settings)
+				removeRuntimeRecoveryBackups(report, agentcfg.RuntimeZcode, target.settings)
+				warnRetainedUnownedEmptyZcodeConfig(env.errOut, entry, target.settings)
 				if cleanupErr := cleanupCreatedZcodeHookPaths(entry, target.settings, target.wrapper, identity); cleanupErr != nil {
 					return cleanupErr
 				}
@@ -499,7 +501,7 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 		} else {
 			outcome, warning, err = env.uninstallManagedZcodeHandoffHook(target.settings, target.wrapper)
 			if purge {
-				removeRecoveryBackups(report, target.settings)
+				removeRuntimeRecoveryBackups(report, agentcfg.RuntimeZcode, target.settings)
 			}
 		}
 		if warning != "" {
@@ -879,12 +881,13 @@ func (env *cliEnv) purgeRegisteredZcodeIntegrations(report *lifecycle.Report, re
 					outcomes = append(outcomes, outcome)
 					configIdentity = outcome.FileIdentity
 				}
-				removeRecoveryBackups(report, config)
+				removeRuntimeRecoveryBackups(report, agentcfg.RuntimeZcode, config)
 				if err := env.unregisterArtifactEntry(entry); err != nil {
 					return err
 				}
 			}
 			aggregate := artifact.Entry{}
+			retainedOperatorConfig := false
 			wrappers := make([]string, 0, len(liveHooks))
 			for _, entry := range liveHooks {
 				expected, expectedErr := zcodeWrapperExpectedFromEntry(entry)
@@ -895,6 +898,7 @@ func (env *cliEnv) purgeRegisteredZcodeIntegrations(report *lifecycle.Report, re
 					config, entry.Path, expected, entry.CreatedHooksEnabled)
 				if warning != "" {
 					fmt.Fprintln(env.errOut, warning)
+					retainedOperatorConfig = retainedOperatorConfig || strings.Contains(warning, zcodeRetainedEnabledWarning)
 				}
 				if uninstallErr != nil {
 					return fmt.Errorf("withdraw the ZCode handoff hook from %s: %w", config, uninstallErr)
@@ -903,7 +907,7 @@ func (env *cliEnv) purgeRegisteredZcodeIntegrations(report *lifecycle.Report, re
 					outcomes = append(outcomes, outcome)
 					configIdentity = outcome.FileIdentity
 				}
-				removeRecoveryBackups(report, config)
+				removeRuntimeRecoveryBackups(report, agentcfg.RuntimeZcode, config)
 				aggregateZcodeProvenance(&aggregate, entry)
 				wrappers = append(wrappers, entry.Path)
 			}
@@ -920,9 +924,15 @@ func (env *cliEnv) purgeRegisteredZcodeIntegrations(report *lifecycle.Report, re
 					outcomes = append(outcomes, outcome)
 					configIdentity = outcome.FileIdentity
 				}
-				removeRecoveryBackups(report, config)
+				removeRuntimeRecoveryBackups(report, agentcfg.RuntimeZcode, config)
 				aggregateZcodeProvenance(&aggregate, entry)
 			}
+			if retainedOperatorConfig {
+				aggregate.CreatedRoot = false
+				aggregate.CreatedConfigDir = false
+				aggregate.CreatedConfig = false
+			}
+			warnRetainedUnownedEmptyZcodeConfig(env.errOut, aggregate, config)
 			if err := cleanupCreatedZcodePaths(aggregate, config, wrappers, configIdentity); err != nil {
 				return err
 			}
@@ -949,6 +959,16 @@ func aggregateZcodeProvenance(target *artifact.Entry, entry artifact.Entry) {
 	target.CreatedHooksEnabled = target.CreatedHooksEnabled || entry.CreatedHooksEnabled
 }
 
+func warnRetainedUnownedEmptyZcodeConfig(out io.Writer, entry artifact.Entry, configPath string) {
+	if out == nil || entry.CreatedConfig {
+		return
+	}
+	body, err := os.ReadFile(configPath)
+	if err == nil && strings.TrimSpace(string(body)) == "{}" {
+		fmt.Fprintf(out, "warning: left pre-existing empty ZCode config unchanged at %s\n", configPath)
+	}
+}
+
 func cleanupCreatedZcodePaths(entry artifact.Entry, configPath string, wrappers []string, identity os.FileInfo) error {
 	configDir := filepath.Dir(configPath)
 	root := filepath.Dir(configDir)
@@ -967,9 +987,7 @@ func cleanupCreatedZcodePaths(entry artifact.Entry, configPath string, wrappers 
 		} else if !os.IsNotExist(identityErr) {
 			cleanupErr = errors.Join(cleanupErr, identityErr)
 		}
-	} else if body, err := os.ReadFile(configPath); err == nil && strings.TrimSpace(string(body)) == "{}" {
-		cleanupErr = errors.Join(cleanupErr, fmt.Errorf("unproven ZCode artifact remains at %s", configPath))
-	} else if err != nil && !os.IsNotExist(err) {
+	} else if _, err := os.ReadFile(configPath); err != nil && !os.IsNotExist(err) {
 		cleanupErr = errors.Join(cleanupErr, err)
 	}
 	if entry.CreatedLock || len(wrappers) > 0 {
@@ -1270,6 +1288,32 @@ func keepTheBackup(report *lifecycle.Report, outcome agentcfg.Outcome) {
 // operator wrote is never this product's to delete, whatever it was authorized
 // to remove of its own. It is the same rule that keeps a prompt.md with content
 // in its USER zone out of the owned-path inventory.
+func removeRuntimeRecoveryBackups(report *lifecycle.Report, runtime, configFile string) {
+	removeRecoveryBackups(report, configFile)
+	if runtime != agentcfg.RuntimeZcode && runtime != agentcfg.RuntimeClaudeDesktop {
+		return
+	}
+	info, err := os.Lstat(configFile)
+	if os.IsNotExist(err) {
+		return
+	}
+	if err != nil {
+		failed(report, "inspect configuration path %s: %v", configFile, err)
+		return
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		return
+	}
+	resolved, err := filepath.EvalSymlinks(configFile)
+	if err != nil {
+		failed(report, "resolve configuration symlink %s: %v", configFile, err)
+		return
+	}
+	if resolved != configFile {
+		removeRecoveryBackups(report, resolved)
+	}
+}
+
 func removeRecoveryBackups(report *lifecycle.Report, configFile string, spared ...string) {
 	for _, path := range recoveryBackupsFor(report, configFile) {
 		if slices.Contains(spared, path) {
@@ -1349,7 +1393,9 @@ func ownedPaths(paths config.Paths) []string {
 	}
 	managed, err := artifact.OwnedPaths(paths.Artifacts)
 	if err != nil {
-		managed = []string{paths.Artifacts, paths.Artifacts + ".lock", paths.Artifacts + ".mcp.lock", paths.Artifacts + ".hooks.lock", paths.Artifacts + ".zcode.lock"}
+		managed = []string{paths.Artifacts + ".lock", paths.Artifacts + ".mcp.lock", paths.Artifacts + ".hooks.lock", paths.Artifacts + ".zcode.lock"}
+	} else if registryRecovery, recoveryErr := recoveryBackups(paths.Artifacts); recoveryErr == nil {
+		managed = append(managed, registryRecovery...)
 	}
 	for _, path := range managed {
 		if !slices.Contains(owned, path) {

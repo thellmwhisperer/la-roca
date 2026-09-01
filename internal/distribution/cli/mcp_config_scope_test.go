@@ -305,6 +305,41 @@ func TestFullUninstallWithdrawsRegisteredCustomZcodeMCPPath(t *testing.T) {
 	}
 }
 
+func TestNewerArtifactRegistryDegradesStatusAndBlocksUninstall(t *testing.T) {
+	home := skillTestHome(t)
+	config := filepath.Join(home, ".zcode", "cli", "config.json")
+	executable := filepath.Join(home, "roca")
+	if _, err := agentcfg.Install(agentcfg.RuntimeZcode, config, executable); err != nil {
+		t.Fatal(err)
+	}
+	registryPath := filepath.Join(home, ".roca", "artifacts.json")
+	writeFile(t, registryPath, `{"schema":3,"artifacts":[]}`)
+	env := &cliEnv{out: io.Discard, errOut: io.Discard}
+	status := rootCommand(env)
+	status.SetArgs([]string{"mcp", "status", "zcode"})
+	if err := status.Execute(); err != nil {
+		t.Fatalf("read-only status rejected newer ownership schema: %v", err)
+	}
+	uninstall := rootCommand(env)
+	uninstall.SetArgs([]string{"mcp", "uninstall", "zcode"})
+	if err := uninstall.Execute(); err == nil || !strings.Contains(err.Error(), "schema 3") {
+		t.Fatalf("destructive uninstall accepted newer ownership schema: %v", err)
+	}
+	matched, err := agentcfg.ZcodeMCPMatches(config, executable)
+	if err != nil || !matched {
+		t.Fatalf("blocked uninstall changed config: matched=%v err=%v", matched, err)
+	}
+	paths, err := env.resolvePaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, owned := range ownedPaths(paths) {
+		if owned == registryPath {
+			t.Fatal("destructive purge planning claimed a newer ownership registry")
+		}
+	}
+}
+
 func TestFullUninstallSkipsZcodeMCPWhenOwnershipStateIsUnreadable(t *testing.T) {
 	home := skillTestHome(t)
 	path := filepath.Join(home, ".zcode", "cli", "config.json")
@@ -647,6 +682,41 @@ func TestManagedArtifactLocksRejectSymlinksWithoutChangingTargets(t *testing.T) 
 	}
 }
 
+func TestPurgeCleanupRemovesResolvedConfigBackups(t *testing.T) {
+	for _, runtime := range []string{agentcfg.RuntimeZcode, agentcfg.RuntimeClaudeDesktop} {
+		t.Run(runtime, func(t *testing.T) {
+			dir := t.TempDir()
+			target := filepath.Join(dir, "shared.json")
+			link := filepath.Join(dir, "config.json")
+			if err := os.WriteFile(target, []byte("{}"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, link); err != nil {
+				t.Skipf("symlinks are unavailable: %v", err)
+			}
+			if _, err := agentcfg.Install(runtime, link, "/opt/roca"); err != nil {
+				t.Fatal(err)
+			}
+			backups, err := filepath.Glob(target + ".roca.bak*")
+			if err != nil || len(backups) == 0 {
+				t.Fatalf("resolved target backups = %v, err=%v", backups, err)
+			}
+			report := lifecycle.Report{Purged: true, Deleted: []string{}}
+			removeRuntimeRecoveryBackups(&report, runtime, link)
+			if len(report.Errors) != 0 {
+				t.Fatalf("backup cleanup errors = %v", report.Errors)
+			}
+			backups, err = filepath.Glob(target + ".roca.bak*")
+			if err != nil || len(backups) != 0 {
+				t.Fatalf("resolved target backups survived: %v, err=%v", backups, err)
+			}
+			if info, err := os.Lstat(link); err != nil || info.Mode()&os.ModeSymlink == 0 {
+				t.Fatalf("backup cleanup changed symlink: info=%v err=%v", info, err)
+			}
+		})
+	}
+}
+
 func TestZcodeConfigCleanupRetainsReplacedEmptyFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	before := `{}`
@@ -698,18 +768,23 @@ func TestZcodeMCPPurgePreservesPreexistingConfig(t *testing.T) {
 	}
 }
 
-func TestZcodeMCPPurgeReportsUnprovenConfigAfterOrdinaryUninstall(t *testing.T) {
+func TestZcodeMCPPurgeWarnsForPreexistingEmptyConfig(t *testing.T) {
 	home := skillTestHome(t)
 	installZcodeTestIntegration(t, "mcp", home)
 	runZcodeTestCLI(t, "mcp", "uninstall", "zcode")
 	installZcodeTestIntegration(t, "mcp", home)
-	report := purgeZcodeTestIntegrations(true)
+	var warnings strings.Builder
+	report := lifecycle.Report{Purged: true, Deleted: []string{}}
+	(&cliEnv{out: io.Discard, errOut: &warnings}).withdrawTheIntegrations(&report, true)
 	config := filepath.Join(home, ".zcode", "cli", "config.json")
-	if !strings.Contains(strings.Join(report.Errors, "\n"), config) {
-		t.Fatalf("unproven config not reported: %v", report.Errors)
+	if len(report.Errors) != 0 {
+		t.Fatalf("preexisting config blocked purge: %v", report.Errors)
 	}
-	if _, err := os.Stat(config); err != nil {
-		t.Fatalf("unproven config removed: %v", err)
+	if !strings.Contains(warnings.String(), "left pre-existing empty ZCode config unchanged") {
+		t.Fatalf("preexisting config warning = %q", warnings.String())
+	}
+	if body, err := os.ReadFile(config); err != nil || strings.TrimSpace(string(body)) != "{}" {
+		t.Fatalf("preexisting config changed: body=%q err=%v", body, err)
 	}
 }
 

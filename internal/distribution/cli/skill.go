@@ -732,6 +732,11 @@ func zcodeManagedHookState(configPath string) (present, verified bool) {
 	return next != string(body), true
 }
 
+func zcodeManagedHookDeclared(config string) bool {
+	next, err := agentcfg.RemoveZcodeSessionStartHook(config, zcodeSessionStartMarker)
+	return err == nil && next != config
+}
+
 func zcodeManagedHookPresent(configPath string) bool {
 	present, _ := zcodeManagedHookState(configPath)
 	return present
@@ -748,8 +753,9 @@ func zcodeHookSelected(configPath, _ string) (bool, error) {
 }
 
 const (
-	zcodeSessionStartMarker = "roca_session_start_marker"
-	zcodeWrapperStateFormat = "zcode-wrapper-v1"
+	zcodeSessionStartMarker     = "roca_session_start_marker"
+	zcodeWrapperStateFormat     = "zcode-wrapper-v1"
+	zcodeRetainedEnabledWarning = "left operator-owned hooks.enabled unchanged"
 )
 
 type zcodeHookPathState struct {
@@ -777,7 +783,8 @@ func zcodeHookPathPreimage(configPath, wrapperPath string) (zcodeHookPathState, 
 	}, nil
 }
 
-func (env *cliEnv) recordZcodeWrapperState(path, executable string, preimage zcodeHookPathState) (func() error, error) {
+func (env *cliEnv) recordZcodeWrapperState(path, executable string, preimage zcodeHookPathState,
+	managedDeclarationContinuous bool) (func() error, error) {
 	paths, err := env.resolvePaths()
 	if err != nil {
 		return nil, err
@@ -803,7 +810,8 @@ func (env *cliEnv) recordZcodeWrapperState(path, executable string, preimage zco
 			transaction.CreatedHooksDir = transaction.CreatedHooksDir || prior.CreatedHooksDir
 			transaction.CreatedConfig = transaction.CreatedConfig || prior.CreatedConfig
 			transaction.CreatedLock = transaction.CreatedLock || prior.CreatedLock
-			transaction.CreatedHooksEnabled = transaction.CreatedHooksEnabled || prior.CreatedHooksEnabled
+			transaction.CreatedHooksEnabled = transaction.CreatedHooksEnabled ||
+				(prior.CreatedHooksEnabled && managedDeclarationContinuous)
 		}
 		registry.Upsert(transaction)
 		return true, nil
@@ -900,10 +908,11 @@ func (env *cliEnv) installManagedZcodeHandoffHookLocked(configPath, wrapperPath,
 	}
 	var rollback func() error
 	outcome, warning, err = installZcodeHandoffHookWithPrevious(configPath, wrapperPath, executable, previous,
-		func(_ string, createdEnabled, existed bool) error {
+		func(configBefore string, createdEnabled, existed bool) error {
 			pathPreimage.createdConfig = !existed
 			pathPreimage.createdHooksEnabled = createdEnabled
-			rollback, err = env.recordZcodeWrapperState(wrapperPath, executable, pathPreimage)
+			rollback, err = env.recordZcodeWrapperState(wrapperPath, executable, pathPreimage,
+				zcodeManagedHookDeclared(configBefore))
 			return err
 		})
 	published = err == nil
@@ -1054,11 +1063,18 @@ func uninstallZcodeHandoffHookUnlocked(configPath, wrapperPath string, expected 
 			return withoutManaged, nil
 		}
 		next := withoutManaged
-		if len(removeEnabled) > 0 && removeEnabled[0] && len(commands) == 0 {
+		removeOwnedEnabled := len(removeEnabled) > 0 && removeEnabled[0] && zcodeManagedHookDeclared(previous)
+		enabledDeclared, enabled, enabledErr := agentcfg.ZcodeHooksEnabled(previous)
+		if enabledErr != nil {
+			return previous, enabledErr
+		}
+		if removeOwnedEnabled && enabledDeclared && enabled && len(commands) == 0 {
 			next, editErr = agentcfg.RemoveCreatedZcodeHooksEnabled(previous)
 			if editErr == nil {
 				next, editErr = agentcfg.RemoveZcodeSessionStartHook(next, zcodeSessionStartMarker)
 			}
+		} else if enabledDeclared && len(commands) == 0 && (!removeOwnedEnabled || !enabled) {
+			warning = fmt.Sprintf("warning: %s in %s", zcodeRetainedEnabledWarning, configPath)
 		}
 		if editErr != nil {
 			return previous, editErr
