@@ -353,12 +353,13 @@ Do not stack synonyms.
   layers at ingest. On a fresh install the `handoff` layer is empty until
   somebody stores the first one.
 - Start project work with `roca pill` and `roca handoff latest`. Ask for the
-  current handoff protocol and follow it instead of freezing it here. Do not
-  write a handoff unless the operator asked for one. When they do, the shape is
-  branch/scope, done, current state, and next step, and replacement is declared
-  with CLI `--supersedes` or the MCP `supersedes` field, not in prose. Progress
-  belongs in tasks-axi; delivery belongs in the `pr` field; a session decision
-  belongs in layer `decision`; job state belongs in a layer with `expires_at`.
+  current handoff protocol and follow it instead of freezing it here.
+  Do not write a handoff unless the operator asked for one. When they do, the
+  shape is branch/scope, done, current state, and next step, and replacement is
+  declared with CLI `--supersedes` or the MCP `supersedes` field, not in prose.
+  Progress belongs in tasks-axi; delivery belongs in the `pr` field; a session
+  decision belongs in layer `decision`; job state belongs in a layer with
+  `expires_at`.
 - Ask bare first: use one short concept and no hints. Hints can steer SQL to the
   wrong table; a typo can silently leave noise as the best match.
 - Write SQL and `roca exec` first. `roca query` is hybrid search. `roca explore`
