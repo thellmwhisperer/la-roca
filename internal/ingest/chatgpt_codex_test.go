@@ -114,8 +114,8 @@ func TestOverlappingLocalCodexRolloutKeepsTheRicherRow(t *testing.T) {
 			if model != "gpt-synthetic-local" || provider != "openai" {
 				t.Errorf("kept provenance = %q/%q, want the richer local rollout", model, provider)
 			}
-			if agentTS == "" {
-				t.Errorf("local agent timestamp was dropped: human=%q agent=%q", humanTS, agentTS)
+			if humanTS != "2026-08-01T12:00:01Z" || agentTS != "2026-08-01T12:00:02Z" {
+				t.Errorf("local timestamps = %q / %q, want both rollout times", humanTS, agentTS)
 			}
 		})
 	}

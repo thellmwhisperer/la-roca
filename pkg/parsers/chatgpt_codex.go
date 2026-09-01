@@ -45,7 +45,8 @@ type chatGPTCodexContent struct {
 }
 
 func detectChatGPTCodex(file File) bool {
-	return sourceIs(file.Meta, "codex-cloud") && has(firstObject(file.Content), "id", "turns")
+	object := firstObject(file.Content)
+	return file.Meta.SourceAgent == "codex-cloud" && has(object, "id") && has(object, "turns")
 }
 
 // ParseChatGPTCodex streams the top-level export array and keeps one
@@ -89,8 +90,9 @@ func parseChatGPTCodexConversation(payload chatGPTCodexConversation, record int,
 	}
 	users := map[string]chatGPTCodexTurn{}
 	for _, turn := range payload.Turns {
-		if strings.ToLower(strings.TrimSpace(turn.Role)) == "user" {
-			users[strings.TrimSpace(turn.ID)] = turn
+		id := strings.TrimSpace(turn.ID)
+		if strings.ToLower(strings.TrimSpace(turn.Role)) == "user" && id != "" {
+			users[id] = turn
 		}
 	}
 	exchanges := make([]Exchange, 0, len(payload.Turns)/2)
@@ -99,7 +101,11 @@ func parseChatGPTCodexConversation(payload chatGPTCodexConversation, record int,
 		if strings.ToLower(strings.TrimSpace(turn.Role)) != "assistant" {
 			continue
 		}
-		human, ok := users[strings.TrimSpace(turn.PreviousTurnID)]
+		previousTurnID := strings.TrimSpace(turn.PreviousTurnID)
+		if previousTurnID == "" {
+			continue
+		}
+		human, ok := users[previousTurnID]
 		if !ok {
 			continue
 		}

@@ -1321,14 +1321,16 @@ func (w *writer) enrichExchange(ctx context.Context, sessionID string, stored st
 		  cost_usd = COALESCE(?, cost_usd)`
 	}
 	values := []any{
-		nullIfEmpty(exchange.AgentText), nullIfEmpty(exchange.AgentTimestamp),
-		nullInt(exchange.LatencyMS), boolToInt(exchange.IsAfterCompaction),
+		nullIfEmpty(exchange.AgentText), nullIfEmpty(exchange.HumanTimestamp),
+		nullIfEmpty(exchange.AgentTimestamp), nullInt(exchange.LatencyMS),
+		boolToInt(exchange.IsAfterCompaction),
 	}
 	values = append(values, exchangeProvenanceValues(provenance)...)
 	values = append(values, stored.id, sessionID)
 	_, err := w.tx.ExecContext(ctx, `
 		UPDATE exchanges SET
 		  agent_text = COALESCE(agent_text, ?),
+		  human_timestamp = COALESCE(human_timestamp, ?),
 		  agent_timestamp = COALESCE(agent_timestamp, ?),
 		  response_latency_ms = COALESCE(response_latency_ms, ?),
 		  is_after_compaction = MAX(COALESCE(is_after_compaction, 0), ?),`+

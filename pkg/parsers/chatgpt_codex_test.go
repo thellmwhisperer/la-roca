@@ -124,6 +124,21 @@ func TestChatGPTCodexDetectsDeclaredCloudSourceAndRejectsLocalRollouts(t *testin
 	if detectChatGPTCodex(chatgpt) {
 		t.Fatal("detector claimed a ChatGPT mapping export")
 	}
+	for name, file := range map[string]File{
+		"undeclared": {Content: []byte(`[{"id":"x","turns":[]}]`)},
+		"id only": {
+			Content: []byte(`[{"id":"x"}]`), Meta: FileMeta{SourceAgent: "codex-cloud"},
+		},
+		"turns only": {
+			Content: []byte(`[{"turns":[]}]`), Meta: FileMeta{SourceAgent: "codex-cloud"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if detectChatGPTCodex(file) {
+				t.Fatal("detector claimed an incomplete declaration")
+			}
+		})
+	}
 }
 
 func TestChatGPTCodexUsesOptionalTimestampsWhenTheSourceStatesThem(t *testing.T) {
@@ -178,6 +193,20 @@ func TestChatGPTCodexDiscardsEmptyAssistantTurnsWithoutPoisoningTheFile(t *testi
 		if !discard.ByDesign {
 			t.Errorf("empty assistant reported as unreadable: %+v", discard)
 		}
+	}
+}
+
+func TestChatGPTCodexDoesNotPairTurnsWithBlankIDs(t *testing.T) {
+	raw := `[{"id":"blank-turns","turns":[
+	  {"id":"","role":"user","input_items":[{"type":"message","content":[{"content_type":"text","text":"Unlinked human."}]}]},
+	  {"id":"blank-assistant","role":"assistant","previous_turn_id":"","output_items":[{"type":"message","content":[{"content_type":"text","text":"Unlinked answer."}]}]},
+	  {"id":"linked-user","role":"user","input_items":[{"type":"message","content":[{"content_type":"text","text":"Linked human."}]}]},
+	  {"id":"linked-assistant","role":"assistant","previous_turn_id":"linked-user","output_items":[{"type":"message","content":[{"content_type":"text","text":"Linked answer."}]}]}
+	]}]`
+	exchanges := parseChatGPTCodex(t, raw).Sessions[0].Exchanges
+	if len(exchanges) != 1 || exchanges[0].HumanText != "Linked human." ||
+		exchanges[0].AgentText != "Linked answer." {
+		t.Fatalf("exchanges = %+v, want only the explicitly linked turn", exchanges)
 	}
 }
 
