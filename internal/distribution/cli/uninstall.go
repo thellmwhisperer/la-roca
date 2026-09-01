@@ -908,7 +908,7 @@ func (env *cliEnv) purgeRegisteredZcodeIntegrations(report *lifecycle.Report, re
 				liveMCP = append(liveMCP, entry)
 			}
 			if replacementRetained {
-				failed(report, "retained operator-recreated ZCode state at %s", config)
+				fmt.Fprintf(env.errOut, "warning: retained operator-recreated ZCode state at %s\n", config)
 			}
 			var configIdentity os.FileInfo
 			for _, entry := range withdrawOnlyHooks {
