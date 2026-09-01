@@ -176,7 +176,7 @@ func TestZcodeUsesTheNestedMCPServersShape(t *testing.T) {
 		t.Fatal("zcode config has no nested mcp.servers object")
 	}
 	roca, ok := servers[agentcfg.ServerName].(map[string]any)
-	if !ok || roca["type"] != "stdio" || roca["command"] != "roca" {
+	if !ok || roca["type"] != "stdio" || roca["command"] != "roca" || len(roca) != 3 {
 		t.Fatalf("zcode roca server = %#v", servers[agentcfg.ServerName])
 	}
 	if _, flat := document["servers"]; flat {
@@ -216,10 +216,14 @@ func TestZcodeWithdrawalRestoresMCPContainerPreimage(t *testing.T) {
 			if err := os.WriteFile(path, []byte(before), 0o600); err != nil {
 				t.Fatal(err)
 			}
+			preimage, err := agentcfg.ZcodeMCPPreimage(before)
+			if err != nil {
+				t.Fatal(err)
+			}
 			if _, err := agentcfg.Install(agentcfg.RuntimeZcode, path, "roca"); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := agentcfg.Uninstall(agentcfg.RuntimeZcode, path); err != nil {
+			if _, err := agentcfg.UninstallZcodeMCP(path, preimage); err != nil {
 				t.Fatal(err)
 			}
 			if after := read(t, path); after != before {

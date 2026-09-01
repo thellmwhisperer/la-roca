@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	goruntime "runtime"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -502,6 +503,9 @@ func hooksInstallCommand(env *cliEnv) *cobra.Command {
 		func(runtime, path string) (agentcfg.Outcome, string, error) {
 			declared := chosenExecutable(executable)
 			if runtime == agentcfg.RuntimeZcode {
+				if err := zcodeHookPlatformError(goruntime.GOOS); err != nil {
+					return agentcfg.Outcome{Runtime: runtime, Path: path}, "", err
+				}
 				wrapper, err := zcodeHookWrapperPath()
 				if err != nil {
 					return agentcfg.Outcome{Runtime: runtime, Path: path}, "", err
@@ -536,6 +540,13 @@ func hooksUninstallCommand(env *cliEnv) *cobra.Command {
 	cmd.Flags().BoolVar(&pills, "pills", false, "withdraw the SessionStart `roca pill` hook")
 	cmd.Flags().BoolVar(&handoff, "handoff", false, "withdraw the SessionStart `roca handoff latest` hook")
 	return cmd
+}
+
+func zcodeHookPlatformError(goos string) error {
+	if goos == "darwin" || goos == "linux" {
+		return nil
+	}
+	return fmt.Errorf("ZCode hooks are unsupported on %s because the installed wrapper requires /bin/bash", goos)
 }
 
 func supportedHookRuntime(name string) error {

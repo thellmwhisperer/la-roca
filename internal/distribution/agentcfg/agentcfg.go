@@ -237,9 +237,6 @@ func Install(name, path, executable string) (Outcome, error) {
 		executable = "roca"
 	}
 	return Edit(name, path, func(text string) (string, error) {
-		if name == RuntimeZcode {
-			return declareZcodeMCP(r, text, executable)
-		}
 		return declare(r, text, executable)
 	}, true)
 }
@@ -253,10 +250,18 @@ func Uninstall(name, path string) (Outcome, error) {
 		return Outcome{}, err
 	}
 	return Edit(name, path, func(text string) (string, error) {
-		if name == RuntimeZcode {
-			return withdrawZcodeMCP(r, text)
-		}
 		return withdraw(r, text)
+	}, false)
+}
+
+func UninstallZcodeMCP(path, preimage string) (Outcome, error) {
+	if preimage != ZcodeMCPPreimageNone && preimage != ZcodeMCPPreimageServers &&
+		preimage != ZcodeMCPPreimageMCPServers {
+		return Outcome{Runtime: RuntimeZcode, Path: path}, fmt.Errorf("invalid ZCode MCP preimage %q", preimage)
+	}
+	r := runtimes[RuntimeZcode]
+	return Edit(RuntimeZcode, path, func(text string) (string, error) {
+		return withdrawZcodeMCP(r, text, preimage)
 	}, false)
 }
 

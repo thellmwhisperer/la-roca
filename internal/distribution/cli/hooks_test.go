@@ -17,6 +17,17 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 )
 
+func TestZcodeHookPlatformSupportRequiresBash(t *testing.T) {
+	for _, goos := range []string{"darwin", "linux"} {
+		if err := zcodeHookPlatformError(goos); err != nil {
+			t.Fatalf("%s support = %v", goos, err)
+		}
+	}
+	if err := zcodeHookPlatformError("windows"); err == nil || !strings.Contains(err.Error(), "/bin/bash") {
+		t.Fatalf("Windows support error = %v", err)
+	}
+}
+
 func TestZcodeHookInstallerWritesNestedSessionStartAndJSONWrapper(t *testing.T) {
 	home := skillTestHome(t)
 	binary := filepath.Join(home, "bin", "roca")
@@ -255,6 +266,9 @@ func TestZcodeUninstallKeepsWrapperForEquivalentOperatorPaths(t *testing.T) {
 		}},
 		{name: "ambiguous shell", command: func(_, _ string) (string, error) {
 			return `test -x "$HOME/.zcode/hooks/roca-handoff.sh" && "$HOME/.zcode/hooks/roca-handoff.sh"`, nil
+		}},
+		{name: "nested command fragment", command: func(_, wrapper string) (string, error) {
+			return "sh -c " + shellQuote(wrapper+" --flag"), nil
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {

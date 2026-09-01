@@ -26,110 +26,58 @@ type member struct {
 	start, valueStart, end int
 }
 
-const zcodeMCPPreimageEnv = "ROCA_ZCODE_MCP_PREIMAGE"
+const (
+	ZcodeMCPPreimageNone       = "none"
+	ZcodeMCPPreimageServers    = "servers"
+	ZcodeMCPPreimageMCPServers = "mcp+servers"
+)
 
-func declareZcodeMCP(r runtime, text, executable string) (string, error) {
+func ZcodeMCPPreimage(text string) (string, error) {
 	if strings.TrimSpace(text) == "" {
-		text = "{}\n"
+		return ZcodeMCPPreimageMCPServers, nil
 	}
+	r := runtime{kind: kindJSON}
 	view, root, err := rootObject(r, text)
 	if err != nil {
 		return "", err
 	}
-	provenance := "none"
 	mcpIndex := root.find("mcp")
 	if mcpIndex < 0 {
-		provenance = "mcp+servers"
-	} else {
-		mcp, err := objectAt(view, root.members[mcpIndex].valueStart)
-		if err != nil {
-			return "", fmt.Errorf("mcp must be an object: %w", err)
-		}
-		serversIndex := mcp.find("servers")
-		if serversIndex < 0 {
-			provenance = "servers"
-		} else {
-			servers, err := objectAt(view, mcp.members[serversIndex].valueStart)
-			if err != nil {
-				return "", fmt.Errorf("servers must be an object: %w", err)
-			}
-			if rocaIndex := servers.find(ServerName); rocaIndex >= 0 {
-				entry, err := objectAt(view, servers.members[rocaIndex].valueStart)
-				if err != nil {
-					return "", err
-				}
-				envIndex := entry.find("env")
-				if envIndex >= 0 {
-					env, envErr := objectAt(view, entry.members[envIndex].valueStart)
-					if envErr == nil {
-						recorded := jsonStringMember(view, env, zcodeMCPPreimageEnv)
-						if recorded == "none" || recorded == "servers" || recorded == "mcp+servers" {
-							provenance = recorded
-						}
-					}
-				}
-			}
-		}
+		return ZcodeMCPPreimageMCPServers, nil
 	}
-	entry := append(fields{{"type", "stdio"}}, commandAndArgs(executable)...)
-	entry = append(entry, field{"env", map[string]string{zcodeMCPPreimageEnv: provenance}})
-	return jsonDeclare(r, text, entry)
+	mcp, err := objectAt(view, root.members[mcpIndex].valueStart)
+	if err != nil {
+		return "", fmt.Errorf("mcp must be an object: %w", err)
+	}
+	serversIndex := mcp.find("servers")
+	if serversIndex < 0 {
+		return ZcodeMCPPreimageServers, nil
+	}
+	servers, err := objectAt(view, mcp.members[serversIndex].valueStart)
+	if err != nil {
+		return "", fmt.Errorf("servers must be an object: %w", err)
+	}
+	if servers.find(ServerName) >= 0 {
+		return ZcodeMCPPreimageNone, nil
+	}
+	return ZcodeMCPPreimageNone, nil
 }
 
-func withdrawZcodeMCP(r runtime, text string) (string, error) {
-	provenance, err := zcodeMCPProvenance(r, text)
-	if err != nil {
-		return "", err
-	}
+func withdrawZcodeMCP(r runtime, text, preimage string) (string, error) {
 	next, err := jsonRemove(r, text, []string{ServerName})
-	if err != nil || provenance == "none" || next == text {
+	if err != nil || preimage == ZcodeMCPPreimageNone || next == text {
 		return next, err
 	}
-	if provenance == "servers" || provenance == "mcp+servers" {
+	if preimage == ZcodeMCPPreimageServers || preimage == ZcodeMCPPreimageMCPServers {
 		next, err = cutJSONMemberIfEmpty(r, next, []string{"mcp"}, "servers")
 		if err != nil {
 			return "", err
 		}
 	}
-	if provenance == "mcp+servers" {
+	if preimage == ZcodeMCPPreimageMCPServers {
 		next, err = cutJSONMemberIfEmpty(r, next, nil, "mcp")
 	}
 	return next, err
-}
-
-func zcodeMCPProvenance(r runtime, text string) (string, error) {
-	if strings.TrimSpace(text) == "" {
-		return "none", nil
-	}
-	view, root, err := rootObject(r, text)
-	if err != nil {
-		return "", err
-	}
-	servers, ok, err := objectAtPath(view, root, []string{"mcp", "servers"})
-	if err != nil || !ok {
-		return "none", err
-	}
-	rocaIndex := servers.find(ServerName)
-	if rocaIndex < 0 {
-		return "none", nil
-	}
-	entry, err := objectAt(view, servers.members[rocaIndex].valueStart)
-	if err != nil {
-		return "", err
-	}
-	envIndex := entry.find("env")
-	if envIndex < 0 {
-		return "none", nil
-	}
-	env, err := objectAt(view, entry.members[envIndex].valueStart)
-	if err != nil {
-		return "none", nil
-	}
-	provenance := jsonStringMember(view, env, zcodeMCPPreimageEnv)
-	if provenance != "servers" && provenance != "mcp+servers" {
-		return "none", nil
-	}
-	return provenance, nil
 }
 
 func cutJSONMemberIfEmpty(r runtime, text string, path []string, key string) (string, error) {

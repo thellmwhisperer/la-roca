@@ -266,7 +266,7 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 			failed(report, "%s", err)
 			continue
 		}
-		outcome, err := agentcfg.Uninstall(runtime, path)
+		outcome, err := env.uninstallMCP(runtime, path)
 		withdrawn("roca from "+runtime, outcome, err)
 		if purge {
 			removeRecoveryBackups(report, path)
@@ -366,7 +366,7 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 		}
 	}
 	if registryErr == nil && registryExists {
-		registry.RemoveKinds(artifactKindSkill, artifactKindSkillCatalog, artifactKindHook)
+		registry.RemoveKinds(artifactKindSkill, artifactKindSkillCatalog, artifactKindHook, artifactKindMCP)
 		if err := artifact.SaveRegistry(registryPath, registry); err != nil {
 			failed(report, "update managed artifact registry: %v", err)
 		}
