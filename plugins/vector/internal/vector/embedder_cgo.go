@@ -31,10 +31,13 @@ func (n *Native) Embed(ctx context.Context, requestedModel string, input []strin
 		vectors [][]float32
 		err     error
 	}
+	if err := n.acquireNative(ctx); err != nil {
+		n.record(telemetry.Record{Kind: telemetry.KindError, Err: "semantic search stalled"})
+		return nil, fmt.Errorf("semantic search stalled while preparing embeddings")
+	}
 	done := make(chan reply, 1)
 	go func() {
-		n.mu.Lock()
-		defer n.mu.Unlock()
+		defer n.releaseNative()
 		vectors, err := n.embedLocked(ctx, input)
 		done <- reply{vectors: vectors, err: err}
 	}()
@@ -48,6 +51,9 @@ func (n *Native) Embed(ctx context.Context, requestedModel string, input []strin
 }
 
 func (n *Native) embedLocked(ctx context.Context, input []string) ([][]float32, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if n.engine == nil {
 		if err := n.open(ctx); err != nil {
 			return nil, err
@@ -128,8 +134,8 @@ func openPreferredWithContext(ctx context.Context, path string, threads int, pol
 }
 
 func (n *Native) Accelerated() bool {
-	n.mu.Lock()
-	defer n.mu.Unlock()
+	_ = n.acquireNative(context.Background())
+	defer n.releaseNative()
 	return n.backend == llamacpp.BackendMetal
 }
 
@@ -137,8 +143,8 @@ func (n *Native) Close() {
 	if n == nil {
 		return
 	}
-	n.mu.Lock()
-	defer n.mu.Unlock()
+	_ = n.acquireNative(context.Background())
+	defer n.releaseNative()
 	if n.engine != nil {
 		n.engine.Close()
 		n.engine = nil

@@ -3,7 +3,10 @@
 package vector
 
 import (
+	"context"
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/thellmwhisperer/la-roca-vector/internal/llamacpp"
 )
@@ -76,4 +79,23 @@ func TestNativeWriterPolicyDrivesTheRecordedReason(t *testing.T) {
 	if writer.Writer.Lever != llamacpp.LeverCPU {
 		t.Fatalf("lever = %q, want %q", writer.Writer.Lever, llamacpp.LeverCPU)
 	}
+}
+
+func TestNativeOwnershipDropsExpiredWaiters(t *testing.T) {
+	native := &Native{}
+	if err := native.acquireNative(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waiting, cancelWaiting := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancelWaiting()
+	if err := native.acquireNative(waiting); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expired waiter error = %v, want deadline exceeded", err)
+	}
+	native.releaseNative()
+	fresh, cancelFresh := context.WithTimeout(context.Background(), time.Second)
+	defer cancelFresh()
+	if err := native.acquireNative(fresh); err != nil {
+		t.Fatalf("fresh ownership after expired waiter: %v", err)
+	}
+	native.releaseNative()
 }
