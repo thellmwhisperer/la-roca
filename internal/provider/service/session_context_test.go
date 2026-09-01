@@ -125,10 +125,7 @@ func TestListPillsKeepsContentLongerThanTheTableRendererBudget(t *testing.T) {
 		project: "demo",
 	})
 
-	got, err := svc.ListPills(t.Context(), "demo")
-	if err != nil {
-		t.Fatal(err)
-	}
+	got := mustListPills(t, svc, "demo")
 	if len(got.Pills) != 1 || got.Pills[0].Content != body {
 		t.Fatalf("content was truncated or lost: %+v", got.Pills)
 	}
@@ -297,6 +294,15 @@ func sessionContextService(t *testing.T) *sessionContextFixture {
 	memories := openRocaOps(t, plugins)
 	t.Cleanup(func() { _ = memories.Close() })
 	return &sessionContextFixture{Service: svc, memories: memories}
+}
+
+func mustListPills(t *testing.T, svc *sessionContextFixture, project string) service.PillList {
+	t.Helper()
+	list, err := svc.ListPills(t.Context(), project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return list
 }
 
 type pillSeed struct {

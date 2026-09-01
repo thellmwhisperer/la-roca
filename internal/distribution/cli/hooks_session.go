@@ -41,16 +41,36 @@ func claudeSessionHookInvocation(kind string) *regexp.Regexp {
 	return claudePillsHookInvocation
 }
 
+type claudeHookSpec struct {
+	event      string
+	invocation *regexp.Regexp
+	command    func(string) string
+	entry      func(string) map[string]any
+}
+
 func installClaudeSessionHook(path, executable, kind string) (agentcfg.Outcome, error) {
+	return installClaudeHook(path, executable, claudeHookSpec{
+		event: claudeSessionStartEvent, invocation: claudeSessionHookInvocation(kind),
+		command: func(declared string) string { return claudeSessionHookCommand(kind, declared) },
+		entry:   claudeSessionHookEntry,
+	})
+}
+
+func claudeSessionHookEntry(command string) map[string]any {
+	return map[string]any{
+		"hooks": []any{map[string]any{"type": "command", "command": command}},
+	}
+}
+
+func installClaudeHook(path, executable string, spec claudeHookSpec) (agentcfg.Outcome, error) {
 	declared := chosenExecutable(executable)
 	if !filepath.IsAbs(declared) {
 		return agentcfg.Outcome{Runtime: "claude", Path: path},
 			fmt.Errorf("resolve the running executable %q to an absolute path", declared)
 	}
-	command := claudeSessionHookCommand(kind, declared)
-	matcher := claudeSessionHookInvocation(kind)
+	command := spec.command(declared)
 	return agentcfg.Edit("claude", path, func(previous string) (string, error) {
-		settings, hooks, entries, err := claudeEventHookSettings(previous, claudeSessionStartEvent)
+		settings, hooks, entries, err := claudeEventHookSettings(previous, spec.event)
 		if err != nil {
 			return "", err
 		}
@@ -58,37 +78,40 @@ func installClaudeSessionHook(path, executable, kind string) (agentcfg.Outcome, 
 			hooks = map[string]any{}
 			settings["hooks"] = hooks
 		}
-		found, repointed := adoptSessionHook(entries, command, matcher)
+		found, repointed := adoptClaudeHook(entries, command, spec.invocation)
 		if found && !repointed {
 			return previous, nil
 		}
 		if !found {
-			entries = append(entries, map[string]any{
-				"hooks": []any{map[string]any{"type": "command", "command": command}},
-			})
+			entries = append(entries, spec.entry(command))
 		}
-		hooks[claudeSessionStartEvent] = entries
+		hooks[spec.event] = entries
 		return encodeClaudeSettings(settings)
 	}, true)
 }
 
 func uninstallClaudeSessionHook(path, kind string) (agentcfg.Outcome, string, error) {
+	return uninstallClaudeHook(path, claudeHookSpec{
+		event: claudeSessionStartEvent, invocation: claudeSessionHookInvocation(kind),
+	}, foreignClaudeSessionSettingsWarning(path, kind))
+}
+
+func uninstallClaudeHook(path string, spec claudeHookSpec, unreadableWarning string) (agentcfg.Outcome, string, error) {
 	var warning string
-	matcher := claudeSessionHookInvocation(kind)
 	outcome, err := agentcfg.Edit("claude", path, func(previous string) (string, error) {
-		settings, hooks, entries, err := claudeEventHookSettings(previous, claudeSessionStartEvent)
+		settings, hooks, entries, err := claudeEventHookSettings(previous, spec.event)
 		if err != nil {
-			warning = foreignClaudeSessionSettingsWarning(path, kind)
+			warning = unreadableWarning
 			return previous, nil
 		}
-		remaining, withdrawn := withoutSessionHook(entries, matcher)
+		remaining, withdrawn := withoutClaudeHook(entries, spec.invocation)
 		if !withdrawn {
 			return previous, nil
 		}
 		if len(remaining) == 0 {
-			delete(hooks, claudeSessionStartEvent)
+			delete(hooks, spec.event)
 		} else {
-			hooks[claudeSessionStartEvent] = remaining
+			hooks[spec.event] = remaining
 		}
 		if len(hooks) == 0 {
 			delete(settings, "hooks")
@@ -127,7 +150,9 @@ func claudeEventHookSettings(previous, event string) (settings, hooks map[string
 	return settings, hooks, entries, nil
 }
 
-func adoptSessionHook(entries []any, command string, matcher *regexp.Regexp) (found, repointed bool) {
+// adoptClaudeHook repoints an entry this product already installed at the
+// currently resolved binary, so reinstalling after a move heals its command.
+func adoptClaudeHook(entries []any, command string, matcher *regexp.Regexp) (found, repointed bool) {
 	for _, entry := range entries {
 		for _, hook := range commandHooksOf(entry) {
 			if !matcher.MatchString(commandOf(hook)) {
@@ -143,7 +168,7 @@ func adoptSessionHook(entries []any, command string, matcher *regexp.Regexp) (fo
 	return found, repointed
 }
 
-func withoutSessionHook(entries []any, matcher *regexp.Regexp) ([]any, bool) {
+func withoutClaudeHook(entries []any, matcher *regexp.Regexp) ([]any, bool) {
 	remaining := make([]any, 0, len(entries))
 	withdrawn := false
 	for _, entry := range entries {

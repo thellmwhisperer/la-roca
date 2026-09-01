@@ -84,27 +84,15 @@ func handoffLatestCommand(env *cliEnv) *cobra.Command {
 }
 
 func runPillList(ctx context.Context, env *cliEnv, project string) error {
-	resolved, err := resolveProject(project)
-	if err != nil {
-		return err
-	}
-	svc, _, err := env.openSessionContextService()
-	if err != nil {
-		return err
-	}
-	defer svc.Close()
-	list, err := svc.ListPills(ctx, resolved)
-	if err != nil {
-		return err
-	}
-	if env.json {
-		return env.printJSON(list)
-	}
-	env.print("%s", axi.Pills(list))
-	return nil
+	return runSessionContext(ctx, env, project, (*service.Service).ListPills, axi.Pills)
 }
 
 func runLatestHandoffs(ctx context.Context, env *cliEnv, project string) error {
+	return runSessionContext(ctx, env, project, (*service.Service).LatestHandoffs, axi.Handoffs)
+}
+
+func runSessionContext[T any](ctx context.Context, env *cliEnv, project string,
+	load func(*service.Service, context.Context, string) (T, error), render func(T) string) error {
 	resolved, err := resolveProject(project)
 	if err != nil {
 		return err
@@ -114,14 +102,14 @@ func runLatestHandoffs(ctx context.Context, env *cliEnv, project string) error {
 		return err
 	}
 	defer svc.Close()
-	list, err := svc.LatestHandoffs(ctx, resolved)
+	result, err := load(svc, ctx, resolved)
 	if err != nil {
 		return err
 	}
 	if env.json {
-		return env.printJSON(list)
+		return env.printJSON(result)
 	}
-	env.print("%s", axi.Handoffs(list))
+	env.print("%s", render(result))
 	return nil
 }
 

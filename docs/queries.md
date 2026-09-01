@@ -172,7 +172,8 @@ envelope, and there is no budget flag.
 `roca handoff latest [--project <project>]` loads every active handoff that no
 other memory supersedes. It chooses project handoffs after that filtering and
 falls back to unsuperseded global handoffs only when no project handoff remains;
-it never treats newest-by-clock as current.
+it never treats newest-by-clock as current. The CLI implementation is owned by
+[`internal/distribution/cli/session.go`](../internal/distribution/cli/session.go).
 
 ```sh
 roca pill --project '<project>'

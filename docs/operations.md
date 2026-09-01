@@ -47,7 +47,8 @@ only the requested SessionStart entries; the signing hook remains a separate,
 bare `hooks install claude` operation. Init and update install no SessionStart
 entries. Each flag has its own uninstall marker: `roca hooks uninstall claude
 --pills` and `--handoff` withdraw those entries and leave the signing hook in
-place.
+place. The implementation is owned by
+[`internal/distribution/cli/hooks_session.go`](../internal/distribution/cli/hooks_session.go).
 
 That exact command hook inside `PreToolUse` is the artifact's SYSTEM fragment;
 the enclosing group, surrounding Claude settings, and every other hook are its

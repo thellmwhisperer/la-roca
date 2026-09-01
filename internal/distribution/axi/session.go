@@ -75,26 +75,7 @@ func fullRecords(name string, columns []string, rows []map[string]any) string {
 	if len(rows) == 0 {
 		return fmt.Sprintf("%s[0]:", name)
 	}
-	order := presentColumns(columns, rows)
-	var out strings.Builder
-	fmt.Fprintf(&out, "%s[%d]{", name, len(rows))
-	for i, column := range order {
-		if i > 0 {
-			out.WriteByte(',')
-		}
-		out.WriteString(toonKey(column))
-	}
-	out.WriteString("}:")
-	for _, row := range rows {
-		out.WriteString("\n  ")
-		for i, column := range order {
-			if i > 0 {
-				out.WriteByte(',')
-			}
-			out.WriteString(fullToonValue(row[column]))
-		}
-	}
-	return out.String()
+	return toonRows(name, presentColumns(columns, rows), rows, fullToonValue)
 }
 
 func presentColumns(columns []string, rows []map[string]any) []string {

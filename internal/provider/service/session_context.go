@@ -165,17 +165,7 @@ func (s *Service) loadLayer(ctx context.Context, layer, project string, includeG
 	}
 	defer rs.Close()
 
-	var rows []loadedMemory
-	for rs.Next() {
-		var row loadedMemory
-		if err := rs.Scan(&row.ID, &row.Layer, &row.Content, &row.Metadata, &row.Project,
-			&row.Status, &row.CreatedAt); err != nil {
-			return nil, fmt.Errorf("read a %s memory: %w", layer, err)
-		}
-		row.createdAt, row.createdAtValid = normalizeCreatedAt(row.CreatedAt)
-		rows = append(rows, row)
-	}
-	return rows, rs.Err()
+	return scanLoadedMemories(rs, layer)
 }
 
 func (s *Service) loadCurrentHandoffs(ctx context.Context, project string) ([]loadedMemory, error) {
@@ -203,17 +193,8 @@ func (s *Service) loadCurrentHandoffs(ctx context.Context, project string) ([]lo
 	}
 	defer rs.Close()
 
-	var rows []loadedMemory
-	for rs.Next() {
-		var row loadedMemory
-		if err := rs.Scan(&row.ID, &row.Layer, &row.Content, &row.Metadata, &row.Project,
-			&row.Status, &row.CreatedAt); err != nil {
-			return nil, fmt.Errorf("read a handoff memory: %w", err)
-		}
-		row.createdAt, row.createdAtValid = normalizeCreatedAt(row.CreatedAt)
-		rows = append(rows, row)
-	}
-	if err := rs.Err(); err != nil {
+	rows, err := scanLoadedMemories(rs, "handoff")
+	if err != nil {
 		return nil, err
 	}
 	sort.Slice(rows, func(i, j int) bool {
@@ -223,6 +204,20 @@ func (s *Service) loadCurrentHandoffs(ctx context.Context, project string) ([]lo
 		return rows[i].ID > rows[j].ID
 	})
 	return rows, nil
+}
+
+func scanLoadedMemories(rs *sql.Rows, layer string) ([]loadedMemory, error) {
+	var rows []loadedMemory
+	for rs.Next() {
+		var row loadedMemory
+		if err := rs.Scan(&row.ID, &row.Layer, &row.Content, &row.Metadata, &row.Project,
+			&row.Status, &row.CreatedAt); err != nil {
+			return nil, fmt.Errorf("read a %s memory: %w", layer, err)
+		}
+		row.createdAt, row.createdAtValid = normalizeCreatedAt(row.CreatedAt)
+		rows = append(rows, row)
+	}
+	return rows, rs.Err()
 }
 
 func compareCreatedAt(left, right loadedMemory) int {

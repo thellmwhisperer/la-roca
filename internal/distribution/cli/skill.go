@@ -493,32 +493,12 @@ func hooksEditCommand(env *cliEnv, use, short, verb string,
 func hooksInstallCommand(env *cliEnv) *cobra.Command {
 	var executable string
 	var force, pills, handoff bool
-	cmd := &cobra.Command{
-		Use:   "install [runtime]",
-		Short: "Install Claude Code hooks for authorship signing and optional session context",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(_ *cobra.Command, args []string) error {
-			if err := supportedHookRuntime(args[0]); err != nil {
-				return err
-			}
-			path, err := claudeSettingsPath()
-			if err != nil {
-				return err
-			}
-			declared := chosenExecutable(executable)
-			if !filepath.IsAbs(declared) {
-				return fmt.Errorf("resolve the running executable %q to an absolute path", declared)
-			}
-			outcome, warning, err := installClaudeAuthorshipAndSessionHooks(env, path, declared, force, pills, handoff)
-			if err != nil {
-				return err
-			}
-			if warning != "" {
-				fmt.Fprintln(env.errOut, warning)
-			}
-			return env.renderOutcome(outcome, "updated")
-		},
-	}
+	cmd := hooksEditCommand(env, "install [runtime]",
+		"Install Claude Code hooks for authorship signing and optional session context", "updated",
+		func(path string) (agentcfg.Outcome, string, error) {
+			return installClaudeAuthorshipAndSessionHooks(
+				env, path, chosenExecutable(executable), force, pills, handoff)
+		})
 	cmd.Flags().StringVar(&executable, "executable", "",
 		"the binary the hook launches (default: this executable; override with "+EnvExecutable+")")
 	cmd.Flags().BoolVar(&force, "force", false, "replace an edited SYSTEM fragment")
@@ -529,28 +509,11 @@ func hooksInstallCommand(env *cliEnv) *cobra.Command {
 
 func hooksUninstallCommand(env *cliEnv) *cobra.Command {
 	var pills, handoff bool
-	cmd := &cobra.Command{
-		Use:   "uninstall [runtime]",
-		Short: "Withdraw Claude Code hooks this product installed",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(_ *cobra.Command, args []string) error {
-			if err := supportedHookRuntime(args[0]); err != nil {
-				return err
-			}
-			path, err := claudeSettingsPath()
-			if err != nil {
-				return err
-			}
-			outcome, warning, err := uninstallClaudeAuthorshipAndSessionHooks(env, path, pills, handoff)
-			if err != nil {
-				return err
-			}
-			if warning != "" {
-				fmt.Fprintln(env.errOut, warning)
-			}
-			return env.renderOutcome(outcome, "withdrawn")
-		},
-	}
+	cmd := hooksEditCommand(env, "uninstall [runtime]",
+		"Withdraw Claude Code hooks this product installed", "withdrawn",
+		func(path string) (agentcfg.Outcome, string, error) {
+			return uninstallClaudeAuthorshipAndSessionHooks(env, path, pills, handoff)
+		})
 	cmd.Flags().BoolVar(&pills, "pills", false, "withdraw the SessionStart `roca pill` hook")
 	cmd.Flags().BoolVar(&handoff, "handoff", false, "withdraw the SessionStart `roca handoff latest` hook")
 	return cmd
@@ -614,31 +577,10 @@ func claudeSettingsPath() (string, error) {
 // install` declares the server: Claude runs a PreToolUse hook in a
 // non-interactive shell, where a bare `roca` is whatever PATH happens to hold.
 func installClaudeAuthorshipHook(path, executable string) (agentcfg.Outcome, error) {
-	declared := chosenExecutable(executable)
-	if !filepath.IsAbs(declared) {
-		return agentcfg.Outcome{Runtime: "claude", Path: path},
-			fmt.Errorf("resolve the running executable %q to an absolute path", declared)
-	}
-	command := claudeHookCommand(declared)
-	return agentcfg.Edit("claude", path, func(previous string) (string, error) {
-		settings, hooks, entries, err := claudeHookSettings(previous)
-		if err != nil {
-			return "", err
-		}
-		if hooks == nil {
-			hooks = map[string]any{}
-			settings["hooks"] = hooks
-		}
-		found, repointed := adoptClaudeAuthorshipHook(entries, command)
-		if found && !repointed {
-			return previous, nil
-		}
-		if !found {
-			entries = append(entries, claudeAuthorshipHookEntry(command))
-		}
-		hooks["PreToolUse"] = entries
-		return encodeClaudeSettings(settings)
-	}, true)
+	return installClaudeHook(path, executable, claudeHookSpec{
+		event: "PreToolUse", invocation: claudeHookInvocation,
+		command: claudeHookCommand, entry: claudeAuthorshipHookEntry,
+	})
 }
 
 func claudeAuthorshipHookEntry(command string) map[string]any {
@@ -661,28 +603,9 @@ func claudeAuthorshipCommandHook(command string) map[string]any {
 // wrote. The edit is skipped, the command succeeds, and the returned warning
 // names the file and the entry to take out by hand. The caller prints it once.
 func uninstallClaudeAuthorshipHook(path string) (agentcfg.Outcome, string, error) {
-	var warning string
-	outcome, err := agentcfg.Edit("claude", path, func(previous string) (string, error) {
-		settings, hooks, entries, err := claudeHookSettings(previous)
-		if err != nil {
-			warning = foreignClaudeSettingsWarning(path)
-			return previous, nil
-		}
-		remaining, withdrawn := withoutClaudeAuthorshipHook(entries)
-		if !withdrawn {
-			return previous, nil
-		}
-		if len(remaining) == 0 {
-			delete(hooks, "PreToolUse")
-		} else {
-			hooks["PreToolUse"] = remaining
-		}
-		if len(hooks) == 0 {
-			delete(settings, "hooks")
-		}
-		return encodeClaudeSettings(settings)
-	}, false)
-	return outcome, warning, err
+	return uninstallClaudeHook(path, claudeHookSpec{
+		event: "PreToolUse", invocation: claudeHookInvocation,
+	}, foreignClaudeSettingsWarning(path))
 }
 
 // foreignClaudeSettingsWarning is the single line an operator gets when their
@@ -699,19 +622,7 @@ func foreignClaudeSettingsWarning(path string) string {
 // edits share this refusal and part company over what it means, so the reader
 // states the shape once and each caller decides whether to stop.
 func claudeHookSettings(previous string) (settings, hooks map[string]any, entries []any, err error) {
-	settings, err = claudeSettings(previous)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	hooks, ok := settings["hooks"].(map[string]any)
-	if settings["hooks"] != nil && !ok {
-		return nil, nil, nil, fmt.Errorf("Claude settings hooks must be an object")
-	}
-	entries, ok = hooks["PreToolUse"].([]any)
-	if hooks["PreToolUse"] != nil && !ok {
-		return nil, nil, nil, fmt.Errorf("Claude settings hooks.PreToolUse must be an array")
-	}
-	return settings, hooks, entries, nil
+	return claudeEventHookSettings(previous, "PreToolUse")
 }
 
 func claudeSettings(previous string) (map[string]any, error) {
@@ -734,55 +645,6 @@ func encodeClaudeSettings(settings map[string]any) (string, error) {
 		return "", fmt.Errorf("encode Claude settings: %w", err)
 	}
 	return string(append(encoded, '\n')), nil
-}
-
-// adoptClaudeAuthorshipHook repoints an entry this product already installed at
-// the currently resolved binary, so reinstalling after a move heals the command
-// instead of leaving a second one beside it.
-func adoptClaudeAuthorshipHook(entries []any, command string) (found, repointed bool) {
-	for _, entry := range entries {
-		for _, hook := range commandHooksOf(entry) {
-			if !claudeHookInvocation.MatchString(commandOf(hook)) {
-				continue
-			}
-			found = true
-			if commandOf(hook) != command {
-				hook["command"] = command
-				repointed = true
-			}
-		}
-	}
-	return found, repointed
-}
-
-func withoutClaudeAuthorshipHook(entries []any) ([]any, bool) {
-	remaining := make([]any, 0, len(entries))
-	withdrawn := false
-	for _, entry := range entries {
-		group, ok := entry.(map[string]any)
-		hooks, isList := group["hooks"].([]any)
-		if !ok || !isList {
-			remaining = append(remaining, entry)
-			continue
-		}
-		kept := make([]any, 0, len(hooks))
-		ours := false
-		for _, raw := range hooks {
-			hook, isHook := raw.(map[string]any)
-			if isHook && hook["type"] == "command" &&
-				claudeHookInvocation.MatchString(commandOf(hook)) {
-				ours, withdrawn = true, true
-				continue
-			}
-			kept = append(kept, raw)
-		}
-		if ours && len(kept) == 0 {
-			continue
-		}
-		group["hooks"] = kept
-		remaining = append(remaining, group)
-	}
-	return remaining, withdrawn
 }
 
 func commandHooksOf(entry any) []map[string]any {
