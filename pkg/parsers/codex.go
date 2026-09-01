@@ -216,8 +216,9 @@ type codexReader struct {
 
 	// recovering is the same for the response-item reading, which is only used
 	// when the event stream recognized nothing.
-	recovering *codexTurn
-	recovered  []codexTurn
+	recovering     *codexTurn
+	recovered      []codexTurn
+	recoveryOpened int
 }
 
 func (r *codexReader) read(content []byte) {
@@ -344,6 +345,7 @@ func (r *codexReader) event(record int, line codexLine, payload codexPayload) {
 			r.discards = append(r.discards, Discard{Record: record, Reason: "aborted turn"})
 			r.orphanTurnScope()
 		} else {
+			r.orphanRecoveredScope(record)
 			r.resetTurnScope()
 		}
 		r.open = nil
@@ -356,6 +358,7 @@ func (r *codexReader) resetTurnScope() {
 	r.agentSaid = ""
 	r.pending = map[string]*ToolUse{}
 	r.turnTools = nil
+	r.recoveryOpened = 0
 }
 
 func (r *codexReader) orphanTurnScope() {
@@ -366,6 +369,22 @@ func (r *codexReader) orphanTurnScope() {
 		r.orphanPending[callID] = tool
 	}
 	r.resetTurnScope()
+}
+
+func (r *codexReader) orphanRecoveredScope(record int) {
+	if r.recoveryOpened == 0 {
+		return
+	}
+	for _, signal := range r.signals {
+		if signal.tool != nil && signal.record > r.recoveryOpened && signal.record < record {
+			r.orphaned[signal.tool] = true
+		}
+	}
+	for callID, tool := range r.pending {
+		if r.orphaned[tool] {
+			r.orphanPending[callID] = tool
+		}
+	}
 }
 
 func (r *codexReader) responseItem(record int, line codexLine, payload codexPayload) {
@@ -436,6 +455,7 @@ func (r *codexReader) recover(record int, line codexLine, payload codexPayload) 
 			opened: record, humanText: text, humanTS: validInstant(line.Timestamp),
 			model: r.model, effort: r.effort,
 		}
+		r.recoveryOpened = record
 	case "assistant":
 		if r.recovering == nil {
 			return

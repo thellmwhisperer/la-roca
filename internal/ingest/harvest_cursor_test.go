@@ -230,6 +230,42 @@ func TestCompletedCodexTurnMovesRecoveredOrphanOntoMatchedExchange(t *testing.T)
 	}
 }
 
+func TestConflictedCodexCompletionPreservesRecoveredOrphan(t *testing.T) {
+	prefix := `{"type":"session_meta","payload":{"id":"conflicted-recovery"}}
+{"type":"event_msg","payload":{"type":"user_message","message":"question"}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"question"}]}}
+{"type":"response_item","payload":{"type":"function_call","call_id":"open","name":"shell","arguments":"{\"cmd\":\"inspect\"}"}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"draft"}]}}
+`
+	completion := `{"type":"event_msg","payload":{"type":"task_complete","last_agent_message":"final"}}
+`
+	db := corpusDatabase(t)
+	for _, content := range []string{prefix, prefix + completion} {
+		records, err := parsers.Parse(parsers.KindCodexSession, []byte(content),
+			parsers.FileMeta{SessionID: "conflicted-recovery"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeHarvestRecords(t, db, records)
+	}
+	var answer string
+	var total, orphaned, attached int
+	if err := db.SQL().QueryRow(`SELECT agent_text,
+		(SELECT COUNT(*) FROM tool_uses WHERE session_id = 'conflicted-recovery'),
+		(SELECT COUNT(*) FROM tool_uses WHERE session_id = 'conflicted-recovery'
+		 AND exchange_number IS NULL),
+		(SELECT COUNT(*) FROM tool_uses WHERE session_id = 'conflicted-recovery'
+		 AND exchange_number IS NOT NULL)
+		FROM exchanges WHERE session_id = 'conflicted-recovery'`).
+		Scan(&answer, &total, &orphaned, &attached); err != nil {
+		t.Fatal(err)
+	}
+	if answer != "draft" || total != 1 || orphaned != 1 || attached != 0 {
+		t.Fatalf("conflicted completion = answer:%q total:%d orphaned:%d attached:%d",
+			answer, total, orphaned, attached)
+	}
+}
+
 func TestIncrementalCodexLateVerdictFallsBackToTheFullRollout(t *testing.T) {
 	prefix := `{"type":"session_meta","payload":{"id":"late-verdict"}}
 {"type":"event_msg","payload":{"type":"user_message","message":"first"}}

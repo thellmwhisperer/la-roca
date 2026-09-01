@@ -215,6 +215,7 @@ func (w *writer) sessionWithPolicy(ctx context.Context, session parsers.Session,
 		counts.Sessions = 1
 	}
 
+	var unresolvedOrphanTools []parsers.ToolUse
 	for _, exchange := range session.Exchanges {
 		number := exchange.Number
 		known, identityKnown := assigned[exchange.SourceID]
@@ -327,6 +328,9 @@ func (w *writer) sessionWithPolicy(ctx context.Context, session parsers.Session,
 		}
 		if outcome == exchangeAnchorConflict || outcome == exchangeAmbiguous {
 			counts.AnchorConflicts++
+			if session.OrphanedTools != nil && !session.Incremental {
+				unresolvedOrphanTools = append(unresolvedOrphanTools, exchange.Tools...)
+			}
 			continue
 		}
 		// A known source identity or a claimed historical row may already be
@@ -392,7 +396,8 @@ func (w *writer) sessionWithPolicy(ctx context.Context, session parsers.Session,
 		if session.Incremental {
 			tools, err = w.insertTools(ctx, session.ID, nil, session.OrphanedTools)
 		} else {
-			tools, err = w.replaceOrphanedTools(ctx, session.ID, session.OrphanedTools)
+			tools, err = w.replaceOrphanedTools(ctx, session.ID, session.OrphanedTools,
+				unresolvedOrphanTools)
 		}
 		if err != nil {
 			return counts, err
@@ -1489,7 +1494,7 @@ func (w *writer) insertTools(ctx context.Context, sessionID string, number any,
 // full rollout can grow between reads, so these rows are compared as an ordered
 // list and replaced together instead of accumulating duplicates.
 func (w *writer) replaceOrphanedTools(ctx context.Context, sessionID string,
-	tools []parsers.ToolUse) (int, error) {
+	tools, unresolved []parsers.ToolUse) (int, error) {
 	rows, err := w.tx.QueryContext(ctx, `
 		SELECT tool_name, tool_params_summary, had_error, error_message, initiative_type
 		FROM tool_uses WHERE session_id = ? AND exchange_number IS NULL ORDER BY id`, sessionID)
@@ -1517,6 +1522,7 @@ func (w *writer) replaceOrphanedTools(ctx context.Context, sessionID string,
 	if err := rows.Close(); err != nil {
 		return 0, fmt.Errorf("close orphaned tools of %s: %w", sessionID, err)
 	}
+	tools = preserveUnresolvedOrphanTools(stored, tools, unresolved)
 	if equalToolUses(stored, tools) {
 		return 0, nil
 	}
@@ -1525,6 +1531,33 @@ func (w *writer) replaceOrphanedTools(ctx context.Context, sessionID string,
 		return 0, fmt.Errorf("replace orphaned tools of %s: %w", sessionID, err)
 	}
 	return w.insertTools(ctx, sessionID, nil, tools)
+}
+
+func preserveUnresolvedOrphanTools(stored, desired,
+	unresolved []parsers.ToolUse) []parsers.ToolUse {
+	available := map[toolIdentity]int{}
+	for _, tool := range stored {
+		available[toolIdentity{name: tool.Name, params: tool.ParamsSummary,
+			initiative: tool.InitiativeType}]++
+	}
+	for _, tool := range desired {
+		identity := toolIdentity{name: tool.Name, params: tool.ParamsSummary,
+			initiative: tool.InitiativeType}
+		if available[identity] > 0 {
+			available[identity]--
+		}
+	}
+	result := append([]parsers.ToolUse(nil), desired...)
+	for _, tool := range unresolved {
+		identity := toolIdentity{name: tool.Name, params: tool.ParamsSummary,
+			initiative: tool.InitiativeType}
+		if available[identity] == 0 {
+			continue
+		}
+		available[identity]--
+		result = append(result, tool)
+	}
+	return result
 }
 
 func equalToolUses(left, right []parsers.ToolUse) bool {

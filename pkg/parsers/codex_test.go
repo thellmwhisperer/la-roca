@@ -178,6 +178,27 @@ func TestCodexRecoveryDoesNotAttachToolsFromAnAbortedEventTurn(t *testing.T) {
 	}
 }
 
+func TestCodexResponseOnlyAbortKeepsRecoveredToolOrphaned(t *testing.T) {
+	content := `{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"interrupted"}]}}
+{"type":"response_item","payload":{"type":"function_call","call_id":"aborted","name":"shell"}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"partial answer"}]}}
+{"type":"event_msg","payload":{"type":"turn_aborted"}}`
+	records, err := Parse(KindCodexSession, []byte(content), FileMeta{SessionID: "response-abort"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := records.Sessions[0]
+	if len(session.Exchanges) != 1 || session.Exchanges[0].HumanText != "interrupted" ||
+		session.Exchanges[0].AgentText != "partial answer" {
+		t.Fatalf("recovered conversation = %+v", session.Exchanges)
+	}
+	if len(session.Exchanges[0].Tools) != 0 || len(session.OrphanedTools) != 1 ||
+		session.OrphanedTools[0].Name != "shell" {
+		t.Fatalf("response-only abort ownership = attached:%+v orphaned:%+v",
+			session.Exchanges[0].Tools, session.OrphanedTools)
+	}
+}
+
 func TestCodexKeepsToolTelemetryFromInterruptedTurns(t *testing.T) {
 	var rollout strings.Builder
 	writeUser := func(message string) {
