@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -924,8 +925,40 @@ func TestZcodeDirectUninstallRetainsReplacementArtifacts(t *testing.T) {
 	if body, err := os.ReadFile(wrapper); err != nil || string(body) != string(managedWrapper) {
 		t.Fatalf("replacement wrapper changed: body=%q err=%v", body, err)
 	}
-	if _, err := os.Lstat(filepath.Join(rootPath, ".roca-hooks.lock")); !os.IsNotExist(err) {
+	localLock := filepath.Join(rootPath, ".roca-hooks.lock")
+	if _, err := os.Lstat(localLock); !os.IsNotExist(err) {
 		t.Fatalf("replacement tree gained a local lock: %v", err)
+	}
+	configBeforeRetry, err := os.ReadFile(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapperBeforeRetry, err := os.ReadFile(wrapper)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var warnings strings.Builder
+	env := &cliEnv{out: io.Discard, errOut: &warnings}
+	for _, args := range [][]string{{"hooks", "uninstall", "zcode"}, {"mcp", "uninstall", "zcode"}} {
+		root := rootCommand(env)
+		root.SetArgs(args)
+		if err := root.Execute(); err != nil {
+			t.Fatalf("second roca %v: %v", args, err)
+		}
+	}
+	if !strings.Contains(warnings.String(), "no managed ZCode hook ownership") ||
+		!strings.Contains(warnings.String(), "no managed ZCode MCP ownership") {
+		t.Fatalf("missing unowned retry warnings: %q", warnings.String())
+	}
+	configAfterRetry, configErr := os.ReadFile(config)
+	wrapperAfterRetry, wrapperErr := os.ReadFile(wrapper)
+	if configErr != nil || wrapperErr != nil || !bytes.Equal(configAfterRetry, configBeforeRetry) ||
+		!bytes.Equal(wrapperAfterRetry, wrapperBeforeRetry) {
+		t.Fatalf("retry changed replacement tree: config=%q wrapper=%q configErr=%v wrapperErr=%v",
+			configAfterRetry, wrapperAfterRetry, configErr, wrapperErr)
+	}
+	if _, err := os.Lstat(localLock); !os.IsNotExist(err) {
+		t.Fatalf("retry created a local lock: %v", err)
 	}
 }
 

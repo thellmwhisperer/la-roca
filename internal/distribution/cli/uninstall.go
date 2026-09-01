@@ -505,7 +505,7 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 		if warning != "" {
 			fmt.Fprintln(env.errOut, warning)
 		}
-		if err == nil {
+		if err == nil && target.registered {
 			present, verified := zcodeManagedHookState(target.settings)
 			if !verified || present {
 				err = fmt.Errorf("ZCode hook withdrawal from %s could not be verified", target.settings)
