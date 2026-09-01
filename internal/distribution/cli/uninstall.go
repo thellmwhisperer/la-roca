@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -25,6 +26,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
+	"github.com/thellmwhisperer/la-roca/internal/securefile"
 )
 
 const legacyCredentialsDir = "credentials"
@@ -268,6 +270,12 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 		if registryErr != nil {
 			return agentcfg.Outcome{Runtime: runtime, Path: path}, fmt.Errorf("ownership registry unavailable")
 		}
+		if purge {
+			return env.uninstallZcodeMCP(path, func(entry artifact.Entry) error {
+				removeRecoveryBackups(report, path)
+				return cleanupCreatedZcodeMCPPaths(entry, path)
+			})
+		}
 		return env.uninstallZcodeMCP(path)
 	}
 
@@ -507,18 +515,76 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 	return outcomes
 }
 
+func cleanupCreatedZcodeMCPPaths(entry artifact.Entry, configPath string) error {
+	configDir := filepath.Dir(configPath)
+	root := filepath.Dir(configDir)
+	if entry.CreatedConfig {
+		retained, err := removeEmptyZcodeConfig(configPath)
+		if err != nil {
+			return err
+		}
+		if retained {
+			return fmt.Errorf("operator configuration remains in proven-created ZCode config %s", configPath)
+		}
+	} else if body, err := os.ReadFile(configPath); err == nil && strings.TrimSpace(string(body)) == "{}" {
+		return fmt.Errorf("unproven ZCode artifact remains at %s", configPath)
+	} else if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	for _, directory := range []struct {
+		path    string
+		created bool
+	}{
+		{configDir, entry.CreatedConfigDir},
+		{root, entry.CreatedRoot},
+	} {
+		if !directory.created {
+			continue
+		}
+		if err := os.Remove(directory.path); err != nil && !os.IsNotExist(err) {
+			if entries, readErr := os.ReadDir(directory.path); readErr == nil && len(entries) > 0 {
+				continue
+			}
+			return err
+		}
+	}
+	return nil
+}
+
+func rollbackCreatedZcodeMCPPaths(preimage zcodeMCPPathState, configPath string) error {
+	var err error
+	if preimage.createdConfig {
+		retained, removeErr := removeEmptyZcodeConfig(configPath)
+		if retained && removeErr == nil {
+			removeErr = fmt.Errorf("operator configuration remains in %s", configPath)
+		}
+		err = errors.Join(err, removeErr)
+	}
+	for _, directory := range []struct {
+		path    string
+		created bool
+	}{
+		{filepath.Dir(configPath), preimage.createdConfigDir},
+		{filepath.Dir(filepath.Dir(configPath)), preimage.createdRoot},
+	} {
+		if !directory.created {
+			continue
+		}
+		removeErr := os.Remove(directory.path)
+		if removeErr != nil && !os.IsNotExist(removeErr) {
+			if entries, readErr := os.ReadDir(directory.path); readErr != nil || len(entries) == 0 {
+				err = errors.Join(err, removeErr)
+			}
+		}
+	}
+	return err
+}
+
 func cleanupCreatedZcodeHookPaths(entry artifact.Entry, configPath, wrapperPath string) error {
 	root := filepath.Dir(filepath.Dir(wrapperPath))
 	if entry.CreatedConfig {
-		body, err := os.ReadFile(configPath)
-		switch {
-		case os.IsNotExist(err):
-		case err != nil:
+		if _, err := removeEmptyZcodeConfig(configPath); err != nil {
 			return err
-		case strings.TrimSpace(string(body)) == "{}":
-			if err := os.Remove(configPath); err != nil && !os.IsNotExist(err) {
-				return err
-			}
 		}
 	}
 	lockPath := filepath.Join(root, ".roca-hooks.lock")
@@ -550,6 +616,99 @@ func cleanupCreatedZcodeHookPaths(entry artifact.Entry, configPath, wrapperPath 
 		}
 	}
 	return nil
+}
+
+func rollbackCreatedZcodeHookPaths(preimage zcodeHookPathState, configPath, wrapperPath string) error {
+	root := filepath.Dir(filepath.Dir(wrapperPath))
+	var err error
+	if preimage.createdConfig {
+		_, removeErr := removeEmptyZcodeConfig(configPath)
+		err = errors.Join(err, removeErr)
+	}
+	if preimage.createdLock {
+		removeErr := os.Remove(filepath.Join(root, ".roca-hooks.lock"))
+		if removeErr != nil && !os.IsNotExist(removeErr) {
+			err = errors.Join(err, removeErr)
+		}
+	}
+	for _, directory := range []struct {
+		path    string
+		created bool
+	}{
+		{filepath.Dir(wrapperPath), preimage.createdHooksDir},
+		{filepath.Dir(configPath), preimage.createdConfigDir},
+		{root, preimage.createdRoot},
+	} {
+		if directory.created {
+			removeErr := os.Remove(directory.path)
+			if removeErr != nil && !os.IsNotExist(removeErr) {
+				if entries, readErr := os.ReadDir(directory.path); readErr != nil || len(entries) == 0 {
+					err = errors.Join(err, removeErr)
+				}
+			}
+		}
+	}
+	return err
+}
+
+func removeEmptyZcodeConfig(path string) (bool, error) {
+	return removeEmptyZcodeConfigAfterQuarantine(path, nil, os.Remove)
+}
+
+func removeEmptyZcodeConfigAfterQuarantine(path string, afterRename func(), removeQuarantine func(string) error) (bool, error) {
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return true, err
+	}
+	if !info.Mode().IsRegular() {
+		return true, fmt.Errorf("refuse to remove non-regular ZCode config %s", path)
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+"-remove-*")
+	if err != nil {
+		return true, err
+	}
+	quarantine := temporary.Name()
+	if closeErr := temporary.Close(); closeErr != nil {
+		os.Remove(quarantine)
+		return true, closeErr
+	}
+	if err := os.Remove(quarantine); err != nil {
+		return true, err
+	}
+	if err := os.Rename(path, quarantine); err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return true, err
+	}
+	if afterRename != nil {
+		afterRename()
+	}
+	restore := func(cause error) (bool, error) {
+		if restoreErr := securefile.RenameNoReplace(quarantine, path); restoreErr != nil {
+			return true, errors.Join(cause, fmt.Errorf("restore ZCode config from %s: %w", quarantine, restoreErr))
+		}
+		return true, cause
+	}
+	body, err := os.ReadFile(quarantine)
+	if err != nil {
+		return restore(err)
+	}
+	if strings.TrimSpace(string(body)) != "{}" {
+		return restore(nil)
+	}
+	if err := removeQuarantine(quarantine); err != nil {
+		return restore(err)
+	}
+	if _, err := os.Lstat(path); err == nil {
+		return true, nil
+	} else if !os.IsNotExist(err) {
+		return true, err
+	}
+	return false, nil
 }
 
 // removeHollowSkillDirs takes back the chain a skill withdrawal could not,

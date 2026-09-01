@@ -235,8 +235,8 @@ func TestZcodeFreshHookPurgeRemovesCreatedRuntimePaths(t *testing.T) {
 	home := skillTestHome(t)
 	root := rootCommand(&cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}})
 	root.SetArgs([]string{"hooks", "install", "zcode", "--executable", filepath.Join(home, "roca")})
-	if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "installed but inactive") {
-		t.Fatalf("fresh inactive install error = %v", err)
+	if err := root.Execute(); err != nil {
+		t.Fatalf("fresh install error = %v", err)
 	}
 	report := lifecycle.Report{Purged: true, Deleted: []string{}}
 	(&cliEnv{out: io.Discard, errOut: io.Discard}).withdrawTheIntegrations(&report, true)
@@ -248,13 +248,44 @@ func TestZcodeFreshHookPurgeRemovesCreatedRuntimePaths(t *testing.T) {
 	}
 }
 
+func TestZcodeFreshHookInstallEnablesHooksAndReportsIt(t *testing.T) {
+	home := skillTestHome(t)
+	var notices strings.Builder
+	root := rootCommand(&cliEnv{out: io.Discard, errOut: &notices, build: Build{Version: "test"}})
+	root.SetArgs([]string{"hooks", "install", "zcode", "--executable", filepath.Join(home, "roca")})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(home, ".zcode", "cli", "config.json")
+	body, err := os.ReadFile(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	declared, enabled, err := agentcfg.ZcodeHooksEnabled(string(body))
+	if err != nil || !declared || !enabled {
+		t.Fatalf("hooks.enabled: declared=%v enabled=%v err=%v", declared, enabled, err)
+	}
+	if !strings.Contains(notices.String(), "set hooks.enabled to true") {
+		t.Fatalf("enablement notice = %q", notices.String())
+	}
+	root = rootCommand(&cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}})
+	root.SetArgs([]string{"hooks", "uninstall", "zcode"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	body, err = os.ReadFile(config)
+	if err != nil || strings.TrimSpace(string(body)) != "{}" {
+		t.Fatalf("created enablement survived uninstall: body=%q err=%v", body, err)
+	}
+}
+
 func TestZcodePurgeReportsUnprovenPathsAfterOrdinaryUninstall(t *testing.T) {
 	home := skillTestHome(t)
 	install := func() {
 		root := rootCommand(&cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}})
 		root.SetArgs([]string{"hooks", "install", "zcode", "--executable", filepath.Join(home, "roca")})
-		if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "installed but inactive") {
-			t.Fatalf("inactive install error = %v", err)
+		if err := root.Execute(); err != nil {
+			t.Fatalf("install error = %v", err)
 		}
 	}
 	install()
@@ -484,7 +515,7 @@ exit 1
 	}
 	if _, warning, err := installZcodeHandoffHook(config, wrapper, binary); err != nil {
 		t.Fatal(err)
-	} else if !strings.Contains(warning, "installed but inactive") {
+	} else if warning != "" {
 		t.Fatalf("fresh ZCode install warning = %q", warning)
 	}
 	body, err := os.ReadFile(config)
@@ -665,6 +696,55 @@ func TestZcodeUninstallKeepsWrapperForAmbiguousDoubleQuotedEscape(t *testing.T) 
 	}
 }
 
+func TestZcodeManagedHookFailureRemovesCreatedRuntimeLock(t *testing.T) {
+	home := skillTestHome(t)
+	wrapper := filepath.Join(home, ".zcode", "hooks", "roca-handoff.sh")
+	if err := os.MkdirAll(filepath.Dir(wrapper), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(wrapper, []byte("operator wrapper\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	root := rootCommand(&cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}})
+	root.SetArgs([]string{"hooks", "install", "zcode", "--executable", filepath.Join(home, "roca")})
+	if err := root.Execute(); err == nil {
+		t.Fatal("foreign wrapper was accepted")
+	}
+	if _, err := os.Stat(filepath.Join(home, ".zcode", ".roca-hooks.lock")); !os.IsNotExist(err) {
+		t.Fatalf("failed install left runtime lock: %v", err)
+	}
+}
+
+func TestZcodeHookRefusesSymlinkWrapper(t *testing.T) {
+	home := skillTestHome(t)
+	executable := filepath.Join(home, "roca")
+	target := filepath.Join(home, "operator-wrapper")
+	wrapper := filepath.Join(home, ".zcode", "hooks", "roca-handoff.sh")
+	if err := os.MkdirAll(filepath.Dir(wrapper), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte(zcodeWrapper(executable)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, wrapper); err != nil {
+		t.Fatal(err)
+	}
+	root := rootCommand(&cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}})
+	root.SetArgs([]string{"hooks", "install", "zcode", "--executable", executable})
+	if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "non-regular") {
+		t.Fatalf("symlink install error = %v", err)
+	}
+	if info, err := os.Lstat(wrapper); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("wrapper symlink changed: info=%v err=%v", info, err)
+	}
+	if info, err := os.Stat(target); err != nil || info.Mode().Perm() != 0o755 {
+		t.Fatalf("symlink target mode changed: info=%v err=%v", info, err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".zcode", ".roca-hooks.lock")); !os.IsNotExist(err) {
+		t.Fatalf("refused symlink left runtime lock: %v", err)
+	}
+}
+
 func TestZcodeHookRefusesPreexistingOperatorWrapper(t *testing.T) {
 	home := t.TempDir()
 	config := filepath.Join(home, "config.json")
@@ -765,6 +845,26 @@ func TestZcodeWrapperRemovalPreservesConcurrentReplacement(t *testing.T) {
 	}
 	if body, err := os.ReadFile(wrapper); err != nil || string(body) != string(operator) {
 		t.Fatalf("concurrent operator replacement changed: body=%q err=%v", body, err)
+	}
+}
+
+func TestZcodeConfigRemovalPreservesConcurrentReplacement(t *testing.T) {
+	home := t.TempDir()
+	config := filepath.Join(home, "config.json")
+	if err := os.WriteFile(config, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	operator := []byte(`{"operator":true}`)
+	retained, err := removeEmptyZcodeConfigAfterQuarantine(config, func() {
+		if writeErr := os.WriteFile(config, operator, 0o600); writeErr != nil {
+			t.Error(writeErr)
+		}
+	}, os.Remove)
+	if err != nil || !retained {
+		t.Fatalf("concurrent replacement: retained=%v err=%v", retained, err)
+	}
+	if body, err := os.ReadFile(config); err != nil || string(body) != string(operator) {
+		t.Fatalf("operator replacement changed: body=%q err=%v", body, err)
 	}
 }
 

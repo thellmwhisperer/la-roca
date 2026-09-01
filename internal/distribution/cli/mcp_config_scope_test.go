@@ -210,6 +210,75 @@ func TestFullUninstallSkipsZcodeMCPWhenOwnershipStateIsUnreadable(t *testing.T) 
 	}
 }
 
+func TestFreshZcodeMCPPurgeRemovesCreatedRuntimePaths(t *testing.T) {
+	home := skillTestHome(t)
+	root := rootCommand(&cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}})
+	root.SetArgs([]string{"mcp", "install", "zcode", "--executable", filepath.Join(home, "roca")})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	report := lifecycle.Report{Purged: true, Deleted: []string{}}
+	(&cliEnv{out: io.Discard, errOut: io.Discard}).withdrawTheIntegrations(&report, true)
+	if len(report.Errors) != 0 {
+		t.Fatalf("purge errors = %v", report.Errors)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".zcode")); !os.IsNotExist(err) {
+		t.Fatalf("fresh MCP runtime paths survived: %v", err)
+	}
+}
+
+func TestZcodeMCPPurgePreservesPreexistingConfig(t *testing.T) {
+	home := skillTestHome(t)
+	config := filepath.Join(home, ".zcode", "cli", "config.json")
+	if err := os.MkdirAll(filepath.Dir(config), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	initial := `{"operator":true}`
+	if err := os.WriteFile(config, []byte(initial), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := rootCommand(&cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}})
+	root.SetArgs([]string{"mcp", "install", "zcode", "--executable", filepath.Join(home, "roca")})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	report := lifecycle.Report{Purged: true, Deleted: []string{}}
+	(&cliEnv{out: io.Discard, errOut: io.Discard}).withdrawTheIntegrations(&report, true)
+	if len(report.Errors) != 0 {
+		t.Fatalf("purge errors = %v", report.Errors)
+	}
+	if body, err := os.ReadFile(config); err != nil || string(body) != initial {
+		t.Fatalf("preexisting config changed: body=%q err=%v", body, err)
+	}
+}
+
+func TestZcodeMCPPurgeReportsUnprovenConfigAfterOrdinaryUninstall(t *testing.T) {
+	home := skillTestHome(t)
+	install := func() {
+		root := rootCommand(&cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}})
+		root.SetArgs([]string{"mcp", "install", "zcode", "--executable", filepath.Join(home, "roca")})
+		if err := root.Execute(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	install()
+	root := rootCommand(&cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}})
+	root.SetArgs([]string{"mcp", "uninstall", "zcode"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	install()
+	report := lifecycle.Report{Purged: true, Deleted: []string{}}
+	(&cliEnv{out: io.Discard, errOut: io.Discard}).withdrawTheIntegrations(&report, true)
+	config := filepath.Join(home, ".zcode", "cli", "config.json")
+	if !strings.Contains(strings.Join(report.Errors, "\n"), config) {
+		t.Fatalf("unproven config not reported: %v", report.Errors)
+	}
+	if _, err := os.Stat(config); err != nil {
+		t.Fatalf("unproven config removed: %v", err)
+	}
+}
+
 func TestAConfigPathIsAcceptedForOneNamedRuntime(t *testing.T) {
 	out, _ := runRootSplit(t, contractBuild(), nil,
 		"mcp", "status", "claude", "--config", "/tmp/not-read.json")

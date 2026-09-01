@@ -334,8 +334,75 @@ func ZcodeHooksEnabled(text string) (bool, bool, error) {
 	if !present {
 		return false, false, nil
 	}
-	enabled, declared := hooks["enabled"].(bool)
-	return declared, enabled, nil
+	value, declared := hooks["enabled"]
+	if !declared {
+		return false, false, nil
+	}
+	enabled, valid := value.(bool)
+	if !valid {
+		return true, false, fmt.Errorf("hooks.enabled must be a boolean")
+	}
+	return true, enabled, nil
+}
+
+func EnsureZcodeHooksEnabled(text string) (string, bool, error) {
+	if strings.TrimSpace(text) == "" {
+		text = "{}\n"
+	}
+	r := runtime{kind: kindJSON}
+	view, root, err := rootObject(r, text)
+	if err != nil {
+		return "", false, err
+	}
+	hooksIndex := root.find("hooks")
+	if hooksIndex < 0 {
+		pad := padUnder(view, root, indentOf(view, root.close)+indent)
+		return root.insert(text, renderJSONValuePath([]string{"hooks", "enabled"}, true, pad),
+			indentOf(view, root.close)), true, nil
+	}
+	hooks, err := objectAt(view, root.members[hooksIndex].valueStart)
+	if err != nil {
+		return "", false, fmt.Errorf("hooks must be an object: %w", err)
+	}
+	enabledIndex := hooks.find("enabled")
+	if enabledIndex >= 0 {
+		member := hooks.members[enabledIndex]
+		var enabled bool
+		if err := json.Unmarshal([]byte(view[member.valueStart:member.end]), &enabled); err != nil {
+			return "", false, fmt.Errorf("hooks.enabled must be a boolean")
+		}
+		return text, false, nil
+	}
+	pad := padUnder(view, hooks, indentOf(view, hooks.close)+indent)
+	return hooks.insert(text, pad+quote("enabled")+": true", indentOf(view, hooks.close)), true, nil
+}
+
+func RemoveCreatedZcodeHooksEnabled(text string) (string, error) {
+	if strings.TrimSpace(text) == "" {
+		return text, nil
+	}
+	r := runtime{kind: kindJSON}
+	view, root, err := rootObject(r, text)
+	if err != nil {
+		return "", err
+	}
+	hooks, ok, err := objectAtPath(view, root, []string{"hooks"})
+	if err != nil || !ok {
+		return text, err
+	}
+	enabledIndex := hooks.find("enabled")
+	if enabledIndex < 0 {
+		return text, nil
+	}
+	member := hooks.members[enabledIndex]
+	var enabled bool
+	if err := json.Unmarshal([]byte(view[member.valueStart:member.end]), &enabled); err != nil {
+		return "", fmt.Errorf("hooks.enabled must be a boolean")
+	}
+	if !enabled {
+		return text, nil
+	}
+	return hooks.cut(text, enabledIndex), nil
 }
 
 func ZcodeHookCommands(text string) ([]string, error) {

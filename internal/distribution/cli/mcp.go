@@ -160,6 +160,27 @@ func mcpStatusCommand(env *cliEnv) *cobra.Command {
 
 const zcodeMCPPreimageFormat = "zcode-mcp-preimage-v1:"
 
+type zcodeMCPPathState struct {
+	createdRoot, createdConfigDir, createdConfig bool
+}
+
+func zcodeMCPPathPreimage(path string) (zcodeMCPPathState, error) {
+	configDir := filepath.Dir(path)
+	root := filepath.Dir(configDir)
+	paths := []string{root, configDir, path}
+	missing := make([]bool, len(paths))
+	for index, candidate := range paths {
+		_, err := os.Lstat(candidate)
+		switch {
+		case os.IsNotExist(err):
+			missing[index] = true
+		case err != nil:
+			return zcodeMCPPathState{}, err
+		}
+	}
+	return zcodeMCPPathState{createdRoot: missing[0], createdConfigDir: missing[1], createdConfig: missing[2]}, nil
+}
+
 func (env *cliEnv) installZcodeMCP(path, executable string) (outcome agentcfg.Outcome, err error) {
 	path, err = filepath.Abs(path)
 	if err != nil {
@@ -170,16 +191,20 @@ func (env *cliEnv) installZcodeMCP(path, executable string) (outcome agentcfg.Ou
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: path}, err
 	}
 	defer func() { err = errors.Join(err, release()) }()
+	pathPreimage, err := zcodeMCPPathPreimage(path)
+	if err != nil {
+		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: path}, err
+	}
 	var rollback func() error
 	outcome, err = agentcfg.InstallZcodeMCP(path, executable,
 		func(preimage string, configured bool) error {
-			rollback, err = env.recordZcodeMCPPreimage(path, preimage, configured)
+			rollback, err = env.recordZcodeMCPPreimage(path, preimage, configured, pathPreimage)
 			return err
 		})
 	if err != nil && rollback != nil {
 		published, matchErr := agentcfg.ZcodeMCPMatches(path, executable)
 		if !published {
-			err = errors.Join(err, matchErr, rollback())
+			err = errors.Join(err, matchErr, rollback(), rollbackCreatedZcodeMCPPaths(pathPreimage, path))
 		}
 	}
 	return outcome, err
@@ -196,7 +221,7 @@ func (env *cliEnv) lockZcodeMCPLifecycle() (func() error, error) {
 	return securefile.Lock(paths.Artifacts + ".mcp.lock")
 }
 
-func (env *cliEnv) recordZcodeMCPPreimage(path, preimage string, configured bool) (func() error, error) {
+func (env *cliEnv) recordZcodeMCPPreimage(path, preimage string, configured bool, pathStates ...zcodeMCPPathState) (func() error, error) {
 	paths, err := env.resolvePaths()
 	if err != nil {
 		return nil, err
@@ -206,6 +231,11 @@ func (env *cliEnv) recordZcodeMCPPreimage(path, preimage string, configured bool
 		InstalledVersion: env.build.Version, AvailableVersion: env.build.Version,
 		Format: zcodeMCPPreimageFormat + preimage,
 	}
+	if len(pathStates) > 0 {
+		transaction.CreatedRoot = pathStates[0].createdRoot
+		transaction.CreatedConfigDir = pathStates[0].createdConfigDir
+		transaction.CreatedConfig = pathStates[0].createdConfig
+	}
 	var prior artifact.Entry
 	var priorFound bool
 	changed, err := mutateArtifactRegistry(paths.Artifacts, func(registry *artifact.Registry) (bool, error) {
@@ -213,6 +243,11 @@ func (env *cliEnv) recordZcodeMCPPreimage(path, preimage string, configured bool
 		if priorFound && configured {
 			_, err := zcodeMCPPreimageFromEntry(prior)
 			return false, err
+		}
+		if priorFound {
+			transaction.CreatedRoot = prior.CreatedRoot
+			transaction.CreatedConfigDir = prior.CreatedConfigDir
+			transaction.CreatedConfig = prior.CreatedConfig
 		}
 		registry.Upsert(transaction)
 		return true, nil
@@ -312,7 +347,7 @@ func (env *cliEnv) uninstallMCP(runtime, path string) (agentcfg.Outcome, error) 
 	return env.uninstallZcodeMCP(path)
 }
 
-func (env *cliEnv) uninstallZcodeMCP(path string) (outcome agentcfg.Outcome, err error) {
+func (env *cliEnv) uninstallZcodeMCP(path string, finalize ...func(artifact.Entry) error) (outcome agentcfg.Outcome, err error) {
 	path, err = filepath.Abs(path)
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: path}, err
@@ -334,6 +369,9 @@ func (env *cliEnv) uninstallZcodeMCP(path string) (outcome agentcfg.Outcome, err
 		}
 	}
 	outcome, err = agentcfg.UninstallZcodeMCP(path, preimage)
+	if err == nil && found && len(finalize) > 0 {
+		err = finalize[0](entry)
+	}
 	if err == nil && found {
 		err = env.unregisterArtifactEntry(entry)
 	}
