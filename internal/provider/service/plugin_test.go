@@ -123,7 +123,7 @@ func TestRocaOpsOffLeavesTheBundledPluginCompletelyInert(t *testing.T) {
 		options.Providers = cascadeOf(model)
 	})
 	stored, err := svc.Store(t.Context(), service.StoreRequest{
-		Layer: "handoff", Content: "synthetic flag-off marker",
+		Layer: "discovery", Content: "synthetic flag-off marker",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -393,7 +393,7 @@ func TestRocaOpsRoutesStoresAndQueriesCoreHistoryTogetherWithNewWrites(t *testin
 	seed(t, svc, "handoff", "synthetic resident handoff")
 
 	stored, err := svc.Store(t.Context(), service.StoreRequest{
-		Layer: "handoff", Content: "synthetic resident handoff",
+		Layer: "discovery", Content: "synthetic resident handoff",
 		Authorship: service.Authorship{Agent: "codex", Model: "gpt-test", Surface: service.SurfaceMCP},
 	})
 	if err != nil {
@@ -445,7 +445,7 @@ func TestKeywordRescueSearchesRocaOpsWithoutQuestionRouting(t *testing.T) {
 		options.Providers = cascadeOf(unavailable("fixture", "offline", "start fixture"))
 	})
 	if _, err := svc.Store(t.Context(), service.StoreRequest{
-		Layer: "handoff", Content: "synthetic zircon falcon handoff",
+		Layer: "discovery", Content: "synthetic zircon falcon handoff",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -481,7 +481,7 @@ func TestRocaOpsDrainOnlyRemovesExplicitlyExpiredRows(t *testing.T) {
 			metadata["expires_at"] = testCase.expiresAt
 		}
 		_, err := svc.Store(t.Context(), service.StoreRequest{
-			Layer: "handoff", Content: testCase.content, Metadata: metadata,
+			Layer: "discovery", Content: testCase.content, Metadata: metadata,
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -508,7 +508,7 @@ func TestRocaOpsDrainOnlyRemovesExplicitlyExpiredRows(t *testing.T) {
 
 func TestRocaOpsExactStoreGuardIncludesExpiry(t *testing.T) {
 	svc, _ := enabledRocaOps(t)
-	request := service.StoreRequest{Layer: "handoff", Content: "synthetic exact ops retry",
+	request := service.StoreRequest{Layer: "discovery", Content: "synthetic exact ops retry",
 		Metadata: map[string]any{"expires_at": "2026-08-18T00:00:00Z"}}
 	first, err := svc.Store(t.Context(), request)
 	if err != nil {

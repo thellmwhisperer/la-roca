@@ -60,6 +60,9 @@ session, which is why every diagnostic in this path writes to standard error.
 | `roca_health` | The non-destructive checks over live data | An agent that cannot run `roca doctor` |
 | `roca_sql` | Compiles a question into SQL without running it | Agents that need to inspect the SQL before `roca_exec` runs it |
 
+`roca_store` applies the same [handoff write policy](operations.md#handoff-writes)
+as the CLI, including session-writer, required-field, and supersession checks.
+
 With semantic search enabled and its companion available, the same server also
 exposes `roca_vector_query`. It searches selected local indexes by meaning and
 uses the session-resident, pre-prepared model described above. The six core
