@@ -788,6 +788,43 @@ func TestZcodeHookReinstallPreservesLiveOwnership(t *testing.T) {
 	}
 }
 
+func TestZcodeHookReinstallDropsStaleEnablementOwnership(t *testing.T) {
+	home := skillTestHome(t)
+	config, wrapper := zcodeTestConfigAndWrapper(home)
+	installZcodeTestIntegration(t, "hooks", home)
+	if err := os.Remove(config); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, config, `{"hooks":{"enabled":true}}`)
+	installZcodeTestIntegration(t, "hooks", home)
+	registry, err := artifact.LoadRegistry(filepath.Join(home, ".roca", "artifacts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, found := registry.Find(artifactKindHook, agentcfg.RuntimeZcode, wrapper)
+	if !found || entry.CreatedHooksEnabled {
+		t.Fatalf("stale enablement ownership = %#v, found=%v", entry, found)
+	}
+	var warnings strings.Builder
+	env := &cliEnv{out: io.Discard, errOut: &warnings}
+	root := rootCommand(env)
+	root.SetArgs([]string{"hooks", "uninstall", "zcode"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(warnings.String(), "left operator-owned hooks.enabled unchanged") {
+		t.Fatalf("enablement warning = %q", warnings.String())
+	}
+	_, document := readZcodeTestJSON(t, config)
+	hooks := document["hooks"].(map[string]any)
+	if enabled, ok := hooks["enabled"].(bool); !ok || !enabled {
+		t.Fatalf("operator hooks.enabled changed: %#v", document)
+	}
+	if _, found := hooks["events"]; found {
+		t.Fatalf("managed hook survived uninstall: %#v", document)
+	}
+}
+
 func TestZcodeHookReinstallExpiresOwnershipWithoutManagedContinuity(t *testing.T) {
 	assertZcodeOwnershipExpiresWithoutContinuity(t, "hooks")
 }
@@ -1234,12 +1271,25 @@ func TestZcodePurgeReconcilesExactWrapperAfterDeclarationRemoval(t *testing.T) {
 		t.Fatal(err)
 	}
 	wrapper := filepath.Join(home, ".zcode", "hooks", "roca-handoff.sh")
-	report := purgeZcodeTestIntegrations(true)
+	var warnings strings.Builder
+	report := lifecycle.Report{Purged: true, Deleted: []string{}}
+	(&cliEnv{out: io.Discard, errOut: &warnings}).withdrawTheIntegrations(&report, true)
 	if len(report.Errors) != 0 {
 		t.Fatalf("wrapper reconciliation errors = %v", report.Errors)
 	}
-	if _, err := os.Stat(rootPath); !os.IsNotExist(err) {
-		t.Fatalf("installer-created ZCode state survived reconciliation: %v", err)
+	if !strings.Contains(warnings.String(), zcodeRetainedEnabledWarning) {
+		t.Fatalf("retained enablement warning = %q", warnings.String())
+	}
+	_, document := readZcodeTestJSON(t, config)
+	hooks := document["hooks"].(map[string]any)
+	if enabled, ok := hooks["enabled"].(bool); !ok || !enabled {
+		t.Fatalf("operator enablement changed: %#v", document)
+	}
+	if _, found := hooks["events"]; found {
+		t.Fatalf("managed declaration survived reconciliation: %#v", document)
+	}
+	if _, err := os.Stat(wrapper); !os.IsNotExist(err) {
+		t.Fatalf("managed wrapper survived reconciliation: %v", err)
 	}
 	registry, err := artifact.LoadRegistry(filepath.Join(home, ".roca", "artifacts.json"))
 	if err != nil {
