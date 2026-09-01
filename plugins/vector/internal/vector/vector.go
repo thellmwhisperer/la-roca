@@ -51,18 +51,19 @@ var sourceFingerprintRegistrationErr = sqlite.RegisterDeterministicScalarFunctio
 	})
 
 type Index struct {
-	Corpus      Corpus
-	VectorPath  string
-	Model       string
-	Embedder    Embedder
-	Notice      func(string)
-	SourceKinds map[string]bool
-	Database    string
-	Reembed     bool
-	Progress    func(IngestProgress)
-	BatchSize   int
-	totalHint   int
-	Events      engine.Sink
+	Corpus       Corpus
+	VectorPath   string
+	Model        string
+	Embedder     Embedder
+	Notice       func(string)
+	SourceKinds  map[string]bool
+	Database     string
+	Reembed      bool
+	Progress     func(IngestProgress)
+	BatchSize    int
+	totalHint    int
+	scanProgress func()
+	Events       engine.Sink
 }
 
 type Corpus interface {
@@ -307,6 +308,9 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 			chunks: make(map[string]desiredChunk, len(existingSnapshot)), markers: map[string]desiredChunk{}}
 		seenSources := map[string]bool{}
 		summary.err = i.Corpus.WalkSources(scanCtx, sourceKind, func(source sourceRow) error {
+			if i.scanProgress != nil {
+				i.scanProgress()
+			}
 			rowKey := source.kind + "\x00" + source.stableID()
 			if !seenSources[rowKey] {
 				summary.sources++

@@ -265,6 +265,67 @@ func TestEmbeddingSchedulerFailsWhenAJobNeverProducesWork(t *testing.T) {
 	}
 }
 
+type delayedScanCorpus struct {
+	*memoryCorpus
+	delay time.Duration
+}
+
+func (c *delayedScanCorpus) WalkSources(ctx context.Context, sourceKind string, visit func(sourceRow) error) error {
+	return c.memoryCorpus.WalkSources(ctx, sourceKind, func(source sourceRow) error {
+		timer := time.NewTimer(c.delay)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+			return visit(source)
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	})
+}
+
+func TestEmbeddingSchedulerAllowsAProgressingUnchangedScan(t *testing.T) {
+	rows := make([]sourceRow, 5)
+	for index := range rows {
+		rows[index] = sourceRow{kind: "memories", sourceID: fmt.Sprint(index), text: fmt.Sprintf("unchanged %d", index)}
+	}
+	path := t.TempDir() + "/vector.db"
+	base := &recordingEmbedder{}
+	initial := Index{Corpus: &memoryCorpus{sources: rows}, VectorPath: path, Model: DefaultModel,
+		Embedder: base, BatchSize: 1}
+	if _, err := initial.Ingest(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	scheduler := newEmbeddingScheduler(ctx, base, 1)
+	scheduler.stallAfter = 100 * time.Millisecond
+	rescan := initial
+	rescan.Corpus = &delayedScanCorpus{memoryCorpus: &memoryCorpus{sources: rows}, delay: 40 * time.Millisecond}
+	rescan.Embedder = scheduledEmbedder{base: base, id: 0, scheduler: scheduler}
+	rescan.scanProgress = scheduler.heartbeat
+	type ingestResult struct {
+		delta Delta
+		err   error
+	}
+	done := make(chan ingestResult, 1)
+	go func() {
+		delta, err := rescan.Ingest(ctx)
+		done <- ingestResult{delta: delta, err: err}
+		scheduler.finished <- 0
+	}()
+	runErr := scheduler.run()
+	if runErr != nil {
+		cancel()
+	}
+	result := <-done
+	if runErr != nil || result.err != nil {
+		t.Fatalf("progressing unchanged scan failed: scheduler=%v ingest=%v", runErr, result.err)
+	}
+	if result.delta.Unchanged != len(rows) {
+		t.Fatalf("unchanged scan = %+v, want %d unchanged", result.delta, len(rows))
+	}
+}
+
 func TestEmbeddingSchedulerEmbedsReadyWorkWithoutWaitingForeverForAPeer(t *testing.T) {
 	base := &recordingEmbedder{}
 	ctx, cancel := context.WithCancel(context.Background())

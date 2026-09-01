@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/thellmwhisperer/la-roca-vector/internal/engine"
@@ -706,6 +707,7 @@ func (f Federation) Ingest(ctx context.Context, sourceKind string) (FederationDe
 			defer workers.Done()
 			index := f.index(job.database, job.reader, job.sidecar)
 			index.BatchSize = 1
+			index.scanProgress = scheduler.heartbeat
 			index.Embedder = scheduledEmbedder{base: f.Embedder, id: id, scheduler: scheduler}
 			if sourceKind == "" {
 				job.delta, job.err = index.Ingest(orderedCtx)
@@ -785,14 +787,16 @@ func boundContext(ctx context.Context, timeout time.Duration) (context.Context, 
 }
 
 type embeddingScheduler struct {
-	ctx          context.Context
-	base         Embedder
-	requests     chan embeddingRequest
-	finished     chan int
-	active       map[int]bool
-	mu           sync.Mutex
-	stallAfter   time.Duration
-	gatherWindow time.Duration
+	ctx             context.Context
+	base            Embedder
+	requests        chan embeddingRequest
+	finished        chan int
+	heartbeats      chan struct{}
+	active          map[int]bool
+	mu              sync.Mutex
+	livenessVersion atomic.Uint64
+	stallAfter      time.Duration
+	gatherWindow    time.Duration
 }
 
 func newEmbeddingScheduler(ctx context.Context, base Embedder, count int) *embeddingScheduler {
@@ -801,7 +805,15 @@ func newEmbeddingScheduler(ctx context.Context, base Embedder, count int) *embed
 		active[id] = true
 	}
 	return &embeddingScheduler{ctx: ctx, base: base, requests: make(chan embeddingRequest),
-		finished: make(chan int, count), active: active}
+		finished: make(chan int, count), heartbeats: make(chan struct{}, 1), active: active}
+}
+
+func (s *embeddingScheduler) heartbeat() {
+	s.livenessVersion.Add(1)
+	select {
+	case s.heartbeats <- struct{}{}:
+	default:
+	}
 }
 
 func (s *embeddingScheduler) run() error {
@@ -816,6 +828,7 @@ func (s *embeddingScheduler) run() error {
 	}
 	stall := time.NewTimer(stallAfter)
 	defer stall.Stop()
+	observedLiveness := s.livenessVersion.Load()
 	resetStall := func() {
 		if !stall.Stop() {
 			select {
@@ -823,6 +836,7 @@ func (s *embeddingScheduler) run() error {
 			default:
 			}
 		}
+		observedLiveness = s.livenessVersion.Load()
 		stall.Reset(stallAfter)
 	}
 	failPending := func(err error) error {
@@ -841,9 +855,15 @@ func (s *embeddingScheduler) run() error {
 				delete(s.active, id)
 				delete(pending, id)
 				resetStall()
+			case <-s.heartbeats:
+				resetStall()
 			case <-s.ctx.Done():
 				return failPending(s.ctx.Err())
 			case <-stall.C:
+				if s.livenessVersion.Load() != observedLiveness {
+					resetStall()
+					continue
+				}
 				return failPending(errIndexingStalled)
 			}
 			continue
