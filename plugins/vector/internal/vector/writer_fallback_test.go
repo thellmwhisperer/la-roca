@@ -5,6 +5,7 @@ package vector
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -98,4 +99,28 @@ func TestNativeOwnershipDropsExpiredWaiters(t *testing.T) {
 		t.Fatalf("fresh ownership after expired waiter: %v", err)
 	}
 	native.releaseNative()
+}
+
+func TestNativeContextErrorPreservesCallerCancellation(t *testing.T) {
+	native := &Native{}
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	deadline, cancelDeadline := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancelDeadline()
+	for name, test := range map[string]struct {
+		ctx  context.Context
+		want error
+	}{
+		"canceled": {ctx: canceled, want: context.Canceled},
+		"deadline": {ctx: deadline, want: context.DeadlineExceeded},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := native.nativeContextError(test.ctx); !errors.Is(err, test.want) {
+				t.Fatalf("native context error = %v, want %v", err, test.want)
+			}
+		})
+	}
+	if err := native.nativeContextError(context.Background()); !strings.Contains(err.Error(), "stalled") {
+		t.Fatalf("internal timeout error = %v, want stall", err)
+	}
 }

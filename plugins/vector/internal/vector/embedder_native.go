@@ -55,6 +55,14 @@ func (n *Native) releaseNative() {
 	<-n.ownership
 }
 
+func (n *Native) nativeContextError(callerCtx context.Context) error {
+	if err := callerCtx.Err(); err != nil {
+		return err
+	}
+	n.record(telemetry.Record{Kind: telemetry.KindError, Err: "semantic search stalled"})
+	return fmt.Errorf("semantic search stalled while preparing embeddings")
+}
+
 func ConfiguredEmbedder(dataDir, stateDir string, events engine.Sink, tel *telemetry.Store,
 	readOnly bool, writer llamacpp.Policy) Embedder {
 	return &Native{DataDir: dataDir, StateDir: stateDir, Events: events, Telemetry: tel,

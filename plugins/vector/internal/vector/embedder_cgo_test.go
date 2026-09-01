@@ -122,6 +122,78 @@ func TestOpenPreferredRetainsOwnershipUntilLateOpenCompletes(t *testing.T) {
 	}
 }
 
+func TestNativeEmbedPreservesWaitingCallerDeadline(t *testing.T) {
+	started := make(chan struct{})
+	block := make(chan struct{})
+	t.Cleanup(func() {
+		select {
+		case <-block:
+		default:
+			close(block)
+		}
+	})
+	native := &Native{engine: &blockingEngine{started: started, block: block}}
+	active := make(chan error, 1)
+	go func() {
+		_, err := native.Embed(context.Background(), DefaultModel, []string{"active"})
+		active <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("active native call did not start")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	_, err := native.Embed(ctx, DefaultModel, []string{"waiting"})
+	if !errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "stalled") {
+		t.Fatalf("waiting caller error = %v, want its deadline", err)
+	}
+	close(block)
+	select {
+	case err := <-active:
+		if err != nil {
+			t.Fatalf("active native call: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("active native call did not finish")
+	}
+}
+
+func TestNativeEmbedPreservesActiveCallerCancellation(t *testing.T) {
+	started := make(chan struct{})
+	block := make(chan struct{})
+	t.Cleanup(func() {
+		select {
+		case <-block:
+		default:
+			close(block)
+		}
+	})
+	native := &Native{engine: &blockingEngine{started: started, block: block}}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := native.Embed(ctx, DefaultModel, []string{"active"})
+		done <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("native call did not start")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "stalled") {
+			t.Fatalf("active caller error = %v, want cancellation", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("canceled native caller did not return")
+	}
+	close(block)
+}
+
 func TestNativeEmbedDoesNotOverlapEngineCalls(t *testing.T) {
 	engine := &blockingEngine{block: make(chan struct{})}
 	native := &Native{engine: engine}

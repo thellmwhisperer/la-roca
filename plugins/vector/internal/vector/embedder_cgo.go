@@ -25,6 +25,7 @@ func (n *Native) Embed(ctx context.Context, requestedModel string, input []strin
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	callerCtx := ctx
 	ctx, cancel := boundContext(ctx, nativeCallTimeout)
 	defer cancel()
 	type reply struct {
@@ -32,8 +33,7 @@ func (n *Native) Embed(ctx context.Context, requestedModel string, input []strin
 		err     error
 	}
 	if err := n.acquireNative(ctx); err != nil {
-		n.record(telemetry.Record{Kind: telemetry.KindError, Err: "semantic search stalled"})
-		return nil, fmt.Errorf("semantic search stalled while preparing embeddings")
+		return nil, n.nativeContextError(callerCtx)
 	}
 	done := make(chan reply, 1)
 	go func() {
@@ -43,10 +43,12 @@ func (n *Native) Embed(ctx context.Context, requestedModel string, input []strin
 	}()
 	select {
 	case result := <-done:
+		if result.err != nil && ctx.Err() != nil {
+			return nil, n.nativeContextError(callerCtx)
+		}
 		return result.vectors, result.err
 	case <-ctx.Done():
-		n.record(telemetry.Record{Kind: telemetry.KindError, Err: "semantic search stalled"})
-		return nil, fmt.Errorf("semantic search stalled while preparing embeddings")
+		return nil, n.nativeContextError(callerCtx)
 	}
 }
 
@@ -105,7 +107,7 @@ func (n *Native) open(ctx context.Context) error {
 	if err != nil {
 		n.record(telemetry.Record{Kind: telemetry.KindError, Err: "the embedding model failed to load"})
 		if ctx.Err() != nil {
-			return fmt.Errorf("semantic search stalled while preparing embeddings")
+			return ctx.Err()
 		}
 		return fmt.Errorf("the embedding model failed to load")
 	}
