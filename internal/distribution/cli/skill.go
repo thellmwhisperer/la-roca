@@ -27,8 +27,10 @@ var rocaStoreInvocation = regexp.MustCompile(
 // claudeHookInvocation recognizes La Roca's own PreToolUse entry whatever binary
 // path it was installed with, so a reinstall repoints it and an uninstall finds
 // it even after the operator moved the executable.
+const shellCommandExecutablePattern = `(?:'(?:[^']|'"'"')*'|"[^"]*"|\S+)`
+
 var claudeHookInvocation = regexp.MustCompile(
-	`^(?:'[^']*'|"[^"]*"|\S+)[ \t]+hooks[ \t]+run[ \t]+claude$`,
+	`^` + shellCommandExecutablePattern + `[ \t]+hooks[ \t]+run[ \t]+claude$`,
 )
 
 func claudeHookCommand(executable string) string {

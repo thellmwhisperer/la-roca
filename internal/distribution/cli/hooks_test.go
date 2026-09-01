@@ -356,7 +356,7 @@ func assertClaudeProductWithdrawalWarnings(t *testing.T, warned, path string, se
 func TestProductUninstallWithdrawsSessionHooksWhenPreToolUseIsUnreadable(t *testing.T) {
 	home := skillTestHome(t)
 	path := filepath.Join(home, ".claude", "settings.json")
-	binary := filepath.Join(home, "bin", "roca")
+	binary := filepath.Join(home, "O'Brien Tools", "roca")
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -389,7 +389,7 @@ func TestProductUninstallWithdrawsSessionHooksWhenPreToolUseIsUnreadable(t *test
 
 func TestSessionStartHooksInstallAndUninstallAreIdempotent(t *testing.T) {
 	home := skillTestHome(t)
-	binary := filepath.Join(home, "bin", "roca")
+	binary := filepath.Join(home, "O'Brien Tools", "roca")
 	t.Setenv(EnvExecutable, binary)
 	path := filepath.Join(home, ".claude", "settings.json")
 	foreign := "/opt/acme pill"

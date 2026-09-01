@@ -12,10 +12,10 @@ const claudeSessionStartEvent = "SessionStart"
 
 var (
 	claudePillsHookInvocation = regexp.MustCompile(
-		`^(?:'[^']*'|"[^"]*"|\S+)[ \t]+hooks[ \t]+run[ \t]+claude-pills$`,
+		`^` + shellCommandExecutablePattern + `[ \t]+hooks[ \t]+run[ \t]+claude-pills$`,
 	)
 	claudeHandoffHookInvocation = regexp.MustCompile(
-		`^(?:'[^']*'|"[^"]*"|\S+)[ \t]+hooks[ \t]+run[ \t]+claude-handoff$`,
+		`^` + shellCommandExecutablePattern + `[ \t]+hooks[ \t]+run[ \t]+claude-handoff$`,
 	)
 )
 
