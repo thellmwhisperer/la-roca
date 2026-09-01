@@ -461,6 +461,7 @@ func hooksCommand(env *cliEnv) *cobra.Command {
 	}
 	command.AddCommand(
 		hooksInstallCommand(env), hooksUninstallCommand(env), hooksRunCommand(env),
+		hooksValidateZcodeOutputCommand(env),
 	)
 	return command
 }
@@ -594,6 +595,45 @@ func hooksRunCommand(env *cliEnv) *cobra.Command {
 		},
 	}
 	return command
+}
+
+const zcodeOutputValidationToken = "roca-zcode-output-valid-v1"
+
+func hooksValidateZcodeOutputCommand(env *cliEnv) *cobra.Command {
+	return &cobra.Command{
+		Use:    "validate-zcode-output",
+		Hidden: true,
+		Args:   cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			input, err := io.ReadAll(cmd.InOrStdin())
+			if err != nil {
+				return err
+			}
+			decoder := json.NewDecoder(strings.NewReader(string(input)))
+			opening, err := decoder.Token()
+			if err != nil || opening != json.Delim('{') || !decoder.More() {
+				return fmt.Errorf("invalid ZCode hook output")
+			}
+			key, err := decoder.Token()
+			if err != nil || key != "additionalContext" {
+				return fmt.Errorf("invalid ZCode hook output")
+			}
+			var context string
+			if err := decoder.Decode(&context); err != nil || decoder.More() {
+				return fmt.Errorf("invalid ZCode hook output")
+			}
+			closing, err := decoder.Token()
+			if err != nil || closing != json.Delim('}') {
+				return fmt.Errorf("invalid ZCode hook output")
+			}
+			var extra any
+			if err := decoder.Decode(&extra); err != io.EOF {
+				return fmt.Errorf("invalid ZCode hook output")
+			}
+			fmt.Fprintln(env.out, zcodeOutputValidationToken)
+			return nil
+		},
+	}
 }
 
 func claudeSettingsPath() (string, error) {
@@ -1030,7 +1070,9 @@ func zcodeWrapper(executable string) string {
 # Managed by roca hooks install zcode.
 set -euo pipefail
 
-if output=$(` + shellQuote(executable) + ` hooks run zcode 2>/dev/null); then
+if output=$(` + shellQuote(executable) + ` hooks run zcode 2>/dev/null) &&
+  validation=$(printf '%s' "$output" | ` + shellQuote(executable) + ` hooks validate-zcode-output 2>/dev/null) &&
+  [ "$validation" = ` + shellQuote(zcodeOutputValidationToken) + ` ]; then
   printf '%s\n' "$output"
 else
   printf '{"additionalContext":""}\n'

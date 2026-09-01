@@ -241,6 +241,30 @@ func TestZcodeEditorsRejectTrailingGarbage(t *testing.T) {
 	}
 }
 
+func TestZcodeMCPMatchRequiresExactStdioInvocation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if _, err := agentcfg.Install(agentcfg.RuntimeZcode, path, "/bin/roca"); err != nil {
+		t.Fatal(err)
+	}
+	matched, err := agentcfg.ZcodeMCPMatches(path, "/bin/roca")
+	if err != nil || !matched {
+		t.Fatalf("installed invocation match = %v, err=%v", matched, err)
+	}
+	for _, invalid := range []string{
+		`{"mcp":{"servers":{"roca":{"type":"http","command":"/bin/roca","args":["mcp","serve"]}}}}`,
+		`{"mcp":{"servers":{"roca":{"type":"stdio","command":"/bin/other","args":["mcp","serve"]}}}}`,
+		`{"mcp":{"servers":{"roca":{"type":"stdio","command":"/bin/roca","args":["serve"]}}}}`,
+	} {
+		if err := os.WriteFile(path, []byte(invalid), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		matched, err := agentcfg.ZcodeMCPMatches(path, "/bin/roca")
+		if err != nil || matched {
+			t.Fatalf("invalid invocation match = %v, err=%v: %s", matched, err, invalid)
+		}
+	}
+}
+
 func TestZcodeMCPPreimageUsesComparedInstallSnapshot(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	if err := os.WriteFile(path, []byte(`{}`), 0o600); err != nil {
