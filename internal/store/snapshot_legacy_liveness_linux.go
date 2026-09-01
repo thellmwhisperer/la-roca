@@ -18,8 +18,8 @@
  *
  *   INTERNALS
  *   ---------
- *   legacySnapshotHasOpenHandles, snapshotTargetWithin, snapshotProcVanished
- *   snapshotProcUninspectable
+ *   legacySnapshotHasOpenHandles, snapshotProcfsVisibility, snapshotTargetWithin
+ *   snapshotProcVanished
  *
  * @exports
  * @deps Linux procfs
@@ -38,6 +38,9 @@ import (
 )
 
 func legacySnapshotHasOpenHandles(ctx context.Context, directory string) (bool, error) {
+	if err := snapshotProcfsVisibility(); err != nil {
+		return false, err
+	}
 	resolvedDirectory, err := filepath.EvalSymlinks(directory)
 	if err != nil {
 		return false, fmt.Errorf("resolve legacy snapshot directory: %w", err)
@@ -60,7 +63,7 @@ func legacySnapshotHasOpenHandles(ctx context.Context, directory string) (bool, 
 		}
 		processRoot := filepath.Join("/proc", process.Name())
 		info, err := os.Stat(processRoot)
-		if snapshotProcVanished(err) || snapshotProcUninspectable(err) {
+		if snapshotProcVanished(err) {
 			continue
 		}
 		if err != nil {
@@ -71,7 +74,7 @@ func legacySnapshotHasOpenHandles(ctx context.Context, directory string) (bool, 
 			continue
 		}
 		fds, err := os.ReadDir(filepath.Join(processRoot, "fd"))
-		if snapshotProcVanished(err) || snapshotProcUninspectable(err) {
+		if snapshotProcVanished(err) {
 			continue
 		}
 		if err != nil {
@@ -79,7 +82,7 @@ func legacySnapshotHasOpenHandles(ctx context.Context, directory string) (bool, 
 		}
 		for _, fd := range fds {
 			target, err := os.Readlink(filepath.Join(processRoot, "fd", fd.Name()))
-			if snapshotProcVanished(err) || snapshotProcUninspectable(err) {
+			if snapshotProcVanished(err) {
 				continue
 			}
 			if err != nil {
@@ -91,6 +94,40 @@ func legacySnapshotHasOpenHandles(ctx context.Context, directory string) (bool, 
 		}
 	}
 	return false, nil
+}
+
+func snapshotProcfsVisibility() error {
+	if os.Getenv("container") != "" {
+		return fmt.Errorf("procfs visibility is container-scoped")
+	}
+	for _, marker := range []string{"/.dockerenv", "/run/.containerenv"} {
+		if _, err := os.Stat(marker); err == nil {
+			return fmt.Errorf("procfs visibility is container-scoped")
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("inspect container marker: %w", err)
+		}
+	}
+	status, err := os.ReadFile("/proc/self/status")
+	if err != nil {
+		return fmt.Errorf("inspect process namespace: %w", err)
+	}
+	for _, line := range strings.Split(string(status), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) > 2 && fields[0] == "NSpid:" {
+			return fmt.Errorf("procfs visibility is PID-namespace scoped")
+		}
+	}
+	cgroup, err := os.ReadFile("/proc/self/cgroup")
+	if err != nil {
+		return fmt.Errorf("inspect process cgroup: %w", err)
+	}
+	lower := strings.ToLower(string(cgroup))
+	for _, marker := range []string{"docker", "containerd", "kubepods", "libpod", "lxc"} {
+		if strings.Contains(lower, marker) {
+			return fmt.Errorf("procfs visibility is container-scoped")
+		}
+	}
+	return nil
 }
 
 func snapshotTargetWithin(directory, target string) bool {
@@ -105,15 +142,4 @@ func snapshotTargetWithin(directory, target string) bool {
 // may skip it instead of aborting the whole probe.
 func snapshotProcVanished(err error) bool {
 	return os.IsNotExist(err) || errors.Is(err, syscall.ESRCH)
-}
-
-// snapshotProcUninspectable reports whether a procfs read failed because the
-// process refuses to expose its file descriptors to a same-user reader. Linux
-// enforces this for non-dumpable processes (PR_SET_DUMPABLE=0), which includes
-// the .NET runner processes that share the CI user. Such a process can never be
-// a roca snapshot holder — roca is an ordinary dumpable Go program — so the
-// sweep skips it instead of declaring the whole probe indeterminate, which
-// would silently disable orphan reaping on any shared CI or dev machine.
-func snapshotProcUninspectable(err error) bool {
-	return errors.Is(err, syscall.EACCES) || errors.Is(err, syscall.EPERM)
 }

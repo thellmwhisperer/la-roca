@@ -159,7 +159,7 @@ func (s *Service) withResidents(route pluginRoute) pluginRoute {
 }
 
 func (s *Service) openResidents(ctx context.Context) error {
-	ctx = s.snapshotContext(ctx)
+	ctx = plugin.WithValidationTimeout(s.snapshotContext(ctx), residentInitializationTimeout)
 	if !s.pluginsActive() && s.opts.PluginDir == "" {
 		return nil
 	}

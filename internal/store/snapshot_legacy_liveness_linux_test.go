@@ -36,34 +36,13 @@ func TestSnapshotProcVanished(t *testing.T) {
 	}
 }
 
-func TestSnapshotProcUninspectable(t *testing.T) {
-	tests := []struct {
-		name string
-		err  error
-		want bool
-	}{
-		{name: "nil error", err: nil, want: false},
-		{name: "permission denied", err: &os.PathError{Op: "readlink", Path: "/proc/1/fd/3", Err: syscall.EACCES}, want: true},
-		{name: "operation not permitted", err: &os.PathError{Op: "readlink", Path: "/proc/1/fd/3", Err: syscall.EPERM}, want: true},
-		{name: "raw permission denied", err: syscall.EACCES, want: true},
-		{name: "not exist is vanished not uninspectable", err: syscall.ENOENT, want: false},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			if got := snapshotProcUninspectable(test.err); got != test.want {
-				t.Fatalf("snapshotProcUninspectable(%v) = %t, want %t", test.err, got, test.want)
-			}
-		})
-	}
-}
-
-func TestLegacyOrphanReapedBesideNonDumpableProcess(t *testing.T) {
+func TestLegacySnapshotPreservedBesideUninspectableProcess(t *testing.T) {
 	tempRoot := isolateSnapshotTemp(t)
-	orphan := createLegacyOrphan(t, tempRoot, "beside-nondumpable")
+	legacy := createLegacyOrphan(t, tempRoot, "beside-nondumpable")
 	startNonDumpableHolder(t, tempRoot)
 	openAndCloseSnapshot(t)
-	if _, err := os.Stat(orphan); !os.IsNotExist(err) {
-		t.Fatalf("legacy orphan beside a non-dumpable process was not reaped: %v", err)
+	if _, err := os.Stat(legacy); err != nil {
+		t.Fatalf("legacy snapshot beside an uninspectable process was removed: %v", err)
 	}
 }
 

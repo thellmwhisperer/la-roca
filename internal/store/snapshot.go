@@ -67,6 +67,7 @@ const (
 	snapshotLeaseName          = "lease"
 	snapshotCopyBufferSize     = 128 * 1024
 	snapshotSignalCleanupLimit = 500 * time.Millisecond
+	legacySnapshotQuiescence   = time.Hour
 	bytesPerMB                 = 1024 * 1024
 )
 
@@ -711,6 +712,10 @@ func snapshotOrphanLease(ctx context.Context, directory string, legacy bool) (fu
 	}
 	if os.IsNotExist(err) {
 		if legacy {
+			quiescent, inspectErr := legacySnapshotIsQuiescent(directory, time.Now())
+			if inspectErr != nil || !quiescent {
+				return nil, false, nil
+			}
 			live, probeErr := legacySnapshotHasOpenHandlesFn(ctx, directory)
 			if probeErr != nil {
 				if ctx.Err() != nil {
@@ -718,7 +723,11 @@ func snapshotOrphanLease(ctx context.Context, directory string, legacy bool) (fu
 				}
 				return nil, false, nil
 			}
-			return nil, !live, nil
+			if live {
+				return nil, false, nil
+			}
+			quiescent, inspectErr = legacySnapshotIsQuiescent(directory, time.Now())
+			return nil, inspectErr == nil && quiescent, nil
 		}
 		return nil, true, nil
 	}
@@ -726,6 +735,25 @@ func snapshotOrphanLease(ctx context.Context, directory string, legacy bool) (fu
 		return nil, false, nil
 	}
 	return nil, false, err
+}
+
+func legacySnapshotIsQuiescent(directory string, now time.Time) (bool, error) {
+	cutoff := now.Add(-legacySnapshotQuiescence)
+	quiescent := true
+	err := filepath.WalkDir(directory, func(_ string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if info.ModTime().After(cutoff) {
+			quiescent = false
+		}
+		return nil
+	})
+	return quiescent, err
 }
 
 func cleanupSnapshotDirectory(directory string, cause error) error {
