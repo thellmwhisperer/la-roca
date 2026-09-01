@@ -237,11 +237,16 @@ func legacyStoreSession(source row, exchanges, thinking, tools []row) (parsers.S
 		number, _ := block.number("exchange_number")
 		thinkingByNumber[int(number)] = append(thinkingByNumber[int(number)], legacyStoreThinking(block))
 	}
+	var discards []parsers.Discard
 	toolsByNumber := map[int][]parsers.ToolUse{}
 	for _, tool := range tools {
 		number, ok := tool.number("exchange_number")
 		if !ok {
-			session.OrphanedTools = append(session.OrphanedTools, legacyStoreTool(tool))
+			if !tool.has("exchange_number") {
+				session.OrphanedTools = append(session.OrphanedTools, legacyStoreTool(tool))
+			} else {
+				discards = append(discards, parsers.Discard{Reason: legacyStoreMissingToolExchangeReason})
+			}
 			continue
 		}
 		toolsByNumber[int(number)] = append(toolsByNumber[int(number)], legacyStoreTool(tool))
@@ -281,7 +286,6 @@ func legacyStoreSession(source row, exchanges, thinking, tools []row) (parsers.S
 	for _, number := range leftoverNumbers {
 		session.Thinking = append(session.Thinking, thinkingByNumber[number]...)
 	}
-	var discards []parsers.Discard
 	for _, leftovers := range toolsByNumber {
 		for range leftovers {
 			discards = append(discards, parsers.Discard{Reason: legacyStoreMissingToolExchangeReason})

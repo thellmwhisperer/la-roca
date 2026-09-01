@@ -414,6 +414,9 @@ func TestIncrementalCodexInterruptedTailsFallBackToTheFullRollout(t *testing.T) 
 `
 	invalidCompletion := `{"type":"event_msg","payload":{"type":"task_complete","content":{}}}
 `
+	invalidOpener := `{"type":"event_msg","payload":{"type":"user_message","message":"interrupted","content":{}}}
+` + responseTail + `{"type":"event_msg","payload":{"type":"task_complete","last_agent_message":"partial"}}
+`
 	cases := []struct {
 		name, tail string
 	}{
@@ -422,6 +425,7 @@ func TestIncrementalCodexInterruptedTailsFallBackToTheFullRollout(t *testing.T) 
 		{name: "response only", tail: responseTail},
 		{name: "response only abort", tail: responseTail + abort},
 		{name: "parser deferred invalid completion", tail: eventTail + invalidCompletion},
+		{name: "parser rejected invalid opener", tail: invalidOpener},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {

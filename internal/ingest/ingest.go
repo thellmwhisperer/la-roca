@@ -874,15 +874,13 @@ func incrementalParseNeedsPrefix(kind parsers.Kind, content []byte, records pars
 	if kind != parsers.KindCodexSession {
 		return false
 	}
-	if records.Deferred > 0 || !codexTailHasCompletedEventTurn(content) {
-		return true
-	}
 	for _, discard := range records.Discards {
-		if discard.Category == "tool verdict has unknown call_id" {
+		if discard.Category == "invalid JSON" || discard.Category == "invalid payload" ||
+			discard.Category == "tool verdict has unknown call_id" {
 			return true
 		}
 	}
-	return false
+	return records.Deferred > 0 || !codexTailHasCompletedEventTurn(content)
 }
 
 func codexTailHasCompletedEventTurn(content []byte) bool {
