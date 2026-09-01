@@ -651,6 +651,19 @@ func zcodeHookDeclarationContinuity(config string, entry artifact.Entry) (bool, 
 	return err == nil && next == string(configBody), err
 }
 
+func zcodeRootContinuity(config string, entry artifact.Entry) (bool, bool, error) {
+	root := filepath.Dir(filepath.Dir(config))
+	identity, err := zcodeRootIdentity(root)
+	if os.IsNotExist(err) {
+		return false, false, nil
+	}
+	if err != nil {
+		return false, false, err
+	}
+	current := artifact.Entry{RootIdentity: identity}
+	return continuousZcodeOwnership(entry, current), true, nil
+}
+
 func zcodeWrapperContinuity(entry artifact.Entry) (bool, error) {
 	expected, err := zcodeWrapperExpectedFromEntry(entry)
 	if err != nil {
@@ -723,10 +736,53 @@ func (env *cliEnv) purgeRegisteredZcodeIntegrations(report *lifecycle.Report, re
 			if configErr != nil && !configMissing {
 				return configErr
 			}
+			replacementReported := false
+			reportReplacement := func(rootExists bool) {
+				if rootExists && !replacementReported {
+					failed(report, "retained replacement ZCode tree at %s", filepath.Dir(filepath.Dir(config)))
+					replacementReported = true
+				}
+			}
 			liveHooks := make([]artifact.Entry, 0, len(group.hooks))
 			wrapperOnlyHooks := make([]artifact.Entry, 0, len(group.hooks))
 			withdrawOnlyHooks := make([]artifact.Entry, 0, len(group.hooks))
 			for _, entry := range group.hooks {
+				rootContinuous, rootExists, rootErr := zcodeRootContinuity(config, entry)
+				if rootErr != nil {
+					return rootErr
+				}
+				if !rootContinuous {
+					reportReplacement(rootExists)
+					if !configMissing {
+						declared, declarationErr := zcodeHookDeclarationPresent(config)
+						if declarationErr != nil {
+							return declarationErr
+						}
+						if declared {
+							outcome, warning, uninstallErr := uninstallZcodeHandoffHookUnlocked(
+								config, entry.Path, nil, false)
+							if warning != "" {
+								fmt.Fprintln(env.errOut, warning)
+							}
+							if uninstallErr != nil {
+								return fmt.Errorf("withdraw the ZCode handoff hook from %s: %w", config, uninstallErr)
+							}
+							if outcome.Changed {
+								outcomes = append(outcomes, outcome)
+							}
+							removeRecoveryBackups(report, config)
+						}
+					}
+					if _, wrapperErr := os.Lstat(entry.Path); wrapperErr == nil {
+						failed(report, "retained uncertain ZCode hook wrapper %s", entry.Path)
+					} else if !os.IsNotExist(wrapperErr) {
+						return wrapperErr
+					}
+					if unregisterErr := env.unregisterArtifactEntry(entry); unregisterErr != nil {
+						return unregisterErr
+					}
+					continue
+				}
 				if configMissing {
 					continuous, continuityErr := zcodeWrapperContinuity(entry)
 					if continuityErr != nil {
@@ -789,6 +845,33 @@ func (env *cliEnv) purgeRegisteredZcodeIntegrations(report *lifecycle.Report, re
 			}
 			liveMCP := make([]artifact.Entry, 0, len(group.mcp))
 			for _, entry := range group.mcp {
+				rootContinuous, rootExists, rootErr := zcodeRootContinuity(config, entry)
+				if rootErr != nil {
+					return rootErr
+				}
+				if !rootContinuous {
+					reportReplacement(rootExists)
+					if !configMissing {
+						configured, continuityErr := zcodeMCPContinuity(config, entry)
+						if continuityErr != nil {
+							return continuityErr
+						}
+						if configured {
+							outcome, uninstallErr := agentcfg.UninstallZcodeMCP(config, agentcfg.ZcodeMCPPreimageNone)
+							if uninstallErr != nil {
+								return fmt.Errorf("withdraw roca from zcode at %s: %w", config, uninstallErr)
+							}
+							if outcome.Changed {
+								outcomes = append(outcomes, outcome)
+							}
+							removeRecoveryBackups(report, config)
+						}
+					}
+					if unregisterErr := env.unregisterArtifactEntry(entry); unregisterErr != nil {
+						return unregisterErr
+					}
+					continue
+				}
 				if configMissing {
 					liveMCP = append(liveMCP, entry)
 					continue

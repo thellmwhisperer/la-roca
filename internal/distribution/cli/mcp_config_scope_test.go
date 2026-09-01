@@ -89,6 +89,30 @@ func TestZcodeMCPReinstallExpiresOwnershipWithoutManagedContinuity(t *testing.T)
 	assertZcodeOwnershipExpiresWithoutContinuity(t, "mcp")
 }
 
+func TestZcodeMCPReinstallPreservesOwnershipAfterDeclarationRemoval(t *testing.T) {
+	home := skillTestHome(t)
+	rootPath := filepath.Join(home, ".zcode")
+	config := filepath.Join(rootPath, "cli", "config.json")
+	installZcodeTestIntegration(t, "mcp", home)
+	writeFile(t, config, "{}")
+	installZcodeTestIntegration(t, "mcp", home)
+	registry, err := artifact.LoadRegistry(filepath.Join(home, ".roca", "artifacts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, found := registry.Find(artifactKindMCP, agentcfg.RuntimeZcode, config)
+	if !found || !entry.CreatedRoot || !entry.CreatedConfigDir || !entry.CreatedConfig {
+		t.Fatalf("continuous MCP ownership = %#v, found=%v", entry, found)
+	}
+	report := purgeZcodeTestIntegrations(true)
+	if len(report.Errors) != 0 {
+		t.Fatalf("purge errors = %v", report.Errors)
+	}
+	if _, err := os.Stat(rootPath); !os.IsNotExist(err) {
+		t.Fatalf("continuously owned MCP tree survived purge: %v", err)
+	}
+}
+
 func TestZcodeMCPReinstallDropsOwnershipOnRecreatedManagedTree(t *testing.T) {
 	home := skillTestHome(t)
 	rootPath := filepath.Join(home, ".zcode")

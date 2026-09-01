@@ -824,6 +824,46 @@ func TestZcodeHookReinstallDropsOwnershipOnRecreatedManagedTree(t *testing.T) {
 	}
 }
 
+func TestZcodePurgeWithdrawsDeclarationsFromReplacementTree(t *testing.T) {
+	home := skillTestHome(t)
+	rootPath := filepath.Join(home, ".zcode")
+	config, wrapper := zcodeTestConfigAndWrapper(home)
+	lockPath := filepath.Join(rootPath, ".roca-hooks.lock")
+	installZcodeTestIntegration(t, "mcp", home)
+	installZcodeTestIntegration(t, "hooks", home)
+	managedConfig, err := os.ReadFile(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	managedWrapper, err := os.ReadFile(wrapper)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(rootPath); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, config, string(managedConfig))
+	writeFile(t, wrapper, string(managedWrapper))
+	writeFile(t, lockPath, "")
+	if err := os.Chmod(wrapper, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	report := purgeZcodeTestIntegrations(true)
+	errorsText := strings.Join(report.Errors, "\n")
+	if !strings.Contains(errorsText, "replacement ZCode tree") || !strings.Contains(errorsText, wrapper) {
+		t.Fatalf("replacement artifacts were not reported: %v", report.Errors)
+	}
+	matched, err := agentcfg.ZcodeMCPMatches(config, filepath.Join(home, "roca"))
+	if err != nil || matched || zcodeManagedHookPresent(config) {
+		t.Fatalf("replacement declarations survived: mcp=%v hook=%v err=%v", matched, zcodeManagedHookPresent(config), err)
+	}
+	for _, path := range []string{rootPath, config, wrapper, lockPath} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("replacement ZCode artifact was removed: %s: %v", path, err)
+		}
+	}
+}
+
 func TestZcodeHooksRejectClaudeOnlyFlags(t *testing.T) {
 	for _, operation := range []string{"install", "uninstall"} {
 		for _, flag := range []string{"--pills", "--handoff"} {
