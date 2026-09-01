@@ -221,6 +221,25 @@ func TestPurgeReconciliationKeepsTheOriginalReasonForAPath(t *testing.T) {
 	}
 }
 
+func TestFullPurgeRetainsZcodeLifecycleLock(t *testing.T) {
+	home := t.TempDir()
+	isolateRuntimeDirs(t, home)
+	paths := resolvedIn(t, home)
+	var out strings.Builder
+	env := &cliEnv{out: &out, errOut: &out}
+	if err := env.uninstall(uninstallCommand(env), strings.NewReader(""), true); err != nil {
+		t.Fatal(err)
+	}
+	lockPath := paths.Artifacts + ".zcode.lock"
+	if info, err := os.Lstat(lockPath); err != nil || !info.Mode().IsRegular() {
+		t.Fatalf("stable ZCode lifecycle lock: info=%v err=%v", info, err)
+	}
+	if !strings.Contains(out.String(), lockPath) ||
+		!strings.Contains(out.String(), "concurrent ZCode operations remain serialized") {
+		t.Fatalf("retained lifecycle lock was not reported:\n%s", out.String())
+	}
+}
+
 func TestPurgeRemovesArtifactRegistryLocks(t *testing.T) {
 	home := t.TempDir()
 	paths := resolvedIn(t, home)
