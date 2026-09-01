@@ -29,6 +29,7 @@ const (
 	RuntimeOpencode      = "opencode"
 	RuntimeHermes        = "hermes"
 	RuntimePi            = "pi"
+	RuntimeZcode         = "zcode"
 )
 
 // Skill seats whose user skill directory this product measured but whose MCP
@@ -77,6 +78,9 @@ type runtime struct {
 	pathVar string
 	// serversKey is the member holding the map of MCP servers.
 	serversKey string
+	// parents are JSON objects traversed before serversKey. ZCode keeps
+	// servers under mcp.servers, not at the root.
+	parents []string
 	// entry renders the value Roca owns inside that map.
 	entry func(executable string) fields
 	// locate, when set, replaces dir/file resolution. Claude Desktop keeps its
@@ -134,6 +138,14 @@ var runtimes = map[string]runtime{
 	RuntimePi: {
 		kind: kindJSONC, dirVar: "PI_CODING_AGENT_DIR", dir: []string{".pi", "agent"},
 		file: "mcp.json", serversKey: "mcpServers", entry: commandAndArgs,
+	},
+	RuntimeZcode: {
+		kind: kindJSON, dirVar: "ZCODE_HOME", dir: []string{".zcode"},
+		file: filepath.Join("cli", "config.json"), parents: []string{"mcp"},
+		serversKey: "servers",
+		entry: func(e string) fields {
+			return append(fields{{"type", "stdio"}}, commandAndArgs(e)...)
+		},
 	},
 }
 
@@ -227,9 +239,23 @@ func Install(name, path, executable string) (Outcome, error) {
 	if strings.TrimSpace(executable) == "" {
 		executable = "roca"
 	}
-	return Edit(name, path, func(text string) (string, error) {
+	previous, readErr := os.ReadFile(path)
+	if readErr != nil && !os.IsNotExist(readErr) {
+		return Outcome{}, fmt.Errorf("read %s: %w", path, readErr)
+	}
+	created := missingServerContainers(r, string(previous))
+	outcome, err := Edit(name, path, func(text string) (string, error) {
 		return declare(r, text, executable)
 	}, true)
+	if err != nil {
+		return outcome, err
+	}
+	if outcome.Changed && len(created) > 0 {
+		if err := saveOwnedMCP(path, created); err != nil {
+			return outcome, err
+		}
+	}
+	return outcome, nil
 }
 
 // Uninstall withdraws Roca's entry and leaves the rest of the file exactly as
@@ -240,9 +266,19 @@ func Uninstall(name, path string) (Outcome, error) {
 	if err != nil {
 		return Outcome{}, err
 	}
-	return Edit(name, path, func(text string) (string, error) {
-		return withdraw(r, text)
+	created := loadOwnedMCP(path)
+	outcome, err := Edit(name, path, func(text string) (string, error) {
+		return withdrawCreated(r, text, created)
 	}, false)
+	if err != nil {
+		return outcome, err
+	}
+	if outcome.Changed {
+		if err := clearOwnedMCP(path); err != nil {
+			return outcome, err
+		}
+	}
+	return outcome, nil
 }
 
 // Status reads one runtime's configuration without modifying it.
