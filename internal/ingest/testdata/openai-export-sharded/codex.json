@@ -1,1 +1,35 @@
-{}
+[
+  {
+    "id": "60000000-0000-4000-8000-000000000001",
+    "title": "Synthetic cloud Codex hatch",
+    "archived": false,
+    "turns": [
+      {
+        "id": "turn-user-sharded",
+        "role": "user",
+        "custom_instructions": "",
+        "input_items": [
+          {
+            "type": "message",
+            "role": "user",
+            "content": [{"content_type": "text", "text": "Open the sharded hatch."}]
+          }
+        ]
+      },
+      {
+        "id": "turn-asst-sharded",
+        "role": "assistant",
+        "previous_turn_id": "turn-user-sharded",
+        "branch": "synthetic-sharded",
+        "turn_status": "TaskTurnStatusEnum.COMPLETED",
+        "output_items": [
+          {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"content_type": "text", "text": "The sharded hatch is open."}]
+          }
+        ]
+      }
+    ]
+  }
+]

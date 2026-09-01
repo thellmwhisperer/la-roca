@@ -236,13 +236,17 @@ func registerIngestIncrementalSteps(ctx *godog.ScenarioContext, w *ingestAccepta
 			  AND e.tokens_in IS NULL AND e.tokens_out IS NULL`, 4)
 	})
 	ctx.Then(`^every ChatGPT shard is ingested with OpenAI provenance$`, func() error {
-		if err := w.expectDelta(map[string]int{"sessions": 2, "exchanges": 3}); err != nil {
+		if err := w.expectDelta(map[string]int{"sessions": 3, "exchanges": 4}); err != nil {
 			return err
 		}
-		return expectQueryCount(w, `SELECT COUNT(*) FROM exchanges e
+		if err := expectQueryCount(w, `SELECT COUNT(*) FROM exchanges e
 			JOIN sessions s ON s.session_id = e.session_id
 			WHERE s.source_agent = 'chatgpt-web' AND e.provider = 'openai'
-			  AND e.model IS NOT NULL`, 3)
+			  AND e.model IS NOT NULL`, 3); err != nil {
+			return err
+		}
+		return expectQueryCount(w, `SELECT COUNT(*) FROM sessions
+			WHERE source_agent = 'codex-cloud'`, 1)
 	})
 	ctx.Then(`^ingest names the directory and both export layouts$`, func() error {
 		refusal := w.last.stdout + w.last.stderr
