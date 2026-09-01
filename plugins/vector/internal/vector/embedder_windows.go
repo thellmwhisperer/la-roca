@@ -12,6 +12,8 @@ import (
 
 // Windows embeds through Ollama, which owns its own backend choice, so the
 // writer policy has nowhere to land here.
+func EnableWorkerRestartOnNativeTrap(Embedder) {}
+
 func ConfiguredEmbedder(dataDir, stateDir string, events engine.Sink, tel *telemetry.Store,
 	readOnly bool, writer llamacpp.Policy) Embedder {
 	_ = dataDir

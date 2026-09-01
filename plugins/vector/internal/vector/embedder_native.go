@@ -32,14 +32,12 @@ type Native struct {
 	backend       string
 	fallback      string
 	trapped       atomic.Bool
+	trapAction    func()
 }
 
-var (
-	errNativeTrapped       = fmt.Errorf("semantic search stalled while preparing embeddings")
-	restartAfterNativeTrap = restartTrappedWorker
-)
+var errNativeTrapped = fmt.Errorf("semantic search stalled while preparing embeddings")
 
-func restartTrappedWorker() {
+var restartTrappedWorker = func() {
 	executable, err := os.Executable()
 	if err != nil {
 		return
@@ -76,8 +74,21 @@ func (n *Native) acquireNative(ctx context.Context) error {
 }
 
 func (n *Native) markNativeTrapped() {
-	if n.trapped.CompareAndSwap(false, true) {
-		restartAfterNativeTrap()
+	if n.trapped.CompareAndSwap(false, true) && n.trapAction != nil {
+		n.trapAction()
+	}
+}
+
+func (n *Native) TerminalError() error {
+	if n.trapped.Load() {
+		return errNativeTrapped
+	}
+	return nil
+}
+
+func EnableWorkerRestartOnNativeTrap(embedder Embedder) {
+	if native, ok := embedder.(*Native); ok {
+		native.trapAction = restartTrappedWorker
 	}
 }
 
@@ -90,7 +101,7 @@ func (n *Native) nativeContextError(callerCtx context.Context) error {
 		return err
 	}
 	n.record(telemetry.Record{Kind: telemetry.KindError, Err: "semantic search stalled"})
-	return fmt.Errorf("semantic search stalled while preparing embeddings")
+	return errNativeTrapped
 }
 
 func ConfiguredEmbedder(dataDir, stateDir string, events engine.Sink, tel *telemetry.Store,

@@ -49,7 +49,8 @@ type environment struct {
 	progressFD int
 	// writer is the backend policy the running command decided on. Commands
 	// that never index leave it zero and take the conservative delta default.
-	writer llamacpp.Policy
+	writer            llamacpp.Policy
+	restartNativeTrap bool
 }
 
 // writerPolicy resolves the occasion against the operator lever. The flag is a
@@ -628,6 +629,7 @@ func workerCommand(env *environment) *cobra.Command {
 			// The worker is the install build: a foreground bulk job from the
 			// operator's side, so it accelerates unless the parent said not to.
 			env.writer = writerPolicy(llamacpp.OccasionBulk, nil)
+			env.restartNativeTrap = true
 			state, err := env.resolveStateDir()
 			if err != nil {
 				return err
@@ -793,7 +795,11 @@ func defaultEmbedder(env *environment) vector.Embedder {
 }
 
 func (env *environment) embedder() (vector.Embedder, engine.Sink) {
-	return newEmbedder(env), env.events()
+	embedder := newEmbedder(env)
+	if env.restartNativeTrap {
+		vector.EnableWorkerRestartOnNativeTrap(embedder)
+	}
+	return embedder, env.events()
 }
 
 func (env *environment) queryEmbedder() (vector.Embedder, engine.Sink) {

@@ -140,7 +140,9 @@ func openPreferredWithContext(ctx context.Context, path string, threads int, pol
 }
 
 func (n *Native) Accelerated() bool {
-	_ = n.acquireNative(context.Background())
+	if err := n.acquireNative(context.Background()); err != nil {
+		return false
+	}
 	defer n.releaseNative()
 	return n.backend == llamacpp.BackendMetal
 }
@@ -149,7 +151,9 @@ func (n *Native) Close() {
 	if n == nil {
 		return
 	}
-	_ = n.acquireNative(context.Background())
+	if err := n.acquireNative(context.Background()); err != nil {
+		return
+	}
 	defer n.releaseNative()
 	if n.engine != nil {
 		n.engine.Close()
