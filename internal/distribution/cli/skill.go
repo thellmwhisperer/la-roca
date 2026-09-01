@@ -83,9 +83,22 @@ func skillInstallCommand(env *cliEnv) *cobra.Command {
 			outcomes := make([]skill.Outcome, 0, (len(skill.EmbeddedSkills())+1)*len(runtimes))
 			var refused []error
 			for _, runtime := range runtimes {
+				var release func() error
+				if runtime == agentcfg.RuntimeZcode {
+					release, err = env.lockManagedZcodeLifecycle()
+					if err != nil {
+						refused = append(refused, err)
+						continue
+					}
+				}
 				written, failures := env.installRuntimeSkills(runtime, catalog, force, true, true)
 				outcomes = append(outcomes, written...)
 				refused = append(refused, failures...)
+				if release != nil {
+					if releaseErr := release(); releaseErr != nil {
+						refused = append(refused, releaseErr)
+					}
+				}
 			}
 			if env.json {
 				if err := env.printJSON(map[string]any{"runtimes": outcomes}); err != nil {
@@ -719,11 +732,6 @@ func zcodeManagedHookPresent(configPath string) bool {
 	return present
 }
 
-func zcodeManagedHookPresentText(body string) bool {
-	next, err := agentcfg.RemoveZcodeSessionStartHook(body, zcodeSessionStartMarker)
-	return err == nil && next != body
-}
-
 func zcodeHookSelected(configPath, _ string) (bool, error) {
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		return false, nil
@@ -763,7 +771,7 @@ func zcodeHookPathPreimage(configPath, wrapperPath string) (zcodeHookPathState, 
 	}, nil
 }
 
-func (env *cliEnv) recordZcodeWrapperState(path, executable string, preimage zcodeHookPathState, continuing bool) (func() error, error) {
+func (env *cliEnv) recordZcodeWrapperState(path, executable string, preimage zcodeHookPathState) (func() error, error) {
 	paths, err := env.resolvePaths()
 	if err != nil {
 		return nil, err
@@ -782,14 +790,6 @@ func (env *cliEnv) recordZcodeWrapperState(path, executable string, preimage zco
 	var priorFound bool
 	_, err = mutateArtifactRegistry(paths.Artifacts, func(registry *artifact.Registry) (bool, error) {
 		prior, priorFound = registry.Find(artifactKindHook, agentcfg.RuntimeZcode, path)
-		if priorFound && continuing {
-			transaction.CreatedRoot = transaction.CreatedRoot || prior.CreatedRoot
-			transaction.CreatedConfigDir = transaction.CreatedConfigDir || prior.CreatedConfigDir
-			transaction.CreatedHooksDir = transaction.CreatedHooksDir || prior.CreatedHooksDir
-			transaction.CreatedConfig = transaction.CreatedConfig || prior.CreatedConfig
-			transaction.CreatedLock = transaction.CreatedLock || prior.CreatedLock
-			transaction.CreatedHooksEnabled = transaction.CreatedHooksEnabled || prior.CreatedHooksEnabled
-		}
 		registry.Upsert(transaction)
 		return true, nil
 	})
@@ -876,17 +876,16 @@ func (env *cliEnv) installManagedZcodeHandoffHookLocked(configPath, wrapperPath,
 			err = errors.Join(err, rollbackCreatedZcodeHookPaths(cleanup, configPath, wrapperPath))
 		}
 	}()
-	previous, _, previousFound, err := env.zcodeWrapperExpected(wrapperPath)
+	previous, _, _, err := env.zcodeWrapperExpected(wrapperPath)
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
 	var rollback func() error
 	outcome, warning, err = installZcodeHandoffHookWithPrevious(configPath, wrapperPath, executable, previous,
-		func(configPreimage string, createdEnabled, existed bool) error {
+		func(_ string, createdEnabled, existed bool) error {
 			pathPreimage.createdConfig = !existed
 			pathPreimage.createdHooksEnabled = createdEnabled
-			continuing := previousFound && zcodeManagedHookPresentText(configPreimage)
-			rollback, err = env.recordZcodeWrapperState(wrapperPath, executable, pathPreimage, continuing)
+			rollback, err = env.recordZcodeWrapperState(wrapperPath, executable, pathPreimage)
 			return err
 		})
 	published = err == nil

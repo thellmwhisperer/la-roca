@@ -756,6 +756,50 @@ func TestZcodeHookReinstallExpiresOwnershipWithoutManagedContinuity(t *testing.T
 	assertZcodeOwnershipExpiresWithoutContinuity(t, "hooks")
 }
 
+func TestZcodeHookReinstallDropsOwnershipOnRecreatedManagedTree(t *testing.T) {
+	home := skillTestHome(t)
+	rootPath := filepath.Join(home, ".zcode")
+	config, wrapper := zcodeTestConfigAndWrapper(home)
+	lockPath := filepath.Join(rootPath, ".roca-hooks.lock")
+	installZcodeTestIntegration(t, "hooks", home)
+	managedConfig, err := os.ReadFile(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	managedWrapper, err := os.ReadFile(wrapper)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(rootPath); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, config, string(managedConfig))
+	writeFile(t, wrapper, string(managedWrapper))
+	writeFile(t, lockPath, "")
+	if err := os.Chmod(wrapper, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	installZcodeTestIntegration(t, "hooks", home)
+	registry, err := artifact.LoadRegistry(filepath.Join(home, ".roca", "artifacts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, found := registry.Find(artifactKindHook, agentcfg.RuntimeZcode, wrapper)
+	if !found || entry.CreatedRoot || entry.CreatedConfigDir || entry.CreatedHooksDir || entry.CreatedConfig ||
+		entry.CreatedLock || entry.CreatedHooksEnabled {
+		t.Fatalf("recreated hook path ownership = %#v, found=%v", entry, found)
+	}
+	report := purgeZcodeTestIntegrations(true)
+	if !strings.Contains(strings.Join(report.Errors, "\n"), lockPath) {
+		t.Fatalf("operator-recreated lock was not reported: %v", report.Errors)
+	}
+	for _, path := range []string{config, lockPath, rootPath} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("operator-recreated ZCode path was removed: %s: %v", path, err)
+		}
+	}
+}
+
 func TestZcodeHooksRejectClaudeOnlyFlags(t *testing.T) {
 	for _, operation := range []string{"install", "uninstall"} {
 		for _, flag := range []string{"--pills", "--handoff"} {
