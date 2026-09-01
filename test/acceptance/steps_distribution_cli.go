@@ -254,8 +254,8 @@ func (w *distributionWorld) helpIsComplete() error {
 		"doctor": "configuration", "ingest": "source", "init": "database",
 		"hooks": "authorship", "layers": "layer", "model": "model", "query": "search",
 		"explore": "concept", "playground": "sql", "remote": "ssh", "store": "memory",
-		"uninstall": "remove", "update": "release", "plugin": "plugin", "plugins": "plugin",
-		"tool-call-observer": "tool",
+		"pill": "pill", "handoff": "handoff", "uninstall": "remove", "update": "release",
+		"plugin": "plugin", "plugins": "plugin", "tool-call-observer": "tool",
 	}
 	found := map[string]string{}
 	inCommands := false
