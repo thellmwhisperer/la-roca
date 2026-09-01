@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -226,6 +227,57 @@ exit 1
 	}
 	if strings.Contains(string(body), "roca-handoff.sh") {
 		t.Fatalf("zcode hook survived full uninstall: %s", body)
+	}
+}
+
+func TestZcodeFreshHookPurgeRemovesCreatedRuntimePaths(t *testing.T) {
+	home := skillTestHome(t)
+	root := rootCommand(&cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}})
+	root.SetArgs([]string{"hooks", "install", "zcode", "--executable", filepath.Join(home, "roca")})
+	if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "installed but inactive") {
+		t.Fatalf("fresh inactive install error = %v", err)
+	}
+	report := lifecycle.Report{Purged: true, Deleted: []string{}}
+	(&cliEnv{out: io.Discard, errOut: io.Discard}).withdrawTheIntegrations(&report, true)
+	if len(report.Errors) != 0 {
+		t.Fatalf("purge errors = %v", report.Errors)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".zcode")); !os.IsNotExist(err) {
+		t.Fatalf("fresh ZCode paths survived purge: %v", err)
+	}
+}
+
+func TestZcodeHookPurgePreservesPreexistingConfig(t *testing.T) {
+	home := skillTestHome(t)
+	config := filepath.Join(home, ".zcode", "cli", "config.json")
+	if err := os.MkdirAll(filepath.Dir(config), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	initial := `{"operator":true,"hooks":{"enabled":true}}`
+	if err := os.WriteFile(config, []byte(initial), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := rootCommand(&cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}})
+	root.SetArgs([]string{"hooks", "install", "zcode", "--executable", filepath.Join(home, "roca")})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	report := lifecycle.Report{Purged: true, Deleted: []string{}}
+	(&cliEnv{out: io.Discard, errOut: io.Discard}).withdrawTheIntegrations(&report, true)
+	if len(report.Errors) != 0 {
+		t.Fatalf("purge errors = %v", report.Errors)
+	}
+	body, err := os.ReadFile(config)
+	if err != nil || string(body) != initial {
+		t.Fatalf("preexisting config changed: body=%q err=%v", body, err)
+	}
+	for _, path := range []string{
+		filepath.Join(home, ".zcode", ".roca-hooks.lock"),
+		filepath.Join(home, ".zcode", "hooks"),
+	} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("created ZCode path survived purge: %s", path)
+		}
 	}
 }
 
@@ -614,6 +666,25 @@ func TestZcodeWrapperRemovalDoesNotCreateMissingDirectories(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, "missing")); !os.IsNotExist(err) {
 		t.Fatalf("absent wrapper removal created directories: %v", err)
+	}
+}
+
+func TestZcodeWrapperRemovalRestoresQuarantineOnFailure(t *testing.T) {
+	home := t.TempDir()
+	wrapper := filepath.Join(home, "roca-handoff.sh")
+	expected := []byte(zcodeWrapper(filepath.Join(home, "roca")))
+	if err := os.WriteFile(wrapper, expected, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	failure := errors.New("synthetic removal failure")
+	retained, err := removeZcodeWrapperQuarantine(wrapper, expected, nil,
+		func(string) error { return failure })
+	if !retained || !errors.Is(err, failure) {
+		t.Fatalf("failed removal: retained=%v err=%v", retained, err)
+	}
+	body, readErr := os.ReadFile(wrapper)
+	if readErr != nil || string(body) != string(expected) {
+		t.Fatalf("wrapper was not restored: body=%q err=%v", body, readErr)
 	}
 }
 

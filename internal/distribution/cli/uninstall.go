@@ -322,11 +322,19 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 			removeRecoveryBackups(report, settings)
 		}
 	}
-	type zcodeHookTarget struct{ settings, wrapper string }
+	type zcodeHookTarget struct {
+		settings, wrapper string
+		entry             artifact.Entry
+		registered        bool
+	}
 	var zcodeHookTargets []zcodeHookTarget
-	seenZcodeWrappers := map[string]bool{}
-	addZcodeHookTarget := func(wrapper string) {
-		if seenZcodeWrappers[wrapper] {
+	seenZcodeWrappers := map[string]int{}
+	addZcodeHookTarget := func(wrapper string, entry artifact.Entry, registered bool) {
+		if index, found := seenZcodeWrappers[wrapper]; found {
+			if registered {
+				zcodeHookTargets[index].entry = entry
+				zcodeHookTargets[index].registered = true
+			}
 			return
 		}
 		settings, err := zcodeHookConfigForWrapper(wrapper)
@@ -334,8 +342,10 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 			failed(report, "%s", err)
 			return
 		}
-		seenZcodeWrappers[wrapper] = true
-		zcodeHookTargets = append(zcodeHookTargets, zcodeHookTarget{settings: settings, wrapper: wrapper})
+		seenZcodeWrappers[wrapper] = len(zcodeHookTargets)
+		zcodeHookTargets = append(zcodeHookTargets, zcodeHookTarget{
+			settings: settings, wrapper: wrapper, entry: entry, registered: registered,
+		})
 	}
 	if wrapper, err := zcodeHookWrapperPath(); err != nil {
 		failed(report, "%s", err)
@@ -344,12 +354,12 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 	} else if selected, err := zcodeHookSelected(settings, wrapper); err != nil {
 		failed(report, "inspect ZCode hook selection: %v", err)
 	} else if selected {
-		addZcodeHookTarget(wrapper)
+		addZcodeHookTarget(wrapper, artifact.Entry{}, false)
 	}
 	if registryErr == nil {
 		for _, entry := range registry.Entries {
 			if entry.Kind == artifactKindHook && entry.Runtime == agentcfg.RuntimeZcode {
-				addZcodeHookTarget(entry.Path)
+				addZcodeHookTarget(entry.Path, entry, true)
 			}
 		}
 	}
@@ -360,15 +370,26 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 		if registryErr != nil {
 			err = fmt.Errorf("ownership registry unavailable")
 		} else {
-			outcome, warning, err = env.uninstallManagedZcodeHandoffHook(target.settings, target.wrapper)
+			outcome, warning, err = env.uninstallManagedZcodeHandoffHook(
+				target.settings, target.wrapper, purge && target.registered)
 		}
 		if warning != "" {
 			fmt.Fprintln(env.errOut, warning)
 		}
-		withdrawn("the ZCode handoff hook from "+target.settings, outcome, err)
 		if purge {
 			removeRecoveryBackups(report, target.settings)
 		}
+		if err == nil && purge && target.registered {
+			present, verified := zcodeManagedHookState(target.settings)
+			if !verified || present {
+				err = fmt.Errorf("ZCode hook withdrawal from %s could not be verified", target.settings)
+			} else if cleanupErr := cleanupCreatedZcodeHookPaths(target.entry, target.settings, target.wrapper); cleanupErr != nil {
+				err = cleanupErr
+			} else {
+				err = env.unregisterArtifactEntry(target.entry)
+			}
+		}
+		withdrawn("the ZCode handoff hook from "+target.settings, outcome, err)
 	}
 
 	home, err := os.UserHomeDir()
@@ -485,6 +506,47 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 		}
 	}
 	return outcomes
+}
+
+func cleanupCreatedZcodeHookPaths(entry artifact.Entry, configPath, wrapperPath string) error {
+	root := filepath.Dir(filepath.Dir(wrapperPath))
+	if entry.CreatedConfig {
+		body, err := os.ReadFile(configPath)
+		switch {
+		case os.IsNotExist(err):
+		case err != nil:
+			return err
+		case strings.TrimSpace(string(body)) == "{}":
+			if err := os.Remove(configPath); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+		}
+	}
+	if entry.CreatedLock {
+		lockPath := filepath.Join(root, ".roca-hooks.lock")
+		if err := os.Remove(lockPath); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	for _, directory := range []struct {
+		path    string
+		created bool
+	}{
+		{filepath.Dir(wrapperPath), entry.CreatedHooksDir},
+		{filepath.Dir(configPath), entry.CreatedConfigDir},
+		{root, entry.CreatedRoot},
+	} {
+		if !directory.created {
+			continue
+		}
+		if err := os.Remove(directory.path); err != nil && !os.IsNotExist(err) {
+			if entries, readErr := os.ReadDir(directory.path); readErr == nil && len(entries) > 0 {
+				continue
+			}
+			return err
+		}
+	}
+	return nil
 }
 
 // removeHollowSkillDirs takes back the chain a skill withdrawal could not,

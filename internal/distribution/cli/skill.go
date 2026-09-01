@@ -727,7 +727,30 @@ const (
 	zcodeWrapperStateFormat = "zcode-wrapper-v1"
 )
 
-func (env *cliEnv) recordZcodeWrapperState(path, executable string) (func() error, error) {
+type zcodeHookPathState struct {
+	createdRoot, createdConfigDir, createdHooksDir, createdConfig, createdLock bool
+}
+
+func zcodeHookPathPreimage(configPath, wrapperPath string) (zcodeHookPathState, error) {
+	root := filepath.Dir(filepath.Dir(wrapperPath))
+	paths := []string{root, filepath.Dir(configPath), filepath.Dir(wrapperPath), configPath, filepath.Join(root, ".roca-hooks.lock")}
+	missing := make([]bool, len(paths))
+	for index, path := range paths {
+		_, err := os.Lstat(path)
+		switch {
+		case os.IsNotExist(err):
+			missing[index] = true
+		case err != nil:
+			return zcodeHookPathState{}, err
+		}
+	}
+	return zcodeHookPathState{
+		createdRoot: missing[0], createdConfigDir: missing[1], createdHooksDir: missing[2],
+		createdConfig: missing[3], createdLock: missing[4],
+	}, nil
+}
+
+func (env *cliEnv) recordZcodeWrapperState(path, executable string, preimage zcodeHookPathState) (func() error, error) {
 	paths, err := env.resolvePaths()
 	if err != nil {
 		return nil, err
@@ -737,12 +760,22 @@ func (env *cliEnv) recordZcodeWrapperState(path, executable string) (func() erro
 		Kind: artifactKindHook, Runtime: agentcfg.RuntimeZcode, Path: path,
 		InstalledVersion: env.build.Version, AvailableVersion: env.build.Version,
 		SystemSHA256: artifact.Checksum(expected), Format: zcodeWrapperStateFormat,
-		Executable: executable,
+		Executable:  executable,
+		CreatedRoot: preimage.createdRoot, CreatedConfigDir: preimage.createdConfigDir,
+		CreatedHooksDir: preimage.createdHooksDir, CreatedConfig: preimage.createdConfig,
+		CreatedLock: preimage.createdLock,
 	}
 	var prior artifact.Entry
 	var priorFound bool
 	_, err = mutateArtifactRegistry(paths.Artifacts, func(registry *artifact.Registry) (bool, error) {
 		prior, priorFound = registry.Find(artifactKindHook, agentcfg.RuntimeZcode, path)
+		if priorFound {
+			transaction.CreatedRoot = prior.CreatedRoot
+			transaction.CreatedConfigDir = prior.CreatedConfigDir
+			transaction.CreatedHooksDir = prior.CreatedHooksDir
+			transaction.CreatedConfig = prior.CreatedConfig
+			transaction.CreatedLock = prior.CreatedLock
+		}
 		registry.Upsert(transaction)
 		return true, nil
 	})
@@ -813,6 +846,10 @@ func (env *cliEnv) installManagedZcodeHandoffHook(configPath, wrapperPath, execu
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
 	defer func() { err = errors.Join(err, stableRelease()) }()
+	pathPreimage, err := zcodeHookPathPreimage(configPath, wrapperPath)
+	if err != nil {
+		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
+	}
 	release, err := lockZcodeHookLifecycle(configPath, wrapperPath, true)
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
@@ -822,7 +859,7 @@ func (env *cliEnv) installManagedZcodeHandoffHook(configPath, wrapperPath, execu
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
-	rollback, err := env.recordZcodeWrapperState(wrapperPath, executable)
+	rollback, err := env.recordZcodeWrapperState(wrapperPath, executable, pathPreimage)
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
@@ -842,7 +879,7 @@ func (env *cliEnv) installManagedZcodeHandoffHook(configPath, wrapperPath, execu
 	return outcome, warning, err
 }
 
-func (env *cliEnv) uninstallManagedZcodeHandoffHook(configPath, wrapperPath string) (outcome agentcfg.Outcome, warning string, err error) {
+func (env *cliEnv) uninstallManagedZcodeHandoffHook(configPath, wrapperPath string, retainOwnership ...bool) (outcome agentcfg.Outcome, warning string, err error) {
 	configPath, err = filepath.Abs(configPath)
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
@@ -867,7 +904,8 @@ func (env *cliEnv) uninstallManagedZcodeHandoffHook(configPath, wrapperPath stri
 	}
 	outcome, warning, err = uninstallZcodeHandoffHookUnlocked(configPath, wrapperPath, expected)
 	present, verified := zcodeManagedHookState(configPath)
-	if err == nil && found && verified && !present {
+	retain := len(retainOwnership) > 0 && retainOwnership[0]
+	if err == nil && found && verified && !present && !retain {
 		err = env.unregisterArtifactEntry(entry)
 	}
 	return outcome, warning, err
@@ -1108,6 +1146,10 @@ func removeZcodeWrapper(path string, expected []byte) (bool, error) {
 }
 
 func removeZcodeWrapperAfterQuarantine(path string, expected []byte, afterRename func()) (bool, error) {
+	return removeZcodeWrapperQuarantine(path, expected, afterRename, os.Remove)
+}
+
+func removeZcodeWrapperQuarantine(path string, expected []byte, afterRename func(), removeQuarantine func(string) error) (bool, error) {
 	if _, err := os.Lstat(path); os.IsNotExist(err) {
 		return false, nil
 	} else if err != nil {
@@ -1151,8 +1193,9 @@ func removeZcodeWrapperAfterQuarantine(path string, expected []byte, afterRename
 		}
 		return true, nil
 	}
-	if err := os.Remove(quarantine); err != nil {
-		return false, fmt.Errorf("remove %s: %w", quarantine, err)
+	if err := removeQuarantine(quarantine); err != nil {
+		restoreErr := securefile.RenameNoReplace(quarantine, path)
+		return true, errors.Join(fmt.Errorf("remove %s: %w", quarantine, err), restoreErr)
 	}
 	if _, err := os.Stat(path); err == nil {
 		return true, nil
