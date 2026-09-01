@@ -78,6 +78,8 @@ Parent containers (`hooks`, `hooks.events`) created by this install are
 recorded beside the config and pruned on uninstall only when they remain empty.
 The command object carries `type`, `command`, and `timeoutMs`. Neighbouring
 operator hooks stay in place. Claude Desktop is not part of this installer.
+The ZCode config and wrapper lifecycle is owned by
+[`internal/distribution/cli/hooks_zcode.go`](../internal/distribution/cli/hooks_zcode.go).
 
 Other harnesses can use the same client-side pattern: intercept the shell tool,
 read identity only from a harness-owned session source, and inject both flags.
