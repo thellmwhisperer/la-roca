@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 
 	"github.com/cucumber/godog"
@@ -524,6 +525,17 @@ command = "other-binary"
   }
 }
 `, nil
+	case "claude-desktop":
+		return claudeDesktopConfigPath(home), `{
+  "numStartups": 42,
+  "mcpServers": {
+    "other-server": {
+      "type": "stdio",
+      "command": "other-binary"
+    }
+  }
+}
+`, nil
 	case "opencode":
 		return filepath.Join(home, ".config", "opencode", "opencode.json"), `{
   // OpenCode reads JSONC and this comment must survive
@@ -555,6 +567,19 @@ mcp_servers:
 `, nil
 	default:
 		return "", "", fmt.Errorf("I do not know the runtime %q", agent)
+	}
+}
+
+func claudeDesktopConfigPath(home string) string {
+	switch runtime.GOOS {
+	case "darwin":
+		return filepath.Join(home, "Library", "Application Support", "Claude",
+			"claude_desktop_config.json")
+	case "windows":
+		return filepath.Join(home, "AppData", "Roaming", "Claude",
+			"claude_desktop_config.json")
+	default:
+		return filepath.Join(home, ".config", "Claude", "claude_desktop_config.json")
 	}
 }
 

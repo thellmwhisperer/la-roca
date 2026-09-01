@@ -37,6 +37,17 @@ args = ["--stdio"]
   "theme": "dark"
 }
 `,
+	agentcfg.RuntimeClaudeDesktop: `{
+  "numStartups": 42,
+  "mcpServers": {
+    "some-other-server": {
+      "type": "stdio",
+      "command": "other-binary"
+    }
+  },
+  "theme": "dark"
+}
+`,
 	agentcfg.RuntimeOpencode: `{
   // OpenCode reads JSONC, so this comment has to survive
   "$schema": "https://opencode.ai/config.json",
