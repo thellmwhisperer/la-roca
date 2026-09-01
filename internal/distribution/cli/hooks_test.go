@@ -550,6 +550,50 @@ func TestZcodeHookReinstallMergesNewEnablementOwnership(t *testing.T) {
 	}
 }
 
+func TestZcodeHookReinstallExpiresOwnershipWithoutManagedContinuity(t *testing.T) {
+	home := skillTestHome(t)
+	rootPath := filepath.Join(home, ".zcode")
+	config := filepath.Join(rootPath, "cli", "config.json")
+	install := func() {
+		root := rootCommand(&cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}})
+		root.SetArgs([]string{"hooks", "install", "zcode", "--executable", filepath.Join(home, "roca")})
+		if err := root.Execute(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	install()
+	if err := os.RemoveAll(rootPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(config), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	install()
+	report := lifecycle.Report{Purged: true, Deleted: []string{}}
+	(&cliEnv{out: io.Discard, errOut: io.Discard}).withdrawTheIntegrations(&report, true)
+	if !strings.Contains(strings.Join(report.Errors, "\n"), config) {
+		t.Fatalf("operator-recreated config was not retained: %v", report.Errors)
+	}
+	if body, err := os.ReadFile(config); err != nil || strings.TrimSpace(string(body)) != "{}" {
+		t.Fatalf("operator-recreated config changed: body=%q err=%v", body, err)
+	}
+}
+
+func TestZcodeHooksRejectForce(t *testing.T) {
+	home := skillTestHome(t)
+	root := rootCommand(&cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}})
+	root.SetArgs([]string{"hooks", "install", "zcode", "--force", "--executable", filepath.Join(home, "roca")})
+	if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "--force is not supported") {
+		t.Fatalf("ZCode --force error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".zcode")); !os.IsNotExist(err) {
+		t.Fatalf("rejected --force changed ZCode state: %v", err)
+	}
+}
+
 func TestFullUninstallWithdrawsRegisteredZcodeHome(t *testing.T) {
 	home := skillTestHome(t)
 	t.Chdir(home)

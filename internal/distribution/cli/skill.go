@@ -504,6 +504,10 @@ func hooksInstallCommand(env *cliEnv) *cobra.Command {
 		func(runtime, path string) (agentcfg.Outcome, string, error) {
 			declared := chosenExecutable(executable)
 			if runtime == agentcfg.RuntimeZcode {
+				if force {
+					return agentcfg.Outcome{Runtime: runtime, Path: path}, "",
+						fmt.Errorf("--force is not supported for ZCode hooks; move or remove the conflicting wrapper, then retry")
+				}
 				if err := zcodeHookPlatformError(goruntime.GOOS, os.Stat); err != nil {
 					return agentcfg.Outcome{Runtime: runtime, Path: path}, "", err
 				}
@@ -746,7 +750,7 @@ func zcodeHookPathPreimage(configPath, wrapperPath string) (zcodeHookPathState, 
 	}, nil
 }
 
-func (env *cliEnv) recordZcodeWrapperState(path, executable string, preimage zcodeHookPathState) (func() error, error) {
+func (env *cliEnv) recordZcodeWrapperState(path, executable string, preimage zcodeHookPathState, continuing bool) (func() error, error) {
 	paths, err := env.resolvePaths()
 	if err != nil {
 		return nil, err
@@ -765,7 +769,7 @@ func (env *cliEnv) recordZcodeWrapperState(path, executable string, preimage zco
 	var priorFound bool
 	_, err = mutateArtifactRegistry(paths.Artifacts, func(registry *artifact.Registry) (bool, error) {
 		prior, priorFound = registry.Find(artifactKindHook, agentcfg.RuntimeZcode, path)
-		if priorFound {
+		if priorFound && continuing {
 			transaction.CreatedRoot = transaction.CreatedRoot || prior.CreatedRoot
 			transaction.CreatedConfigDir = transaction.CreatedConfigDir || prior.CreatedConfigDir
 			transaction.CreatedHooksDir = transaction.CreatedHooksDir || prior.CreatedHooksDir
@@ -860,7 +864,8 @@ func (env *cliEnv) installManagedZcodeHandoffHook(configPath, wrapperPath, execu
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
-	rollback, err := env.recordZcodeWrapperState(wrapperPath, executable, pathPreimage)
+	continuing := previousFound && zcodeManagedHookPresent(configPath)
+	rollback, err := env.recordZcodeWrapperState(wrapperPath, executable, pathPreimage, continuing)
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}

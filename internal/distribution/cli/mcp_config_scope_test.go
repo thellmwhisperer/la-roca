@@ -110,6 +110,38 @@ func TestZcodeMCPReinstallMergesNewPathOwnership(t *testing.T) {
 	}
 }
 
+func TestZcodeMCPReinstallExpiresOwnershipWithoutManagedContinuity(t *testing.T) {
+	home := skillTestHome(t)
+	rootPath := filepath.Join(home, ".zcode")
+	config := filepath.Join(rootPath, "cli", "config.json")
+	install := func() {
+		root := rootCommand(&cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}})
+		root.SetArgs([]string{"mcp", "install", "zcode", "--executable", filepath.Join(home, "roca")})
+		if err := root.Execute(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	install()
+	if err := os.RemoveAll(rootPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(config), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	install()
+	report := lifecycle.Report{Purged: true, Deleted: []string{}}
+	(&cliEnv{out: io.Discard, errOut: io.Discard}).withdrawTheIntegrations(&report, true)
+	if !strings.Contains(strings.Join(report.Errors, "\n"), config) {
+		t.Fatalf("operator-recreated config was not retained: %v", report.Errors)
+	}
+	if body, err := os.ReadFile(config); err != nil || strings.TrimSpace(string(body)) != "{}" {
+		t.Fatalf("operator-recreated config changed: body=%q err=%v", body, err)
+	}
+}
+
 func TestZcodeMCPPersistsAbsoluteConfigPath(t *testing.T) {
 	home := skillTestHome(t)
 	first := t.TempDir()
