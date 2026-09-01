@@ -276,10 +276,11 @@ func pathOf(name, home string, env func(string) string, skillName string) (strin
 // behind: os.Remove is the whole guard, since another skill's directory keeps
 // it from being empty.
 func UninstallWithChecksum(name, path, systemSHA256 string) (Outcome, error) {
-	return uninstallWithChecksum(name, path, systemSHA256, nil, os.Remove)
+	return uninstallWithChecksum(name, path, systemSHA256, securefile.RenameNoReplace, nil, os.Remove)
 }
 
-func uninstallWithChecksum(name, path, systemSHA256 string, afterQuarantine func(), removeQuarantine func(string) error) (Outcome, error) {
+func uninstallWithChecksum(name, path, systemSHA256 string, renameQuarantine func(string, string) error,
+	afterQuarantine func(), removeQuarantine func(string) error) (Outcome, error) {
 	if _, ok := rootOf[name]; !ok {
 		return Outcome{}, unknown(name)
 	}
@@ -299,6 +300,13 @@ func uninstallWithChecksum(name, path, systemSHA256 string, afterQuarantine func
 	if !ownedDir(filepath.Base(dir)) {
 		return out, nil
 	}
+	previous, err := os.ReadFile(path)
+	if err != nil {
+		return out, err
+	}
+	if _, _, owned := removableSkillContent(path, previous, systemSHA256); !owned {
+		return out, nil
+	}
 	temporary, err := os.CreateTemp(dir, "."+filepath.Base(path)+"-remove-*")
 	if err != nil {
 		return out, fmt.Errorf("prepare removal of %s: %w", path, err)
@@ -311,7 +319,7 @@ func uninstallWithChecksum(name, path, systemSHA256 string, afterQuarantine func
 	if err := os.Remove(quarantine); err != nil {
 		return out, err
 	}
-	if err := os.Rename(path, quarantine); err != nil {
+	if err := renameQuarantine(path, quarantine); err != nil {
 		if os.IsNotExist(err) {
 			out.Missing = true
 			return out, nil
@@ -327,22 +335,13 @@ func uninstallWithChecksum(name, path, systemSHA256 string, afterQuarantine func
 		}
 		return cause
 	}
-	previous, err := os.ReadFile(quarantine)
+	previous, err = os.ReadFile(quarantine)
 	if err != nil {
 		return out, restore(fmt.Errorf("read %s: %w", quarantine, err))
 	}
-	user, unproven := "", false
-	if zones, err := artifact.Parse(string(previous)); err == nil {
-		if artifact.Checksum(zones.System) != systemSHA256 {
-			return out, restore(nil)
-		}
-		user = zones.User
-	} else if artifact.Checksum(string(previous)) != systemSHA256 {
-		_, legacy := ContentForPath(path)
-		if legacy == "" || !strings.HasPrefix(string(previous), legacy) {
-			return out, restore(nil)
-		}
-		unproven = true
+	user, unproven, owned := removableSkillContent(path, previous, systemSHA256)
+	if !owned {
+		return out, restore(nil)
 	}
 	if unproven || user != "" {
 		backup, err := securefile.BackUp(path, previous)
@@ -368,6 +367,23 @@ func uninstallWithChecksum(name, path, systemSHA256 string, afterQuarantine func
 		}
 	}
 	return out, nil
+}
+
+func removableSkillContent(path string, content []byte, systemSHA256 string) (string, bool, bool) {
+	if zones, err := artifact.Parse(string(content)); err == nil {
+		if artifact.Checksum(zones.System) != systemSHA256 {
+			return "", false, false
+		}
+		return zones.User, false, true
+	}
+	if artifact.Checksum(string(content)) == systemSHA256 {
+		return "", false, true
+	}
+	_, legacy := ContentForPath(path)
+	if legacy == "" || !strings.HasPrefix(string(content), legacy) {
+		return "", false, false
+	}
+	return "", true, true
 }
 
 // InstallWithOptions writes the zoned canonical skill at path. Idempotent

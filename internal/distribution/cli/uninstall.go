@@ -470,7 +470,7 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 		failed(report, "%s", err)
 	} else if selected, err := zcodeHookSelected(settings, wrapper); err != nil {
 		failed(report, "inspect ZCode hook selection: %v", err)
-	} else if selected {
+	} else if selected && !purgedHookPaths[wrapper] {
 		addZcodeHookTarget(wrapper, artifact.Entry{}, false)
 	}
 	if registryErr == nil {
@@ -760,47 +760,14 @@ func (env *cliEnv) purgeRegisteredZcodeIntegrations(report *lifecycle.Report, re
 			if configErr != nil && !configMissing {
 				return configErr
 			}
-			replacementReported := false
-			reportReplacement := func(rootExists bool) {
-				if rootExists && !replacementReported {
-					failed(report, "retained replacement ZCode tree at %s", filepath.Dir(filepath.Dir(config)))
-					replacementReported = true
-				}
-			}
 			liveHooks := make([]artifact.Entry, 0, len(group.hooks))
 			withdrawOnlyHooks := make([]artifact.Entry, 0, len(group.hooks))
 			for _, entry := range group.hooks {
-				rootContinuous, rootExists, rootErr := zcodeRootContinuity(config, entry)
+				rootContinuous, _, rootErr := zcodeRootContinuity(config, entry)
 				if rootErr != nil {
 					return rootErr
 				}
 				if !rootContinuous {
-					reportReplacement(rootExists)
-					if !configMissing {
-						declared, declarationErr := zcodeHookDeclarationPresent(config)
-						if declarationErr != nil {
-							return declarationErr
-						}
-						if declared {
-							outcome, warning, uninstallErr := uninstallZcodeHandoffHookUnlocked(
-								config, entry.Path, nil, false)
-							if warning != "" {
-								fmt.Fprintln(env.errOut, warning)
-							}
-							if uninstallErr != nil {
-								return fmt.Errorf("withdraw the ZCode handoff hook from %s: %w", config, uninstallErr)
-							}
-							if outcome.Changed {
-								outcomes = append(outcomes, outcome)
-							}
-							removeRecoveryBackups(report, config)
-						}
-					}
-					if _, wrapperErr := os.Lstat(entry.Path); wrapperErr == nil {
-						failed(report, "retained uncertain ZCode hook wrapper %s", entry.Path)
-					} else if !os.IsNotExist(wrapperErr) {
-						return wrapperErr
-					}
 					if unregisterErr := env.unregisterArtifactEntry(entry); unregisterErr != nil {
 						return unregisterErr
 					}
@@ -1124,12 +1091,26 @@ func rollbackCreatedZcodeHookPaths(preimage zcodeHookPathState, configPath, wrap
 type zcodeArtifactVerifier func(string, os.FileInfo) (bool, error)
 
 func removeOwnedZcodeArtifact(path string, verify zcodeArtifactVerifier, afterRename func(), removeQuarantine func(string) error) (bool, error) {
-	if _, err := os.Lstat(path); os.IsNotExist(err) {
+	return removeOwnedZcodeArtifactWithRename(path, verify, securefile.RenameNoReplace, afterRename, removeQuarantine)
+}
+
+func removeOwnedZcodeArtifactWithRename(path string, verify zcodeArtifactVerifier,
+	renameQuarantine func(string, string) error, afterRename func(), removeQuarantine func(string) error) (bool, error) {
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
 		return false, nil
-	} else if err != nil {
+	}
+	if err != nil {
 		return true, err
 	}
 	if verify == nil {
+		return true, nil
+	}
+	owned, err := verify(path, info)
+	if err != nil {
+		return true, err
+	}
+	if !owned {
 		return true, nil
 	}
 	temporary, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+"-remove-*")
@@ -1144,7 +1125,7 @@ func removeOwnedZcodeArtifact(path string, verify zcodeArtifactVerifier, afterRe
 	if err := os.Remove(quarantine); err != nil {
 		return true, err
 	}
-	if err := os.Rename(path, quarantine); err != nil {
+	if err := renameQuarantine(path, quarantine); err != nil {
 		if os.IsNotExist(err) {
 			return false, nil
 		}
@@ -1159,11 +1140,11 @@ func removeOwnedZcodeArtifact(path string, verify zcodeArtifactVerifier, afterRe
 		}
 		return true, cause
 	}
-	info, err := os.Lstat(quarantine)
+	info, err = os.Lstat(quarantine)
 	if err != nil {
 		return restore(err)
 	}
-	owned, err := verify(quarantine, info)
+	owned, err = verify(quarantine, info)
 	if err != nil {
 		return restore(err)
 	}
