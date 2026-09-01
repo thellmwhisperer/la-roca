@@ -623,6 +623,8 @@ func zcodeHookWrapperPath() (string, error) {
 	return filepath.Join(root, "hooks", "roca-handoff.sh"), nil
 }
 
+const zcodeSessionStartMarker = "^(?:.*|roca_session_start_marker)$"
+
 func installZcodeHandoffHook(configPath, wrapperPath, executable string) (agentcfg.Outcome, string, error) {
 	state, err := readZcodeWrapperState(wrapperPath)
 	if err != nil {
@@ -638,7 +640,7 @@ func installZcodeHandoffHook(configPath, wrapperPath, executable string) (agentc
 	}
 	command := zcodeOwnedHookCommand(wrapperPath)
 	outcome, err := agentcfg.Edit(agentcfg.RuntimeZcode, configPath, func(previous string) (string, error) {
-		return agentcfg.DeclareZcodeSessionStartHook(previous, command, 15000)
+		return agentcfg.DeclareZcodeSessionStartHook(previous, zcodeSessionStartMarker, command, 15000)
 	}, true)
 	if err != nil {
 		if restoreErr := restoreZcodeWrapper(wrapperPath, state, []byte(wrapper)); restoreErr != nil {
@@ -660,9 +662,9 @@ func uninstallZcodeHandoffHook(configPath, wrapperPath string) (agentcfg.Outcome
 	var warning string
 	command := zcodeOwnedHookCommand(wrapperPath)
 	outcome, err := agentcfg.Edit(agentcfg.RuntimeZcode, configPath, func(previous string) (string, error) {
-		next, editErr := agentcfg.RemoveZcodeSessionStartHook(previous, command)
+		next, editErr := agentcfg.RemoveZcodeSessionStartHook(previous, zcodeSessionStartMarker)
 		if editErr != nil {
-			warning = fmt.Sprintf("warning: %s is not readable as zcode settings; remove the nested hooks.events.SessionStart command %s by hand", configPath, command)
+			warning = fmt.Sprintf("warning: %s is not readable as zcode settings; remove the nested hooks.events.SessionStart entry whose matcher is %q and command is %s by hand", configPath, zcodeSessionStartMarker, command)
 			return previous, nil
 		}
 		return next, nil
@@ -755,7 +757,7 @@ func writeZcodeWrapper(path, content string, state zcodeWrapperState) error {
 		}
 		return os.Chmod(path, 0o700)
 	}
-	return securefile.Write(path, []byte(content), 0o700, 0o700)
+	return securefile.CreatePreservingParentMode(path, []byte(content), 0o700, 0o700)
 }
 
 func removeZcodeWrapper(path string) error {

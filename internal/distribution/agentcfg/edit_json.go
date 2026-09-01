@@ -175,10 +175,16 @@ func serversInside(r runtime, view string, container object) (object, member, bo
 	return inside, servers, true, nil
 }
 
-func DeclareZcodeSessionStartHook(text, command string, timeoutMs int) (string, error) {
+func DeclareZcodeSessionStartHook(text, marker, command string, timeoutMs int) (string, error) {
+	if marker == "" {
+		return "", fmt.Errorf("ZCode SessionStart marker must not be empty")
+	}
 	if strings.TrimSpace(text) == "" {
 		text = "{}\n"
 	}
+	owned := zcodeHookGroup{Matcher: marker, Hooks: []zcodeCommandHook{{
+		Type: "command", Command: command, TimeoutMs: timeoutMs,
+	}}}
 	view, root, err := rootObject(runtime{kind: kindJSON}, text)
 	if err != nil {
 		return "", err
@@ -191,9 +197,8 @@ func DeclareZcodeSessionStartHook(text, command string, timeoutMs int) (string, 
 			pad := padUnder(view, container, indentOf(view, container.close)+indent)
 			keys := append(append([]string{}, path[i:]...), "SessionStart")
 			return container.insert(text,
-				renderJSONValuePath(keys, []zcodeHookGroup{{Hooks: []zcodeCommandHook{{
-					Type: "command", Command: command, TimeoutMs: timeoutMs,
-				}}}}, pad), indentOf(view, container.close)), nil
+				renderJSONValuePath(keys, []zcodeHookGroup{owned}, pad),
+				indentOf(view, container.close)), nil
 		}
 		next, err := objectAt(view, container.members[memberIndex].valueStart)
 		if err != nil {
@@ -205,9 +210,7 @@ func DeclareZcodeSessionStartHook(text, command string, timeoutMs int) (string, 
 	if sessionIndex < 0 {
 		pad := padUnder(view, container, indentOf(view, container.close)+indent)
 		return container.insert(text, renderJSONValuePath([]string{"SessionStart"},
-			[]zcodeHookGroup{{Hooks: []zcodeCommandHook{{
-				Type: "command", Command: command, TimeoutMs: timeoutMs,
-			}}}}, pad), indentOf(view, container.close)), nil
+			[]zcodeHookGroup{owned}, pad), indentOf(view, container.close)), nil
 	}
 	entries, err := arrayAt(view, container.members[sessionIndex].valueStart)
 	if err != nil {
@@ -215,32 +218,19 @@ func DeclareZcodeSessionStartHook(text, command string, timeoutMs int) (string, 
 	}
 	for _, entry := range entries.values {
 		group, err := objectAt(view, entry.start)
+		if err != nil || jsonStringMember(view, group, "matcher") != marker {
+			continue
+		}
+		pad := indentOf(view, entry.start)
+		rendered, err := json.MarshalIndent(owned, pad, indent)
 		if err != nil {
-			continue
+			return "", err
 		}
-		hooksIndex := group.find("hooks")
-		if hooksIndex < 0 {
-			continue
-		}
-		hooks, err := arrayAt(view, group.members[hooksIndex].valueStart)
-		if err != nil {
-			continue
-		}
-		for _, candidate := range hooks.values {
-			hook, err := objectAt(view, candidate.start)
-			if err != nil || jsonStringMember(view, hook, "command") != command {
-				continue
-			}
-			return setJSONObjectFields(text, view, hook, fields{
-				{"type", "command"}, {"timeoutMs", timeoutMs},
-			})
-		}
+		return text[:entry.start] + string(rendered) + text[entry.end:], nil
 	}
 	pad := arrayPadUnder(view, entries,
 		indentOf(view, container.members[sessionIndex].start)+indent)
-	rendered, err := json.MarshalIndent(zcodeHookGroup{Hooks: []zcodeCommandHook{{
-		Type: "command", Command: command, TimeoutMs: timeoutMs,
-	}}}, pad, indent)
+	rendered, err := json.MarshalIndent(owned, pad, indent)
 	if err != nil {
 		return "", err
 	}
@@ -263,9 +253,12 @@ func ZcodeHooksEnabled(text string) (bool, bool, error) {
 	return declared, enabled, nil
 }
 
-func RemoveZcodeSessionStartHook(text, command string) (string, error) {
+func RemoveZcodeSessionStartHook(text, marker string) (string, error) {
+	if marker == "" {
+		return "", fmt.Errorf("ZCode SessionStart marker must not be empty")
+	}
 	for {
-		next, found, err := removeOneZcodeSessionStartHook(text, command)
+		next, found, err := removeOneZcodeSessionStartHook(text, marker)
 		if err != nil || !found {
 			return next, err
 		}
@@ -273,7 +266,7 @@ func RemoveZcodeSessionStartHook(text, command string) (string, error) {
 	}
 }
 
-func removeOneZcodeSessionStartHook(text, command string) (string, bool, error) {
+func removeOneZcodeSessionStartHook(text, marker string) (string, bool, error) {
 	if strings.TrimSpace(text) == "" {
 		return text, false, nil
 	}
@@ -295,34 +288,16 @@ func removeOneZcodeSessionStartHook(text, command string) (string, bool, error) 
 	}
 	for entryIndex, entry := range entries.values {
 		group, err := objectAt(view, entry.start)
-		if err != nil {
-			continue
-		}
-		hooksIndex := group.find("hooks")
-		if hooksIndex < 0 {
-			continue
-		}
-		hooks, err := arrayAt(view, group.members[hooksIndex].valueStart)
-		if err != nil {
-			continue
-		}
-		for hookIndex, candidate := range hooks.values {
-			hook, err := objectAt(view, candidate.start)
-			if err != nil || jsonStringMember(view, hook, "command") != command ||
-				jsonStringMember(view, hook, "type") != "command" {
-				continue
-			}
-			if len(hooks.values) == 1 && len(group.members) == 1 {
-				return entries.cut(text, entryIndex), true, nil
-			}
-			return hooks.cut(text, hookIndex), true, nil
+		if err == nil && jsonStringMember(view, group, "matcher") == marker {
+			return entries.cut(text, entryIndex), true, nil
 		}
 	}
 	return text, false, nil
 }
 
 type zcodeHookGroup struct {
-	Hooks []zcodeCommandHook `json:"hooks"`
+	Matcher string             `json:"matcher"`
+	Hooks   []zcodeCommandHook `json:"hooks"`
 }
 
 type zcodeCommandHook struct {

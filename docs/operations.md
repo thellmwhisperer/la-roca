@@ -69,15 +69,15 @@ file is left byte for byte as it is, and stderr names each affected ownership
 marker (`hooks run claude`, `hooks run claude-pills`, or `hooks run
 claude-handoff`) to delete by hand.
 
-`roca hooks install zcode` adds an opt-in `SessionStart` handoff hook under
-ZCode's required nested `hooks.events.SessionStart` shape. The command points
-to `~/.zcode/hooks/roca-handoff.sh`, an executable wrapper that emits
+`roca hooks install zcode` adds an opt-in, matcher-marked `SessionStart`
+handoff hook under ZCode's required nested `hooks.events.SessionStart` shape.
+The command points to `~/.zcode/hooks/roca-handoff.sh`, an executable wrapper that emits
 `{"additionalContext":"..."}` JSON because ZCode discards plain-text hook
 stdout. It does not change the operator-owned `hooks.enabled`; when that value
 is false or absent, install warns that the hook is inactive and says to set it
 to true. A pre-existing unrecognized wrapper is left untouched and blocks the
 install with a clear remedy. Reinstalling is idempotent, and `roca hooks
-uninstall zcode` removes only that nested command and the managed wrapper while
+uninstall zcode` removes only that marked entry and the managed wrapper while
 preserving neighbouring hooks. Neither init nor update installs or refreshes
 this integration.
 

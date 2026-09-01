@@ -79,6 +79,9 @@ exit 1
 	if len(entries) != 2 {
 		t.Fatalf("SessionStart entries = %d, want operator hook plus one Roca hook", len(entries))
 	}
+	if marker := entries[1].(map[string]any)["matcher"]; marker != zcodeSessionStartMarker {
+		t.Fatalf("managed SessionStart marker = %#v", marker)
+	}
 	wrapper := filepath.Join(home, ".zcode", "hooks", "roca-handoff.sh")
 	info, err := os.Stat(wrapper)
 	if err != nil {
@@ -195,7 +198,7 @@ func TestZcodeInstallPreservesOperatorHookUsingSameWrapper(t *testing.T) {
 	home := t.TempDir()
 	config := filepath.Join(home, "config.json")
 	wrapper := filepath.Join(home, "hooks", "roca-handoff.sh")
-	operatorCommand := shellQuote(wrapper)
+	operatorCommand := zcodeOwnedHookCommand(wrapper)
 	initial := fmt.Sprintf(`{"hooks":{"enabled":true,"events":{"SessionStart":[{"hooks":[{"type":"command","command":%q,"timeoutMs":4000}]}]}}}`, operatorCommand)
 	if err := os.WriteFile(config, []byte(initial), 0o600); err != nil {
 		t.Fatal(err)
@@ -270,6 +273,40 @@ func TestZcodeWrapperInstallUsesCapturedPreimage(t *testing.T) {
 	body, err := os.ReadFile(path)
 	if err != nil || string(body) != string(concurrent) {
 		t.Fatalf("wrapper install changed concurrent bytes: body=%q err=%v", body, err)
+	}
+}
+
+func TestZcodeWrapperFreshInstallDoesNotReplaceConcurrentFile(t *testing.T) {
+	directory := filepath.Join(t.TempDir(), "hooks")
+	path := filepath.Join(directory, "roca-handoff.sh")
+	state, err := readZcodeWrapperState(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(directory, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	operator := []byte("#!/bin/sh\nprintf 'operator wrapper\\n'\n")
+	if err := os.WriteFile(path, operator, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeZcodeWrapper(path, zcodeWrapper("/bin/roca"), state); err == nil {
+		t.Fatal("fresh wrapper install replaced a concurrently created file")
+	}
+	body, err := os.ReadFile(path)
+	if err != nil || string(body) != string(operator) {
+		t.Fatalf("concurrent operator wrapper changed: body=%q err=%v", body, err)
+	}
+	after, err := os.Stat(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Mode().Perm() != before.Mode().Perm() {
+		t.Fatalf("hooks directory mode changed from %o to %o", before.Mode().Perm(), after.Mode().Perm())
 	}
 }
 
