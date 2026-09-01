@@ -308,7 +308,7 @@ func (r *codexReader) event(record int, line codexLine, payload codexPayload) {
 				Reason: "turn superseded by a later question before it completed"})
 			r.orphanTurnScope()
 		} else {
-			r.resetTurnScope()
+			r.orphanTurnScope()
 		}
 		r.open = &codexTurn{
 			opened: record, humanText: payload.Message, humanTS: validInstant(line.Timestamp),

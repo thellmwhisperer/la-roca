@@ -209,6 +209,31 @@ func TestCodexResponseOnlyRecoveryKeepsToolsOrphaned(t *testing.T) {
 	}
 }
 
+func TestCodexAppliesALateVerdictToAResponseOnlyOrphan(t *testing.T) {
+	content := `{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"interrupted"}]}}
+{"type":"response_item","payload":{"type":"function_call","call_id":"response-only","name":"shell"}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"partial answer"}]}}
+{"type":"event_msg","payload":{"type":"user_message","message":"next"}}
+{"type":"response_item","payload":{"type":"function_call_output","call_id":"response-only","output":"failure\nProcess exited with code 1"}}
+{"type":"event_msg","payload":{"type":"task_complete","last_agent_message":"done"}}`
+	records, err := Parse(KindCodexSession, []byte(content), FileMeta{SessionID: "response-only-verdict"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := records.Sessions[0]
+	if len(session.Exchanges) != 1 || session.Exchanges[0].HumanText != "next" ||
+		session.Exchanges[0].AgentText != "done" || len(session.Exchanges[0].Tools) != 0 {
+		t.Fatalf("completed event turn = %+v", session.Exchanges)
+	}
+	if len(session.OrphanedTools) != 1 {
+		t.Fatalf("orphaned tools = %+v, want the response-only call", session.OrphanedTools)
+	}
+	tool := session.OrphanedTools[0]
+	if !tool.HadError || tool.ErrorMessage != "failure\nProcess exited with code 1" {
+		t.Fatalf("response-only tool verdict = %+v", tool)
+	}
+}
+
 func TestCodexKeepsToolTelemetryFromInterruptedTurns(t *testing.T) {
 	var rollout strings.Builder
 	writeUser := func(message string) {
