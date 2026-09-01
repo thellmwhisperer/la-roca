@@ -354,6 +354,83 @@ func TestZcodeFullUninstallDiscoversRegistryUnderLifecycleLock(t *testing.T) {
 	}
 }
 
+func TestManagedArtifactLocksRejectSymlinksWithoutChangingTargets(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		lockPath func(string) string
+		acquire  func(*cliEnv, string) (func() error, error)
+	}{
+		{
+			name: "ZCode lifecycle",
+			lockPath: func(home string) string {
+				return filepath.Join(home, ".roca", "artifacts.json.zcode.lock")
+			},
+			acquire: func(env *cliEnv, _ string) (func() error, error) {
+				return env.lockManagedZcodeLifecycle()
+			},
+		},
+		{
+			name: "artifact registry",
+			lockPath: func(home string) string {
+				return filepath.Join(home, ".roca", "artifacts.json.lock")
+			},
+			acquire: func(_ *cliEnv, home string) (func() error, error) {
+				return lockArtifactRegistry(filepath.Join(home, ".roca", "artifacts.json"))
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			home := skillTestHome(t)
+			if err := os.MkdirAll(filepath.Join(home, ".roca"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			target := filepath.Join(home, "operator-data")
+			if err := os.WriteFile(target, []byte("operator data\n"), 0o744); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(target, 0o744); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, test.lockPath(home)); err != nil {
+				t.Fatal(err)
+			}
+			release, err := test.acquire(&cliEnv{}, home)
+			if release != nil || err == nil || !strings.Contains(err.Error(), "non-regular managed lock") {
+				t.Fatalf("symlink lock result: release=%v err=%v", release != nil, err)
+			}
+			info, statErr := os.Stat(target)
+			body, readErr := os.ReadFile(target)
+			if statErr != nil || readErr != nil || info.Mode().Perm() != 0o744 || string(body) != "operator data\n" {
+				t.Fatalf("lock target changed: info=%v body=%q statErr=%v readErr=%v", info, body, statErr, readErr)
+			}
+		})
+	}
+}
+
+func TestZcodeConfigCleanupRetainsReplacedEmptyFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	owned, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	retained, err := removeEmptyZcodeConfigMatching(path, owned)
+	if err != nil || !retained {
+		t.Fatalf("replacement cleanup: retained=%v err=%v", retained, err)
+	}
+	if body, err := os.ReadFile(path); err != nil || string(body) != `{}` {
+		t.Fatalf("operator replacement changed: body=%q err=%v", body, err)
+	}
+}
+
 func TestFreshZcodeMCPPurgeRemovesCreatedRuntimePaths(t *testing.T) {
 	assertFreshZcodePurgeRemovesRuntimePaths(t, "mcp")
 }

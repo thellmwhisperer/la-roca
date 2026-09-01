@@ -883,12 +883,7 @@ func (env *cliEnv) installManagedZcodeHandoffHookLocked(configPath, wrapperPath,
 		})
 	published = err == nil
 	if err != nil && rollback != nil {
-		body, readErr := os.ReadFile(wrapperPath)
-		published = readErr == nil && string(body) == zcodeWrapper(executable) &&
-			(previousFound || zcodeManagedHookPresent(configPath))
-		if !published {
-			err = errors.Join(err, rollback())
-		}
+		err = errors.Join(err, rollback())
 	}
 	if err == nil && warning != "" {
 		err = fmt.Errorf("ZCode hook installed but inactive in %s; set hooks.enabled to true to enable SessionStart", configPath)
@@ -983,7 +978,7 @@ func installZcodeHandoffHookWithPrevious(configPath, wrapperPath, executable str
 	outcome, err := agentcfg.InstallZcodeSessionStartHook(
 		configPath, zcodeSessionStartMarker, command, 15000, recordState)
 	if err != nil {
-		if !zcodeManagedHookPresent(configPath) {
+		if state.exists || !zcodeManagedHookPresent(configPath) {
 			if restoreErr := restoreZcodeWrapper(wrapperPath, state, []byte(wrapper)); restoreErr != nil {
 				err = errors.Join(err, restoreErr)
 			}
