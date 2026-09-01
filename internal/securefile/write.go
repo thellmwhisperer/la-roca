@@ -16,13 +16,13 @@ var (
 
 // Write replaces path atomically after the new bytes and permissions are durable.
 func Write(path string, data []byte, mode, dirMode os.FileMode) (err error) {
-	return publish(path, data, nil, mode, dirMode, true, false)
+	return publish(path, data, nil, nil, mode, dirMode, true, false)
 }
 
 // CreatePreservingParentMode atomically creates a file without replacing a
 // path that already exists or changing an existing parent directory's mode.
 func CreatePreservingParentMode(path string, data []byte, mode, dirMode os.FileMode) error {
-	return publish(path, data, nil, mode, dirMode, false, true)
+	return publish(path, data, nil, nil, mode, dirMode, false, true)
 }
 
 // Replace atomically replaces an operator-owned file while preserving its mode.
@@ -32,7 +32,15 @@ func Replace(path string, data, previous []byte) error {
 	if info, err := os.Stat(path); err == nil {
 		mode = info.Mode().Perm()
 	}
-	return publish(path, data, previous, mode, 0o700, false, false)
+	return publish(path, data, previous, nil, mode, 0o700, false, false)
+
+}
+
+func ReplaceRegular(path string, data, previous []byte, original os.FileInfo) error {
+	if original == nil || !original.Mode().IsRegular() {
+		return fmt.Errorf("refuse to replace non-regular file %s", path)
+	}
+	return publish(path, data, previous, original, original.Mode().Perm(), 0o700, false, false)
 }
 
 // BackUp preserves previous bytes beside path without overwriting older copies.
@@ -62,7 +70,7 @@ func BackUp(path string, previous []byte) (string, error) {
 	}
 }
 
-func publish(path string, data, previous []byte, mode, dirMode os.FileMode,
+func publish(path string, data, previous []byte, original os.FileInfo, mode, dirMode os.FileMode,
 	restrictDir, createOnly bool) (err error) {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, dirMode); err != nil {
@@ -96,15 +104,23 @@ func publish(path string, data, previous []byte, mode, dirMode os.FileMode,
 	if err = temporary.Close(); err != nil {
 		return err
 	}
-	if previous != nil {
+	if original != nil {
+		if err = requireSameRegularFile(path, original); err != nil {
+			return err
+		}
+	}
+	if previous != nil || original != nil {
 		current, readErr := os.ReadFile(path)
 		if readErr != nil {
 			return fmt.Errorf("re-read %s: %w", path, readErr)
 		}
 		if string(current) != string(previous) {
-			return fmt.Errorf(
-				"%s changed while it was being edited: close the runtime that owns it and try again",
-				path)
+			return changedFileError(path)
+		}
+	}
+	if original != nil {
+		if err = requireSameRegularFile(path, original); err != nil {
+			return err
 		}
 	}
 	if createOnly {
@@ -138,4 +154,18 @@ func publish(path string, data, previous []byte, mode, dirMode os.FileMode,
 
 func createCollisionError(path string) error {
 	return fmt.Errorf("%s appeared before it could be created; existing file was preserved", path)
+}
+
+func requireSameRegularFile(path string, original os.FileInfo) error {
+	current, err := os.Lstat(path)
+	if err != nil || !current.Mode().IsRegular() || !os.SameFile(original, current) {
+		return changedFileError(path)
+	}
+	return nil
+}
+
+func changedFileError(path string) error {
+	return fmt.Errorf(
+		"%s changed while it was being edited: close the runtime that owns it and try again",
+		path)
 }

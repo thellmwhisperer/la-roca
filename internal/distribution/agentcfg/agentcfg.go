@@ -316,18 +316,12 @@ func Rewrite(path string, transform func(string) (string, error)) error {
 func edit(name, path string, transform, backupTransform func(string) (string, error),
 	createMissing bool) (Outcome, error) {
 	outcome := Outcome{Runtime: name, Path: path}
-	if err := requireRegularOrMissing(path); err != nil {
+	previous, original, err := readRegularOrMissing(path)
+	if err != nil {
 		return outcome, err
 	}
-
-	previous, err := os.ReadFile(path)
-	switch {
-	case os.IsNotExist(err) && !createMissing:
+	if original == nil && !createMissing {
 		return outcome, nil
-	case os.IsNotExist(err):
-		previous = nil
-	case err != nil:
-		return outcome, fmt.Errorf("read %s: %w", path, err)
 	}
 
 	next, err := transform(string(previous))
@@ -338,7 +332,7 @@ func edit(name, path string, transform, backupTransform func(string) (string, er
 		return outcome, nil
 	}
 
-	if previous != nil {
+	if original != nil {
 		backupContent := previous
 		if backupTransform != nil {
 			content, err := backupTransform(string(previous))
@@ -356,25 +350,39 @@ func edit(name, path string, transform, backupTransform func(string) (string, er
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return outcome, fmt.Errorf("create the directory of %s: %w", path, err)
 	}
-	if err := securefile.Replace(path, []byte(next), previous); err != nil {
+	if original == nil {
+		err = securefile.CreatePreservingParentMode(path, []byte(next), 0o600, 0o700)
+	} else {
+		err = securefile.ReplaceRegular(path, []byte(next), previous, original)
+	}
+	if err != nil {
 		return outcome, err
 	}
 	outcome.Changed = true
 	return outcome, nil
 }
 
-func requireRegularOrMissing(path string) error {
+func readRegularOrMissing(path string) ([]byte, os.FileInfo, error) {
 	info, err := os.Lstat(path)
 	switch {
 	case os.IsNotExist(err):
-		return nil
+		return nil, nil, nil
 	case err != nil:
-		return fmt.Errorf("inspect %s: %w", path, err)
+		return nil, nil, fmt.Errorf("inspect %s: %w", path, err)
 	case !info.Mode().IsRegular():
-		return fmt.Errorf("refuse to edit non-regular configuration %s", path)
-	default:
-		return nil
+		return nil, nil, fmt.Errorf("refuse to edit non-regular configuration %s", path)
 	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return nil, nil, fmt.Errorf("read %s: %w", path, err)
+	}
+	current, err := os.Lstat(path)
+	if err != nil || !current.Mode().IsRegular() || !os.SameFile(info, current) {
+		return nil, nil, fmt.Errorf(
+			"%s changed while it was being read: close the runtime that owns it and try again",
+			path)
+	}
+	return content, info, nil
 }
 
 func find(name string) (runtime, error) {

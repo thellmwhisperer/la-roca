@@ -94,3 +94,71 @@ func TestClaudeDesktopInstallRefusesSymlinkedConfigWithoutMutation(t *testing.T)
 		t.Fatalf("unexpected backup beside symlink: %v", err)
 	}
 }
+
+func TestClaudeDesktopEditPreservesPathCreatedDuringMissingConfigEdit(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "claude_desktop_config.json")
+	target := filepath.Join(dir, "managed.json")
+	before := []byte("operator configuration")
+	if err := os.WriteFile(target, before, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var symlinkErr error
+
+	outcome, err := agentcfg.Edit(agentcfg.RuntimeClaudeDesktop, path, func(string) (string, error) {
+		symlinkErr = os.Symlink(target, path)
+		return "replacement", symlinkErr
+	}, true)
+	if symlinkErr != nil {
+		t.Skipf("symlinks unavailable: %v", symlinkErr)
+	}
+	if err == nil {
+		t.Fatal("Edit replaced a path created while the config was missing")
+	}
+	if outcome.Changed || outcome.Backup != "" {
+		t.Fatalf("outcome = %+v, want no mutation", outcome)
+	}
+	assertSymlinkAndTarget(t, path, target, before)
+}
+
+func TestClaudeDesktopEditPreservesSameContentSymlinkReplacement(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "claude_desktop_config.json")
+	target := filepath.Join(dir, "managed.json")
+	before := []byte("operator configuration")
+	if err := os.WriteFile(path, before, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, before, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var symlinkErr error
+
+	outcome, err := agentcfg.Edit(agentcfg.RuntimeClaudeDesktop, path, func(string) (string, error) {
+		if removeErr := os.Remove(path); removeErr != nil {
+			return "", removeErr
+		}
+		symlinkErr = os.Symlink(target, path)
+		return "replacement", symlinkErr
+	}, true)
+	if symlinkErr != nil {
+		t.Skipf("symlinks unavailable: %v", symlinkErr)
+	}
+	if err == nil {
+		t.Fatal("Edit replaced a same-content symlink introduced during the edit")
+	}
+	if outcome.Changed {
+		t.Fatalf("outcome = %+v, want unchanged", outcome)
+	}
+	assertSymlinkAndTarget(t, path, target, before)
+}
+
+func assertSymlinkAndTarget(t *testing.T, path, target string, want []byte) {
+	t.Helper()
+	if got, err := os.Readlink(path); err != nil || got != target {
+		t.Fatalf("config symlink = %q, %v; want %q", got, err, target)
+	}
+	if got, err := os.ReadFile(target); err != nil || string(got) != string(want) {
+		t.Fatalf("managed target changed: %v\n%s", err, got)
+	}
+}
