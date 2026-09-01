@@ -1920,8 +1920,8 @@ type FederatedWorker struct {
 }
 
 func (w FederatedWorker) Run(ctx context.Context) Completion {
-	clearWorkerActivity(w.DataDir)
-	defer clearWorkerActivity(w.DataDir)
+	_ = clearWorkerActivity(w.DataDir)
+	defer func() { _ = clearWorkerActivity(w.DataDir) }()
 	started := time.Now().UTC()
 	completion := Completion{ExitStatus: 0, Model: w.Federation.Model, StartedAt: started}
 	failIf := func(err error) {

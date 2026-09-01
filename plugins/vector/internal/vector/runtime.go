@@ -47,8 +47,8 @@ type Worker struct {
 }
 
 func (w Worker) Run(ctx context.Context) Completion {
-	clearWorkerActivity(w.DataDir)
-	defer clearWorkerActivity(w.DataDir)
+	_ = clearWorkerActivity(w.DataDir)
+	defer func() { _ = clearWorkerActivity(w.DataDir) }()
 	started := time.Now().UTC()
 	completion := Completion{ExitStatus: 0, Model: w.Index.Model, StartedAt: started}
 	failIf := func(err error) {
@@ -250,7 +250,10 @@ func LockWorkerClaim(directory string) (func() error, error) {
 				_ = release()
 				return nil, fmt.Errorf("vector worker claim changed before it was locked")
 			}
-			clearWorkerActivity(directory)
+			if err := clearWorkerActivity(directory); err != nil {
+				_ = release()
+				return nil, fmt.Errorf("clear vector worker activity: %w", err)
+			}
 			return release, nil
 		}
 		if err == nil && claim.PID > 0 && claim.PID != os.Getpid() {

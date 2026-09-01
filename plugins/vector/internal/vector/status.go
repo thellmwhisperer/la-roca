@@ -438,10 +438,14 @@ func updateWorkerActivity(stateDir, backend string, database *string) error {
 	return os.Rename(temporary, filepath.Join(stateDir, workerActivityFile))
 }
 
-func clearWorkerActivity(stateDir string) {
+func clearWorkerActivity(stateDir string) error {
 	workerActivityMu.Lock()
 	defer workerActivityMu.Unlock()
-	_ = os.Remove(filepath.Join(stateDir, workerActivityFile))
+	err := os.Remove(filepath.Join(stateDir, workerActivityFile))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	return err
 }
 
 type sourceMarkerFact struct {

@@ -130,6 +130,38 @@ func TestWorkerRunningRequiresTheClaimOwnerLock(t *testing.T) {
 	}
 }
 
+func TestLockWorkerClaimRequiresActivityInvalidation(t *testing.T) {
+	directory := t.TempDir()
+	claimPath := filepath.Join(directory, WorkerClaimFilename)
+	if err := os.WriteFile(claimPath, []byte(fmt.Sprintf("%d current-run\n", os.Getpid())), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	activityPath := filepath.Join(directory, workerActivityFile)
+	if err := os.Mkdir(activityPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(activityPath, "blocked"), []byte("stale"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	release, err := LockWorkerClaim(directory)
+	if err == nil {
+		if release != nil {
+			_ = release()
+		}
+		t.Fatal("worker claim lock accepted uncleared activity")
+	}
+	if release != nil {
+		_ = release()
+		t.Fatal("failed activity invalidation retained the claim lock")
+	}
+	if !strings.Contains(err.Error(), "clear vector worker activity") {
+		t.Fatalf("lock error = %v", err)
+	}
+	if WorkerRunning(directory) {
+		t.Fatal("failed activity invalidation left the worker running")
+	}
+}
+
 func TestManagedStateUsageLocksTheStablePluginRoot(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "plugins")
 	state := filepath.Join(root, "vector", "state")
