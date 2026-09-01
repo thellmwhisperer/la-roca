@@ -215,6 +215,7 @@ func (w *writer) sessionWithPolicy(ctx context.Context, session parsers.Session,
 		counts.Sessions = 1
 	}
 
+	reconcileOrphans := session.OrphanedTools != nil && !session.Incremental
 	var unresolvedOrphanTools []parsers.ToolUse
 	for _, exchange := range session.Exchanges {
 		number := exchange.Number
@@ -279,6 +280,9 @@ func (w *writer) sessionWithPolicy(ctx context.Context, session parsers.Session,
 			} else {
 				_, conflicts := compareContent(stored, exchange)
 				if conflicts {
+					if reconcileOrphans {
+						unresolvedOrphanTools = append(unresolvedOrphanTools, exchange.Tools...)
+					}
 					matcher.claim(stored, number, exchange)
 					counts.ExchangesChanged++
 					continue
@@ -293,7 +297,6 @@ func (w *writer) sessionWithPolicy(ctx context.Context, session parsers.Session,
 			if !matched.numberValid {
 				counts.ThinkingBlocksDiscarded += len(exchange.Thinking)
 			}
-			reconcileOrphans := session.OrphanedTools != nil && !session.Incremental
 			if reconcileOrphans && matched.numberValid && len(exchange.Tools) > 0 &&
 				(matched.agentText != "" || matched.agentTimestamp != "") {
 				hasTools, err := w.exchangeHasTools(ctx, session.ID, matched.number)
@@ -338,7 +341,7 @@ func (w *writer) sessionWithPolicy(ctx context.Context, session parsers.Session,
 		}
 		if outcome == exchangeAnchorConflict || outcome == exchangeAmbiguous {
 			counts.AnchorConflicts++
-			if session.OrphanedTools != nil && !session.Incremental {
+			if reconcileOrphans {
 				unresolvedOrphanTools = append(unresolvedOrphanTools, exchange.Tools...)
 			}
 			continue

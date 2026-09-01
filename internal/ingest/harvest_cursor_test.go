@@ -326,6 +326,43 @@ func TestConflictedCodexCompletionPreservesRecoveredOrphan(t *testing.T) {
 	}
 }
 
+func TestMappedExchangeConflictPreservesToolsAsOrphans(t *testing.T) {
+	db := corpusDatabase(t)
+	writeHarvestRecords(t, db, parsers.Records{Sessions: []parsers.Session{{
+		ID: "mapped-exchange-conflict",
+		Exchanges: []parsers.Exchange{{
+			Number: 1, SourceID: "source-turn", Fingerprint: "draft",
+			HumanText: "question", AgentText: "draft answer",
+		}},
+	}}})
+	writeHarvestRecords(t, db, parsers.Records{Sessions: []parsers.Session{{
+		ID: "mapped-exchange-conflict",
+		Exchanges: []parsers.Exchange{{
+			Number: 1, SourceID: "source-turn", Fingerprint: "final",
+			HumanText: "question", AgentText: "conflicting final answer",
+			Tools: []parsers.ToolUse{{Name: "shell", ParamsSummary: "inspect"}},
+		}},
+		OrphanedTools: []parsers.ToolUse{},
+	}}})
+
+	var answer string
+	var total, orphaned, attached int
+	if err := db.SQL().QueryRow(`SELECT agent_text,
+		(SELECT COUNT(*) FROM tool_uses WHERE session_id = 'mapped-exchange-conflict'),
+		(SELECT COUNT(*) FROM tool_uses WHERE session_id = 'mapped-exchange-conflict'
+		 AND exchange_number IS NULL),
+		(SELECT COUNT(*) FROM tool_uses WHERE session_id = 'mapped-exchange-conflict'
+		 AND exchange_number IS NOT NULL)
+		FROM exchanges WHERE session_id = 'mapped-exchange-conflict'`).
+		Scan(&answer, &total, &orphaned, &attached); err != nil {
+		t.Fatal(err)
+	}
+	if answer != "draft answer" || total != 1 || orphaned != 1 || attached != 0 {
+		t.Fatalf("mapped conflict = answer:%q total:%d orphaned:%d attached:%d",
+			answer, total, orphaned, attached)
+	}
+}
+
 func TestConflictedCodexCompletionPreservesDistinctIdenticalCalls(t *testing.T) {
 	prefix := `{"type":"session_meta","payload":{"id":"conflicted-identical-calls"}}
 {"type":"event_msg","payload":{"type":"user_message","message":"question"}}
