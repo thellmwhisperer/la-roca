@@ -223,6 +223,9 @@ func (env *cliEnv) refreshManagedArtifacts(executable string, force bool) (artif
 	}
 	for index := range registry.Entries {
 		entry := &registry.Entries[index]
+		if entry.Runtime != "" && !skill.AutomaticallyManaged(entry.Runtime) {
+			continue
+		}
 		entry.AvailableVersion = env.build.Version
 		switch entry.Kind {
 		case artifactKindSkill, artifactKindSkillCatalog, artifactKindPrompt:
@@ -362,6 +365,9 @@ func (env *cliEnv) finishHookRefresh(entry *artifact.Entry, out hookRefreshOutco
 func (env *cliEnv) adoptLegacyArtifacts(paths config.Paths, executable string,
 	registry *artifact.Registry, report *artifactRefreshReport) error {
 	for _, runtime := range skill.Runtimes() {
+		if !skill.AutomaticallyManaged(runtime) {
+			continue
+		}
 		proposed := false
 		for _, embedded := range skill.EmbeddedSkills() {
 			path, err := skill.NamedPath(runtime, embedded.Name, paths.Home, os.Getenv)

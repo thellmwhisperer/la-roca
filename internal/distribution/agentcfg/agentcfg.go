@@ -148,6 +148,10 @@ var runtimes = map[string]runtime{
 func Runtimes() []string {
 	names := make([]string, 0, len(runtimes))
 	for name := range runtimes {
+		if name == RuntimeClaudeDesktop &&
+			goruntime.GOOS != "darwin" && goruntime.GOOS != "windows" {
+			continue
+		}
 		names = append(names, name)
 	}
 	sort.Strings(names)

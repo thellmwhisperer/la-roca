@@ -295,6 +295,21 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 			removeRecoveryBackups(report, settings)
 		}
 	}
+	if settings, err := hookConfigPath(agentcfg.RuntimeZcode); err != nil {
+		failed(report, "%s", err)
+	} else if wrapper, err := zcodeHookWrapperPath(); err != nil {
+		failed(report, "%s", err)
+	} else {
+		outcome, warning, err := uninstallZcodeHandoffHook(settings, wrapper)
+		if warning != "" {
+			fmt.Fprintln(env.errOut, warning)
+		}
+		withdrawn("the ZCode handoff hook from "+settings, outcome, err)
+		if purge {
+			removeRecoveryBackups(report, settings)
+			removeRecoveryBackups(report, wrapper)
+		}
+	}
 
 	home, err := os.UserHomeDir()
 	if err != nil {
