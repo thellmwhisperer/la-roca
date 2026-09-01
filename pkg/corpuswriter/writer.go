@@ -34,7 +34,9 @@ type Session struct {
 	PruneUnmappedExchanges       bool
 	Exchanges                    []Exchange
 	// OrphanedTools are session-level calls outside completed exchanges. Nil
-	// leaves existing rows untouched; a non-nil slice replaces that projection.
+	// leaves existing rows untouched; a non-nil slice is the desired projection.
+	// Calls that cannot be safely attached while reconciling an existing exchange
+	// remain session-level rather than being dropped.
 	OrphanedTools []ToolUse
 	Thinking      []Thinking
 }

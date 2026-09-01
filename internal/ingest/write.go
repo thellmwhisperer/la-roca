@@ -1469,7 +1469,8 @@ func (w *writer) storedOrphanedTools(ctx context.Context,
 	return stored, nil
 }
 
-// replaceOrphanedTools writes the authoritative session-level projection. A
+// replaceOrphanedTools writes a full parse's desired session-level projection
+// plus transition calls that exchange reconciliation could not safely attach. A
 // full rollout can grow between reads, so these rows are compared as an ordered
 // list and replaced together instead of accumulating duplicates.
 func (w *writer) replaceOrphanedTools(ctx context.Context, sessionID string,
