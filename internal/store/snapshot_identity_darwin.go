@@ -2,16 +2,10 @@
 
 package store
 
-import (
-	"fmt"
-	"os"
-	"syscall"
-)
+import "syscall"
 
-func snapshotFileIdentity(_ string, info os.FileInfo) (string, error) {
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok {
-		return "", fmt.Errorf("unsupported file metadata %T", info.Sys())
-	}
-	return fmt.Sprintf("%d:%d:%d:%d", stat.Dev, stat.Ino, stat.Ctimespec.Sec, stat.Ctimespec.Nsec), nil
+type snapshotStat = syscall.Stat_t
+
+func snapshotChangeTime(stat *snapshotStat) (int64, int64) {
+	return stat.Ctimespec.Sec, stat.Ctimespec.Nsec
 }
