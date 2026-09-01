@@ -47,6 +47,10 @@ each step separately or who are on a machine the one command cannot serve.
 
 ## Windows install
 
+[Install](lifecycle.md#install) owns the recommended Windows path and its
+detection limitation. The native `.exe` procedure below is a manual, untested
+fallback.
+
 1. Download `roca-<version>-windows-x64.exe` from the release, put it in a
    permanent directory as `roca.exe`, and add that directory to the user
    `PATH`. This stable name is what the shipped skills and the commands below
@@ -74,8 +78,7 @@ roca-<version>-windows-x64.exe _install-bundled-plugins
 
 The docs and shipped skills assume the stable `roca` / `roca.exe` name. A user
 who keeps the versioned filename must substitute it for bare `roca` in every
-later docs or skill command. WSL is an alternative: install and operate the
-Linux artefact with the Unix commands inside the distribution.
+later docs or skill command.
 
 Turn it on in the configuration `roca doctor` names
 (`~/.roca/config.toml`, or `%USERPROFILE%\.roca\config.toml` on Windows,
