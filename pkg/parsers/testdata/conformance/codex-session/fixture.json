@@ -4,7 +4,7 @@
   "source": "rollout.data",
   "meta": {"Path":"/synthetic/codex/rollout.data","SessionID":"fixture-codex","Project":"lighthouse","SourceAgent":"codex"},
   "want": {
-    "sessions": [{"id":"fixture-codex","source_agent":"codex","project":"lighthouse","exchanges":[{"human_text":"Open the imaginary hatch.","agent_text":"The hatch is open."}]}],
+    "sessions": [{"id":"fixture-codex","source_agent":"codex","project":"lighthouse","exchanges":[{"human_text":"Open the imaginary hatch.","agent_text":"The hatch is open.","tools":[{"name":"shell","params_summary":"{\"cmd\":\"wait for the imaginary hatch\"}","had_error":true,"error_message":"Chunk ID: synthetic\nProcess exited with code 124\nFinal output:\nsynthetic timeout"},{"name":"shell","params_summary":"{\"cmd\":\"inspect the imaginary hatch\"}"}]}]}],
     "memories": []
   }
 }

@@ -31,8 +31,16 @@ type conformanceSession struct {
 }
 
 type conformanceExchange struct {
-	HumanText string `json:"human_text"`
-	AgentText string `json:"agent_text"`
+	HumanText string            `json:"human_text"`
+	AgentText string            `json:"agent_text"`
+	Tools     []conformanceTool `json:"tools,omitempty"`
+}
+
+type conformanceTool struct {
+	Name          string `json:"name"`
+	ParamsSummary string `json:"params_summary,omitempty"`
+	HadError      bool   `json:"had_error,omitempty"`
+	ErrorMessage  string `json:"error_message,omitempty"`
 }
 
 type conformanceMemory struct {
@@ -149,7 +157,7 @@ func TestRegisteredParsersConform(t *testing.T) {
 						memory.FilePath, memory.SourceSurface, want)
 				}
 			}
-			if got := conformanceProjection(records); !reflect.DeepEqual(got, fixture.Want) {
+			if got := conformanceProjection(records, fixture.Want); !reflect.DeepEqual(got, fixture.Want) {
 				gotJSON, _ := json.MarshalIndent(got, "", "  ")
 				wantJSON, _ := json.MarshalIndent(fixture.Want, "", "  ")
 				t.Fatalf("normalized records differ\ngot:  %s\nwant: %s", gotJSON, wantJSON)
@@ -412,21 +420,27 @@ func readConformanceFixture(t *testing.T, path string) conformanceFixture {
 	return fixture
 }
 
-func conformanceProjection(records Records) conformanceWant {
+func conformanceProjection(records Records, want conformanceWant) conformanceWant {
 	got := conformanceWant{
 		Sessions: make([]conformanceSession, 0, len(records.Sessions)),
 		Memories: make([]conformanceMemory, 0, len(records.Memories)),
 	}
-	for _, session := range records.Sessions {
+	for sessionIndex, session := range records.Sessions {
 		projected := conformanceSession{
 			ID: session.ID, SourceAgent: session.SourceAgent, Project: session.Project,
 			Title: session.Title, ParentID: session.ParentID,
 			Exchanges: make([]conformanceExchange, 0, len(session.Exchanges)),
 		}
-		for _, exchange := range session.Exchanges {
-			projected.Exchanges = append(projected.Exchanges, conformanceExchange{
+		for exchangeIndex, exchange := range session.Exchanges {
+			projectedExchange := conformanceExchange{
 				HumanText: exchange.HumanText, AgentText: exchange.AgentText,
-			})
+			}
+			if sessionIndex < len(want.Sessions) &&
+				exchangeIndex < len(want.Sessions[sessionIndex].Exchanges) &&
+				want.Sessions[sessionIndex].Exchanges[exchangeIndex].Tools != nil {
+				projectedExchange.Tools = projectConformanceTools(exchange.Tools)
+			}
+			projected.Exchanges = append(projected.Exchanges, projectedExchange)
 		}
 		got.Sessions = append(got.Sessions, projected)
 	}
@@ -437,4 +451,15 @@ func conformanceProjection(records Records) conformanceWant {
 		})
 	}
 	return got
+}
+
+func projectConformanceTools(tools []ToolUse) []conformanceTool {
+	projected := make([]conformanceTool, 0, len(tools))
+	for _, tool := range tools {
+		projected = append(projected, conformanceTool{
+			Name: tool.Name, ParamsSummary: tool.ParamsSummary,
+			HadError: tool.HadError, ErrorMessage: tool.ErrorMessage,
+		})
+	}
+	return projected
 }

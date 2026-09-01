@@ -1,3 +1,7 @@
 {"type":"session_meta","timestamp":"2026-08-01T12:00:00Z","payload":{"id":"fixture-codex","cwd":"/synthetic/lighthouse","timestamp":"2026-08-01T12:00:00Z"}}
 {"type":"event_msg","timestamp":"2026-08-01T12:00:01Z","payload":{"type":"user_message","message":"Open the imaginary hatch."}}
+{"type":"response_item","timestamp":"2026-08-01T12:00:01Z","payload":{"type":"function_call","call_id":"fixture-failure","name":"shell","arguments":"{\"cmd\":\"wait for the imaginary hatch\"}"}}
+{"type":"response_item","timestamp":"2026-08-01T12:00:01Z","payload":{"type":"function_call_output","call_id":"fixture-failure","output":"Chunk ID: synthetic\nProcess exited with code 124\nFinal output:\nsynthetic timeout"}}
+{"type":"response_item","timestamp":"2026-08-01T12:00:01Z","payload":{"type":"function_call","call_id":"fixture-success","name":"shell","arguments":"{\"cmd\":\"inspect the imaginary hatch\"}"}}
+{"type":"response_item","timestamp":"2026-08-01T12:00:01Z","payload":{"type":"function_call_output","call_id":"fixture-success","output":"error is only a word in this successful output"}}
 {"type":"event_msg","timestamp":"2026-08-01T12:00:02Z","payload":{"type":"task_complete","last_agent_message":"The hatch is open."}}

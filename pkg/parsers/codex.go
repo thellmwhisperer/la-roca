@@ -2,6 +2,8 @@ package parsers
 
 import (
 	"encoding/json"
+	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -504,19 +506,28 @@ func rawText(value json.RawMessage) string {
 	return string(value)
 }
 
-// isToolError recognizes only a non-zero exit code inside output metadata.
-// Guessing an error out of the text would file
-// every command that printed the word "error" as a failure.
+var codexProcessExit = regexp.MustCompile(`(?m)^Process exited with code ([0-9]+)\r?$`)
+
+// isToolError recognizes only an explicit non-zero exit code: first in the
+// structured metadata older outputs carried, then in the status line real
+// rollouts write around plain-text command output. Arbitrary output text is not
+// a verdict; in particular, the word "error" says nothing about the exit code.
 func isToolError(output string) bool {
 	var document struct {
 		Metadata struct {
 			ExitCode *float64 `json:"exit_code"`
 		} `json:"metadata"`
 	}
-	if err := json.Unmarshal([]byte(output), &document); err != nil {
-		return false
+	if err := json.Unmarshal([]byte(output), &document); err == nil && document.Metadata.ExitCode != nil {
+		return *document.Metadata.ExitCode != 0
 	}
-	return document.Metadata.ExitCode != nil && *document.Metadata.ExitCode != 0
+	for _, match := range codexProcessExit.FindAllStringSubmatch(output, -1) {
+		code, err := strconv.ParseUint(match[1], 10, 64)
+		if err == nil && code != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func putIfSet(payload map[string]any, key, value string) {
