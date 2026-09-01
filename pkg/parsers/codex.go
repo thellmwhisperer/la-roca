@@ -139,8 +139,10 @@ func ParseCodexSession(content []byte, meta FileMeta) (Records, error) {
 			Project:     meta.Project,
 			Metadata:    map[string]any{},
 		},
-		pending:      map[string]*ToolUse{},
-		numberOffset: meta.ExchangeNumberOffset,
+		pending:       map[string]*ToolUse{},
+		orphanPending: map[string]*ToolUse{},
+		orphaned:      map[*ToolUse]bool{},
+		numberOffset:  meta.ExchangeNumberOffset,
 	}
 	reader.read(content)
 
@@ -202,8 +204,11 @@ type codexReader struct {
 	// those records recover.
 	legacy []Exchange
 
-	pending      map[string]*ToolUse
-	numberOffset int
+	pending       map[string]*ToolUse
+	orphanPending map[string]*ToolUse
+	orphaned      map[*ToolUse]bool
+	turnTools     []*ToolUse
+	numberOffset  int
 
 	// open is the turn the event stream has started and not closed.
 	open      *codexTurn
@@ -258,6 +263,7 @@ func (r *codexReader) read(content []byte) {
 		// answering. That turn is deferred and not discarded: the next run reads a
 		// longer file and lands it.
 		r.deferred++
+		r.orphanTurnScope()
 	}
 	if r.recovering != nil && len(r.turns) == 0 {
 		r.deferred++
@@ -299,12 +305,14 @@ func (r *codexReader) event(record int, line codexLine, payload codexPayload) {
 		if r.open != nil {
 			r.discards = append(r.discards, Discard{Record: r.open.opened,
 				Reason: "turn superseded by a later question before it completed"})
+			r.orphanTurnScope()
+		} else {
+			r.resetTurnScope()
 		}
 		r.open = &codexTurn{
 			opened: record, humanText: payload.Message, humanTS: validInstant(line.Timestamp),
 			model: r.model, effort: r.effort,
 		}
-		r.resetTurnScope()
 	case "agent_message":
 		// The agent's own words. They do not close the turn, because a turn holds
 		// several of them and closing on the first would split one answer into
@@ -334,21 +342,30 @@ func (r *codexReader) event(record int, line codexLine, payload codexPayload) {
 	case "turn_aborted":
 		if r.open != nil {
 			r.discards = append(r.discards, Discard{Record: record, Reason: "aborted turn"})
+			r.orphanTurnScope()
+		} else {
+			r.resetTurnScope()
 		}
 		r.open = nil
-		r.resetTurnScope()
 	default:
 		r.exclude(record, "event", payload.InnerType)
 	}
 }
 
-// resetTurnScope drops what only made sense inside the turn that just ended: the
-// agent's last words and the tool calls still waiting for a verdict. A verdict
-// arriving after the turn closed answers a call nothing stores any more, and it
-// is counted as the orphan it is instead of patching a tool use of another turn.
 func (r *codexReader) resetTurnScope() {
 	r.agentSaid = ""
 	r.pending = map[string]*ToolUse{}
+	r.turnTools = nil
+}
+
+func (r *codexReader) orphanTurnScope() {
+	for _, tool := range r.turnTools {
+		r.orphaned[tool] = true
+	}
+	for callID, tool := range r.pending {
+		r.orphanPending[callID] = tool
+	}
+	r.resetTurnScope()
 }
 
 func (r *codexReader) responseItem(record int, line codexLine, payload codexPayload) {
@@ -370,12 +387,18 @@ func (r *codexReader) responseItem(record int, line codexLine, payload codexPayl
 			ParamsSummary: Clip(firstNonEmpty(rawText(payload.Arguments), payload.Input), paramsBudget),
 		}
 		r.signals = append(r.signals, codexSignal{record: record, tool: tool})
+		if r.open != nil {
+			r.turnTools = append(r.turnTools, tool)
+		}
 		if payload.CallID != "" {
 			r.pending[payload.CallID] = tool
 		}
 	case "function_call_output", "custom_tool_call_output":
 		output := rawText(payload.Output)
 		tool, ok := r.pending[payload.CallID]
+		if !ok {
+			tool, ok = r.orphanPending[payload.CallID]
+		}
 		if !ok {
 			r.discards = append(r.discards, Discard{Record: record,
 				Reason:   "tool verdict has unknown call_id: " + payload.CallID,
@@ -470,6 +493,9 @@ func (r *codexReader) exchanges(turns []codexTurn) []Exchange {
 					usage.AddReasoningTokens(*signal.usage.Reasoning)
 				}
 			case signal.tool != nil:
+				if r.orphaned[signal.tool] {
+					continue
+				}
 				exchange.Tools = append(exchange.Tools, *signal.tool)
 			default:
 				// The streamed reasoning event and the response item that persists
@@ -497,7 +523,10 @@ func (r *codexReader) exchanges(turns []codexTurn) []Exchange {
 func (r *codexReader) orphanedTools(turns []codexTurn) []ToolUse {
 	tools := make([]ToolUse, 0)
 	for _, signal := range r.signals {
-		if signal.tool == nil || codexTurnOwnsRecord(turns, signal.record) {
+		if signal.tool == nil {
+			continue
+		}
+		if !r.orphaned[signal.tool] && codexTurnOwnsRecord(turns, signal.record) {
 			continue
 		}
 		tools = append(tools, *signal.tool)

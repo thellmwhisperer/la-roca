@@ -130,7 +130,7 @@ func TestCodexCountsAUserMessageThatSupersedesAnUnclosedTurn(t *testing.T) {
 	}
 }
 
-func TestCodexCountsToolVerdictWithUnknownCallID(t *testing.T) {
+func TestCodexAppliesALateVerdictToTheSupersededOrphan(t *testing.T) {
 	content := `{"type":"event_msg","payload":{"type":"user_message","message":"first"}}
 {"type":"response_item","payload":{"type":"function_call","call_id":"old","name":"shell"}}
 {"type":"event_msg","payload":{"type":"user_message","message":"replacement"}}
@@ -140,12 +140,41 @@ func TestCodexCountsToolVerdictWithUnknownCallID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(records.Discards) != 2 {
-		t.Fatalf("discards = %+v", records.Discards)
+	if len(records.Discards) != 1 {
+		t.Fatalf("discards = %+v, want only the superseded turn", records.Discards)
 	}
-	if !strings.Contains(records.Discards[1].Reason, "unknown call_id") ||
-		records.Discards[1].Category != "tool verdict has unknown call_id" {
-		t.Fatalf("tool verdict discard = %q", records.Discards[1].Reason)
+	session := records.Sessions[0]
+	if len(session.Exchanges) != 1 || len(session.Exchanges[0].Tools) != 0 {
+		t.Fatalf("replacement exchange = %+v, want no superseded tool", session.Exchanges)
+	}
+	if len(session.OrphanedTools) != 1 {
+		t.Fatalf("orphaned tools = %+v, want the superseded call", session.OrphanedTools)
+	}
+	tool := session.OrphanedTools[0]
+	if !tool.HadError || tool.ErrorMessage != `{"metadata":{"exit_code":1}}` {
+		t.Fatalf("superseded tool verdict = %+v", tool)
+	}
+}
+
+func TestCodexRecoveryDoesNotAttachToolsFromAnAbortedEventTurn(t *testing.T) {
+	content := `{"type":"event_msg","payload":{"type":"user_message","message":"interrupted"}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"interrupted"}]}}
+{"type":"response_item","payload":{"type":"function_call","call_id":"aborted","name":"shell"}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"partial answer"}]}}
+{"type":"event_msg","payload":{"type":"turn_aborted"}}`
+	records, err := Parse(KindCodexSession, []byte(content), FileMeta{SessionID: "recovered-abort"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := records.Sessions[0]
+	if len(session.Exchanges) != 1 || session.Exchanges[0].HumanText != "interrupted" ||
+		session.Exchanges[0].AgentText != "partial answer" {
+		t.Fatalf("recovered conversation = %+v", session.Exchanges)
+	}
+	if len(session.Exchanges[0].Tools) != 0 || len(session.OrphanedTools) != 1 ||
+		session.OrphanedTools[0].Name != "shell" {
+		t.Fatalf("recovered tool ownership = attached:%+v orphaned:%+v",
+			session.Exchanges[0].Tools, session.OrphanedTools)
 	}
 }
 
