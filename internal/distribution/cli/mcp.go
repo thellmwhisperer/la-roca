@@ -52,21 +52,13 @@ func mcpInstallCommand(env *cliEnv) *cobra.Command {
 			if !filepath.IsAbs(declared) {
 				return fmt.Errorf("resolve the running executable %q to an absolute path", declared)
 			}
-			var rollback func() error
 			var outcome agentcfg.Outcome
 			if args[0] == agentcfg.RuntimeZcode {
-				outcome, err = agentcfg.InstallZcodeMCP(path, declared,
-					func(preimage string, configured bool) error {
-						rollback, err = env.recordZcodeMCPPreimage(path, preimage, configured)
-						return err
-					})
+				outcome, err = env.installZcodeMCP(path, declared)
 			} else {
 				outcome, err = agentcfg.Install(args[0], path, declared)
 			}
 			if err != nil {
-				if rollback != nil {
-					err = errors.Join(err, rollback())
-				}
 				return err
 			}
 			if env.json {
@@ -168,6 +160,35 @@ func mcpStatusCommand(env *cliEnv) *cobra.Command {
 
 const zcodeMCPPreimageFormat = "zcode-mcp-preimage-v1:"
 
+func (env *cliEnv) installZcodeMCP(path, executable string) (outcome agentcfg.Outcome, err error) {
+	release, err := env.lockZcodeMCPLifecycle()
+	if err != nil {
+		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: path}, err
+	}
+	defer func() { err = errors.Join(err, release()) }()
+	var rollback func() error
+	outcome, err = agentcfg.InstallZcodeMCP(path, executable,
+		func(preimage string, configured bool) error {
+			rollback, err = env.recordZcodeMCPPreimage(path, preimage, configured)
+			return err
+		})
+	if err != nil && rollback != nil {
+		err = errors.Join(err, rollback())
+	}
+	return outcome, err
+}
+
+func (env *cliEnv) lockZcodeMCPLifecycle() (func() error, error) {
+	paths, err := env.resolvePaths()
+	if err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(filepath.Dir(paths.Artifacts), 0o700); err != nil {
+		return nil, err
+	}
+	return securefile.Lock(paths.Artifacts + ".mcp.lock")
+}
+
 func (env *cliEnv) recordZcodeMCPPreimage(path, preimage string, configured bool) (func() error, error) {
 	paths, err := env.resolvePaths()
 	if err != nil {
@@ -208,11 +229,15 @@ func (env *cliEnv) recordZcodeMCPPreimage(path, preimage string, configured bool
 	}, nil
 }
 
-func mutateArtifactRegistry(path string, mutate func(*artifact.Registry) (bool, error)) (changed bool, err error) {
+func lockArtifactRegistry(path string) (func() error, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return false, err
+		return nil, err
 	}
-	release, err := securefile.Lock(path + ".lock")
+	return securefile.Lock(path + ".lock")
+}
+
+func mutateArtifactRegistry(path string, mutate func(*artifact.Registry) (bool, error)) (changed bool, err error) {
+	release, err := lockArtifactRegistry(path)
 	if err != nil {
 		return false, err
 	}
@@ -270,34 +295,29 @@ func (env *cliEnv) uninstallMCP(runtime, path string) (agentcfg.Outcome, error) 
 	if runtime != agentcfg.RuntimeZcode {
 		return agentcfg.Uninstall(runtime, path)
 	}
-	preimage := agentcfg.ZcodeMCPPreimageNone
-	entry, found, err := env.registeredArtifact(artifactKindMCP, runtime, path)
+	return env.uninstallZcodeMCP(path)
+}
+
+func (env *cliEnv) uninstallZcodeMCP(path string) (outcome agentcfg.Outcome, err error) {
+	release, err := env.lockZcodeMCPLifecycle()
 	if err != nil {
-		return agentcfg.Outcome{Runtime: runtime, Path: path}, err
+		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: path}, err
+	}
+	defer func() { err = errors.Join(err, release()) }()
+	preimage := agentcfg.ZcodeMCPPreimageNone
+	entry, found, err := env.registeredArtifact(artifactKindMCP, agentcfg.RuntimeZcode, path)
+	if err != nil {
+		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: path}, err
 	}
 	if found {
 		preimage, err = zcodeMCPPreimageFromEntry(entry)
 		if err != nil {
-			return agentcfg.Outcome{Runtime: runtime, Path: path}, err
+			return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: path}, err
 		}
 	}
-	outcome, err := agentcfg.UninstallZcodeMCP(path, preimage)
-	if err != nil {
-		return outcome, err
-	}
-	if found {
-		paths, pathsErr := env.resolvePaths()
-		if pathsErr != nil {
-			return outcome, pathsErr
-		}
-		_, err = mutateArtifactRegistry(paths.Artifacts, func(registry *artifact.Registry) (bool, error) {
-			current, exists := registry.Find(artifactKindMCP, runtime, path)
-			if !exists || current != entry {
-				return false, nil
-			}
-			removeArtifactEntry(registry, entry.Key())
-			return true, nil
-		})
+	outcome, err = agentcfg.UninstallZcodeMCP(path, preimage)
+	if err == nil && found {
+		err = env.unregisterArtifactEntry(entry)
 	}
 	return outcome, err
 }
