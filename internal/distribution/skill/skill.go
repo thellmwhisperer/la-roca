@@ -106,6 +106,7 @@ var rootOf = map[string]struct {
 	agentcfg.RuntimeHermes:   {dirVar: "HERMES_HOME", dir: []string{".hermes"}},
 	agentcfg.RuntimePi:       {dirVar: "PI_CODING_AGENT_DIR", dir: []string{".pi", "agent"}},
 	agentcfg.RuntimeQwen:     {dirVar: "QWEN_HOME", dir: []string{".qwen"}},
+	agentcfg.RuntimeZcode:    {dirVar: "ZCODE_HOME", dir: []string{".zcode"}},
 }
 
 // Payload is the AGENTS.md whole-file source the definitive skill is generated
@@ -221,6 +222,9 @@ func Root(name, home string, env func(string) string) (string, error) {
 func Detected(home string, env func(string) string) []string {
 	var names []string
 	for _, name := range Runtimes() {
+		if name == agentcfg.RuntimeZcode {
+			continue
+		}
 		root, err := Root(name, home, env)
 		if err != nil {
 			continue
