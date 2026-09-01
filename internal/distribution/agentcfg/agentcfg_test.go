@@ -252,6 +252,21 @@ func TestZcodeHookRoundTripPreservesEmptySessionStartWhitespace(t *testing.T) {
 	}
 }
 
+func TestZcodeHookParserRejectsObjectShapedGroupsItCannotVerify(t *testing.T) {
+	installed, err := agentcfg.DeclareZcodeSessionStartHook(`{}`, "marker", "/wrapper", 15000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ambiguous := strings.Replace(installed, `"matcher":`, `"matcher": "operator", "matcher":`, 1)
+	if !json.Valid([]byte(ambiguous)) {
+		t.Fatalf("fixture is not valid JSON: %s", ambiguous)
+	}
+	if _, err := agentcfg.RemoveZcodeSessionStartHook(ambiguous, "marker"); err == nil ||
+		!strings.Contains(err.Error(), "duplicate object member") {
+		t.Fatalf("ambiguous hook group was treated as verified: %v", err)
+	}
+}
+
 func TestZcodeHookReinstallCollapsesManagedDuplicates(t *testing.T) {
 	marker := "roca_session_start_marker"
 	installed, err := agentcfg.DeclareZcodeSessionStartHook(
@@ -346,7 +361,7 @@ func TestZcodeMCPPreimageUsesComparedInstallSnapshot(t *testing.T) {
 	}
 	concurrent := `{"mcp":{"servers":{}}}`
 	var recorded string
-	_, err := agentcfg.InstallZcodeMCP(path, "roca", func(preimage string, _, _ bool) error {
+	_, err := agentcfg.InstallZcodeMCP(path, "roca", func(preimage string, _, _ bool, _ string) error {
 		recorded = preimage
 		return os.WriteFile(path, []byte(concurrent), 0o600)
 	})
@@ -372,7 +387,7 @@ func TestZcodeInstallSnapshotsFileExistence(t *testing.T) {
 			name:    "MCP existing empty file",
 			prepare: func(path string) error { return os.WriteFile(path, nil, 0o600) },
 			install: func(path string, observed func(bool)) error {
-				_, err := agentcfg.InstallZcodeMCP(path, "roca", func(_ string, _, existed bool) error {
+				_, err := agentcfg.InstallZcodeMCP(path, "roca", func(_ string, _, existed bool, _ string) error {
 					observed(existed)
 					return nil
 				})
@@ -385,7 +400,7 @@ func TestZcodeInstallSnapshotsFileExistence(t *testing.T) {
 			prepare: func(string) error { return nil },
 			install: func(path string, observed func(bool)) error {
 				_, err := agentcfg.InstallZcodeSessionStartHook(path, "marker", "/wrapper", 15000,
-					func(_ string, createdEnabled, existed bool) error {
+					func(_ string, createdEnabled, existed bool, _ string) error {
 						if !createdEnabled {
 							t.Fatal("missing hook config did not create hooks.enabled")
 						}
@@ -911,8 +926,16 @@ func TestConfigEditsPreserveSymlinkTopology(t *testing.T) {
 			if err := os.Symlink(target, link); err != nil {
 				t.Skipf("symlinks are unavailable: %v", err)
 			}
-			if _, err := agentcfg.Install(runtime, link, "/opt/roca"); err != nil {
+			outcome, err := agentcfg.Install(runtime, link, "/opt/roca")
+			if err != nil {
 				t.Fatal(err)
+			}
+			resolvedTarget, err := filepath.EvalSymlinks(target)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if outcome.MutationPath != resolvedTarget {
+				t.Fatalf("mutation path = %q, want %q", outcome.MutationPath, resolvedTarget)
 			}
 			if info, err := os.Lstat(link); err != nil || info.Mode()&os.ModeSymlink == 0 {
 				t.Fatalf("install replaced config symlink: info=%v err=%v", info, err)

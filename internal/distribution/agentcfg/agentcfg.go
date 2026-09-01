@@ -162,6 +162,7 @@ func Runtimes() []string {
 type Outcome struct {
 	Runtime      string      `json:"runtime"`
 	Path         string      `json:"path"`
+	MutationPath string      `json:"mutation_path,omitempty"`
 	Changed      bool        `json:"changed"`
 	Backup       string      `json:"backup,omitempty"`
 	FileIdentity os.FileInfo `json:"-"`
@@ -229,6 +230,10 @@ func ConfigPathForOS(name, home, goos string, env func(string) string) (string, 
 
 // Install declares the stdio server in one runtime's configuration.
 func Install(name, path, executable string) (Outcome, error) {
+	return InstallWithMutationPath(name, path, executable, nil)
+}
+
+func InstallWithMutationPath(name, path, executable string, record func(string) error) (Outcome, error) {
 	r, err := find(name)
 	if err != nil {
 		return Outcome{}, err
@@ -236,14 +241,19 @@ func Install(name, path, executable string) (Outcome, error) {
 	if strings.TrimSpace(executable) == "" {
 		executable = "roca"
 	}
-	return Edit(name, path, func(text string) (string, error) {
+	return edit(name, path, func(text string, _ bool, mutationPath string) (string, error) {
+		if record != nil {
+			if err := record(mutationPath); err != nil {
+				return "", err
+			}
+		}
 		return declare(r, text, executable)
-	}, true)
+	}, nil, true)
 }
 
 func InstallZcodeSessionStartHook(path, marker, command string, timeoutMs int,
-	record func(string, bool, bool) error) (Outcome, error) {
-	return edit(RuntimeZcode, path, func(previous string, existed bool) (string, error) {
+	record func(string, bool, bool, string) error) (Outcome, error) {
+	return edit(RuntimeZcode, path, func(previous string, existed bool, mutationPath string) (string, error) {
 		next, err := DeclareZcodeSessionStartHook(previous, marker, command, timeoutMs)
 		if err != nil {
 			return "", err
@@ -253,7 +263,7 @@ func InstallZcodeSessionStartHook(path, marker, command string, timeoutMs int,
 			return "", err
 		}
 		if record != nil {
-			if err := record(previous, createdEnabled, existed); err != nil {
+			if err := record(previous, createdEnabled, existed, mutationPath); err != nil {
 				return "", err
 			}
 		}
@@ -261,12 +271,12 @@ func InstallZcodeSessionStartHook(path, marker, command string, timeoutMs int,
 	}, nil, true)
 }
 
-func InstallZcodeMCP(path, executable string, recordPreimage func(string, bool, bool) error) (Outcome, error) {
+func InstallZcodeMCP(path, executable string, recordPreimage func(string, bool, bool, string) error) (Outcome, error) {
 	if strings.TrimSpace(executable) == "" {
 		executable = "roca"
 	}
 	r := runtimes[RuntimeZcode]
-	return edit(RuntimeZcode, path, func(text string, existed bool) (string, error) {
+	return edit(RuntimeZcode, path, func(text string, existed bool, mutationPath string) (string, error) {
 		preimage, err := ZcodeMCPPreimage(text)
 		if err != nil {
 			return "", err
@@ -276,7 +286,7 @@ func InstallZcodeMCP(path, executable string, recordPreimage func(string, bool, 
 			return "", err
 		}
 		if recordPreimage != nil {
-			if err := recordPreimage(preimage, configured, existed); err != nil {
+			if err := recordPreimage(preimage, configured, existed, mutationPath); err != nil {
 				return "", err
 			}
 		}
@@ -424,7 +434,7 @@ func Status(name, path string) (Report, error) {
 // guarantees. Two edit paths would create two sets of ways to lose a file.
 func Edit(name, path string, transform func(string) (string, error),
 	createMissing bool) (Outcome, error) {
-	return edit(name, path, func(text string, _ bool) (string, error) {
+	return edit(name, path, func(text string, _ bool, _ string) (string, error) {
 		return transform(text)
 	}, nil, createMissing)
 }
@@ -434,7 +444,7 @@ func Edit(name, path string, transform func(string) (string, error),
 // to make a deliberately non-byte-exact, secret-free backup.
 func EditWithBackup(name, path string, transform, backupTransform func(string) (string, error),
 	createMissing bool) (Outcome, error) {
-	return edit(name, path, func(text string, _ bool) (string, error) {
+	return edit(name, path, func(text string, _ bool, _ string) (string, error) {
 		return transform(text)
 	}, backupTransform, createMissing)
 }
@@ -488,7 +498,7 @@ func configMutationPath(path string) (string, error) {
 	return resolved, nil
 }
 
-func edit(name, path string, transform func(string, bool) (string, error),
+func edit(name, path string, transform func(string, bool, string) (string, error),
 	backupTransform func(string) (string, error), createMissing bool) (Outcome, error) {
 	outcome := Outcome{Runtime: name, Path: path}
 	target := path
@@ -510,7 +520,8 @@ func edit(name, path string, transform func(string, bool) (string, error),
 		return outcome, fmt.Errorf("read %s: %w", path, err)
 	}
 
-	next, err := transform(string(previous), previous != nil)
+	outcome.MutationPath = target
+	next, err := transform(string(previous), previous != nil, target)
 	if err != nil {
 		return outcome, fmt.Errorf("%s: %w", path, err)
 	}

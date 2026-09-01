@@ -297,6 +297,9 @@ func DeclareZcodeSessionStartHook(text, marker, command string, timeoutMs int) (
 	for entryIndex, entry := range entries.values {
 		group, err := objectAt(view, entry.start)
 		if err != nil {
+			if view[entry.start] == '{' {
+				return "", fmt.Errorf("invalid SessionStart hook group: %w", err)
+			}
 			continue
 		}
 		recorded, owned := parseZcodeHookMarker(marker, jsonStringMember(view, group, "matcher"))
@@ -522,6 +525,9 @@ func removeOneZcodeSessionStartHook(text, marker string) (string, zcodeHookPreim
 	for entryIndex, entry := range entries.values {
 		group, err := objectAt(view, entry.start)
 		if err != nil {
+			if view[entry.start] == '{' {
+				return "", zcodeHookPreimage{}, false, fmt.Errorf("invalid SessionStart hook group: %w", err)
+			}
 			continue
 		}
 		preimage, owned := parseZcodeHookMarker(marker, jsonStringMember(view, group, "matcher"))

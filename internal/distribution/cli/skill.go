@@ -748,7 +748,10 @@ func zcodeHookSelected(configPath, _ string) (bool, error) {
 	} else if err != nil {
 		return false, err
 	}
-	present, _ := zcodeManagedHookState(configPath)
+	present, verified := zcodeManagedHookState(configPath)
+	if !verified {
+		return false, fmt.Errorf("could not verify ZCode hook markers in %s", configPath)
+	}
 	return present, nil
 }
 
@@ -783,7 +786,7 @@ func zcodeHookPathPreimage(configPath, wrapperPath string) (zcodeHookPathState, 
 	}, nil
 }
 
-func (env *cliEnv) recordZcodeWrapperState(path, executable string, preimage zcodeHookPathState,
+func (env *cliEnv) recordZcodeWrapperState(path, mutationPath, executable string, preimage zcodeHookPathState,
 	managedDeclarationContinuous bool) (func() error, error) {
 	paths, err := env.resolvePaths()
 	if err != nil {
@@ -791,7 +794,7 @@ func (env *cliEnv) recordZcodeWrapperState(path, executable string, preimage zco
 	}
 	expected := zcodeWrapper(executable)
 	transaction := artifact.Entry{
-		Kind: artifactKindHook, Runtime: agentcfg.RuntimeZcode, Path: path,
+		Kind: artifactKindHook, Runtime: agentcfg.RuntimeZcode, Path: path, MutationPath: mutationPath,
 		InstalledVersion: env.build.Version, AvailableVersion: env.build.Version,
 		SystemSHA256: artifact.Checksum(expected), Format: zcodeWrapperStateFormat,
 		Executable:  executable,
@@ -908,10 +911,10 @@ func (env *cliEnv) installManagedZcodeHandoffHookLocked(configPath, wrapperPath,
 	}
 	var rollback func() error
 	outcome, warning, err = installZcodeHandoffHookWithPrevious(configPath, wrapperPath, executable, previous,
-		func(configBefore string, createdEnabled, existed bool) error {
+		func(configBefore string, createdEnabled, existed bool, mutationPath string) error {
 			pathPreimage.createdConfig = !existed
 			pathPreimage.createdHooksEnabled = createdEnabled
-			rollback, err = env.recordZcodeWrapperState(wrapperPath, executable, pathPreimage,
+			rollback, err = env.recordZcodeWrapperState(wrapperPath, mutationPath, executable, pathPreimage,
 				zcodeManagedHookDeclared(configBefore))
 			return err
 		})
@@ -996,7 +999,7 @@ func installZcodeHandoffHookUnlocked(configPath, wrapperPath, executable string)
 }
 
 func installZcodeHandoffHookWithPrevious(configPath, wrapperPath, executable string, previous []byte,
-	record ...func(string, bool, bool) error) (agentcfg.Outcome, string, error) {
+	record ...func(string, bool, bool, string) error) (agentcfg.Outcome, string, error) {
 	state, err := readZcodeWrapperState(wrapperPath)
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
@@ -1010,7 +1013,7 @@ func installZcodeHandoffHookWithPrevious(configPath, wrapperPath, executable str
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
 	command := zcodeOwnedHookCommand(wrapperPath)
-	var recordState func(string, bool, bool) error
+	var recordState func(string, bool, bool, string) error
 	if len(record) > 0 {
 		recordState = record[0]
 	}

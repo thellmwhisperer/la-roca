@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	RegistrySchema   = 2
+	RegistrySchema   = 3
 	SystemBegin      = "<!-- ROCA SYSTEM BEGIN -->"
 	SystemEnd        = "<!-- ROCA SYSTEM END -->"
 	UserBegin        = "<!-- ROCA USER BEGIN -->"
@@ -225,6 +225,7 @@ type Entry struct {
 	Kind                string `json:"kind"`
 	Runtime             string `json:"runtime,omitempty"`
 	Path                string `json:"path"`
+	MutationPath        string `json:"mutation_path,omitempty"`
 	InstalledVersion    string `json:"installed_version,omitempty"`
 	AvailableVersion    string `json:"available_version,omitempty"`
 	SystemSHA256        string `json:"system_sha256,omitempty"`
@@ -260,8 +261,8 @@ func LoadRegistry(path string) (Registry, error) {
 	if err := json.Unmarshal(body, &registry); err != nil {
 		return Registry{}, fmt.Errorf("read artifact registry %s: %w", path, err)
 	}
-	if registry.Schema != 1 && registry.Schema != RegistrySchema {
-		return Registry{}, fmt.Errorf("artifact registry %s has schema %d, want 1 or %d",
+	if registry.Schema != 1 && registry.Schema != 2 && registry.Schema != RegistrySchema {
+		return Registry{}, fmt.Errorf("artifact registry %s has schema %d, want 1, 2, or %d",
 			path, registry.Schema, RegistrySchema)
 	}
 	registry.Schema = RegistrySchema
@@ -280,7 +281,7 @@ func SaveRegistry(path string, registry Registry) error {
 			return fmt.Errorf("read artifact registry %s: %w", path, err)
 		}
 		switch header.Schema {
-		case 1:
+		case 1, 2:
 			if _, err := securefile.BackUp(path, previous); err != nil {
 				return fmt.Errorf("back up artifact registry migration: %w", err)
 			}

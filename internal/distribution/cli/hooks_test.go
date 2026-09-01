@@ -1180,7 +1180,7 @@ func TestZcodeFailedConfigPublicationRestoresFreshWrapper(t *testing.T) {
 	executable := filepath.Join(home, "roca")
 	command := zcodeOwnedHookCommand(wrapper)
 	_, _, err := installZcodeHandoffHookWithPrevious(config, wrapper, executable, nil,
-		func(_ string, _, _ bool) error {
+		func(_ string, _, _ bool, _ string) error {
 			operator, err := agentcfg.DeclareZcodeSessionStartHook(
 				`{}`, zcodeSessionStartMarker, command, 15000)
 			if err != nil {
@@ -1221,6 +1221,38 @@ func TestFullUninstallRetainsBinaryForUnverifiedZcodeHook(t *testing.T) {
 	}
 	if _, err := os.Stat(wrapper); err != nil {
 		t.Fatalf("unverified hook wrapper was removed: %v", err)
+	}
+}
+
+func TestFullUninstallRetainsBinaryForAmbiguousZcodeHookGroup(t *testing.T) {
+	home := skillTestHome(t)
+	installZcodeTestIntegration(t, "hooks", home)
+	config, wrapper := zcodeTestConfigAndWrapper(home)
+	_, document := readZcodeTestJSON(t, config)
+	group := document["hooks"].(map[string]any)["events"].(map[string]any)["SessionStart"].([]any)[0].(map[string]any)
+	marker := group["matcher"].(string)
+	command := zcodeOwnedHookCommand(wrapper)
+	ambiguous := fmt.Sprintf(`{"hooks":{"enabled":true,"events":{"SessionStart":[{"matcher":"operator","matcher":%q,"hooks":[{"type":"command","command":%q,"timeoutMs":15000}]}]}}}`, marker, command)
+	if !json.Valid([]byte(ambiguous)) {
+		t.Fatalf("fixture is not valid JSON: %s", ambiguous)
+	}
+	if err := os.WriteFile(config, []byte(ambiguous), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var output strings.Builder
+	env := &cliEnv{out: &output, errOut: &output}
+	if err := env.uninstall(uninstallCommand(env), strings.NewReader(""), false); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "integration withdrawal failed") ||
+		!strings.Contains(output.String(), "could not verify ZCode hook markers") {
+		t.Fatalf("ambiguous hook did not retain the binary:\n%s", output.String())
+	}
+	if body, err := os.ReadFile(config); err != nil || string(body) != ambiguous {
+		t.Fatalf("ambiguous hook changed: body=%q err=%v", body, err)
+	}
+	if _, err := os.Stat(wrapper); err != nil {
+		t.Fatalf("ambiguous hook wrapper was removed: %v", err)
 	}
 }
 
