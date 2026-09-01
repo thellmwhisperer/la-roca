@@ -6,11 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"net/url"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 )
@@ -19,7 +17,6 @@ var snapshotArtifacts = [...]string{"", "-wal", "-journal"}
 
 const (
 	snapshotDirectoryPrefix = "roca-read-only-snapshot-"
-	snapshotStaleAfter      = 30 * 24 * time.Hour
 	snapshotCopyBufferSize  = 128 * 1024
 )
 
@@ -48,12 +45,15 @@ func OpenReadOnlySnapshot(ctx context.Context, path string) (*ReadOnlySnapshot, 
 		return nil, err
 	}
 	tempRoot := os.TempDir()
-	if err := scavengeReadOnlySnapshots(ctx, tempRoot, time.Now()); err != nil {
+	if err := reapReadOnlySnapshots(ctx, tempRoot, time.Now()); err != nil {
 		return nil, err
 	}
 	directory, err := os.MkdirTemp(tempRoot, snapshotDirectoryPrefix)
 	if err != nil {
 		return nil, fmt.Errorf("create read-only snapshot directory: %w", err)
+	}
+	if err := writeSnapshotLease(directory, currentSnapshotLease()); err != nil {
+		return nil, cleanupSnapshotDirectory(directory, fmt.Errorf("write snapshot lease: %w", err))
 	}
 	for attempt := range 3 {
 		if err := ctx.Err(); err != nil {
@@ -114,42 +114,6 @@ func OpenReadOnlySnapshot(ctx context.Context, path string) (*ReadOnlySnapshot, 
 	}
 	return nil, cleanupSnapshotDirectory(directory,
 		fmt.Errorf("database %q kept changing while it was snapshotted", abs))
-}
-
-func scavengeReadOnlySnapshots(ctx context.Context, root string, now time.Time) error {
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return fmt.Errorf("inspect read-only snapshot directory: %w", err)
-	}
-	return scavengeSnapshotEntries(ctx, root, entries, now)
-}
-
-func scavengeSnapshotEntries(ctx context.Context, root string, entries []fs.DirEntry, now time.Time) error {
-	for _, entry := range entries {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), snapshotDirectoryPrefix) {
-			continue
-		}
-		info, err := entry.Info()
-		if err != nil {
-			if os.IsNotExist(err) {
-				// A concurrent snapshot closed and removed its directory
-				// after ReadDir listed it; there is nothing left to scavenge.
-				continue
-			}
-			return fmt.Errorf("inspect stale read-only snapshot %q: %w", entry.Name(), err)
-		}
-		if age := now.Sub(info.ModTime()); age < snapshotStaleAfter {
-			continue
-		}
-		path := filepath.Join(root, entry.Name())
-		if err := os.RemoveAll(path); err != nil {
-			return fmt.Errorf("remove stale read-only snapshot %q: %w", path, err)
-		}
-	}
-	return nil
 }
 
 func cleanupSnapshotDirectory(directory string, cause error) error {
