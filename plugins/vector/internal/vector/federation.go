@@ -741,6 +741,9 @@ func (f Federation) Ingest(ctx context.Context, sourceKind string) (FederationDe
 	if preparationErr != nil {
 		return result, preparationErr
 	}
+	if errors.Is(runErr, errIndexingStalled) {
+		return result, runErr
+	}
 	if ingestErr != nil {
 		return result, ingestErr
 	}

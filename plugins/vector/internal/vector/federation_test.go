@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,6 +15,23 @@ import (
 
 	_ "modernc.org/sqlite"
 )
+
+func TestFederationReportsSchedulerStallInsteadOfWorkerCancellation(t *testing.T) {
+	federation, _, _, _ := federationFixture(t)
+	previous := embeddingStallTimeout
+	embeddingStallTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { embeddingStallTimeout = previous })
+	federation.Core.Run = func(ctx context.Context, _ string, _ ...string) ([]byte, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_, err := federation.Ingest(ctx, "")
+	if !errors.Is(err, errIndexingStalled) {
+		t.Fatalf("federation ingest error = %v, want indexing stalled", err)
+	}
+}
 
 func TestFederationBuildsOwnedSidecarsAndGarbageCollectsByDelta(t *testing.T) {
 	federation, corpusPath, opsPath, embedder := federationFixture(t)

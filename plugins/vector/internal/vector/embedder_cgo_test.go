@@ -4,11 +4,14 @@ package vector
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/thellmwhisperer/la-roca-vector/internal/llamacpp"
 )
 
 type blockingEngine struct {
@@ -70,6 +73,52 @@ func TestNativeEmbedFailsInsteadOfHanging(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("Embed hung after the engine stopped returning")
+	}
+}
+
+func TestOpenPreferredRetainsOwnershipUntilLateOpenCompletes(t *testing.T) {
+	previous := nativeOpenPreferred
+	started := make(chan struct{})
+	release := make(chan struct{})
+	nativeOpenPreferred = func(string, int, llamacpp.Policy) (*llamacpp.Engine, error) {
+		close(started)
+		<-release
+		return &llamacpp.Engine{}, nil
+	}
+	t.Cleanup(func() {
+		nativeOpenPreferred = previous
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := openPreferredWithContext(ctx, "model", 1, llamacpp.ReadPolicy())
+		done <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("native open did not start")
+	}
+	<-ctx.Done()
+	select {
+	case err := <-done:
+		t.Fatalf("native open ownership ended before the underlying open completed: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("late native open error = %v, want deadline exceeded", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("native open ownership was not released after completion")
 	}
 }
 

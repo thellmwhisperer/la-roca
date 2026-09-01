@@ -13,7 +13,10 @@ import (
 	"github.com/thellmwhisperer/la-roca-vector/internal/telemetry"
 )
 
-var nativeCallTimeout = 10 * time.Minute
+var (
+	nativeCallTimeout   = 10 * time.Minute
+	nativeOpenPreferred = llamacpp.OpenPreferred
+)
 
 func (n *Native) Embed(ctx context.Context, requestedModel string, input []string) ([][]float32, error) {
 	if requestedModel != DefaultModel {
@@ -114,21 +117,14 @@ func (n *Native) open(ctx context.Context) error {
 }
 
 func openPreferredWithContext(ctx context.Context, path string, threads int, policy llamacpp.Policy) (*llamacpp.Engine, error) {
-	type reply struct {
-		engine *llamacpp.Engine
-		err    error
+	loaded, err := nativeOpenPreferred(path, threads, policy)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		if loaded != nil {
+			loaded.Close()
+		}
+		return nil, ctxErr
 	}
-	done := make(chan reply, 1)
-	go func() {
-		engine, err := llamacpp.OpenPreferred(path, threads, policy)
-		done <- reply{engine: engine, err: err}
-	}()
-	select {
-	case result := <-done:
-		return result.engine, result.err
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
+	return loaded, err
 }
 
 func (n *Native) Accelerated() bool {
