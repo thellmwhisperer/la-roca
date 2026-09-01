@@ -239,12 +239,12 @@ func Install(name, path, executable string) (Outcome, error) {
 	if strings.TrimSpace(executable) == "" {
 		executable = "roca"
 	}
-	previous, readErr := os.ReadFile(path)
-	if readErr != nil && !os.IsNotExist(readErr) {
-		return Outcome{}, fmt.Errorf("read %s: %w", path, readErr)
+	if _, err := loadOwnedMCP(path); err != nil {
+		return Outcome{Runtime: name, Path: path}, err
 	}
-	created := missingServerContainers(r, string(previous))
+	var created []string
 	outcome, err := Edit(name, path, func(text string) (string, error) {
+		created = missingServerContainers(r, text)
 		return declare(r, text, executable)
 	}, true)
 	if err != nil {

@@ -235,3 +235,146 @@ func TestZcodeHookUninstallRejectsUnreadableOwnershipBeforeMutation(t *testing.T
 		t.Fatalf("uninstall edited unrecognized ownership: %s", ownedAfter)
 	}
 }
+
+func TestZcodeHookInstallRejectsUnreadableOwnershipBeforeMutation(t *testing.T) {
+	home := skillTestHome(t)
+	config := filepath.Join(home, ".zcode", "cli", "config.json")
+	if err := os.MkdirAll(filepath.Dir(config), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	owned := config + ".roca-owned"
+	if err := os.WriteFile(owned, []byte("{not-json\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	root := rootCommand(&cliEnv{out: io.Discard, build: Build{Version: "test"}})
+	root.SetArgs([]string{"hooks", "install", "zcode"})
+	if err := root.Execute(); err == nil {
+		t.Fatal("install accepted an unrecognized ownership sidecar")
+	}
+	body, err := os.ReadFile(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != "{}\n" {
+		t.Fatalf("install edited config before rejecting ownership: %s", body)
+	}
+	ownedAfter, err := os.ReadFile(owned)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(ownedAfter) != "{not-json\n" {
+		t.Fatalf("install edited unrecognized ownership: %s", ownedAfter)
+	}
+	wrapper := filepath.Join(home, ".zcode", "hooks", "roca-handoff.sh")
+	if _, err := os.Stat(wrapper); !os.IsNotExist(err) {
+		t.Fatalf("install wrote wrapper before rejecting ownership: %v", err)
+	}
+}
+
+func TestZcodeHookReinstallPreservesContainerOwnership(t *testing.T) {
+	home := skillTestHome(t)
+	config := filepath.Join(home, ".zcode", "cli", "config.json")
+	if err := os.MkdirAll(filepath.Dir(config), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := rootCommand(&cliEnv{out: io.Discard, build: Build{Version: "test"}})
+	root.SetArgs([]string{"hooks", "install", "zcode"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config, []byte("{\"hooks\":{\"enabled\":true}}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root = rootCommand(&cliEnv{out: io.Discard, build: Build{Version: "test"}})
+	root.SetArgs([]string{"hooks", "install", "zcode"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	root = rootCommand(&cliEnv{out: io.Discard, build: Build{Version: "test"}})
+	root.SetArgs([]string{"hooks", "uninstall", "zcode"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	body, err := os.ReadFile(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(body, &document); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := document["hooks"]; ok {
+		t.Fatalf("reinstall lost ownership of the product-created hooks container: %#v", document)
+	}
+}
+
+func TestZcodeHookUninstallPreservesGroupMetadata(t *testing.T) {
+	home := skillTestHome(t)
+	config := filepath.Join(home, ".zcode", "cli", "config.json")
+	if err := os.MkdirAll(filepath.Dir(config), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := rootCommand(&cliEnv{out: io.Discard, build: Build{Version: "test"}})
+	root.SetArgs([]string{"hooks", "install", "zcode"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(body, &document); err != nil {
+		t.Fatal(err)
+	}
+	hooks := document["hooks"].(map[string]any)
+	events := hooks["events"].(map[string]any)
+	groups := events["SessionStart"].([]any)
+	group := groups[0].(map[string]any)
+	group["matcher"] = "operator-owned"
+	body, err = json.MarshalIndent(document, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config, append(body, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	root = rootCommand(&cliEnv{out: io.Discard, build: Build{Version: "test"}})
+	root.SetArgs([]string{"hooks", "uninstall", "zcode"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	body, err = os.ReadFile(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	document = nil
+	if err := json.Unmarshal(body, &document); err != nil {
+		t.Fatal(err)
+	}
+	hooks = document["hooks"].(map[string]any)
+	events = hooks["events"].(map[string]any)
+	groups = events["SessionStart"].([]any)
+	if len(groups) != 1 {
+		t.Fatalf("SessionStart groups = %d, want metadata-bearing group", len(groups))
+	}
+	group = groups[0].(map[string]any)
+	if group["matcher"] != "operator-owned" {
+		t.Fatalf("uninstall lost group metadata: %#v", group)
+	}
+	groupHooks, ok := group["hooks"].([]any)
+	if !ok || len(groupHooks) != 0 {
+		t.Fatalf("uninstall did not remove only the Roca command: %#v", group)
+	}
+}

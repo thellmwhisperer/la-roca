@@ -52,6 +52,9 @@ func installZcodeHandoffHook(configPath, executable string) (agentcfg.Outcome, s
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
+	if _, err := agentcfg.LoadOwnedHooks(configPath); err != nil {
+		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
+	}
 	if err := writeZcodeWrapper(wrapperPath, zcodeWrapper(executable)); err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
@@ -139,7 +142,7 @@ func uninstallZcodeHandoffHook(configPath, wrapperPath string) (agentcfg.Outcome
 				}
 				kept = append(kept, candidate)
 			}
-			if len(kept) == 0 {
+			if len(kept) == 0 && len(group) == 1 {
 				continue
 			}
 			group["hooks"] = kept
