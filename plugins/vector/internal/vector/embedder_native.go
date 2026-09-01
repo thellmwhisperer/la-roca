@@ -4,8 +4,14 @@ package vector
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
+	"os"
+	"strings"
 	"sync"
+	"sync/atomic"
+	"syscall"
 
 	"github.com/thellmwhisperer/la-roca-vector/internal/engine"
 	"github.com/thellmwhisperer/la-roca-vector/internal/llamacpp"
@@ -28,6 +34,123 @@ type Native struct {
 	engine        nativeEngine
 	backend       string
 	fallback      string
+	terminal      atomic.Pointer[nativeTrap]
+	activeElement atomic.Pointer[string]
+	trapAction    func(string) error
+}
+
+type nativeTrap struct {
+	err error
+}
+
+const (
+	nativeTrapDeathsEnv     = "ROCA_VECTOR_NATIVE_TRAP_DEATHS"
+	maxNativeTrapRestarts   = 1
+	maxNativeTrapLedgerSize = 64
+)
+
+var (
+	errNativeTrapped  = fmt.Errorf("semantic search stalled while preparing embeddings")
+	execWorkerProcess = syscall.Exec
+)
+
+type WorkerTrapRecovery struct {
+	cancel      context.CancelFunc
+	drain       func()
+	mu          sync.Mutex
+	environment []string
+}
+
+func NewWorkerTrapRecovery(cancel context.CancelFunc, drain func()) *WorkerTrapRecovery {
+	return &WorkerTrapRecovery{cancel: cancel, drain: drain}
+}
+
+func (r *WorkerTrapRecovery) Handle(element string) error {
+	environment, err := nativeTrapRestartEnvironment(element, os.Environ())
+	if err != nil {
+		return err
+	}
+	r.mu.Lock()
+	r.environment = environment
+	r.mu.Unlock()
+	r.cancel()
+	return nil
+}
+
+func (r *WorkerTrapRecovery) RestartIfRequested() (bool, error) {
+	r.mu.Lock()
+	environment := r.environment
+	r.mu.Unlock()
+	if environment == nil {
+		return false, nil
+	}
+	r.drain()
+	executable, err := os.Executable()
+	if err != nil {
+		return true, fmt.Errorf("restart vector worker after native stall: %w", err)
+	}
+	if err := execWorkerProcess(executable, os.Args, environment); err != nil {
+		return true, fmt.Errorf("restart vector worker after native stall: %w", err)
+	}
+	return true, nil
+}
+
+func nativeTrapRestartEnvironment(element string, environment []string) ([]string, error) {
+	deaths := map[string]int{}
+	if encoded := environmentValue(environment, nativeTrapDeathsEnv); encoded != "" {
+		if err := json.Unmarshal([]byte(encoded), &deaths); err != nil || deaths == nil {
+			return nil, nativeTrapBudgetError(element, maxNativeTrapRestarts)
+		}
+	}
+	for _, count := range deaths {
+		if count < 0 || count > maxNativeTrapRestarts {
+			return nil, nativeTrapBudgetError(element, maxNativeTrapRestarts)
+		}
+	}
+	if deaths[element] >= maxNativeTrapRestarts {
+		return nil, nativeTrapBudgetError(element, deaths[element])
+	}
+	if _, known := deaths[element]; !known && len(deaths) >= maxNativeTrapLedgerSize {
+		return nil, fmt.Errorf("%w: native restart ledger is full at embedding element %s",
+			errNativeTrapped, element)
+	}
+	deaths[element]++
+	encoded, err := json.Marshal(deaths)
+	if err != nil {
+		return nil, fmt.Errorf("record native restart state: %w", err)
+	}
+	return replaceEnvironment(environment, nativeTrapDeathsEnv, string(encoded)), nil
+}
+
+func nativeTrapBudgetError(element string, restarts int) error {
+	return fmt.Errorf("%w: embedding element %s stalled after %d worker restart", errNativeTrapped,
+		element, restarts)
+}
+
+func environmentValue(environment []string, key string) string {
+	prefix := key + "="
+	for _, entry := range environment {
+		if strings.HasPrefix(entry, prefix) {
+			return strings.TrimPrefix(entry, prefix)
+		}
+	}
+	return ""
+}
+
+func replaceEnvironment(environment []string, key, value string) []string {
+	prefix := key + "="
+	result := make([]string, 0, len(environment)+1)
+	for _, entry := range environment {
+		if !strings.HasPrefix(entry, prefix) {
+			result = append(result, entry)
+		}
+	}
+	return append(result, prefix+value)
+}
+
+func nativeElementIdentity(input string) string {
+	digest := sha256.Sum256([]byte(input))
+	return fmt.Sprintf("sha256:%x", digest[:8])
 }
 
 type nativeEngine interface {
@@ -36,11 +159,18 @@ type nativeEngine interface {
 }
 
 func (n *Native) acquireNative(ctx context.Context) error {
+	if err := n.TerminalError(); err != nil {
+		return err
+	}
 	n.ownershipOnce.Do(func() {
 		n.ownership = make(chan struct{}, 1)
 	})
 	select {
 	case n.ownership <- struct{}{}:
+		if err := n.TerminalError(); err != nil {
+			<-n.ownership
+			return err
+		}
 		if err := ctx.Err(); err != nil {
 			<-n.ownership
 			return err
@@ -48,6 +178,41 @@ func (n *Native) acquireNative(ctx context.Context) error {
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
+	}
+}
+
+func (n *Native) markNativeTrapped(element string) {
+	state := &nativeTrap{err: errNativeTrapped}
+	if !n.terminal.CompareAndSwap(nil, state) {
+		return
+	}
+	if n.trapAction != nil {
+		if err := n.trapAction(element); err != nil {
+			n.terminal.Store(&nativeTrap{err: err})
+		}
+	}
+}
+
+func (n *Native) TerminalError() error {
+	if state := n.terminal.Load(); state != nil {
+		return state.err
+	}
+	return nil
+}
+
+func (n *Native) trappedElement(input []string) string {
+	if active := n.activeElement.Load(); active != nil {
+		return *active
+	}
+	if len(input) > 0 {
+		return nativeElementIdentity(input[0])
+	}
+	return nativeElementIdentity("")
+}
+
+func EnableWorkerRestartOnNativeTrap(embedder Embedder, action func(string) error) {
+	if native, ok := embedder.(*Native); ok {
+		native.trapAction = action
 	}
 }
 
@@ -60,7 +225,10 @@ func (n *Native) nativeContextError(callerCtx context.Context) error {
 		return err
 	}
 	n.record(telemetry.Record{Kind: telemetry.KindError, Err: "semantic search stalled"})
-	return fmt.Errorf("semantic search stalled while preparing embeddings")
+	if err := n.TerminalError(); err != nil {
+		return err
+	}
+	return errNativeTrapped
 }
 
 func ConfiguredEmbedder(dataDir, stateDir string, events engine.Sink, tel *telemetry.Store,

@@ -49,7 +49,8 @@ type environment struct {
 	progressFD int
 	// writer is the backend policy the running command decided on. Commands
 	// that never index leave it zero and take the conservative delta default.
-	writer llamacpp.Policy
+	writer           llamacpp.Policy
+	nativeTrapAction func(string) error
 }
 
 // writerPolicy resolves the occasion against the operator lever. The flag is a
@@ -628,6 +629,11 @@ func workerCommand(env *environment) *cobra.Command {
 			// The worker is the install build: a foreground bulk job from the
 			// operator's side, so it accelerates unless the parent said not to.
 			env.writer = writerPolicy(llamacpp.OccasionBulk, nil)
+			workerContext, cancelWorker := context.WithCancel(command.Context())
+			defer cancelWorker()
+			workerContext, drainCommands := vector.WithWorkerCommandDrain(workerContext)
+			recovery := vector.NewWorkerTrapRecovery(cancelWorker, drainCommands)
+			env.nativeTrapAction = recovery.Handle
 			state, err := env.resolveStateDir()
 			if err != nil {
 				return err
@@ -643,7 +649,7 @@ func workerCommand(env *environment) *cobra.Command {
 			if federationErr == nil {
 				worker := vector.FederatedWorker{Federation: federation, DataDir: state, PullModel: true,
 					Notifier: vector.SystemNotifier{}, WaitForCalm: env.calmGate().Wait}
-				completion = worker.Run(command.Context())
+				completion = worker.Run(workerContext)
 			} else {
 				if !errors.Is(federationErr, os.ErrNotExist) {
 					return federationErr
@@ -654,7 +660,10 @@ func workerCommand(env *environment) *cobra.Command {
 				}
 				worker := vector.Worker{Index: index, DataDir: state, PullModel: true,
 					Notifier: vector.SystemNotifier{}, WaitForCalm: env.calmGate().Wait}
-				completion = worker.Run(command.Context())
+				completion = worker.Run(workerContext)
+			}
+			if requested, restartErr := recovery.RestartIfRequested(); requested {
+				return restartErr
 			}
 			if env.json {
 				if err := printJSON(completion); err != nil {
@@ -793,7 +802,11 @@ func defaultEmbedder(env *environment) vector.Embedder {
 }
 
 func (env *environment) embedder() (vector.Embedder, engine.Sink) {
-	return newEmbedder(env), env.events()
+	embedder := newEmbedder(env)
+	if env.nativeTrapAction != nil {
+		vector.EnableWorkerRestartOnNativeTrap(embedder, env.nativeTrapAction)
+	}
+	return embedder, env.events()
 }
 
 func (env *environment) queryEmbedder() (vector.Embedder, engine.Sink) {

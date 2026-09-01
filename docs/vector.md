@@ -132,11 +132,17 @@ Engine telemetry records the selected backend and decision in
 `bulk build default`, or `indexing leaves the accelerator for live search`.
 An engine-level reason such as `accelerator init failed` takes precedence over
 the policy reason. Each native engine instance serializes model opens and
-embeddings. A caller waits no longer than ten minutes (or its earlier deadline);
-reaching the internal cap reports `semantic search stalled` instead of blocking
-forever. Linux uses CPU for both paths. Windows keeps the
-previous local runtime path until its own native build lane ships; see the
-release notes.
+embeddings. A caller waits no longer than ten minutes (or its earlier deadline).
+Once native work begins, a timeout asks llama.cpp to abort. Reaching the internal
+cap marks the native engine as trapped: a one-shot command reports `semantic
+search stalled`, while a resident reports the terminal error before closing its
+transport. A resumable background worker instead cancels and reaps its active
+`roca exec` children, then restarts once for that exact embedding element. If the
+same element traps again, the worker fails with its hashed element identity in
+`worker.log` and
+`completion.json` rather than restarting indefinitely. Linux uses CPU for both
+paths. Windows keeps the previous local runtime path until its own native build
+lane ships; see the release notes.
 
 ## Index declared databases
 
@@ -216,10 +222,13 @@ are unchanged. When a sweep is needed, existing chunk fingerprints decide
 added, updated, and unchanged work; a desired-versus-stored fingerprint diff
 garbage-collects chunks and embeddings whose source disappeared. Optional
 manifest chunking hints override the kernel defaults without giving plugins
-executable generation code. Source sweeps are paged and use an ingest-only
-statement budget. Source counts use the bounded exec path with an explicit
-30-second statement timeout, independent of the interactive query timeout;
-serving lookups keep the configured interactive query budget.
+executable generation code. Source sweeps are paged. Each page keeps its SQL
+statement gate unbounded for large histories, but the `roca exec` child has a
+two-minute process deadline; a timed-out child is terminated and reaped so the
+worker can fail cleanly and a later pass can resume. Source counts use the
+bounded exec path with an explicit 30-second statement timeout, independent
+of the interactive query timeout; serving lookups keep the configured
+interactive query budget.
 
 Across declared databases, the scheduler waits one second to gather the newest
 ready work, then embeds what is available rather than waiting for a silent
