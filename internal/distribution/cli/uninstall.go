@@ -788,18 +788,25 @@ func (env *cliEnv) purgeRegisteredZcodeIntegrations(report *lifecycle.Report, re
 			if configErr != nil && !configMissing {
 				return configErr
 			}
+			replacementRetained := false
 			liveHooks := make([]artifact.Entry, 0, len(group.hooks))
 			withdrawOnlyHooks := make([]artifact.Entry, 0, len(group.hooks))
 			for _, entry := range group.hooks {
-				rootContinuous, _, rootErr := zcodeRootContinuity(config, entry)
+				rootContinuous, rootExists, rootErr := zcodeRootContinuity(config, entry)
 				if rootErr != nil {
 					return rootErr
 				}
-				if !rootContinuous {
+				if !rootContinuous && (!rootExists || !zcodeRootClaimAllowsWithdrawal(entry)) {
 					if unregisterErr := env.unregisterArtifactEntry(entry); unregisterErr != nil {
 						return unregisterErr
 					}
+					if rootExists && !configMissing {
+						replacementRetained = true
+					}
 					continue
+				}
+				if zcodeReplacedRootClaim(entry) {
+					replacementRetained = true
 				}
 				if configMissing {
 					continuous, continuityErr := zcodeWrapperContinuity(entry)
@@ -867,14 +874,20 @@ func (env *cliEnv) purgeRegisteredZcodeIntegrations(report *lifecycle.Report, re
 				if rootErr != nil {
 					return rootErr
 				}
-				if !rootContinuous {
+				if !rootContinuous && (!rootExists || !zcodeRootClaimAllowsWithdrawal(entry)) {
 					if !rootExists && env.errOut != nil {
 						fmt.Fprintf(env.errOut, "warning: ZCode MCP root is absent; removed stale ownership for %s\n", config)
 					}
 					if unregisterErr := env.unregisterArtifactEntry(entry); unregisterErr != nil {
 						return unregisterErr
 					}
+					if rootExists && !configMissing {
+						replacementRetained = true
+					}
 					continue
+				}
+				if zcodeReplacedRootClaim(entry) {
+					replacementRetained = true
 				}
 				if configMissing {
 					liveMCP = append(liveMCP, entry)
@@ -893,6 +906,9 @@ func (env *cliEnv) purgeRegisteredZcodeIntegrations(report *lifecycle.Report, re
 					continue
 				}
 				liveMCP = append(liveMCP, entry)
+			}
+			if replacementRetained {
+				failed(report, "retained operator-recreated ZCode state at %s", config)
 			}
 			var configIdentity os.FileInfo
 			for _, entry := range withdrawOnlyHooks {
