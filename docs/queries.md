@@ -156,11 +156,30 @@ also reads the rows. The longer model, repair, and routing contracts live in
 [Model providers](models.md); [the MCP plug](mcp.md) documents the shell-less
 `roca_query`, `roca_sql`, and `roca_exec` equivalents.
 
-For facts whose ordering matters, use explicit SQL instead of asking ranking to
-imply it. A session can fetch its latest project handoff exactly and then store
-the next one:
+## Session context
+
+Both session-context verbs default `--project` to the basename of the working
+directory. They always read the existing `roca-ops` database; if
+`features.roca_ops` is disabled or that database is missing, they refuse rather
+than reading core or creating an empty ops database.
+
+`roca pill [--project <project>]` loads active project and global pills, keeps
+the newest timestamped row for each `metadata.pill_slug`, and lists unslugged
+row IDs without loading them. `roca pill show <slug>` returns the selected pill.
+Default AXI/TOON output includes complete content, `--json` returns the script
+envelope, and there is no budget flag.
+
+`roca handoff latest [--project <project>]` loads every active handoff that no
+other memory supersedes. It chooses project handoffs after that filtering and
+falls back to unsuperseded global handoffs only when no project handoff remains;
+it never treats newest-by-clock as current. The CLI implementation is owned by
+[`internal/distribution/cli/session.go`](../internal/distribution/cli/session.go).
 
 ```sh
-roca exec "SELECT content, created_at FROM plugin_roca_ops.memories WHERE layer = 'handoff' AND project = '<project>' ORDER BY created_at DESC LIMIT 1"
-roca store --layer handoff --project '<project>' --content "token refresh done, retry pending" --agent codex --model gpt-5
+roca pill --project '<project>'
+roca handoff latest --project '<project>'
 ```
+
+A handoff is written only on explicit operator instruction. The
+[handoff write policy](operations.md#handoff-writes) owns the allowed writers,
+required shape, and replacement contract.

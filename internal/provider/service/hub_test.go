@@ -60,7 +60,11 @@ func TestCutoverWritersRemainAuthoritativeInPlugins(t *testing.T) {
 	seedHubCoreMemory(t, fixture.plugins, 7, "Synthetic historical marker")
 	svc := openHubService(t, fixture, LayoutCutover, nil)
 
-	stored, err := svc.Store(t.Context(), StoreRequest{Layer: "handoff", Content: "Synthetic post-cutover write"})
+	stored, err := svc.Store(t.Context(), StoreRequest{
+		Layer:      "handoff",
+		Content:    "Synthetic post-cutover write\nbranch: fixture\ndone: recorded\nstate: stored\nnext: continue\n",
+		Authorship: Authorship{Agent: "claude", Model: "sonnet", Surface: SurfaceCLI},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +74,7 @@ func TestCutoverWritersRemainAuthoritativeInPlugins(t *testing.T) {
 	if err := ops.QueryRow(`SELECT content FROM memories WHERE id = ?`, stored.ID).Scan(&content); err != nil {
 		t.Fatal(err)
 	}
-	if content != "Synthetic post-cutover write" {
+	if !strings.Contains(content, "Synthetic post-cutover write") {
 		t.Fatalf("stored content = %q", content)
 	}
 }

@@ -268,7 +268,7 @@ func rootCommand(env *cliEnv) *cobra.Command {
 		commands = append(commands, execCommand(env))
 	}
 	if opsManifest.HasVerb(service.StoreVerb) {
-		commands = append(commands, storeCommand(env))
+		commands = append(commands, storeCommand(env), pillCommand(env), handoffCommand(env))
 	}
 	manifest, err := rocacorpus.Manifest(env.build.Version)
 	if err != nil {
@@ -295,7 +295,7 @@ func rootCommand(env *cliEnv) *cobra.Command {
 
 func publicCommand(name string) bool {
 	switch name {
-	case "init", "query", "playground", "explore", "store", "ingest", "model", "doctor", "update", "uninstall", "plugin", "plugins", "hooks", "cron", "layers", "remote", "tool-call-observer":
+	case "init", "query", "playground", "explore", "store", "pill", "handoff", "ingest", "model", "doctor", "update", "uninstall", "plugin", "plugins", "hooks", "cron", "layers", "remote", "tool-call-observer":
 		return true
 	default:
 		return false
