@@ -21,13 +21,7 @@ func TestDeclaredChatGPTCodexExportIsNeverDiscoveredWithoutADeclaration(t *testi
 
 func TestDeclaredChatGPTExportIngestsCodexJSONUnderADistinctSource(t *testing.T) {
 	db := rocaDatabase(t)
-	root := filepath.Join("testdata", "openai-export-sharded")
-	result, err := Run(context.Background(), db, registry(t), Options{
-		Roots: Roots{ChatGPTWebExports: []string{root}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	result := ingestShardedChatGPTExport(t, db)
 	if result.Scanned["chatgpt_web_export_files"] != 3 || result.FilesRead != 3 || result.FilesExcluded != 0 {
 		t.Fatalf("sharded files scanned/read/excluded = %d/%d/%d, want 3/3/0",
 			result.Scanned["chatgpt_web_export_files"], result.FilesRead, result.FilesExcluded)

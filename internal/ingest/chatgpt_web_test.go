@@ -128,13 +128,7 @@ func TestChatGPTExportIsNeverDiscoveredWithoutADeclaration(t *testing.T) {
 
 func TestDeclaredShardedChatGPTExportIngestsEveryShard(t *testing.T) {
 	db := rocaDatabase(t)
-	root := filepath.Join("testdata", "openai-export-sharded")
-	result, err := Run(context.Background(), db, registry(t), Options{
-		Roots: Roots{ChatGPTWebExports: []string{root}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	result := ingestShardedChatGPTExport(t, db)
 	if result.Delta != (Tables{Sessions: 3, Exchanges: 4}) {
 		t.Fatalf("sharded export delta = %+v", result.Delta)
 	}
@@ -264,6 +258,18 @@ func TestDeclaredChatGPTExportDiagnosesEveryDeclarationItCannotRead(t *testing.T
 			t.Errorf("warnings for %q = %v, want one naming %q", root, plan.Warnings, want)
 		}
 	}
+}
+
+func ingestShardedChatGPTExport(t *testing.T, db Database) Result {
+	t.Helper()
+	root := filepath.Join("testdata", "openai-export-sharded")
+	result, err := Run(context.Background(), db, registry(t), Options{
+		Roots: Roots{ChatGPTWebExports: []string{root}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
 }
 
 // chatGPTExportWithBothShapes is the directory an operator ends up with after
