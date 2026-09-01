@@ -1011,8 +1011,8 @@ func TestZcodePurgeReconcilesExactWrapperAfterDeclarationRemoval(t *testing.T) {
 	}
 	wrapper := filepath.Join(home, ".zcode", "hooks", "roca-handoff.sh")
 	report := purgeZcodeTestIntegrations(true)
-	if !strings.Contains(strings.Join(report.Errors, "\n"), config) {
-		t.Fatalf("retained paths were not reported: %v", report.Errors)
+	if len(report.Errors) != 0 {
+		t.Fatalf("wrapper reconciliation errors = %v", report.Errors)
 	}
 	if _, err := os.Stat(wrapper); !os.IsNotExist(err) {
 		t.Fatalf("exact orphaned wrapper survived: %v", err)

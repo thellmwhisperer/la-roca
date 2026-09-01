@@ -438,13 +438,13 @@ func (env *cliEnv) uninstallMCP(runtime, path string) (agentcfg.Outcome, error) 
 	return env.uninstallZcodeMCP(path)
 }
 
-func (env *cliEnv) uninstallZcodeMCP(path string, finalize ...func(artifact.Entry) error) (agentcfg.Outcome, error) {
+func (env *cliEnv) uninstallZcodeMCP(path string, finalize ...func(artifact.Entry, os.FileInfo) error) (agentcfg.Outcome, error) {
 	return env.withLockedZcodeMCP(path, func(path string) (agentcfg.Outcome, error) {
 		return env.uninstallZcodeMCPLocked(path, finalize...)
 	})
 }
 
-func (env *cliEnv) uninstallZcodeMCPLocked(path string, finalize ...func(artifact.Entry) error) (outcome agentcfg.Outcome, err error) {
+func (env *cliEnv) uninstallZcodeMCPLocked(path string, finalize ...func(artifact.Entry, os.FileInfo) error) (outcome agentcfg.Outcome, err error) {
 	preimage := agentcfg.ZcodeMCPPreimageNone
 	entry, found, err := env.registeredArtifact(artifactKindMCP, agentcfg.RuntimeZcode, path)
 	if err != nil {
@@ -458,7 +458,7 @@ func (env *cliEnv) uninstallZcodeMCPLocked(path string, finalize ...func(artifac
 	}
 	outcome, err = agentcfg.UninstallZcodeMCP(path, preimage)
 	if err == nil && found && len(finalize) > 0 {
-		err = finalize[0](entry)
+		err = finalize[0](entry, outcome.FileIdentity)
 	}
 	if err == nil && found {
 		err = env.unregisterArtifactEntry(entry)

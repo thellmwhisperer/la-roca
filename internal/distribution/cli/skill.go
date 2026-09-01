@@ -902,14 +902,14 @@ func (env *cliEnv) installManagedZcodeHandoffHookLocked(configPath, wrapperPath,
 	return outcome, warning, err
 }
 
-func (env *cliEnv) uninstallManagedZcodeHandoffHook(configPath, wrapperPath string, finalize ...func(artifact.Entry) error) (agentcfg.Outcome, string, error) {
+func (env *cliEnv) uninstallManagedZcodeHandoffHook(configPath, wrapperPath string, finalize ...func(artifact.Entry, os.FileInfo) error) (agentcfg.Outcome, string, error) {
 	return env.withLockedManagedZcodeHook(configPath, wrapperPath,
 		func(configPath, wrapperPath string) (agentcfg.Outcome, string, error) {
 			return env.uninstallManagedZcodeHandoffHookLocked(configPath, wrapperPath, finalize...)
 		})
 }
 
-func (env *cliEnv) uninstallManagedZcodeHandoffHookLocked(configPath, wrapperPath string, finalize ...func(artifact.Entry) error) (outcome agentcfg.Outcome, warning string, err error) {
+func (env *cliEnv) uninstallManagedZcodeHandoffHookLocked(configPath, wrapperPath string, finalize ...func(artifact.Entry, os.FileInfo) error) (outcome agentcfg.Outcome, warning string, err error) {
 	expected, entry, found, err := env.zcodeWrapperExpected(wrapperPath)
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
@@ -939,7 +939,7 @@ func (env *cliEnv) uninstallManagedZcodeHandoffHookLocked(configPath, wrapperPat
 			err = release()
 			localReleased = true
 			if err == nil {
-				err = finalize[0](entry)
+				err = finalize[0](entry, outcome.FileIdentity)
 			}
 		}
 	} else if err == nil && found && verified && !present {
@@ -973,9 +973,6 @@ func installZcodeHandoffHookWithPrevious(configPath, wrapperPath, executable str
 			fmt.Errorf("refuse to replace operator-modified ZCode hook wrapper %s; move or remove it, then retry", wrapperPath)
 	}
 	if err := writeZcodeWrapper(wrapperPath, wrapper, state, previous); err != nil {
-		if body, readErr := os.ReadFile(wrapperPath); readErr == nil && string(body) == wrapper {
-			err = errors.Join(err, restoreZcodeWrapper(wrapperPath, state, []byte(wrapper)))
-		}
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
 	command := zcodeOwnedHookCommand(wrapperPath)
