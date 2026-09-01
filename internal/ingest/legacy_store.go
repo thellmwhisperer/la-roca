@@ -96,10 +96,15 @@ func ReadLegacyStore(ctx context.Context, path string) (parsers.Records, []strin
 	if err != nil {
 		return parsers.Records{}, nil, err
 	}
+	toolProjection, err := legacyStoreProjection(ctx, db, "tool_uses", []string{
+		"id", "session_id", "exchange_number", "call_id", "tool_name", "tool_params_summary",
+		"had_error", "error_message", "initiative_type",
+	})
+	if err != nil {
+		return parsers.Records{}, nil, err
+	}
 	tools, err := queryRows(ctx, db,
-		`SELECT id, session_id, exchange_number, tool_name, tool_params_summary,
-		        had_error, error_message, initiative_type
-		 FROM tool_uses ORDER BY session_id, exchange_number, id`)
+		`SELECT `+toolProjection+` FROM tool_uses ORDER BY session_id, exchange_number, id`)
 	if err != nil {
 		return parsers.Records{}, nil, err
 	}
@@ -307,6 +312,7 @@ func legacyStoreThinking(block row) parsers.Thinking {
 
 func legacyStoreTool(tool row) parsers.ToolUse {
 	return parsers.ToolUse{
+		CallID:         tool.text("call_id"),
 		Name:           tool.text("tool_name"),
 		ParamsSummary:  tool.text("tool_params_summary"),
 		HadError:       legacyStoreFlag(tool, "had_error"),

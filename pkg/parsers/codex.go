@@ -402,6 +402,7 @@ func (r *codexReader) responseItem(record int, line codexLine, payload codexPayl
 		r.signals = append(r.signals, codexSignal{record: record, thinking: text})
 	case "function_call", "custom_tool_call":
 		tool := &ToolUse{
+			CallID:        payload.CallID,
 			Name:          payload.Name,
 			ParamsSummary: Clip(firstNonEmpty(rawText(payload.Arguments), payload.Input), paramsBudget),
 		}

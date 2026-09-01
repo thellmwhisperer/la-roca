@@ -874,8 +874,11 @@ func incrementalParseNeedsPrefix(kind parsers.Kind, records parsers.Records) boo
 	if kind != parsers.KindCodexSession {
 		return false
 	}
+	if records.Deferred > 0 {
+		return true
+	}
 	for _, discard := range records.Discards {
-		if discard.Category == "tool verdict has unknown call_id" {
+		if discard.Category == "tool verdict has unknown call_id" || discard.Reason == "aborted turn" {
 			return true
 		}
 	}

@@ -38,6 +38,7 @@ type conformanceExchange struct {
 }
 
 type conformanceTool struct {
+	CallID         string `json:"call_id,omitempty"`
 	Name           string `json:"name"`
 	ParamsSummary  string `json:"params_summary,omitempty"`
 	HadError       bool   `json:"had_error,omitempty"`
@@ -459,7 +460,7 @@ func projectConformanceTools(tools []ToolUse) []conformanceTool {
 	projected := make([]conformanceTool, 0, len(tools))
 	for _, tool := range tools {
 		projected = append(projected, conformanceTool{
-			Name: tool.Name, ParamsSummary: tool.ParamsSummary,
+			CallID: tool.CallID, Name: tool.Name, ParamsSummary: tool.ParamsSummary,
 			HadError: tool.HadError, ErrorMessage: tool.ErrorMessage,
 			InitiativeType: tool.InitiativeType,
 		})
@@ -473,10 +474,10 @@ func TestConformanceProjectionExposesToolTelemetry(t *testing.T) {
 		{ID: "empty", OrphanedTools: []ToolUse{},
 			Exchanges: []Exchange{{Tools: []ToolUse{}}}},
 		{ID: "populated", OrphanedTools: []ToolUse{{
-			Name: "orphan", ParamsSummary: "session params", HadError: true,
+			CallID: "orphan-call", Name: "orphan", ParamsSummary: "session params", HadError: true,
 			ErrorMessage: "session failure", InitiativeType: "proactive",
 		}}, Exchanges: []Exchange{{Tools: []ToolUse{{
-			Name: "attached", ParamsSummary: "exchange params", HadError: true,
+			CallID: "attached-call", Name: "attached", ParamsSummary: "exchange params", HadError: true,
 			ErrorMessage: "exchange failure", InitiativeType: "reactive",
 		}}}}},
 	}}
@@ -488,9 +489,9 @@ func TestConformanceProjectionExposesToolTelemetry(t *testing.T) {
 	if got.Sessions[1].OrphanedTools == nil || got.Sessions[1].Exchanges[0].Tools == nil {
 		t.Fatalf("empty tools changed shape: %+v", got.Sessions[1])
 	}
-	wantOrphan := conformanceTool{Name: "orphan", ParamsSummary: "session params",
+	wantOrphan := conformanceTool{CallID: "orphan-call", Name: "orphan", ParamsSummary: "session params",
 		HadError: true, ErrorMessage: "session failure", InitiativeType: "proactive"}
-	wantAttached := conformanceTool{Name: "attached", ParamsSummary: "exchange params",
+	wantAttached := conformanceTool{CallID: "attached-call", Name: "attached", ParamsSummary: "exchange params",
 		HadError: true, ErrorMessage: "exchange failure", InitiativeType: "reactive"}
 	if !reflect.DeepEqual(got.Sessions[2].OrphanedTools, []conformanceTool{wantOrphan}) ||
 		!reflect.DeepEqual(got.Sessions[2].Exchanges[0].Tools, []conformanceTool{wantAttached}) {

@@ -78,6 +78,7 @@ type Thinking struct {
 
 // ToolUse is one tool call and the verdict carried by its result.
 type ToolUse struct {
+	CallID        string
 	Name          string
 	ParamsSummary string
 	HadError      bool
@@ -165,7 +166,7 @@ func internalTools(tools []ToolUse) []parsers.ToolUse {
 	result := make([]parsers.ToolUse, len(tools))
 	for i, tool := range tools {
 		result[i] = parsers.ToolUse{
-			Name: tool.Name, ParamsSummary: tool.ParamsSummary,
+			CallID: tool.CallID, Name: tool.Name, ParamsSummary: tool.ParamsSummary,
 			HadError: tool.HadError, ErrorMessage: tool.ErrorMessage,
 		}
 	}

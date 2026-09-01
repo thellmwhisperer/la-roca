@@ -1399,37 +1399,34 @@ func latencyBetween(human, agent string) *int {
 	return &milliseconds
 }
 
-type toolIdentity struct {
-	name, params, initiative string
-}
-
 func (w *writer) reconcileOrphanedTools(ctx context.Context, sessionID string, number int,
 	tools []parsers.ToolUse) (int, error) {
 	rows, err := w.tx.QueryContext(ctx, `
-		SELECT id, exchange_number, tool_name, tool_params_summary, initiative_type
+		SELECT id, exchange_number, call_id
 		FROM tool_uses
 		WHERE session_id = ? AND (exchange_number = ? OR exchange_number IS NULL)
 		ORDER BY id`, sessionID, number)
 	if err != nil {
 		return 0, fmt.Errorf("read tools for orphan reconciliation of %s/%d: %w", sessionID, number, err)
 	}
-	attached := map[toolIdentity]int{}
-	orphaned := map[toolIdentity][]int64{}
+	attached := map[string]int{}
+	orphaned := map[string][]int64{}
 	for rows.Next() {
 		var id int64
 		var exchangeNumber sql.NullInt64
-		var name string
-		var params, initiative sql.NullString
-		if err := rows.Scan(&id, &exchangeNumber, &name, &params, &initiative); err != nil {
+		var callID sql.NullString
+		if err := rows.Scan(&id, &exchangeNumber, &callID); err != nil {
 			_ = rows.Close()
 			return 0, fmt.Errorf("scan tools for orphan reconciliation of %s/%d: %w",
 				sessionID, number, err)
 		}
-		identity := toolIdentity{name: name, params: params.String, initiative: initiative.String}
+		if callID.String == "" {
+			continue
+		}
 		if exchangeNumber.Valid {
-			attached[identity]++
+			attached[callID.String]++
 		} else {
-			orphaned[identity] = append(orphaned[identity], id)
+			orphaned[callID.String] = append(orphaned[callID.String], id)
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -1443,24 +1440,26 @@ func (w *writer) reconcileOrphanedTools(ctx context.Context, sessionID string, n
 	}
 	var missing []parsers.ToolUse
 	for _, tool := range tools {
-		identity := toolIdentity{name: tool.Name, params: tool.ParamsSummary,
-			initiative: tool.InitiativeType}
-		if attached[identity] > 0 {
-			attached[identity]--
+		if tool.CallID == "" {
+			missing = append(missing, tool)
 			continue
 		}
-		ids := orphaned[identity]
+		if attached[tool.CallID] > 0 {
+			attached[tool.CallID]--
+			continue
+		}
+		ids := orphaned[tool.CallID]
 		if len(ids) == 0 {
 			missing = append(missing, tool)
 			continue
 		}
 		id := ids[0]
-		orphaned[identity] = ids[1:]
+		orphaned[tool.CallID] = ids[1:]
 		if _, err := w.tx.ExecContext(ctx, `
-			UPDATE tool_uses SET exchange_number = ?, tool_name = ?, tool_params_summary = ?,
-			  had_error = ?, error_message = ?, initiative_type = ?
+			UPDATE tool_uses SET exchange_number = ?, call_id = ?, tool_name = ?,
+			  tool_params_summary = ?, had_error = ?, error_message = ?, initiative_type = ?
 			WHERE id = ? AND session_id = ? AND exchange_number IS NULL`,
-			number, tool.Name, nullIfEmpty(tool.ParamsSummary), boolToInt(tool.HadError),
+			number, tool.CallID, tool.Name, nullIfEmpty(tool.ParamsSummary), boolToInt(tool.HadError),
 			nullIfEmpty(tool.ErrorMessage), nullIfEmpty(tool.InitiativeType), id, sessionID); err != nil {
 			return 0, fmt.Errorf("reconcile orphaned tool of %s/%d: %w", sessionID, number, err)
 		}
@@ -1474,10 +1473,10 @@ func (w *writer) insertTools(ctx context.Context, sessionID string, number any,
 	for _, tool := range tools {
 		_, err := w.tx.ExecContext(ctx, `
 			INSERT INTO tool_uses
-			  (session_id, exchange_number, tool_name, tool_params_summary, had_error,
+			  (session_id, exchange_number, call_id, tool_name, tool_params_summary, had_error,
 			   error_message, initiative_type)
-			VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			sessionID, number, tool.Name, nullIfEmpty(tool.ParamsSummary),
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			sessionID, number, nullIfEmpty(tool.CallID), tool.Name, nullIfEmpty(tool.ParamsSummary),
 			boolToInt(tool.HadError), nullIfEmpty(tool.ErrorMessage),
 			nullIfEmpty(tool.InitiativeType))
 		if err != nil {
@@ -1497,7 +1496,7 @@ func (w *writer) insertTools(ctx context.Context, sessionID string, number any,
 func (w *writer) replaceOrphanedTools(ctx context.Context, sessionID string,
 	tools, unresolved []parsers.ToolUse) (int, error) {
 	rows, err := w.tx.QueryContext(ctx, `
-		SELECT tool_name, tool_params_summary, had_error, error_message, initiative_type
+		SELECT call_id, tool_name, tool_params_summary, had_error, error_message, initiative_type
 		FROM tool_uses WHERE session_id = ? AND exchange_number IS NULL ORDER BY id`, sessionID)
 	if err != nil {
 		return 0, fmt.Errorf("read orphaned tools of %s: %w", sessionID, err)
@@ -1505,14 +1504,14 @@ func (w *writer) replaceOrphanedTools(ctx context.Context, sessionID string,
 	var stored []parsers.ToolUse
 	for rows.Next() {
 		var name string
-		var params, message, initiative sql.NullString
+		var callID, params, message, initiative sql.NullString
 		var hadError int
-		if err := rows.Scan(&name, &params, &hadError, &message, &initiative); err != nil {
+		if err := rows.Scan(&callID, &name, &params, &hadError, &message, &initiative); err != nil {
 			_ = rows.Close()
 			return 0, fmt.Errorf("scan orphaned tools of %s: %w", sessionID, err)
 		}
 		stored = append(stored, parsers.ToolUse{
-			Name: name, ParamsSummary: params.String, HadError: hadError != 0,
+			CallID: callID.String, Name: name, ParamsSummary: params.String, HadError: hadError != 0,
 			ErrorMessage: message.String, InitiativeType: initiative.String,
 		})
 	}
@@ -1536,27 +1535,34 @@ func (w *writer) replaceOrphanedTools(ctx context.Context, sessionID string,
 
 func preserveUnresolvedOrphanTools(stored, desired,
 	unresolved []parsers.ToolUse) []parsers.ToolUse {
-	available := map[toolIdentity]int{}
-	for _, tool := range stored {
-		available[toolIdentity{name: tool.Name, params: tool.ParamsSummary,
-			initiative: tool.InitiativeType}]++
-	}
+	desiredIDs := map[string]bool{}
 	for _, tool := range desired {
-		identity := toolIdentity{name: tool.Name, params: tool.ParamsSummary,
-			initiative: tool.InitiativeType}
-		if available[identity] > 0 {
-			available[identity]--
+		if tool.CallID != "" {
+			desiredIDs[tool.CallID] = true
 		}
 	}
-	result := append([]parsers.ToolUse(nil), desired...)
+	unresolvedByID := map[string]parsers.ToolUse{}
+	hasAnonymousUnresolved := false
 	for _, tool := range unresolved {
-		identity := toolIdentity{name: tool.Name, params: tool.ParamsSummary,
-			initiative: tool.InitiativeType}
-		if available[identity] == 0 {
+		if tool.CallID == "" {
+			hasAnonymousUnresolved = true
 			continue
 		}
-		available[identity]--
-		result = append(result, tool)
+		unresolvedByID[tool.CallID] = tool
+	}
+	result := append([]parsers.ToolUse(nil), desired...)
+	for _, tool := range stored {
+		if tool.CallID == "" {
+			if hasAnonymousUnresolved {
+				result = append(result, tool)
+			}
+			continue
+		}
+		unresolvedTool, exists := unresolvedByID[tool.CallID]
+		if exists && !desiredIDs[tool.CallID] {
+			result = append(result, unresolvedTool)
+			delete(unresolvedByID, tool.CallID)
+		}
 	}
 	return result
 }

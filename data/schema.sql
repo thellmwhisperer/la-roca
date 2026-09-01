@@ -78,6 +78,7 @@ CREATE TABLE IF NOT EXISTS tool_uses (
   id                    INTEGER PRIMARY KEY AUTOINCREMENT,
   session_id            TEXT REFERENCES sessions(session_id),
   exchange_number       INTEGER,
+  call_id               TEXT,
   tool_name             TEXT,
   tool_params_summary   TEXT,
   had_error             INTEGER DEFAULT 0,

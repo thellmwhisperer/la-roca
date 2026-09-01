@@ -45,7 +45,7 @@
             "name": "tool_uses",
             "description": "Tool calls harvested from sessions and exchanges, including failures and initiative classification; a NULL exchange_number identifies a session-level call.",
             "questions": ["Which tools were used and which calls failed?"],
-            "columns": ["id", "session_id", "exchange_number", "tool_name", "tool_params_summary", "had_error", "error_message", "initiative_type"]
+            "columns": ["id", "session_id", "exchange_number", "call_id", "tool_name", "tool_params_summary", "had_error", "error_message", "initiative_type"]
           },
           {
             "name": "thinking_blocks",

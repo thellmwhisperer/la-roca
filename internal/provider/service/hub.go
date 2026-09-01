@@ -56,7 +56,7 @@ func installHubCompatibility(ctx context.Context, db *sql.DB, opsSchema, corpusS
 			tokens_reasoning, cost_usd
 		 FROM ` + corpus + `.exchanges`,
 		`CREATE TEMP VIEW tool_uses AS SELECT id, session_id,
-			exchange_number, tool_name, tool_params_summary, had_error, error_message,
+			exchange_number, call_id, tool_name, tool_params_summary, had_error, error_message,
 			initiative_type
 		 FROM ` + corpus + `.tool_uses`,
 		`CREATE TEMP VIEW thinking_blocks AS SELECT id, session_id,

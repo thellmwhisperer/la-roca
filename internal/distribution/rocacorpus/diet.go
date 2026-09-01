@@ -639,15 +639,16 @@ var slimVersionStatements = []string{
   version_digest      TEXT NOT NULL UNIQUE CHECK (length(version_digest) = 64),
   session_id          TEXT NOT NULL,
   exchange_number     INTEGER,
+  call_id             TEXT,
   tool_name           TEXT,
   had_error           INTEGER,
   initiative_type     TEXT,
   observed_at         TEXT NOT NULL DEFAULT (datetime('now'))
 )`,
 	`INSERT OR IGNORE INTO tool_use_versions_slim
-	  (id, version_digest, session_id, exchange_number, tool_name, had_error, initiative_type,
+	  (id, version_digest, session_id, exchange_number, call_id, tool_name, had_error, initiative_type,
 	   observed_at)
-	 SELECT id, version_digest, session_id, exchange_number, tool_name, had_error, initiative_type,
+	 SELECT id, version_digest, session_id, exchange_number, call_id, tool_name, had_error, initiative_type,
 	   observed_at
 	 FROM tool_use_versions`,
 	`DROP TABLE IF EXISTS tool_use_versions`,

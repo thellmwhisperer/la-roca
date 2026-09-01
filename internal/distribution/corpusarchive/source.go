@@ -109,7 +109,7 @@ var archiveSourceTables = []archiveTable{
 	{
 		sourceTable: "tool_uses", migration: "corpus-archive-tool-uses",
 		destinationTable: "tool_use_versions",
-		query: `SELECT id, session_id, exchange_number, tool_name,
+		query: `SELECT id, session_id, exchange_number, call_id, tool_name,
 			tool_params_summary, had_error, error_message, initiative_type
 			FROM tool_uses ORDER BY session_id, exchange_number, id`,
 		scan: scanToolUse,
@@ -252,11 +252,11 @@ func materializeRecord(ctx context.Context, tx *sql.Tx, record archiveRecord) er
 		args = append(slices.Clone(args), args[0], args[1])
 	case "tool_use_versions":
 		query = `INSERT INTO tool_uses
-			(session_id, exchange_number, tool_name, tool_params_summary, had_error,
+			(session_id, exchange_number, call_id, tool_name, tool_params_summary, had_error,
 			 error_message, initiative_type)
-			SELECT ?, ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (
+			SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (
 			 SELECT 1 FROM tool_uses WHERE session_id IS ? AND exchange_number IS ?
-			   AND tool_name IS ? AND tool_params_summary IS ? AND had_error IS ?
+			   AND call_id IS ? AND tool_name IS ? AND tool_params_summary IS ? AND had_error IS ?
 			   AND error_message IS ? AND initiative_type IS ?)`
 		args = append(slices.Clone(args), args...)
 	case "thinking_block_versions":
@@ -464,8 +464,8 @@ func insertStatement(destinationTable string) (string, error) {
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, nil
 	case "tool_use_versions":
 		return `INSERT OR IGNORE INTO tool_use_versions
-			(version_digest, session_id, exchange_number, tool_name, had_error, initiative_type)
-			VALUES (?, ?, ?, ?, ?, ?)`, nil
+			(version_digest, session_id, exchange_number, call_id, tool_name, had_error, initiative_type)
+			VALUES (?, ?, ?, ?, ?, ?, ?)`, nil
 	case "thinking_block_versions":
 		return `INSERT OR IGNORE INTO thinking_block_versions
 			(version_digest, session_id, exchange_number, position_in_session, depth,
@@ -555,20 +555,20 @@ func scanExchange(rows *sql.Rows, tracker *occurrenceTracker) (archiveRecord, er
 
 func scanToolUse(rows *sql.Rows, tracker *occurrenceTracker) (archiveRecord, error) {
 	var id int64
-	var sessionID, name, params, errorMessage, initiative sql.NullString
+	var sessionID, callID, name, params, errorMessage, initiative sql.NullString
 	var number, hadError sql.NullInt64
-	if err := rows.Scan(&id, &sessionID, &number, &name, &params, &hadError,
+	if err := rows.Scan(&id, &sessionID, &number, &callID, &name, &params, &hadError,
 		&errorMessage, &initiative); err != nil {
 		return archiveRecord{}, err
 	}
 	if !sessionID.Valid {
 		return archiveRecord{}, fmt.Errorf("tool use %d has no deterministic parent turn", id)
 	}
-	currentValues := []any{sessionID.String, number, name, params, hadError, errorMessage, initiative}
+	currentValues := []any{sessionID.String, number, callID, name, params, hadError, errorMessage, initiative}
 	digest := canonicalDigest("tool-use", currentValues...)
 	ordinal := tracker.next(sessionID, number, digest)
 	record := childRecord("tool_use_versions", id, sessionID, number, ordinal, digest,
-		[]any{sessionID.String, number, name, hadError, initiative})
+		[]any{sessionID.String, number, callID, name, hadError, initiative})
 	record.currentValues = currentValues
 	return record, nil
 }

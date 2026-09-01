@@ -297,6 +297,48 @@ func TestConflictedCodexCompletionPreservesRecoveredOrphan(t *testing.T) {
 	}
 }
 
+func TestConflictedCodexCompletionPreservesDistinctIdenticalCalls(t *testing.T) {
+	prefix := `{"type":"session_meta","payload":{"id":"conflicted-identical-calls"}}
+{"type":"event_msg","payload":{"type":"user_message","message":"question"}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"question"}]}}
+{"type":"response_item","payload":{"type":"function_call","call_id":"transitioning","name":"shell","arguments":"{\"cmd\":\"inspect\"}"}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"draft"}]}}
+`
+	tail := `{"type":"event_msg","payload":{"type":"task_complete","last_agent_message":"final"}}
+{"type":"event_msg","payload":{"type":"user_message","message":"second"}}
+{"type":"response_item","payload":{"type":"function_call","call_id":"aborted","name":"shell","arguments":"{\"cmd\":\"inspect\"}"}}
+{"type":"event_msg","payload":{"type":"turn_aborted"}}
+`
+	db, _ := writeGrowingSessionInTwoPasses(t, prefix, tail, Target{
+		FileName: "rollout.jsonl", Kind: parsers.KindCodexSession,
+		SessionID: "conflicted-identical-calls", SourceAgent: "codex",
+	})
+	rows, err := db.SQL().Query(`SELECT call_id, exchange_number FROM tool_uses
+		WHERE session_id = ? ORDER BY call_id`, "conflicted-identical-calls")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var callIDs []string
+	for rows.Next() {
+		var callID string
+		var exchangeNumber sql.NullInt64
+		if err := rows.Scan(&callID, &exchangeNumber); err != nil {
+			t.Fatal(err)
+		}
+		if exchangeNumber.Valid {
+			t.Fatalf("conflicted call %q attached to exchange %d", callID, exchangeNumber.Int64)
+		}
+		callIDs = append(callIDs, callID)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(callIDs) != 2 || callIDs[0] != "aborted" || callIDs[1] != "transitioning" {
+		t.Fatalf("preserved call identities = %v", callIDs)
+	}
+}
+
 func TestIncrementalCodexLateVerdictFallsBackToTheFullRollout(t *testing.T) {
 	prefix := `{"type":"session_meta","payload":{"id":"late-verdict"}}
 {"type":"event_msg","payload":{"type":"user_message","message":"first"}}
@@ -324,6 +366,47 @@ func TestIncrementalCodexLateVerdictFallsBackToTheFullRollout(t *testing.T) {
 	}
 	if count != 1 || hadError != 1 || message != `{"metadata":{"exit_code":1}}` {
 		t.Fatalf("persisted late verdict = count:%d error:%d message:%q", count, hadError, message)
+	}
+}
+
+func TestIncrementalCodexInterruptedTailsFallBackToTheFullRollout(t *testing.T) {
+	prefix := `{"type":"session_meta","payload":{"id":"interrupted-tail"}}
+{"type":"event_msg","payload":{"type":"user_message","message":"complete question"}}
+{"type":"event_msg","payload":{"type":"task_complete","last_agent_message":"complete answer"}}
+`
+	interruptedTail := `{"type":"event_msg","payload":{"type":"user_message","message":"interrupted"}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"interrupted"}]}}
+{"type":"response_item","payload":{"type":"function_call","call_id":"interrupted-call","name":"shell","arguments":"{}"}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"partial"}]}}
+`
+	cases := []struct {
+		name, suffix string
+	}{
+		{name: "aborted", suffix: `{"type":"event_msg","payload":{"type":"turn_aborted"}}
+`},
+		{name: "open"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			db, second := writeGrowingSessionInTwoPasses(t, prefix, interruptedTail+testCase.suffix, Target{
+				FileName: "rollout.jsonl", Kind: parsers.KindCodexSession,
+				SessionID: "interrupted-tail", SourceAgent: "codex",
+			})
+			if len(second.Sessions) != 1 || second.Sessions[0].Incremental ||
+				len(second.Sessions[0].Exchanges) != 1 {
+				t.Fatalf("interrupted tail records = %+v", second.Sessions)
+			}
+			var exchanges, orphaned int
+			if err := db.SQL().QueryRow(`SELECT
+				(SELECT COUNT(*) FROM exchanges WHERE session_id = 'interrupted-tail'),
+				(SELECT COUNT(*) FROM tool_uses WHERE session_id = 'interrupted-tail'
+				 AND exchange_number IS NULL)`).Scan(&exchanges, &orphaned); err != nil {
+				t.Fatal(err)
+			}
+			if exchanges != 1 || orphaned != 1 {
+				t.Fatalf("persisted interrupted tail = exchanges:%d orphaned:%d", exchanges, orphaned)
+			}
+		})
 	}
 }
 
