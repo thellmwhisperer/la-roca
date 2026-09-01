@@ -40,9 +40,15 @@ func installZcodeTestIntegration(t *testing.T, integration, home string) {
 }
 
 func purgeZcodeTestIntegrations(purge bool) lifecycle.Report {
-	report := lifecycle.Report{Purged: true, Deleted: []string{}}
-	(&cliEnv{out: io.Discard, errOut: io.Discard}).withdrawTheIntegrations(&report, purge)
+	report, _ := purgeZcodeTestIntegrationsWithWarnings(purge)
 	return report
+}
+
+func purgeZcodeTestIntegrationsWithWarnings(purge bool) (lifecycle.Report, string) {
+	report := lifecycle.Report{Purged: true, Deleted: []string{}}
+	var warnings strings.Builder
+	(&cliEnv{out: io.Discard, errOut: &warnings}).withdrawTheIntegrations(&report, purge)
+	return report, warnings.String()
 }
 
 func readZcodeTestJSON(t *testing.T, path string) ([]byte, map[string]any) {
@@ -115,9 +121,12 @@ func assertZcodeOwnershipExpiresWithoutContinuity(t *testing.T, integration stri
 	}
 	writeFile(t, config, "{}")
 	installZcodeTestIntegration(t, integration, home)
-	report := purgeZcodeTestIntegrations(true)
-	if !strings.Contains(strings.Join(report.Errors, "\n"), config) {
-		t.Fatalf("operator-recreated config was not retained: %v", report.Errors)
+	report, warnings := purgeZcodeTestIntegrationsWithWarnings(true)
+	if len(report.Errors) != 0 {
+		t.Fatalf("operator-recreated config produced purge errors: %v", report.Errors)
+	}
+	if !strings.Contains(warnings, "warning: retained operator-recreated ZCode state at "+config) {
+		t.Fatalf("operator-recreated config warning = %q", warnings)
 	}
 	if body, err := os.ReadFile(config); err != nil || strings.TrimSpace(string(body)) != "{}" {
 		t.Fatalf("operator-recreated config changed: body=%q err=%v", body, err)
@@ -569,9 +578,12 @@ func TestZcodePurgeExpiresOwnershipAfterRuntimeReplacement(t *testing.T) {
 				t.Fatal(err)
 			}
 			writeFile(t, config, `{}`)
-			report := purgeZcodeTestIntegrations(true)
-			if !strings.Contains(strings.Join(report.Errors, "\n"), config) {
-				t.Fatalf("retained replacement was not reported: %v", report.Errors)
+			report, warnings := purgeZcodeTestIntegrationsWithWarnings(true)
+			if len(report.Errors) != 0 {
+				t.Fatalf("retained replacement produced purge errors: %v", report.Errors)
+			}
+			if !strings.Contains(warnings, "warning: retained operator-recreated ZCode state at "+config) {
+				t.Fatalf("retained replacement warning = %q", warnings)
 			}
 			if body, err := os.ReadFile(config); err != nil || string(body) != `{}` {
 				t.Fatalf("operator replacement changed: body=%q err=%v", body, err)
