@@ -46,6 +46,9 @@ func Remove(path string, expected []byte) error {
 
 func exchangeExact(path string, data, expected []byte, mode os.FileMode, remove bool) error {
 	dir := filepath.Dir(path)
+	if err := verifyNoReplace(dir, filepath.Base(path)); err != nil {
+		return err
+	}
 	transaction, err := os.MkdirTemp(dir, "."+filepath.Base(path)+"-exchange-")
 	if err != nil {
 		return err
@@ -116,6 +119,27 @@ func preserveExchangedFile(path, held string, cause error, cleanup *bool) error 
 		return fmt.Errorf("%v; current file preserved at %s: %w", cause, held, err)
 	}
 	return cause
+}
+
+func verifyNoReplace(dir, base string) error {
+	probe, err := os.CreateTemp(dir, "."+base+"-noreplace-")
+	if err != nil {
+		return err
+	}
+	staged := probe.Name()
+	if err := probe.Close(); err != nil {
+		os.Remove(staged)
+		return err
+	}
+	target := staged + ".published"
+	if err := renameNoReplaceFile(staged, target); err != nil {
+		os.Remove(staged)
+		if errors.Is(err, errAtomicNoReplaceUnsupported) {
+			return fmt.Errorf("cannot safely edit %s: %w", filepath.Join(dir, base), err)
+		}
+		return err
+	}
+	return os.Remove(target)
 }
 
 // BackUp preserves previous bytes beside path without overwriting older copies.

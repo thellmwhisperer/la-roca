@@ -307,7 +307,6 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 		withdrawn("the ZCode handoff hook from "+settings, outcome, err)
 		if purge {
 			removeRecoveryBackups(report, settings)
-			removeRecoveryBackups(report, wrapper)
 		}
 	}
 

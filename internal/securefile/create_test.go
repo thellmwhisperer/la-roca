@@ -96,6 +96,34 @@ func TestReplaceExactPreservesAFileCreatedAfterIsolation(t *testing.T) {
 	assertFileContentAndMode(t, path, concurrent, 0o640)
 }
 
+func TestExactExchangeLeavesLiveFileWhenNoReplaceIsUnsupported(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "roca-handoff.sh")
+	original := []byte("operator wrapper")
+	if err := os.WriteFile(path, original, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	realRename := renameNoReplaceFile
+	renameNoReplaceFile = func(_, _ string) error {
+		return errAtomicNoReplaceUnsupported
+	}
+	t.Cleanup(func() { renameNoReplaceFile = realRename })
+
+	for _, operation := range []struct {
+		name string
+		run  func() error
+	}{
+		{"replace", func() error { return ReplaceExact(path, []byte("managed"), original, 0o700) }},
+		{"remove", func() error { return Remove(path, original) }},
+	} {
+		t.Run(operation.name, func(t *testing.T) {
+			if err := operation.run(); err == nil || !strings.Contains(err.Error(), "atomic no-replace") {
+				t.Fatalf("operation error = %v", err)
+			}
+			assertFileContentAndMode(t, path, original, 0o640)
+		})
+	}
+}
+
 func TestCreatePreservingParentModeFailsWithoutAtomicPrimitive(t *testing.T) {
 	realRename := renameNoReplaceFile
 	renameNoReplaceFile = func(_, _ string) error {
