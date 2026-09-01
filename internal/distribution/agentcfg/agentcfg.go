@@ -239,8 +239,10 @@ func Install(name, path, executable string) (Outcome, error) {
 	if strings.TrimSpace(executable) == "" {
 		executable = "roca"
 	}
-	if _, err := loadOwnedMCP(path); err != nil {
-		return Outcome{Runtime: name, Path: path}, err
+	if len(r.parents) > 0 {
+		if _, err := loadOwnedMCP(path); err != nil {
+			return Outcome{Runtime: name, Path: path}, err
+		}
 	}
 	var created []string
 	outcome, err := Edit(name, path, func(text string) (string, error) {
@@ -266,9 +268,12 @@ func Uninstall(name, path string) (Outcome, error) {
 	if err != nil {
 		return Outcome{}, err
 	}
-	created, err := loadOwnedMCP(path)
-	if err != nil {
-		return Outcome{Runtime: name, Path: path}, err
+	var created []string
+	if len(r.parents) > 0 {
+		created, err = loadOwnedMCP(path)
+		if err != nil {
+			return Outcome{Runtime: name, Path: path}, err
+		}
 	}
 	outcome, err := Edit(name, path, func(text string) (string, error) {
 		return withdrawCreated(r, text, created)
@@ -276,8 +281,10 @@ func Uninstall(name, path string) (Outcome, error) {
 	if err != nil {
 		return outcome, err
 	}
-	if err := clearOwnedMCP(path); err != nil {
-		return outcome, err
+	if len(r.parents) > 0 {
+		if err := clearOwnedMCP(path); err != nil {
+			return outcome, err
+		}
 	}
 	return outcome, nil
 }
