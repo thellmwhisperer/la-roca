@@ -19,12 +19,16 @@ import (
 
 func TestZcodeHookPlatformSupportRequiresBash(t *testing.T) {
 	for _, goos := range []string{"darwin", "linux"} {
-		if err := zcodeHookPlatformError(goos); err != nil {
+		if err := zcodeHookPlatformError(goos, os.Stat); err != nil {
 			t.Fatalf("%s support = %v", goos, err)
 		}
 	}
-	if err := zcodeHookPlatformError("windows"); err == nil || !strings.Contains(err.Error(), "/bin/bash") {
+	if err := zcodeHookPlatformError("windows", nil); err == nil || !strings.Contains(err.Error(), "/bin/bash") {
 		t.Fatalf("Windows support error = %v", err)
+	}
+	missing := func(string) (os.FileInfo, error) { return nil, os.ErrNotExist }
+	if err := zcodeHookPlatformError("linux", missing); err == nil || !strings.Contains(err.Error(), "require executable") {
+		t.Fatalf("Linux support without Bash = %v", err)
 	}
 }
 
@@ -100,6 +104,14 @@ exit 1
 	}
 	if info.Mode().Perm()&0o100 == 0 {
 		t.Fatal("wrapper is not executable")
+	}
+	registry, err := artifact.LoadRegistry(filepath.Join(home, ".roca", "artifacts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, found := registry.Find(artifactKindHook, "zcode", wrapper)
+	if !found || entry.Executable != binary || entry.SystemSHA256 != artifact.Checksum(zcodeWrapper(binary)) {
+		t.Fatalf("ZCode wrapper ownership state = %#v", entry)
 	}
 	output, err := exec.Command(wrapper).Output()
 	if err != nil {
@@ -193,7 +205,7 @@ func TestZcodeHookCommandExecutesWhenWrapperPathContainsSpaces(t *testing.T) {
 	if err := json.Unmarshal(output, &context); err != nil || context["additionalContext"] != "space-safe" {
 		t.Fatalf("hook command output = %q, err = %v", output, err)
 	}
-	if _, _, err := uninstallZcodeHandoffHook(config, wrapper); err != nil {
+	if _, _, err := uninstallZcodeHandoffHook(config, wrapper, []byte(zcodeWrapper(binary))); err != nil {
 		t.Fatal(err)
 	}
 	body, err = os.ReadFile(config)
@@ -229,7 +241,8 @@ func TestZcodeInstallPreservesOperatorHookUsingSameWrapper(t *testing.T) {
 	if len(entries) != 2 {
 		t.Fatalf("SessionStart entries = %d, want operator and managed hooks", len(entries))
 	}
-	_, warning, err := uninstallZcodeHandoffHook(config, wrapper)
+	_, warning, err := uninstallZcodeHandoffHook(config, wrapper,
+		[]byte(zcodeWrapper(filepath.Join(home, "roca"))))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,7 +303,8 @@ func TestZcodeUninstallKeepsWrapperForEquivalentOperatorPaths(t *testing.T) {
 			if _, _, err := installZcodeHandoffHook(config, wrapper, filepath.Join(home, "roca")); err != nil {
 				t.Fatal(err)
 			}
-			_, warning, err := uninstallZcodeHandoffHook(config, wrapper)
+			_, warning, err := uninstallZcodeHandoffHook(config, wrapper,
+				[]byte(zcodeWrapper(filepath.Join(home, "roca"))))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -326,7 +340,8 @@ func TestZcodeUninstallKeepsWrapperForAmbiguousDoubleQuotedEscape(t *testing.T) 
 	if _, _, err := installZcodeHandoffHook(config, wrapper, filepath.Join(home, "roca")); err != nil {
 		t.Fatal(err)
 	}
-	_, warning, err := uninstallZcodeHandoffHook(config, wrapper)
+	_, warning, err := uninstallZcodeHandoffHook(config, wrapper,
+		[]byte(zcodeWrapper(filepath.Join(home, "roca"))))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -365,7 +380,7 @@ func TestZcodeHookRefusesPreexistingOperatorWrapper(t *testing.T) {
 	}
 }
 
-func TestZcodeUninstallRetainsEditedCanonicalWrapper(t *testing.T) {
+func TestZcodeUninstallRetainsWrapperWithEditedExecutable(t *testing.T) {
 	home := t.TempDir()
 	config := filepath.Join(home, "config.json")
 	wrapper := filepath.Join(home, "hooks", "roca-handoff.sh")
@@ -373,11 +388,11 @@ func TestZcodeUninstallRetainsEditedCanonicalWrapper(t *testing.T) {
 	if _, _, err := installZcodeHandoffHook(config, wrapper, executable); err != nil {
 		t.Fatal(err)
 	}
-	edited := []byte(zcodeWrapper(executable) + "# operator edit\n")
+	edited := []byte(zcodeWrapper(filepath.Join(home, "operator-roca")))
 	if err := os.WriteFile(wrapper, edited, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	_, warning, err := uninstallZcodeHandoffHook(config, wrapper)
+	_, warning, err := uninstallZcodeHandoffHook(config, wrapper, []byte(zcodeWrapper(executable)))
 	if err != nil {
 		t.Fatal(err)
 	}

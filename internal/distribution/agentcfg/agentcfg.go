@@ -241,6 +241,29 @@ func Install(name, path, executable string) (Outcome, error) {
 	}, true)
 }
 
+func InstallZcodeMCP(path, executable string, recordPreimage func(string, bool) error) (Outcome, error) {
+	if strings.TrimSpace(executable) == "" {
+		executable = "roca"
+	}
+	r := runtimes[RuntimeZcode]
+	return Edit(RuntimeZcode, path, func(text string) (string, error) {
+		preimage, err := ZcodeMCPPreimage(text)
+		if err != nil {
+			return "", err
+		}
+		_, configured, err := installed(r, text)
+		if err != nil {
+			return "", err
+		}
+		if recordPreimage != nil {
+			if err := recordPreimage(preimage, configured); err != nil {
+				return "", err
+			}
+		}
+		return declare(r, text, executable)
+	}, true)
+}
+
 // Uninstall withdraws Roca's entry and leaves the rest of the file exactly as
 // it was. A configuration that is not there is not created and a configuration
 // with no Roca in it is not written to.

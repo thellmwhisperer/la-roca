@@ -229,6 +229,7 @@ type Entry struct {
 	AvailableVersion string `json:"available_version,omitempty"`
 	SystemSHA256     string `json:"system_sha256,omitempty"`
 	Format           string `json:"format,omitempty"`
+	Executable       string `json:"executable,omitempty"`
 }
 
 func (entry Entry) Key() string {

@@ -260,11 +260,15 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 		}
 	}
 
-	removedMCPState := map[string]bool{}
+	removedMCPState := map[string]artifact.Entry{}
+	removedHookState := map[string]artifact.Entry{}
 	processedMCPPaths := map[string]bool{}
 	withdrawMCP := func(runtime, path string) (agentcfg.Outcome, error) {
 		if runtime != agentcfg.RuntimeZcode {
 			return agentcfg.Uninstall(runtime, path)
+		}
+		if registryErr != nil {
+			return agentcfg.Outcome{Runtime: runtime, Path: path}, fmt.Errorf("ownership registry unavailable")
 		}
 		preimage := agentcfg.ZcodeMCPPreimageNone
 		entry, found := registry.Find(artifactKindMCP, runtime, path)
@@ -277,7 +281,7 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 		}
 		outcome, err := agentcfg.UninstallZcodeMCP(path, preimage)
 		if err == nil && found {
-			removedMCPState[entry.Key()] = true
+			removedMCPState[entry.Key()] = entry
 		}
 		return outcome, err
 	}
@@ -338,9 +342,24 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 	} else if wrapper, err := zcodeHookWrapperPath(); err != nil {
 		failed(report, "%s", err)
 	} else {
-		outcome, warning, err := uninstallZcodeHandoffHook(settings, wrapper)
+		var expected []byte
+		var wrapperEntry artifact.Entry
+		var wrapperRegistered bool
+		if registryErr == nil {
+			wrapperEntry, wrapperRegistered = registry.Find(artifactKindHook, agentcfg.RuntimeZcode, wrapper)
+			if wrapperRegistered {
+				expected, err = zcodeWrapperExpectedFromEntry(wrapperEntry)
+				if err != nil {
+					failed(report, "read ZCode wrapper ownership state: %v", err)
+				}
+			}
+		}
+		outcome, warning, err := uninstallZcodeHandoffHook(settings, wrapper, expected)
 		if warning != "" {
 			fmt.Fprintln(env.errOut, warning)
+		}
+		if err == nil && wrapperRegistered {
+			removedHookState[wrapperEntry.Key()] = wrapperEntry
 		}
 		withdrawn("the ZCode handoff hook from "+settings, outcome, err)
 		if purge {
@@ -404,15 +423,37 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 		}
 	}
 	if registryErr == nil && registryExists {
-		kept := registry.Entries[:0]
+		removable := map[string]artifact.Entry{}
 		for _, entry := range registry.Entries {
-			if !removedMCPState[entry.Key()] {
-				kept = append(kept, entry)
+			switch entry.Kind {
+			case artifactKindSkill, artifactKindSkillCatalog:
+				removable[entry.Key()] = entry
+			case artifactKindHook:
+				if entry.Runtime != agentcfg.RuntimeZcode {
+					removable[entry.Key()] = entry
+				}
 			}
 		}
-		registry.Entries = kept
-		registry.RemoveKinds(artifactKindSkill, artifactKindSkillCatalog, artifactKindHook)
-		if err := artifact.SaveRegistry(registryPath, registry); err != nil {
+		for key, entry := range removedMCPState {
+			removable[key] = entry
+		}
+		for key, entry := range removedHookState {
+			removable[key] = entry
+		}
+		_, err := mutateArtifactRegistry(registryPath, func(current *artifact.Registry) (bool, error) {
+			kept := current.Entries[:0]
+			changed := false
+			for _, entry := range current.Entries {
+				if expected, remove := removable[entry.Key()]; remove && entry == expected {
+					changed = true
+					continue
+				}
+				kept = append(kept, entry)
+			}
+			current.Entries = kept
+			return changed, nil
+		})
+		if err != nil {
 			failed(report, "update managed artifact registry: %v", err)
 		}
 	}
