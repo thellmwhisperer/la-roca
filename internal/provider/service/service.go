@@ -169,9 +169,7 @@ type Service struct {
 
 // Open opens the database. Its schema is adopted before the first data operation.
 func Open(opts Options) (*Service, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), residentInitializationTimeout)
-	defer cancel()
-	return openWithContext(ctx, opts)
+	return openWithContext(context.Background(), opts)
 }
 
 func snapshotLogWriter(dataDir string) store.SnapshotLogWriter {

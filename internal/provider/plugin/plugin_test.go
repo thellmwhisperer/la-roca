@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 	_ "modernc.org/sqlite"
@@ -86,6 +87,36 @@ func TestValidationPreservesInspectedFTS5Kind(t *testing.T) {
 	}
 	if !kinds["documents_search"] || kinds["receipts_fts"] {
 		t.Fatalf("inspected FTS5 kinds = %v", kinds)
+	}
+}
+
+func TestValidationTimeoutStartsAfterPhysicalSnapshotOpen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "delayed.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE rows (id INTEGER)`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := plugin.WithValidationTimeout(t.Context(), 250*time.Millisecond)
+	time.Sleep(300 * time.Millisecond)
+	database, err := plugin.ValidatePhysicalReadOnly(ctx, plugin.Descriptor{
+		Name: "delayed", Database: path,
+		Semantic: plugin.Semantic{Tables: []plugin.SemanticTable{{
+			Name: "rows", Columns: []string{"id"},
+		}}},
+	})
+	if err != nil {
+		t.Fatalf("snapshot setup consumed the validation timeout: %v", err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
 	}
 }
 

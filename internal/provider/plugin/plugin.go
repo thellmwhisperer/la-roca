@@ -543,6 +543,13 @@ func tokenSet(text string) map[string]bool {
 	return tokens
 }
 
+type validationTimeoutContextKey struct{}
+
+// WithValidationTimeout limits database validation after its read-only source is opened.
+func WithValidationTimeout(ctx context.Context, timeout time.Duration) context.Context {
+	return context.WithValue(ctx, validationTimeoutContextKey{}, timeout)
+}
+
 func Validate(ctx context.Context, descriptor Descriptor) (Database, error) {
 	return validate(ctx, descriptor, false)
 }
@@ -565,6 +572,11 @@ func validate(ctx context.Context, descriptor Descriptor, physicalReadOnly bool)
 	}
 	if err != nil {
 		return Database{}, fmt.Errorf("open plugin %s read-only: %w", descriptor.Name, err)
+	}
+	if timeout, _ := ctx.Value(validationTimeoutContextKey{}).(time.Duration); timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
 	}
 	keepSnapshot := false
 	defer func() {

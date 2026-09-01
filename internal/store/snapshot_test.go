@@ -458,6 +458,13 @@ func TestLegacySnapshotNamespaceIsMigratedSafely(t *testing.T) {
 	orphan := createLegacyOrphan(t, tempRoot, "legacy-orphan")
 	live := startSnapshotHelper(t, tempRoot, "", "legacy-hold")
 	t.Cleanup(func() { _ = os.RemoveAll(live.directory) })
+	ageLegacySnapshot(t, live.directory)
+	originalProbe := legacySnapshotHasOpenHandlesFn
+	liveHolding := true
+	legacySnapshotHasOpenHandlesFn = func(_ context.Context, directory string) (bool, error) {
+		return liveHolding && directory == live.directory, nil
+	}
+	t.Cleanup(func() { legacySnapshotHasOpenHandlesFn = originalProbe })
 
 	openAndCloseSnapshot(t)
 	if _, err := os.Stat(orphan); !os.IsNotExist(err) {
@@ -472,9 +479,31 @@ func TestLegacySnapshotNamespaceIsMigratedSafely(t *testing.T) {
 	if err := live.wait(); err != nil {
 		t.Fatal(err)
 	}
+	liveHolding = false
+	ageLegacySnapshot(t, live.directory)
 	openAndCloseSnapshot(t)
 	if _, err := os.Stat(live.directory); !os.IsNotExist(err) {
 		t.Fatalf("closed legacy snapshot was not reaped: %v", err)
+	}
+}
+
+func TestFreshLegacySnapshotIsPreservedUntilQuiescent(t *testing.T) {
+	tempRoot := isolateSnapshotTemp(t)
+	legacy := makeOrphanDir(t, tempRoot, "legacy-in-progress")
+	writeOrphanFile(t, legacy, "payload", []byte("copying"))
+	originalProbe := legacySnapshotHasOpenHandlesFn
+	legacySnapshotHasOpenHandlesFn = func(context.Context, string) (bool, error) { return false, nil }
+	t.Cleanup(func() { legacySnapshotHasOpenHandlesFn = originalProbe })
+
+	openAndCloseSnapshot(t)
+	if _, err := os.Stat(legacy); err != nil {
+		t.Fatalf("fresh legacy snapshot was removed: %v", err)
+	}
+
+	ageLegacySnapshot(t, legacy)
+	openAndCloseSnapshot(t)
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+		t.Fatalf("quiescent legacy orphan was not removed: %v", err)
 	}
 }
 
@@ -1070,7 +1099,21 @@ func createLegacyOrphan(t *testing.T, root, name string) string {
 	t.Helper()
 	orphan := makeOrphanDir(t, root, name)
 	writeOrphanFile(t, orphan, "payload", []byte("orphan"))
+	ageLegacySnapshot(t, orphan)
 	return orphan
+}
+
+func ageLegacySnapshot(t *testing.T, directory string) {
+	t.Helper()
+	old := time.Now().Add(-legacySnapshotQuiescence - time.Minute)
+	if err := filepath.WalkDir(directory, func(path string, _ os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		return os.Chtimes(path, old, old)
+	}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func lockNamespaceLease(t *testing.T, root string) func() {
