@@ -121,13 +121,13 @@ func TestDeclaredCorpusLimitsUnboundedStatementsToIngestReads(t *testing.T) {
 	if _, err := corpus.CountChunks(context.Background(), "records"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := corpus.CountSources(context.Background(), "records"); err != nil {
-		t.Fatal(err)
-	}
 	if err := corpus.WalkSources(context.Background(), "records", func(sourceRow) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
 	wantUnbounded = false
+	if _, err := corpus.CountSources(context.Background(), "records"); err != nil {
+		t.Fatal(err)
+	}
 	want := sourceRow{kind: "records", sourceID: "record-1", text: "synthetic body",
 		rowText: "synthetic body", fingerprintVersion: table.embeddingContractFingerprint()}
 	if _, err := corpus.ResolveSource(context.Background(), "records", locator{
@@ -241,11 +241,65 @@ func TestEmbeddingSchedulerMergesDatabaseHeadsNewestFirst(t *testing.T) {
 	}
 }
 
+func TestEmbeddingSchedulerFailsWhenAJobNeverProducesWork(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	scheduler := newEmbeddingScheduler(ctx, &recordingEmbedder{}, 2)
+	scheduler.stallAfter = 100 * time.Millisecond
+	scheduler.gatherWindow = 20 * time.Millisecond
+	go func() {
+		embedder := scheduledEmbedder{base: scheduler.base, id: 0, scheduler: scheduler}
+		ordered := context.WithValue(ctx, sourceOrderKey{}, sourceOrder{timestamp: "2026-01-01", id: "ready"})
+		_, _ = embedder.Embed(ordered, DefaultModel, []string{"ready"})
+		scheduler.finished <- 0
+	}()
+	done := make(chan error, 1)
+	go func() { done <- scheduler.run() }()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected the scheduler to fail when a peer never produced work")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("scheduler hung waiting for a job that never produced work")
+	}
+}
+
+func TestEmbeddingSchedulerEmbedsReadyWorkWithoutWaitingForeverForAPeer(t *testing.T) {
+	base := &recordingEmbedder{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	scheduler := newEmbeddingScheduler(ctx, base, 2)
+	scheduler.gatherWindow = 20 * time.Millisecond
+	embedded := make(chan error, 1)
+	go func() {
+		embedder := scheduledEmbedder{base: base, id: 0, scheduler: scheduler}
+		ordered := context.WithValue(ctx, sourceOrderKey{}, sourceOrder{timestamp: "2026-01-01", id: "ready"})
+		_, err := embedder.Embed(ordered, DefaultModel, []string{"ready"})
+		embedded <- err
+		scheduler.finished <- 0
+	}()
+	go func() { _ = scheduler.run() }()
+	select {
+	case err := <-embedded:
+		if err != nil {
+			t.Fatalf("ready job embed: %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("scheduler waited for a peer instead of embedding ready work")
+	}
+	scheduler.finished <- 1
+	inputs := base.snapshot()
+	if len(inputs) != 1 || inputs[0][0] != "ready" {
+		t.Fatalf("embedded %v, want the ready job only", inputs)
+	}
+}
+
 func TestEmbeddingSchedulerCompletionDoesNotBlockAfterCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	scheduler := newEmbeddingScheduler(ctx, &recordingEmbedder{}, 1)
 	cancel()
-	scheduler.run()
+	_ = scheduler.run()
 	done := make(chan struct{})
 	go func() {
 		scheduler.finished <- 0

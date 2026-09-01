@@ -13,12 +13,42 @@ import (
 	"github.com/thellmwhisperer/la-roca-vector/internal/telemetry"
 )
 
+var nativeCallTimeout = 10 * time.Minute
+
 func (n *Native) Embed(ctx context.Context, requestedModel string, input []string) ([][]float32, error) {
 	if requestedModel != DefaultModel {
 		return nil, fmt.Errorf("embedding model %q is not supported by this engine", requestedModel)
 	}
-	if err := n.ensureOpen(ctx); err != nil {
+	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	ctx, cancel := boundContext(ctx, nativeCallTimeout)
+	defer cancel()
+	type reply struct {
+		vectors [][]float32
+		err     error
+	}
+	done := make(chan reply, 1)
+	go func() {
+		n.mu.Lock()
+		defer n.mu.Unlock()
+		vectors, err := n.embedLocked(ctx, input)
+		done <- reply{vectors: vectors, err: err}
+	}()
+	select {
+	case result := <-done:
+		return result.vectors, result.err
+	case <-ctx.Done():
+		n.record(telemetry.Record{Kind: telemetry.KindError, Err: "semantic search stalled"})
+		return nil, fmt.Errorf("semantic search stalled while preparing embeddings")
+	}
+}
+
+func (n *Native) embedLocked(ctx context.Context, input []string) ([][]float32, error) {
+	if n.engine == nil {
+		if err := n.open(ctx); err != nil {
+			return nil, err
+		}
 	}
 	started := time.Now()
 	result := make([][]float32, len(input))
@@ -50,15 +80,6 @@ func (n *Native) Embed(ctx context.Context, requestedModel string, input []strin
 	return result, nil
 }
 
-func (n *Native) ensureOpen(ctx context.Context) error {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	if n.engine != nil {
-		return nil
-	}
-	return n.open(ctx)
-}
-
 func (n *Native) open(ctx context.Context) error {
 	path, err := n.modelPath(ctx)
 	if err != nil {
@@ -71,9 +92,12 @@ func (n *Native) open(ctx context.Context) error {
 	if !n.ReadOnly {
 		policy = n.Writer
 	}
-	loaded, err := llamacpp.OpenPreferred(path, runtime.NumCPU(), policy)
+	loaded, err := openPreferredWithContext(ctx, path, runtime.NumCPU(), policy)
 	if err != nil {
 		n.record(telemetry.Record{Kind: telemetry.KindError, Err: "the embedding model failed to load"})
+		if ctx.Err() != nil {
+			return fmt.Errorf("semantic search stalled while preparing embeddings")
+		}
 		return fmt.Errorf("the embedding model failed to load")
 	}
 	if !n.ReadOnly {
@@ -87,6 +111,24 @@ func (n *Native) open(ctx context.Context) error {
 		DurationMS: time.Since(started).Milliseconds(), MemoryHWM: memoryHighWater(),
 	})
 	return nil
+}
+
+func openPreferredWithContext(ctx context.Context, path string, threads int, policy llamacpp.Policy) (*llamacpp.Engine, error) {
+	type reply struct {
+		engine *llamacpp.Engine
+		err    error
+	}
+	done := make(chan reply, 1)
+	go func() {
+		engine, err := llamacpp.OpenPreferred(path, threads, policy)
+		done <- reply{engine: engine, err: err}
+	}()
+	select {
+	case result := <-done:
+		return result.engine, result.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 func (n *Native) Accelerated() bool {
