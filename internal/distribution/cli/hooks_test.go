@@ -752,6 +752,30 @@ func TestZcodeHookReinstallMergesNewEnablementOwnership(t *testing.T) {
 	}
 }
 
+func TestZcodeHookReinstallPreservesLiveOwnership(t *testing.T) {
+	home := skillTestHome(t)
+	for range 2 {
+		installZcodeTestIntegration(t, "hooks", home)
+	}
+	config, wrapper := zcodeTestConfigAndWrapper(home)
+	registry, err := artifact.LoadRegistry(filepath.Join(home, ".roca", "artifacts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, found := registry.Find(artifactKindHook, agentcfg.RuntimeZcode, wrapper)
+	if !found || !entry.CreatedRoot || !entry.CreatedConfigDir || !entry.CreatedHooksDir ||
+		!entry.CreatedConfig || !entry.CreatedLock || !entry.CreatedHooksEnabled || entry.RootIdentity == "" {
+		t.Fatalf("continuous hook provenance = %#v, found=%v", entry, found)
+	}
+	runZcodeTestCLI(t, "hooks", "uninstall", "zcode")
+	_, document := readZcodeTestJSON(t, config)
+	if hooks, found := document["hooks"].(map[string]any); found {
+		if _, found := hooks["enabled"]; found {
+			t.Fatalf("continuously owned hooks.enabled survived uninstall: %#v", document)
+		}
+	}
+}
+
 func TestZcodeHookReinstallExpiresOwnershipWithoutManagedContinuity(t *testing.T) {
 	assertZcodeOwnershipExpiresWithoutContinuity(t, "hooks")
 }

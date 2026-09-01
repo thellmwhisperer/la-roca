@@ -105,11 +105,36 @@ func (env *cliEnv) askAboutTheData(in io.Reader) (bool, error) {
 // The integrations go first, and on purpose: they name the binary, so an agent
 // left pointing at a file that is gone is the one residue an operator does not
 // find until their next session fails to start.
-func (env *cliEnv) uninstall(cmd *cobra.Command, in io.Reader, purge bool) error {
+func (env *cliEnv) uninstall(cmd *cobra.Command, in io.Reader, purge bool) (returnErr error) {
 	paths, err := env.resolvePaths()
 	if err != nil {
 		return err
 	}
+	lockTimeout := 5 * time.Second
+	if ctx := cmd.Context(); ctx != nil {
+		if deadline, ok := ctx.Deadline(); ok {
+			if remaining := time.Until(deadline); remaining < lockTimeout {
+				lockTimeout = remaining
+			}
+		}
+	}
+	releaseZcode, err := env.lockManagedZcodeLifecycleWithin(lockTimeout)
+	if err != nil {
+		return fmt.Errorf("lock ZCode lifecycle for uninstall: %w", err)
+	}
+	zcodeLockPath := paths.Artifacts + ".zcode.lock"
+	zcodeLockIdentity, identityErr := os.Lstat(zcodeLockPath)
+	if identityErr != nil {
+		return errors.Join(identityErr, releaseZcode())
+	}
+	env.zcodeLifecycleLocked = true
+	releasedZcode := false
+	defer func() {
+		if !releasedZcode {
+			env.zcodeLifecycleLocked = false
+			returnErr = errors.Join(returnErr, releaseZcode())
+		}
+	}()
 	report := lifecycle.Report{Purged: true, Deleted: []string{}}
 	runtimes := env.withdrawTheIntegrations(&report, purge)
 
@@ -118,6 +143,7 @@ func (env *cliEnv) uninstall(cmd *cobra.Command, in io.Reader, purge bool) error
 	running, _ := os.Executable()
 	plan := lifecycle.Plan{Binary: running}
 	var applied lifecycle.Report
+	dataDir := dirOf(paths.DB)
 	if purge {
 		// The execution is recorded before the operator-authorized purge removes
 		// the log directory itself. Execute then suppresses its ordinary post-run
@@ -134,14 +160,16 @@ func (env *cliEnv) uninstall(cmd *cobra.Command, in io.Reader, purge bool) error
 			}
 			env.prelogged = true
 		}
-		dataDir := dirOf(paths.DB)
 		// The archived plugin data is decided before the sweep and stays outside
 		// the inventory unless the operator just said so with their own answer.
 		archives, keptArchives := env.consentToCustody(in, paths)
 		report.Kept = append(report.Kept, keptArchives...)
 		applied = applyPurge(dataDir, func() lifecycle.Plan {
+			owned := slices.DeleteFunc(ownedPaths(paths), func(path string) bool {
+				return path == zcodeLockPath
+			})
 			return lifecycle.Plan{Binary: running,
-				Owned: append(ownedPaths(paths), archives...), DataDir: dataDir}
+				Owned: append(owned, archives...), DataDir: dataDir}
 		})
 		if len(keptArchives) > 0 {
 			applied.Kept = exceptCustodyTree(applied.Kept, custodyRoot(paths))
@@ -153,6 +181,24 @@ func (env *cliEnv) uninstall(cmd *cobra.Command, in io.Reader, purge bool) error
 	report.Kept = append(report.Kept, applied.Kept...)
 	report.Errors = append(report.Errors, applied.Errors...)
 	report.Purged = report.Purged && applied.Purged
+
+	if purge {
+		if err := cleanupCreatedZcodeLifecycleLock(zcodeLockPath, zcodeLockIdentity); err != nil {
+			failed(&report, "remove ZCode lifecycle lock: %v", err)
+		} else if _, err := os.Lstat(zcodeLockPath); err == nil {
+			failed(&report, "retained ZCode lifecycle lock at %s", zcodeLockPath)
+		} else if !os.IsNotExist(err) {
+			failed(&report, "inspect ZCode lifecycle lock after purge: %v", err)
+		} else {
+			report.Deleted = append(report.Deleted, zcodeLockPath)
+		}
+		report = reconcilePurge(report, lifecycle.Plan{DataDir: dataDir}.Apply(), zcodeLockPath)
+	}
+	env.zcodeLifecycleLocked = false
+	if err := releaseZcode(); err != nil {
+		failed(&report, "release ZCode lifecycle lock: %v", err)
+	}
+	releasedZcode = true
 
 	if !report.Purged {
 		env.code = ExitError
@@ -230,6 +276,36 @@ func reconcilePurge(report, final lifecycle.Report, lockPath string) lifecycle.R
 func failed(report *lifecycle.Report, format string, args ...any) {
 	report.Errors = append(report.Errors, fmt.Sprintf(format, args...))
 	report.Purged = false
+}
+
+type zcodeLifecycleLockResult struct {
+	release func() error
+	err     error
+}
+
+func (env *cliEnv) lockManagedZcodeLifecycleWithin(timeout time.Duration) (func() error, error) {
+	acquired := make(chan zcodeLifecycleLockResult)
+	cancelled := make(chan struct{})
+	go func() {
+		release, err := env.lockManagedZcodeLifecycle()
+		result := zcodeLifecycleLockResult{release: release, err: err}
+		select {
+		case acquired <- result:
+		case <-cancelled:
+			if release != nil {
+				_ = release()
+			}
+		}
+	}()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case result := <-acquired:
+		return result.release, result.err
+	case <-timer.C:
+		close(cancelled)
+		return nil, fmt.Errorf("timed out after %s", timeout)
+	}
 }
 
 // withdrawTheIntegrations takes La Roca's entry out of every runtime's own MCP
