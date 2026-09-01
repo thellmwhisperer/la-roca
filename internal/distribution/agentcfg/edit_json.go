@@ -736,6 +736,7 @@ func objectAt(view string, open int) (object, error) {
 		return object{}, fmt.Errorf("an object was expected at offset %d", open)
 	}
 	result := object{open: open}
+	seen := map[string]bool{}
 	for i := open + 1; ; {
 		i = skipSpace(view, i)
 		if view[i] == '}' {
@@ -748,6 +749,10 @@ func objectAt(view string, open int) (object, error) {
 		}
 		start := i
 		key, next := scanString(view, i)
+		if seen[key] {
+			return object{}, fmt.Errorf("duplicate object member %q", key)
+		}
+		seen[key] = true
 		valueStart := skipSpace(view, skipSpace(view, next)+1)
 		end := skipValue(view, valueStart)
 		result.members = append(result.members,
