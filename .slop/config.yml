@@ -81,6 +81,8 @@ orphan_scopes:
       - "internal/distribution/cli/openfiles_linux.go"
       - "internal/distribution/cli/openfiles_other.go"
       - "internal/distribution/cli/zcode_reference.go"
+      - "internal/distribution/cli/zcode_identity_linux.go"
+      - "internal/distribution/cli/zcode_identity_other.go"
       - "internal/distribution/cli/zcode_identity_unix.go"
       - "internal/distribution/cli/zcode_identity_windows.go"
 
@@ -103,6 +105,8 @@ claims:
         - "internal/distribution/cli/openfiles_linux.go"
         - "internal/distribution/cli/openfiles_other.go"
         - "internal/distribution/cli/zcode_reference.go"
+        - "internal/distribution/cli/zcode_identity_linux.go"
+        - "internal/distribution/cli/zcode_identity_other.go"
         - "internal/distribution/cli/zcode_identity_unix.go"
         - "internal/distribution/cli/zcode_identity_windows.go"
     mcp_tools:

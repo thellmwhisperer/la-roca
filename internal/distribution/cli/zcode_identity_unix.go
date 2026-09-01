@@ -8,7 +8,7 @@ import (
 	"syscall"
 )
 
-func zcodeRootIdentity(path string) (string, error) {
+func zcodeUnixRootIdentity(path string) (string, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
 		return "", err
