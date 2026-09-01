@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -122,7 +123,7 @@ func (env *cliEnv) uninstall(cmd *cobra.Command, in io.Reader, purge bool) (retu
 	if err != nil {
 		return fmt.Errorf("lock ZCode lifecycle for uninstall: %w", err)
 	}
-	zcodeLockPath := paths.Artifacts + ".zcode.lock"
+	zcodeLockPath := paths.Artifacts + ".lock"
 	env.zcodeLifecycleLocked = true
 	releasedZcode := false
 	defer func() {
@@ -300,7 +301,14 @@ func (env *cliEnv) lockManagedZcodeLifecycleWithin(timeout time.Duration) (func(
 	defer timer.Stop()
 	select {
 	case result := <-acquired:
-		return result.release, result.err
+		if result.err != nil {
+			return nil, result.err
+		}
+		env.registryLocked = true
+		return func() error {
+			env.registryLocked = false
+			return result.release()
+		}, nil
 	case <-timer.C:
 		close(cancelled)
 		return nil, fmt.Errorf("timed out after %s", timeout)
@@ -497,6 +505,21 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 		if warning != "" {
 			fmt.Fprintln(env.errOut, warning)
 		}
+		if err == nil {
+			present, verified := zcodeManagedHookState(target.settings)
+			if !verified || present {
+				err = fmt.Errorf("ZCode hook withdrawal from %s could not be verified", target.settings)
+			} else if body, readErr := os.ReadFile(target.settings); readErr == nil {
+				commands, commandsErr := agentcfg.ZcodeHookCommands(string(body))
+				referenced, referenceErr := zcodeHookCommandsReferenceWrapper(commands, target.wrapper)
+				if commandsErr != nil || referenceErr != nil || referenced {
+					err = errors.Join(commandsErr, referenceErr,
+						fmt.Errorf("ZCode wrapper remains active at %s", target.wrapper))
+				}
+			} else if !os.IsNotExist(readErr) {
+				err = fmt.Errorf("verify ZCode wrapper references in %s: %w", target.settings, readErr)
+			}
+		}
 		withdrawn("the ZCode handoff hook from "+target.settings, outcome, err)
 	}
 
@@ -598,7 +621,7 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 				removable[entry.Key()] = entry
 			}
 		}
-		_, err := mutateArtifactRegistry(registryPath, func(current *artifact.Registry) (bool, error) {
+		_, err := env.mutateArtifactRegistry(registryPath, func(current *artifact.Registry) (bool, error) {
 			kept := current.Entries[:0]
 			changed := false
 			for _, entry := range current.Entries {
@@ -745,7 +768,6 @@ func (env *cliEnv) purgeRegisteredZcodeIntegrations(report *lifecycle.Report, re
 				}
 			}
 			liveHooks := make([]artifact.Entry, 0, len(group.hooks))
-			wrapperOnlyHooks := make([]artifact.Entry, 0, len(group.hooks))
 			withdrawOnlyHooks := make([]artifact.Entry, 0, len(group.hooks))
 			for _, entry := range group.hooks {
 				rootContinuous, rootExists, rootErr := zcodeRootContinuity(config, entry)
@@ -820,7 +842,7 @@ func (env *cliEnv) purgeRegisteredZcodeIntegrations(report *lifecycle.Report, re
 						return wrapperErr
 					}
 					if continuous || wrapperMissing {
-						wrapperOnlyHooks = append(wrapperOnlyHooks, entry)
+						liveHooks = append(liveHooks, entry)
 						continue
 					}
 					if unregisterErr := env.unregisterArtifactEntry(entry); unregisterErr != nil {
@@ -889,22 +911,6 @@ func (env *cliEnv) purgeRegisteredZcodeIntegrations(report *lifecycle.Report, re
 					continue
 				}
 				liveMCP = append(liveMCP, entry)
-			}
-			for _, entry := range wrapperOnlyHooks {
-				expected, expectedErr := zcodeWrapperExpectedFromEntry(entry)
-				if expectedErr != nil {
-					return expectedErr
-				}
-				retained, removeErr := removeZcodeWrapper(entry.Path, expected)
-				if removeErr != nil {
-					return removeErr
-				}
-				if retained {
-					return fmt.Errorf("ZCode hook wrapper changed while reconciling %s", entry.Path)
-				}
-				if err := env.unregisterArtifactEntry(entry); err != nil {
-					return err
-				}
 			}
 			var configIdentity os.FileInfo
 			for _, entry := range withdrawOnlyHooks {
@@ -987,6 +993,7 @@ func aggregateZcodeProvenance(target *artifact.Entry, entry artifact.Entry) {
 	target.CreatedHooksDir = target.CreatedHooksDir || entry.CreatedHooksDir
 	target.CreatedConfig = target.CreatedConfig || entry.CreatedConfig
 	target.CreatedLock = target.CreatedLock || entry.CreatedLock
+	target.CreatedHooksEnabled = target.CreatedHooksEnabled || entry.CreatedHooksEnabled
 }
 
 func cleanupCreatedZcodePaths(entry artifact.Entry, configPath string, wrappers []string, identity os.FileInfo) error {
@@ -995,7 +1002,7 @@ func cleanupCreatedZcodePaths(entry artifact.Entry, configPath string, wrappers 
 	var cleanupErr error
 	if entry.CreatedConfig {
 		if identity != nil {
-			retained, err := removeEmptyZcodeConfigMatching(configPath, identity)
+			retained, err := removeCreatedZcodeConfigMatching(configPath, identity, entry.CreatedHooksEnabled)
 			cleanupErr = errors.Join(cleanupErr, err)
 			if retained && err == nil {
 				cleanupErr = errors.Join(cleanupErr,
@@ -1214,12 +1221,30 @@ func removeEmptyZcodeConfig(path string) (bool, error) {
 }
 
 func removeEmptyZcodeConfigMatching(path string, expected os.FileInfo) (bool, error) {
+	return removeCreatedZcodeConfigMatching(path, expected, false)
+}
+
+func removeCreatedZcodeConfigMatching(path string, expected os.FileInfo, createdHooksEnabled bool) (bool, error) {
 	return removeOwnedZcodeArtifact(path, func(path string, info os.FileInfo) (bool, error) {
 		if !info.Mode().IsRegular() || !os.SameFile(expected, info) {
 			return false, nil
 		}
 		body, err := os.ReadFile(path)
-		return strings.TrimSpace(string(body)) == "{}", err
+		if err != nil {
+			return false, err
+		}
+		if strings.TrimSpace(string(body)) == "{}" {
+			return true, nil
+		}
+		if !createdHooksEnabled {
+			return false, nil
+		}
+		var document map[string]any
+		if err := json.Unmarshal(body, &document); err != nil || len(document) != 1 {
+			return false, err
+		}
+		hooks, ok := document["hooks"].(map[string]any)
+		return ok && len(hooks) == 0, nil
 	}, nil, os.Remove)
 }
 

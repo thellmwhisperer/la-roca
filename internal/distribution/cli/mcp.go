@@ -272,18 +272,18 @@ func (env *cliEnv) zcodeLockTimeout() time.Duration {
 }
 
 func (env *cliEnv) lockManagedZcodeLifecycle() (func() error, error) {
+	if env.zcodeLifecycleLocked {
+		return func() error { return nil }, nil
+	}
 	return env.lockManagedZcodeLifecycleWithin(env.zcodeLockTimeout())
 }
 
 func (env *cliEnv) lockManagedZcodeLifecycleUnbounded() (func() error, error) {
-	if env.zcodeLifecycleLocked {
-		return func() error { return nil }, nil
-	}
 	paths, err := env.resolvePaths()
 	if err != nil {
 		return nil, err
 	}
-	return lockManagedFile(paths.Artifacts + ".zcode.lock")
+	return lockManagedFile(paths.Artifacts + ".lock")
 }
 
 func continuousZcodeOwnership(prior, current artifact.Entry) bool {
@@ -308,7 +308,7 @@ func (env *cliEnv) recordZcodeMCPPreimage(path, executable, preimage string, con
 	}
 	var prior artifact.Entry
 	var priorFound bool
-	changed, err := mutateArtifactRegistry(paths.Artifacts, func(registry *artifact.Registry) (bool, error) {
+	changed, err := env.mutateArtifactRegistry(paths.Artifacts, func(registry *artifact.Registry) (bool, error) {
 		prior, priorFound = registry.Find(artifactKindMCP, agentcfg.RuntimeZcode, path)
 		if priorFound && continuousZcodeOwnership(prior, transaction) {
 			transaction.CreatedRoot = transaction.CreatedRoot || prior.CreatedRoot
@@ -337,7 +337,7 @@ func (env *cliEnv) recordZcodeMCPPreimage(path, executable, preimage string, con
 	if !changed {
 		return nil, nil
 	}
-	return artifactRegistryRollback(paths.Artifacts, transaction, prior, priorFound), nil
+	return env.artifactRegistryRollback(paths.Artifacts, transaction, prior, priorFound), nil
 }
 
 func lockArtifactRegistry(path string) (func() error, error) {
@@ -388,6 +388,17 @@ func mutateArtifactRegistry(path string, mutate func(*artifact.Registry) (bool, 
 		return false, err
 	}
 	defer func() { err = errors.Join(err, release()) }()
+	return mutateArtifactRegistryUnlocked(path, mutate)
+}
+
+func (env *cliEnv) mutateArtifactRegistry(path string, mutate func(*artifact.Registry) (bool, error)) (bool, error) {
+	if env.registryLocked {
+		return mutateArtifactRegistryUnlocked(path, mutate)
+	}
+	return mutateArtifactRegistry(path, mutate)
+}
+
+func mutateArtifactRegistryUnlocked(path string, mutate func(*artifact.Registry) (bool, error)) (changed bool, err error) {
 	registry, err := artifact.LoadRegistry(path)
 	if err != nil {
 		return false, err
@@ -399,9 +410,9 @@ func mutateArtifactRegistry(path string, mutate func(*artifact.Registry) (bool, 
 	return true, artifact.SaveRegistry(path, registry)
 }
 
-func artifactRegistryRollback(path string, transaction, prior artifact.Entry, priorFound bool) func() error {
+func (env *cliEnv) artifactRegistryRollback(path string, transaction, prior artifact.Entry, priorFound bool) func() error {
 	return func() error {
-		_, err := mutateArtifactRegistry(path, func(registry *artifact.Registry) (bool, error) {
+		_, err := env.mutateArtifactRegistry(path, func(registry *artifact.Registry) (bool, error) {
 			current, found := registry.Find(transaction.Kind, transaction.Runtime, transaction.Path)
 			if !found || current != transaction {
 				return false, nil
@@ -421,7 +432,7 @@ func (env *cliEnv) unregisterArtifactEntry(entry artifact.Entry) error {
 	if err != nil {
 		return err
 	}
-	_, err = mutateArtifactRegistry(paths.Artifacts, func(registry *artifact.Registry) (bool, error) {
+	_, err = env.mutateArtifactRegistry(paths.Artifacts, func(registry *artifact.Registry) (bool, error) {
 		current, found := registry.Find(entry.Kind, entry.Runtime, entry.Path)
 		if !found || current != entry {
 			return false, nil
@@ -475,11 +486,18 @@ func (env *cliEnv) uninstallZcodeMCPLocked(path string, finalize ...func(artifac
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: path}, err
 	}
 	if found {
-		rootContinuous, _, continuityErr := zcodeRootContinuity(path, entry)
+		rootContinuous, rootExists, continuityErr := zcodeRootContinuity(path, entry)
 		if continuityErr != nil {
 			return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: path}, continuityErr
 		}
 		if !rootContinuous {
+			if !rootExists {
+				if env.errOut != nil {
+					fmt.Fprintf(env.errOut, "warning: ZCode MCP root is absent; removed stale ownership for %s\n", path)
+				}
+				err = env.unregisterArtifactEntry(entry)
+				return outcome, err
+			}
 			configured, matchErr := zcodeMCPContinuity(path, entry)
 			if matchErr != nil {
 				return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: path}, matchErr

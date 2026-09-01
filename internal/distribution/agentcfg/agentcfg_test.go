@@ -899,6 +899,51 @@ func TestZcodeConfigPathTreatsZcodeHomeAsTheRuntimeRoot(t *testing.T) {
 	}
 }
 
+func TestConfigEditsPreserveSymlinkTopology(t *testing.T) {
+	for _, runtime := range []string{agentcfg.RuntimeZcode, agentcfg.RuntimeClaudeDesktop} {
+		t.Run(runtime, func(t *testing.T) {
+			dir := t.TempDir()
+			target := filepath.Join(dir, "shared.json")
+			link := filepath.Join(dir, "runtime.json")
+			if err := os.WriteFile(target, []byte("{}"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, link); err != nil {
+				t.Skipf("symlinks are unavailable: %v", err)
+			}
+			if _, err := agentcfg.Install(runtime, link, "/opt/roca"); err != nil {
+				t.Fatal(err)
+			}
+			if info, err := os.Lstat(link); err != nil || info.Mode()&os.ModeSymlink == 0 {
+				t.Fatalf("install replaced config symlink: info=%v err=%v", info, err)
+			}
+			status, err := agentcfg.Status(runtime, link)
+			if err != nil || status.State != agentcfg.StateConfigured {
+				t.Fatalf("symlinked config status = %+v err=%v", status, err)
+			}
+			if _, err := agentcfg.Uninstall(runtime, link); err != nil {
+				t.Fatal(err)
+			}
+			if info, err := os.Lstat(link); err != nil || info.Mode()&os.ModeSymlink == 0 {
+				t.Fatalf("uninstall replaced config symlink: info=%v err=%v", info, err)
+			}
+		})
+	}
+}
+
+func TestConfigEditsRefuseBrokenAndNonFileSymlinks(t *testing.T) {
+	dir := t.TempDir()
+	for _, target := range []string{filepath.Join(dir, "missing.json"), dir} {
+		link := filepath.Join(t.TempDir(), "config.json")
+		if err := os.Symlink(target, link); err != nil {
+			t.Skipf("symlinks are unavailable: %v", err)
+		}
+		if _, err := agentcfg.Install(agentcfg.RuntimeZcode, link, "/opt/roca"); err == nil {
+			t.Fatalf("unsafe config symlink to %s was accepted", target)
+		}
+	}
+}
+
 func TestZcodeConfigPathExpandsWindowsHomePrefix(t *testing.T) {
 	home := t.TempDir()
 	got, err := agentcfg.ConfigPathForOS(agentcfg.RuntimeZcode, home, "windows",

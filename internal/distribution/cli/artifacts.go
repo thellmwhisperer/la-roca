@@ -68,7 +68,7 @@ func (env *cliEnv) registerZonedArtifact(kind, runtime, path, desiredSystem stri
 	}
 	desiredChecksum := artifact.Checksum(desiredSystem)
 	currentChecksum := artifact.Checksum(zones.System)
-	_, err = mutateArtifactRegistry(paths.Artifacts, func(registry *artifact.Registry) (bool, error) {
+	_, err = env.mutateArtifactRegistry(paths.Artifacts, func(registry *artifact.Registry) (bool, error) {
 		entry, exists := registry.Find(kind, runtime, path)
 		if !exists {
 			entry = artifact.Entry{Kind: kind, Runtime: runtime, Path: path}
@@ -108,7 +108,7 @@ func (env *cliEnv) unregisterArtifact(kind, runtime, path string) error {
 		return err
 	}
 	key := (artifact.Entry{Kind: kind, Runtime: runtime, Path: path}).Key()
-	_, err = mutateArtifactRegistry(paths.Artifacts, func(registry *artifact.Registry) (bool, error) {
+	_, err = env.mutateArtifactRegistry(paths.Artifacts, func(registry *artifact.Registry) (bool, error) {
 		before := len(registry.Entries)
 		removeArtifactEntry(registry, key)
 		return len(registry.Entries) != before, nil
@@ -121,7 +121,7 @@ func (env *cliEnv) registerHook(path, runtime, system string) error {
 	if err != nil {
 		return err
 	}
-	_, err = mutateArtifactRegistry(paths.Artifacts, func(registry *artifact.Registry) (bool, error) {
+	_, err = env.mutateArtifactRegistry(paths.Artifacts, func(registry *artifact.Registry) (bool, error) {
 		registry.Upsert(artifact.Entry{
 			Kind: artifactKindHook, Runtime: runtime, Path: path,
 			InstalledVersion: env.build.Version, AvailableVersion: env.build.Version,

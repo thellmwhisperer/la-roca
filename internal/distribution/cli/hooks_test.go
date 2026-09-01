@@ -1064,23 +1064,20 @@ func TestZcodeFailedInstallRollsBackCreationProvenance(t *testing.T) {
 		t.Run(integration, func(t *testing.T) {
 			home := skillTestHome(t)
 			configDir := filepath.Join(home, ".zcode", "cli")
-			if err := os.MkdirAll(configDir, 0o700); err != nil {
+			config := filepath.Join(configDir, "config.json")
+			if err := os.MkdirAll(config, 0o700); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.Chmod(configDir, 0o500); err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = os.Chmod(configDir, 0o700) })
 			err := executeZcodeTestCLI(integration, "install", "zcode", "--executable", filepath.Join(home, "roca"))
 			if err == nil {
-				t.Fatal("install unexpectedly published into a read-only directory")
+				t.Fatal("install unexpectedly published into a non-file config path")
 			}
 			registry, loadErr := artifact.LoadRegistry(filepath.Join(home, ".roca", "artifacts.json"))
 			if loadErr != nil {
 				t.Fatal(loadErr)
 			}
 			kind := artifactKindMCP
-			path := filepath.Join(configDir, "config.json")
+			path := config
 			if integration == "hooks" {
 				kind = artifactKindHook
 				path = filepath.Join(home, ".zcode", "hooks", "roca-handoff.sh")
@@ -1124,6 +1121,27 @@ func TestZcodeFailedConfigPublicationRestoresFreshWrapper(t *testing.T) {
 	}
 }
 
+func TestFullUninstallRetainsBinaryForUnverifiedZcodeHook(t *testing.T) {
+	home := skillTestHome(t)
+	installZcodeTestIntegration(t, "hooks", home)
+	config, wrapper := zcodeTestConfigAndWrapper(home)
+	if err := os.WriteFile(config, []byte("{broken"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var output strings.Builder
+	env := &cliEnv{out: &output, errOut: &output}
+	if err := env.uninstall(uninstallCommand(env), strings.NewReader(""), false); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "integration withdrawal failed") ||
+		!strings.Contains(output.String(), "could not be verified") {
+		t.Fatalf("unverified hook did not retain the binary:\n%s", output.String())
+	}
+	if _, err := os.Stat(wrapper); err != nil {
+		t.Fatalf("unverified hook wrapper was removed: %v", err)
+	}
+}
+
 func TestZcodePurgeKeepsOwnershipWhenConfigInspectionFails(t *testing.T) {
 	for _, integration := range []string{"mcp", "hooks"} {
 		t.Run(integration, func(t *testing.T) {
@@ -1156,8 +1174,8 @@ func TestZcodePurgeKeepsOwnershipWhenConfigInspectionFails(t *testing.T) {
 
 func TestZcodePurgeReconcilesExactWrapperAfterDeclarationRemoval(t *testing.T) {
 	home := skillTestHome(t)
-	config := filepath.Join(home, ".zcode", "cli", "config.json")
-	writeFile(t, config, `{"hooks":{"enabled":true}}`)
+	rootPath := filepath.Join(home, ".zcode")
+	config := filepath.Join(rootPath, "cli", "config.json")
 	installZcodeTestIntegration(t, "hooks", home)
 	body, err := os.ReadFile(config)
 	if err != nil {
@@ -1175,8 +1193,8 @@ func TestZcodePurgeReconcilesExactWrapperAfterDeclarationRemoval(t *testing.T) {
 	if len(report.Errors) != 0 {
 		t.Fatalf("wrapper reconciliation errors = %v", report.Errors)
 	}
-	if _, err := os.Stat(wrapper); !os.IsNotExist(err) {
-		t.Fatalf("exact orphaned wrapper survived: %v", err)
+	if _, err := os.Stat(rootPath); !os.IsNotExist(err) {
+		t.Fatalf("installer-created ZCode state survived reconciliation: %v", err)
 	}
 	registry, err := artifact.LoadRegistry(filepath.Join(home, ".roca", "artifacts.json"))
 	if err != nil {
