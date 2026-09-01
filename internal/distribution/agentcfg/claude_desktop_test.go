@@ -1,6 +1,7 @@
 package agentcfg_test
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -61,5 +62,35 @@ func TestClaudeDesktopConfigPathFollowsThePlatformLayout(t *testing.T) {
 				t.Errorf("path = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestClaudeDesktopInstallRefusesSymlinkedConfigWithoutMutation(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "managed.json")
+	path := filepath.Join(dir, "claude_desktop_config.json")
+	before := []byte(fixtures[agentcfg.RuntimeClaudeDesktop])
+	if err := os.WriteFile(target, before, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, path); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	outcome, err := agentcfg.Install(agentcfg.RuntimeClaudeDesktop, path, "roca")
+	if err == nil {
+		t.Fatal("Install accepted a symlinked configuration")
+	}
+	if outcome.Changed || outcome.Backup != "" {
+		t.Fatalf("outcome = %+v, want no mutation", outcome)
+	}
+	if got, err := os.Readlink(path); err != nil || got != target {
+		t.Fatalf("config symlink = %q, %v; want %q", got, err, target)
+	}
+	if got, err := os.ReadFile(target); err != nil || string(got) != string(before) {
+		t.Fatalf("managed target changed: %v\n%s", err, got)
+	}
+	if _, err := os.Lstat(path + ".roca.bak"); !os.IsNotExist(err) {
+		t.Fatalf("unexpected backup beside symlink: %v", err)
 	}
 }

@@ -316,6 +316,9 @@ func Rewrite(path string, transform func(string) (string, error)) error {
 func edit(name, path string, transform, backupTransform func(string) (string, error),
 	createMissing bool) (Outcome, error) {
 	outcome := Outcome{Runtime: name, Path: path}
+	if err := requireRegularOrMissing(path); err != nil {
+		return outcome, err
+	}
 
 	previous, err := os.ReadFile(path)
 	switch {
@@ -358,6 +361,20 @@ func edit(name, path string, transform, backupTransform func(string) (string, er
 	}
 	outcome.Changed = true
 	return outcome, nil
+}
+
+func requireRegularOrMissing(path string) error {
+	info, err := os.Lstat(path)
+	switch {
+	case os.IsNotExist(err):
+		return nil
+	case err != nil:
+		return fmt.Errorf("inspect %s: %w", path, err)
+	case !info.Mode().IsRegular():
+		return fmt.Errorf("refuse to edit non-regular configuration %s", path)
+	default:
+		return nil
+	}
 }
 
 func find(name string) (runtime, error) {
