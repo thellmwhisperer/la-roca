@@ -286,6 +286,74 @@ func TestZcodePurgeDiscoversRegistryUnderLifecycleLock(t *testing.T) {
 	}
 }
 
+func TestZcodeMCPReinstallRefreshesExecutableProvenance(t *testing.T) {
+	home := skillTestHome(t)
+	config := filepath.Join(home, ".zcode", "cli", "config.json")
+	first := filepath.Join(home, "bin", "roca-v1")
+	second := filepath.Join(home, "bin", "roca-v2")
+	for _, executable := range []string{first, second} {
+		runZcodeTestCLI(t, "mcp", "install", "zcode", "--executable", executable)
+	}
+	registry, err := artifact.LoadRegistry(filepath.Join(home, ".roca", "artifacts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, found := registry.Find(artifactKindMCP, agentcfg.RuntimeZcode, config)
+	if !found || entry.Executable != second || !entry.CreatedConfig || !entry.CreatedConfigDir || !entry.CreatedRoot {
+		t.Fatalf("refreshed MCP provenance = %#v, found=%v", entry, found)
+	}
+	report := purgeZcodeTestIntegrations(true)
+	if len(report.Errors) != 0 {
+		t.Fatalf("purge errors = %v", report.Errors)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".zcode")); !os.IsNotExist(err) {
+		t.Fatalf("reinstalled MCP runtime survived purge: %v", err)
+	}
+}
+
+func TestZcodeFullUninstallDiscoversRegistryUnderLifecycleLock(t *testing.T) {
+	home := skillTestHome(t)
+	env := &cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}}
+	release, err := env.lockManagedZcodeLifecycle()
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan lifecycle.Report, 1)
+	go func() {
+		report := lifecycle.Report{Purged: true, Deleted: []string{}}
+		env.withdrawTheIntegrations(&report, false)
+		done <- report
+	}()
+	select {
+	case report := <-done:
+		t.Fatalf("full uninstall discovered targets before acquiring lifecycle lock: %#v", report)
+	case <-time.After(50 * time.Millisecond):
+	}
+	custom := filepath.Join(home, "custom", "config.json")
+	preimage, err := zcodeMCPPathPreimage(custom)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := agentcfg.InstallZcodeMCP(custom, filepath.Join(home, "roca"), nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.recordZcodeMCPPreimage(custom, filepath.Join(home, "roca"),
+		agentcfg.ZcodeMCPPreimageMCPServers, false, preimage); err != nil {
+		t.Fatal(err)
+	}
+	if err := release(); err != nil {
+		t.Fatal(err)
+	}
+	report := <-done
+	if len(report.Errors) != 0 {
+		t.Fatalf("full uninstall errors = %v", report.Errors)
+	}
+	matched, err := agentcfg.ZcodeMCPMatches(custom, filepath.Join(home, "roca"))
+	if err != nil || matched {
+		t.Fatalf("late registered custom MCP survived full uninstall: matched=%v err=%v", matched, err)
+	}
+}
+
 func TestFreshZcodeMCPPurgeRemovesCreatedRuntimePaths(t *testing.T) {
 	assertFreshZcodePurgeRemovesRuntimePaths(t, "mcp")
 }

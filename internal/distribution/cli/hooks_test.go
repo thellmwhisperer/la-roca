@@ -478,6 +478,47 @@ func TestZcodeHookInstallRejectsLifecycleLockSymlink(t *testing.T) {
 	}
 }
 
+func TestZcodeFailedLifecycleLockAcquisitionCleansOnlyCreatedLock(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		replace    bool
+		wantExists bool
+	}{
+		{name: "created lock", wantExists: false},
+		{name: "operator replacement", replace: true, wantExists: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			home := skillTestHome(t)
+			config, wrapper := zcodeTestConfigAndWrapper(home)
+			injected := errors.New("synthetic acquisition failure")
+			_, created, err := lockZcodeHookLifecycleWith(config, wrapper, true,
+				func(path string, _ os.FileInfo) (func() error, error) {
+					if test.replace {
+						if err := os.Remove(path); err != nil {
+							t.Fatal(err)
+						}
+						if err := os.WriteFile(path, []byte("operator lock\n"), 0o640); err != nil {
+							t.Fatal(err)
+						}
+					}
+					return nil, injected
+				})
+			if !errors.Is(err, injected) || created {
+				t.Fatalf("lock result: created=%v err=%v", created, err)
+			}
+			lockPath := filepath.Join(home, ".zcode", ".roca-hooks.lock")
+			body, readErr := os.ReadFile(lockPath)
+			if test.wantExists {
+				if readErr != nil || string(body) != "operator lock\n" {
+					t.Fatalf("operator replacement changed: body=%q err=%v", body, readErr)
+				}
+			} else if !os.IsNotExist(readErr) {
+				t.Fatalf("created lock survived failed acquisition: body=%q err=%v", body, readErr)
+			}
+		})
+	}
+}
+
 func TestZcodeFreshHookInstallEnablesHooksAndReportsIt(t *testing.T) {
 	home := skillTestHome(t)
 	var notices strings.Builder
@@ -723,6 +764,41 @@ func TestFullUninstallWithdrawsRegisteredZcodeHome(t *testing.T) {
 	}
 	if strings.Contains(string(body), "roca-handoff.sh") {
 		t.Fatalf("registered ZCode hook survived: %s", body)
+	}
+}
+
+func TestZcodeCustomHookPurgeWithdrawsDeclarationWithModifiedWrapper(t *testing.T) {
+	home := skillTestHome(t)
+	custom := filepath.Join(home, "custom-zcode")
+	t.Setenv("ZCODE_HOME", custom)
+	config := filepath.Join(custom, "cli", "config.json")
+	writeFile(t, config, `{"hooks":{"enabled":true}}`)
+	installZcodeTestIntegration(t, "hooks", home)
+	wrapper := filepath.Join(custom, "hooks", "roca-handoff.sh")
+	if err := os.WriteFile(wrapper, []byte("operator wrapper\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ZCODE_HOME", "")
+	report := purgeZcodeTestIntegrations(true)
+	if !strings.Contains(strings.Join(report.Errors, "\n"), config) {
+		t.Fatalf("retained wrapper was not reported: %v", report.Errors)
+	}
+	body, err := os.ReadFile(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), "roca-handoff.sh") {
+		t.Fatalf("verified managed declaration survived purge: %s", body)
+	}
+	if body, err := os.ReadFile(wrapper); err != nil || string(body) != "operator wrapper\n" {
+		t.Fatalf("modified wrapper changed: body=%q err=%v", body, err)
+	}
+	registry, err := artifact.LoadRegistry(filepath.Join(home, ".roca", "artifacts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, found := registry.Find(artifactKindHook, agentcfg.RuntimeZcode, wrapper); found {
+		t.Fatal("withdrawn custom hook ownership survived")
 	}
 }
 

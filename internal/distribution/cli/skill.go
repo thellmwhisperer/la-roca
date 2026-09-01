@@ -1077,6 +1077,11 @@ func uninstallZcodeHandoffHookUnlocked(configPath, wrapperPath string, expected 
 }
 
 func lockZcodeHookLifecycle(configPath, wrapperPath string, create bool) (func() error, bool, error) {
+	return lockZcodeHookLifecycleWith(configPath, wrapperPath, create, lockExistingZcodeLifecycle)
+}
+
+func lockZcodeHookLifecycleWith(configPath, wrapperPath string, create bool,
+	acquire func(string, os.FileInfo) (func() error, error)) (func() error, bool, error) {
 	root := filepath.Dir(filepath.Dir(wrapperPath))
 	lockPath := filepath.Join(root, ".roca-hooks.lock")
 	if !create {
@@ -1096,7 +1101,7 @@ func lockZcodeHookLifecycle(configPath, wrapperPath string, create bool) (func()
 			if !info.Mode().IsRegular() {
 				return nil, false, fmt.Errorf("refuse non-regular ZCode lifecycle lock %s", lockPath)
 			}
-			release, err := lockExistingZcodeLifecycle(lockPath, info)
+			release, err := acquire(lockPath, info)
 			return release, false, err
 		}
 		if !os.IsNotExist(err) {
@@ -1112,11 +1117,25 @@ func lockZcodeHookLifecycle(configPath, wrapperPath string, create bool) (func()
 		info, statErr := file.Stat()
 		closeErr := file.Close()
 		if statErr != nil || closeErr != nil {
+			if statErr == nil {
+				closeErr = errors.Join(closeErr, cleanupCreatedZcodeLifecycleLock(lockPath, info))
+			}
 			return nil, false, errors.Join(statErr, closeErr)
 		}
-		release, err := lockExistingZcodeLifecycle(lockPath, info)
-		return release, true, err
+		release, err := acquire(lockPath, info)
+		if err != nil {
+			err = errors.Join(err, cleanupCreatedZcodeLifecycleLock(lockPath, info))
+			return nil, false, err
+		}
+		return release, true, nil
 	}
+}
+
+func cleanupCreatedZcodeLifecycleLock(path string, expected os.FileInfo) error {
+	_, err := removeOwnedZcodeArtifact(path, func(_ string, info os.FileInfo) (bool, error) {
+		return info.Mode().IsRegular() && info.Size() == 0 && os.SameFile(expected, info), nil
+	}, nil, os.Remove)
+	return err
 }
 
 func lockExistingZcodeLifecycle(path string, expected os.FileInfo) (func() error, error) {
