@@ -122,8 +122,9 @@ type codexTurn struct {
 // ParseCodexSession turns a Codex rollout into one session.
 //
 // A turn is closed by `task_complete`, and one aborted by `turn_aborted` is
-// discarded whole: half a turn in the corpus is worse than no turn, because it
-// reads as an answer the agent never gave.
+// discarded from the conversation: half a turn in the corpus is worse than no
+// turn, because it reads as an answer the agent never gave. Its tool calls still
+// hang directly from the session so analytics do not lose runtime telemetry.
 //
 // When that event stream recognizes no turn at all the response items are read
 // instead: a rollout whose process died before writing a `task_complete` still
@@ -151,6 +152,7 @@ func ParseCodexSession(content []byte, meta FileMeta) (Records, error) {
 	PlaceThinking(exchanges)
 
 	session := reader.session
+	session.OrphanedTools = reader.orphanedTools(turns)
 	if len(exchanges) == 0 && len(reader.legacy) > 0 {
 		// The prompt-only reading carries no answer, so the session is marked for
 		// the reconciliation a richer rollout of it later gets, and the last
@@ -487,6 +489,32 @@ func (r *codexReader) exchanges(turns []codexTurn) []Exchange {
 		exchanges = append(exchanges, exchange)
 	}
 	return exchanges
+}
+
+// orphanedTools keeps runtime telemetry that belongs to superseded, aborted or
+// still-open turns without manufacturing a conversational exchange for them.
+// Completed spans continue to own exactly the signals they owned before.
+func (r *codexReader) orphanedTools(turns []codexTurn) []ToolUse {
+	tools := make([]ToolUse, 0)
+	for _, signal := range r.signals {
+		if signal.tool == nil || codexTurnOwnsRecord(turns, signal.record) {
+			continue
+		}
+		tools = append(tools, *signal.tool)
+	}
+	return tools
+}
+
+func codexTurnOwnsRecord(turns []codexTurn, record int) bool {
+	for _, turn := range turns {
+		if record <= turn.opened {
+			return false
+		}
+		if record <= turn.closed {
+			return true
+		}
+	}
+	return false
 }
 
 func codexContentText(blocks []codexContent) string {

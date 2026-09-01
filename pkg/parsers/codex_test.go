@@ -1,6 +1,7 @@
 package parsers
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -145,6 +146,42 @@ func TestCodexCountsToolVerdictWithUnknownCallID(t *testing.T) {
 	if !strings.Contains(records.Discards[1].Reason, "unknown call_id") ||
 		records.Discards[1].Category != "tool verdict has unknown call_id" {
 		t.Fatalf("tool verdict discard = %q", records.Discards[1].Reason)
+	}
+}
+
+func TestCodexKeepsToolTelemetryFromInterruptedTurns(t *testing.T) {
+	var rollout strings.Builder
+	writeUser := func(message string) {
+		fmt.Fprintf(&rollout, `{"type":"event_msg","payload":{"type":"user_message","message":%q}}`, message)
+		rollout.WriteByte('\n')
+	}
+	writeTools := func(prefix string, count int) {
+		for index := range count {
+			fmt.Fprintf(&rollout, `{"type":"response_item","payload":{"type":"function_call","call_id":"%s-%d","name":"shell","arguments":"{}"}}`, prefix, index)
+			rollout.WriteByte('\n')
+		}
+	}
+
+	writeUser("superseded turn")
+	writeTools("superseded", 550)
+	writeUser("aborted turn")
+	writeTools("aborted", 550)
+	rollout.WriteString("{\"type\":\"event_msg\",\"payload\":{\"type\":\"turn_aborted\"}}\n")
+	writeUser("completed turn")
+	writeTools("attached", 471)
+	rollout.WriteString("{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\",\"last_agent_message\":\"done\"}}\n")
+
+	records, err := Parse(KindCodexSession, []byte(rollout.String()), FileMeta{SessionID: "interrupt-heavy"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := records.Sessions[0]
+	if len(session.Exchanges) != 1 || len(session.Exchanges[0].Tools) != 471 {
+		t.Fatalf("recognized exchanges/tools = %d/%d, want 1/471",
+			len(session.Exchanges), len(session.Exchanges[0].Tools))
+	}
+	if len(session.OrphanedTools) != 1100 {
+		t.Fatalf("orphaned tools = %d, want 1100 of 1571 total", len(session.OrphanedTools))
 	}
 }
 

@@ -386,6 +386,13 @@ func (w *writer) sessionWithPolicy(ctx context.Context, session parsers.Session,
 			counts.ThinkingBlocks++
 		}
 	}
+	if session.OrphanedTools != nil {
+		tools, err := w.replaceOrphanedTools(ctx, session.ID, session.OrphanedTools)
+		if err != nil {
+			return counts, err
+		}
+		counts.ToolUses += tools
+	}
 	rewroteAssignments := false
 	if session.Snapshot && session.PruneUnmappedExchanges {
 		currentAssignments, complete := currentSourceAssignments(assigned, session.Exchanges)
@@ -1377,7 +1384,7 @@ func latencyBetween(human, agent string) *int {
 	return &milliseconds
 }
 
-func (w *writer) insertTools(ctx context.Context, sessionID string, number int,
+func (w *writer) insertTools(ctx context.Context, sessionID string, number any,
 	tools []parsers.ToolUse) (int, error) {
 	inserted := 0
 	for _, tool := range tools {
@@ -1393,11 +1400,65 @@ func (w *writer) insertTools(ctx context.Context, sessionID string, number int,
 			if isExactPayloadConflict(err) || isUniqueConstraint(err) {
 				continue
 			}
-			return inserted, fmt.Errorf("insert a tool use of %s/%d: %w", sessionID, number, err)
+			return inserted, fmt.Errorf("insert a tool use of %s/%v: %w", sessionID, number, err)
 		}
 		inserted++
 	}
 	return inserted, nil
+}
+
+// replaceOrphanedTools writes the authoritative session-level projection. A
+// full rollout can grow between reads, so these rows are compared as an ordered
+// list and replaced together instead of accumulating duplicates.
+func (w *writer) replaceOrphanedTools(ctx context.Context, sessionID string,
+	tools []parsers.ToolUse) (int, error) {
+	rows, err := w.tx.QueryContext(ctx, `
+		SELECT tool_name, tool_params_summary, had_error, error_message, initiative_type
+		FROM tool_uses WHERE session_id = ? AND exchange_number IS NULL ORDER BY id`, sessionID)
+	if err != nil {
+		return 0, fmt.Errorf("read orphaned tools of %s: %w", sessionID, err)
+	}
+	var stored []parsers.ToolUse
+	for rows.Next() {
+		var name string
+		var params, message, initiative sql.NullString
+		var hadError int
+		if err := rows.Scan(&name, &params, &hadError, &message, &initiative); err != nil {
+			_ = rows.Close()
+			return 0, fmt.Errorf("scan orphaned tools of %s: %w", sessionID, err)
+		}
+		stored = append(stored, parsers.ToolUse{
+			Name: name, ParamsSummary: params.String, HadError: hadError != 0,
+			ErrorMessage: message.String, InitiativeType: initiative.String,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return 0, fmt.Errorf("iterate orphaned tools of %s: %w", sessionID, err)
+	}
+	if err := rows.Close(); err != nil {
+		return 0, fmt.Errorf("close orphaned tools of %s: %w", sessionID, err)
+	}
+	if equalToolUses(stored, tools) {
+		return 0, nil
+	}
+	if _, err := w.tx.ExecContext(ctx,
+		`DELETE FROM tool_uses WHERE session_id = ? AND exchange_number IS NULL`, sessionID); err != nil {
+		return 0, fmt.Errorf("replace orphaned tools of %s: %w", sessionID, err)
+	}
+	return w.insertTools(ctx, sessionID, nil, tools)
+}
+
+func equalToolUses(left, right []parsers.ToolUse) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func (w *writer) children(ctx context.Context, sessionID string, number int,

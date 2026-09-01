@@ -22,12 +22,13 @@ type conformanceWant struct {
 }
 
 type conformanceSession struct {
-	ID          string                `json:"id"`
-	SourceAgent string                `json:"source_agent"`
-	Project     string                `json:"project,omitempty"`
-	Title       string                `json:"title,omitempty"`
-	ParentID    string                `json:"parent_id,omitempty"`
-	Exchanges   []conformanceExchange `json:"exchanges"`
+	ID            string                `json:"id"`
+	SourceAgent   string                `json:"source_agent"`
+	Project       string                `json:"project,omitempty"`
+	Title         string                `json:"title,omitempty"`
+	ParentID      string                `json:"parent_id,omitempty"`
+	OrphanedTools []conformanceTool     `json:"orphaned_tools,omitempty"`
+	Exchanges     []conformanceExchange `json:"exchanges"`
 }
 
 type conformanceExchange struct {
@@ -301,6 +302,7 @@ func (y *realHarvestYield) add(records Records) {
 	y.deferred += records.Deferred
 	for _, session := range records.Sessions {
 		y.exchanges += len(session.Exchanges)
+		y.tools += len(session.OrphanedTools)
 		for _, exchange := range session.Exchanges {
 			y.thinking += len(exchange.Thinking)
 			y.tools += len(exchange.Tools)
@@ -430,6 +432,9 @@ func conformanceProjection(records Records, want conformanceWant) conformanceWan
 			ID: session.ID, SourceAgent: session.SourceAgent, Project: session.Project,
 			Title: session.Title, ParentID: session.ParentID,
 			Exchanges: make([]conformanceExchange, 0, len(session.Exchanges)),
+		}
+		if sessionIndex < len(want.Sessions) && want.Sessions[sessionIndex].OrphanedTools != nil {
+			projected.OrphanedTools = projectConformanceTools(session.OrphanedTools)
 		}
 		for exchangeIndex, exchange := range session.Exchanges {
 			projectedExchange := conformanceExchange{

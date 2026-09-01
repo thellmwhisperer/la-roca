@@ -33,7 +33,10 @@ type Session struct {
 	ExchangeKeyScope             string
 	PruneUnmappedExchanges       bool
 	Exchanges                    []Exchange
-	Thinking                     []Thinking
+	// OrphanedTools are session-level calls outside completed exchanges. Nil
+	// leaves existing rows untouched; a non-nil slice replaces that projection.
+	OrphanedTools []ToolUse
+	Thinking      []Thinking
 }
 
 // Exchange is one human turn and the agent response it received.
@@ -130,18 +133,12 @@ func internalSession(session Session) parsers.Session {
 		ParentID:                     session.ParentID, AgentMayUpgrade: session.AgentMayUpgrade,
 		ExchangeKeyScope:       session.ExchangeKeyScope,
 		PruneUnmappedExchanges: session.PruneUnmappedExchanges,
-		Exchanges:              exchanges, Thinking: internalThinking(session.Thinking),
+		Exchanges:              exchanges, OrphanedTools: internalTools(session.OrphanedTools),
+		Thinking: internalThinking(session.Thinking),
 	}
 }
 
 func internalExchange(exchange Exchange) parsers.Exchange {
-	tools := make([]parsers.ToolUse, len(exchange.Tools))
-	for i, tool := range exchange.Tools {
-		tools[i] = parsers.ToolUse{
-			Name: tool.Name, ParamsSummary: tool.ParamsSummary,
-			HadError: tool.HadError, ErrorMessage: tool.ErrorMessage,
-		}
-	}
 	return parsers.Exchange{
 		Number: exchange.Number, SourceID: exchange.SourceID,
 		Fingerprint:             exchange.Fingerprint,
@@ -149,7 +146,8 @@ func internalExchange(exchange Exchange) parsers.Exchange {
 		IsAfterCompaction:       exchange.IsAfterCompaction,
 		HumanText:               exchange.HumanText, AgentText: exchange.AgentText,
 		HumanTimestamp: exchange.HumanTimestamp, AgentTimestamp: exchange.AgentTimestamp,
-		LatencyMS: exchange.LatencyMS, Thinking: internalThinking(exchange.Thinking), Tools: tools,
+		LatencyMS: exchange.LatencyMS, Thinking: internalThinking(exchange.Thinking),
+		Tools: internalTools(exchange.Tools),
 		Provenance: parsers.Provenance{
 			Model: exchange.Provenance.Model, Provider: exchange.Provenance.Provider,
 			TokensIn: exchange.Provenance.TokensIn, TokensOut: exchange.Provenance.TokensOut,
@@ -158,6 +156,20 @@ func internalExchange(exchange Exchange) parsers.Exchange {
 		},
 		Signal: exchange.Signal,
 	}
+}
+
+func internalTools(tools []ToolUse) []parsers.ToolUse {
+	if tools == nil {
+		return nil
+	}
+	result := make([]parsers.ToolUse, len(tools))
+	for i, tool := range tools {
+		result[i] = parsers.ToolUse{
+			Name: tool.Name, ParamsSummary: tool.ParamsSummary,
+			HadError: tool.HadError, ErrorMessage: tool.ErrorMessage,
+		}
+	}
+	return result
 }
 
 func internalThinking(blocks []Thinking) []parsers.Thinking {

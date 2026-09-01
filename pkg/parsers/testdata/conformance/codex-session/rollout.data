@@ -5,3 +5,16 @@
 {"type":"response_item","timestamp":"2026-08-01T12:00:01Z","payload":{"type":"function_call","call_id":"fixture-success","name":"shell","arguments":"{\"cmd\":\"inspect the imaginary hatch\"}"}}
 {"type":"response_item","timestamp":"2026-08-01T12:00:01Z","payload":{"type":"function_call_output","call_id":"fixture-success","output":"error is only a word in this successful output"}}
 {"type":"event_msg","timestamp":"2026-08-01T12:00:02Z","payload":{"type":"task_complete","last_agent_message":"The hatch is open."}}
+{"type":"event_msg","timestamp":"2026-08-01T12:01:00Z","payload":{"type":"user_message","message":"Start the superseded inspection."}}
+{"type":"response_item","timestamp":"2026-08-01T12:01:01Z","payload":{"type":"function_call","call_id":"fixture-superseded","name":"inspect","arguments":"{\"target\":\"superseded hatch\"}"}}
+{"type":"response_item","timestamp":"2026-08-01T12:01:02Z","payload":{"type":"function_call_output","call_id":"fixture-superseded","output":"Process exited with code 0"}}
+{"type":"event_msg","timestamp":"2026-08-01T12:02:00Z","payload":{"type":"user_message","message":"Use the replacement inspection."}}
+{"type":"response_item","timestamp":"2026-08-01T12:02:01Z","payload":{"type":"function_call","call_id":"fixture-attached","name":"inspect","arguments":"{\"target\":\"replacement hatch\"}"}}
+{"type":"response_item","timestamp":"2026-08-01T12:02:02Z","payload":{"type":"function_call_output","call_id":"fixture-attached","output":"Process exited with code 0"}}
+{"type":"event_msg","timestamp":"2026-08-01T12:02:03Z","payload":{"type":"task_complete","last_agent_message":"The replacement inspection is complete."}}
+{"type":"event_msg","timestamp":"2026-08-01T12:03:00Z","payload":{"type":"user_message","message":"Start the aborted inspection."}}
+{"type":"response_item","timestamp":"2026-08-01T12:03:01Z","payload":{"type":"function_call","call_id":"fixture-aborted","name":"inspect","arguments":"{\"target\":\"aborted hatch\"}"}}
+{"type":"response_item","timestamp":"2026-08-01T12:03:02Z","payload":{"type":"function_call_output","call_id":"fixture-aborted","output":"Process exited with code 130"}}
+{"type":"event_msg","timestamp":"2026-08-01T12:03:03Z","payload":{"type":"turn_aborted"}}
+{"type":"event_msg","timestamp":"2026-08-01T12:04:00Z","payload":{"type":"user_message","message":"Start the open inspection."}}
+{"type":"response_item","timestamp":"2026-08-01T12:04:01Z","payload":{"type":"function_call","call_id":"fixture-open","name":"inspect","arguments":"{\"target\":\"open hatch\"}"}}
