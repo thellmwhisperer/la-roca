@@ -190,6 +190,11 @@ func oneRuntimeForAConfigPath(configPath string, runtimes int) error {
 // operator named the file themselves. A test sandbox and a machine with an
 // unusual layout both need that flag.
 func configFileOf(runtime, declared string) (string, error) {
+	if runtime == agentcfg.RuntimeClaudeDesktop {
+		if _, err := agentcfg.ConfigPath(runtime, "", os.Getenv); err != nil {
+			return "", err
+		}
+	}
 	if declared != "" {
 		return declared, nil
 	}

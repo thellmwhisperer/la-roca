@@ -247,6 +247,47 @@ func TestArtifactRefreshHonoursTheDefaultOffGateAndSystemDivergence(t *testing.T
 	}
 }
 
+func TestArtifactRefreshIgnoresExplicitZcodeSkills(t *testing.T) {
+	home := skillTestHome(t)
+	path := filepath.Join(home, ".zcode", "skills", "roca", "SKILL.md")
+	before := artifact.Zoned("installed-zcode-version\n", "operator bytes\n")
+	writeFile(t, path, before)
+	registryPath := filepath.Join(home, ".roca", "artifacts.json")
+	entry := artifact.Entry{
+		Kind: artifactKindSkill, Runtime: "zcode", Path: path,
+		InstalledVersion: "v1.0.0", AvailableVersion: "v1.0.0",
+		SystemSHA256: artifact.Checksum("installed-zcode-version\n"),
+	}
+	if err := artifact.SaveRegistry(registryPath, artifact.Registry{Entries: []artifact.Entry{entry}}); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(home, ".roca", "config.toml"),
+		"[features]\nartifact_refresh = true\n")
+	report, err := (&cliEnv{build: Build{Version: "v2.0.0"}}).
+		refreshManagedArtifacts(filepath.Join(home, "bin", "roca"), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(body); got != before {
+		t.Fatalf("update refreshed an opt-in ZCode skill: %s", got)
+	}
+	if report.Refreshed != 0 || report.Outdated != 0 || len(report.Diverged) != 0 {
+		t.Fatalf("update reported an opt-in ZCode skill: %+v", report)
+	}
+	registry, err := artifact.LoadRegistry(registryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := registry.Find(artifactKindSkill, "zcode", path)
+	if got != entry {
+		t.Fatalf("update changed the ZCode registry entry: %+v", got)
+	}
+}
+
 func TestLegacyAdoptionRequiresProofOfSkillOwnership(t *testing.T) {
 	home := skillTestHome(t)
 	foreignOperations := filepath.Join(home, ".codex", "skills", skill.OperationsName, "SKILL.md")

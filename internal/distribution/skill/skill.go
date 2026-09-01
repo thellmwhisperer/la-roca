@@ -183,6 +183,10 @@ func Runtimes() []string {
 	return names
 }
 
+func AutomaticallyManaged(name string) bool {
+	return name != agentcfg.RuntimeZcode
+}
+
 // Path resolves where one runtime keeps the definitive roca skill under home.
 func Path(name, home string, env func(string) string) (string, error) {
 	return pathOf(name, home, env, SkillName)
@@ -222,7 +226,7 @@ func Root(name, home string, env func(string) string) (string, error) {
 func Detected(home string, env func(string) string) []string {
 	var names []string
 	for _, name := range Runtimes() {
-		if name == agentcfg.RuntimeZcode {
+		if !AutomaticallyManaged(name) {
 			continue
 		}
 		root, err := Root(name, home, env)

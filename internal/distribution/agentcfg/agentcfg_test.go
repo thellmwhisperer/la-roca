@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -180,6 +181,25 @@ func TestZcodeUsesTheNestedMCPServersShape(t *testing.T) {
 	}
 	if _, flat := document["servers"]; flat {
 		t.Fatal("zcode config wrote a flat servers member")
+	}
+}
+
+func TestZcodeWithdrawalPreservesPreexistingMCPParents(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	before := `{"numeric_spelling":9007199254740993,"mcp":{}}`
+	if err := os.WriteFile(path, []byte(before), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := agentcfg.Install(agentcfg.RuntimeZcode, path, "roca"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := agentcfg.Uninstall(agentcfg.RuntimeZcode, path); err != nil {
+		t.Fatal(err)
+	}
+	after := read(t, path)
+	if !strings.Contains(after, `"numeric_spelling":9007199254740993`) ||
+		!strings.Contains(after, `"mcp"`) || strings.Contains(after, `"roca"`) {
+		t.Fatalf("withdrawal changed neighboring ZCode configuration: %s", after)
 	}
 }
 
@@ -512,8 +532,6 @@ func TestTheConfigPathComesFromTheHomeAndTheEnvironment(t *testing.T) {
 		{agentcfg.RuntimeCodex, map[string]string{"CODEX_HOME": "/elsewhere"},
 			"/elsewhere/config.toml"},
 		{agentcfg.RuntimeClaude, nil, filepath.Join(home, ".claude.json")},
-		{agentcfg.RuntimeClaudeDesktop, nil,
-			filepath.Join(home, "Library", "Application Support", "Claude", "claude_desktop_config.json")},
 		{agentcfg.RuntimeOpencode, nil,
 			filepath.Join(home, ".config", "opencode", "opencode.json")},
 		{agentcfg.RuntimeHermes, nil, filepath.Join(home, ".hermes", "config.yaml")},
@@ -533,17 +551,40 @@ func TestTheConfigPathComesFromTheHomeAndTheEnvironment(t *testing.T) {
 	}
 }
 
-func TestClaudeDesktopConfigPathResolvesWindowsAppData(t *testing.T) {
+func TestClaudeDesktopConfigPathResolvesSupportedPlatforms(t *testing.T) {
 	home := t.TempDir()
 	appData := filepath.Join(home, "AppData", "Roaming")
-	got, err := agentcfg.ConfigPathForOS(agentcfg.RuntimeClaudeDesktop, home, "windows",
-		lookup(map[string]string{"APPDATA": appData}))
-	if err != nil {
-		t.Fatal(err)
+	cases := []struct {
+		goos string
+		env  map[string]string
+		want string
+	}{
+		{"darwin", nil, filepath.Join(home, "Library", "Application Support", "Claude", "claude_desktop_config.json")},
+		{"windows", map[string]string{"APPDATA": appData}, filepath.Join(appData, "Claude", "claude_desktop_config.json")},
 	}
-	want := filepath.Join(appData, "Claude", "claude_desktop_config.json")
-	if got != want {
-		t.Fatalf("path = %q, want %q", got, want)
+	for _, test := range cases {
+		got, err := agentcfg.ConfigPathForOS(agentcfg.RuntimeClaudeDesktop, home, test.goos,
+			lookup(test.env))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != test.want {
+			t.Fatalf("%s path = %q, want %q", test.goos, got, test.want)
+		}
+	}
+	if _, err := agentcfg.ConfigPathForOS(agentcfg.RuntimeClaudeDesktop, home, "linux", lookup(nil)); err == nil {
+		t.Fatal("explicit Claude Desktop selection on Linux did not explain its unsupported platform")
+	}
+}
+
+func TestRuntimeCatalogueOmitsClaudeDesktopOnUnsupportedPlatforms(t *testing.T) {
+	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
+		return
+	}
+	for _, name := range agentcfg.Runtimes() {
+		if name == agentcfg.RuntimeClaudeDesktop {
+			t.Fatalf("Claude Desktop appeared in the %s runtime catalogue", runtime.GOOS)
+		}
 	}
 }
 

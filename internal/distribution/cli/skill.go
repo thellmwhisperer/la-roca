@@ -391,6 +391,9 @@ func (env *cliEnv) refreshPluginContracts() {
 		return
 	}
 	for _, runtime := range skill.Runtimes() {
+		if !skill.AutomaticallyManaged(runtime) {
+			continue
+		}
 		path, err := skill.CatalogPath(runtime, home, os.Getenv)
 		if err != nil {
 			continue
@@ -617,87 +620,33 @@ func zcodeHookWrapperPath() (string, error) {
 }
 
 func installZcodeHandoffHook(configPath, wrapperPath, executable string) (agentcfg.Outcome, string, error) {
-	wrapper := zcodeWrapper(executable)
-	if err := writeZcodeWrapper(wrapperPath, wrapper); err != nil {
+	state, err := readZcodeWrapperState(wrapperPath)
+	if err != nil {
+		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
+	}
+	if err := writeZcodeWrapper(wrapperPath, zcodeWrapper(executable)); err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
 	outcome, err := agentcfg.Edit(agentcfg.RuntimeZcode, configPath, func(previous string) (string, error) {
-		settings, hooks, events, entries, err := zcodeHookSettings(previous)
-		if err != nil {
-			return "", err
-		}
-		if hooks == nil {
-			hooks = map[string]any{}
-			settings["hooks"] = hooks
-		}
-		hooks["enabled"] = true
-		if events == nil {
-			events = map[string]any{}
-			hooks["events"] = events
-		}
-		found := false
-		for _, raw := range entries {
-			for _, hook := range commandHooksOf(raw) {
-				if commandOf(hook) == wrapperPath {
-					hook["type"] = "command"
-					hook["timeoutMs"] = float64(15000)
-					found = true
-				}
-			}
-		}
-		if !found {
-			entries = append(entries, map[string]any{"hooks": []any{map[string]any{
-				"type": "command", "command": wrapperPath, "timeoutMs": 15000,
-			}}})
-		}
-		events["SessionStart"] = entries
-		return encodeClaudeSettings(settings)
+		return agentcfg.DeclareZcodeSessionStartHook(previous, wrapperPath, 15000)
 	}, true)
+	if err != nil {
+		if restoreErr := restoreZcodeWrapper(wrapperPath, state); restoreErr != nil {
+			err = errors.Join(err, restoreErr)
+		}
+	}
 	return outcome, "", err
 }
 
 func uninstallZcodeHandoffHook(configPath, wrapperPath string) (agentcfg.Outcome, string, error) {
 	var warning string
 	outcome, err := agentcfg.Edit(agentcfg.RuntimeZcode, configPath, func(previous string) (string, error) {
-		settings, hooks, events, entries, err := zcodeHookSettings(previous)
-		if err != nil {
+		next, editErr := agentcfg.RemoveZcodeSessionStartHook(previous, wrapperPath)
+		if editErr != nil {
 			warning = fmt.Sprintf("warning: %s is not readable as zcode settings; remove the nested hooks.events.SessionStart command %s by hand", configPath, wrapperPath)
 			return previous, nil
 		}
-		remaining := make([]any, 0, len(entries))
-		for _, raw := range entries {
-			group, ok := raw.(map[string]any)
-			groupHooks, isList := group["hooks"].([]any)
-			if !ok || !isList {
-				remaining = append(remaining, raw)
-				continue
-			}
-			kept := make([]any, 0, len(groupHooks))
-			for _, candidate := range groupHooks {
-				hook, ok := candidate.(map[string]any)
-				if ok && hook["type"] == "command" && commandOf(hook) == wrapperPath {
-					continue
-				}
-				kept = append(kept, candidate)
-			}
-			if len(kept) == 0 {
-				continue
-			}
-			group["hooks"] = kept
-			remaining = append(remaining, group)
-		}
-		if len(remaining) == 0 {
-			delete(events, "SessionStart")
-		} else {
-			events["SessionStart"] = remaining
-		}
-		if len(events) == 0 {
-			delete(hooks, "events")
-		}
-		if len(hooks) == 1 && hooks["enabled"] == true {
-			delete(settings, "hooks")
-		}
-		return encodeClaudeSettings(settings)
+		return next, nil
 	}, false)
 	if err != nil {
 		return outcome, warning, err
@@ -708,24 +657,42 @@ func uninstallZcodeHandoffHook(configPath, wrapperPath string) (agentcfg.Outcome
 	return outcome, warning, nil
 }
 
-func zcodeHookSettings(previous string) (settings, hooks, events map[string]any, entries []any, err error) {
-	settings, err = claudeSettings(previous)
+type zcodeWrapperState struct {
+	body   []byte
+	mode   os.FileMode
+	exists bool
+}
+
+func readZcodeWrapperState(path string) (zcodeWrapperState, error) {
+	body, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return zcodeWrapperState{}, nil
+	}
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("read zcode settings: %w", err)
+		return zcodeWrapperState{}, fmt.Errorf("read %s: %w", path, err)
 	}
-	hooks, ok := settings["hooks"].(map[string]any)
-	if settings["hooks"] != nil && !ok {
-		return nil, nil, nil, nil, fmt.Errorf("zcode settings hooks must be an object")
+	info, err := os.Stat(path)
+	if err != nil {
+		return zcodeWrapperState{}, fmt.Errorf("stat %s: %w", path, err)
 	}
-	events, ok = hooks["events"].(map[string]any)
-	if hooks["events"] != nil && !ok {
-		return nil, nil, nil, nil, fmt.Errorf("zcode settings hooks.events must be an object")
+	return zcodeWrapperState{body: body, mode: info.Mode().Perm(), exists: true}, nil
+}
+
+func restoreZcodeWrapper(path string, state zcodeWrapperState) error {
+	if !state.exists {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("roll back %s: %w", path, err)
+		}
+		return nil
 	}
-	entries, ok = events["SessionStart"].([]any)
-	if events["SessionStart"] != nil && !ok {
-		return nil, nil, nil, nil, fmt.Errorf("zcode settings hooks.events.SessionStart must be an array")
+	current, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read %s for rollback: %w", path, err)
 	}
-	return settings, hooks, events, entries, nil
+	if err := securefile.Replace(path, state.body, current); err != nil {
+		return fmt.Errorf("roll back %s: %w", path, err)
+	}
+	return os.Chmod(path, state.mode)
 }
 
 func zcodeWrapper(executable string) string {
@@ -739,12 +706,8 @@ d = json.load(sys.stdin)
 rows = d.get("rows") or []
 sys.stdout.write(rows[0]["content"] if rows else "")' 2>/dev/null || true)
 
-if [ -z "$CONTENT" ]; then
-  printf '{}\n'
-else
-  printf '%s' "$CONTENT" | /usr/bin/python3 -c 'import json,sys
+printf '%s' "$CONTENT" | /usr/bin/python3 -c 'import json,sys
 sys.stdout.write(json.dumps({"additionalContext": sys.stdin.read()}))'
-fi
 `
 }
 

@@ -103,29 +103,10 @@ func jsonRemove(r runtime, text string, entries []string) (string, error) {
 	// root so that withdrawing from a file whose serversKey was created by the
 	// install gives back the exact previous bytes (not an empty object left
 	// behind where there was none before).
-	if removed > 0 && removed == len(inside.members) {
+	if removed > 0 && removed == len(inside.members) && len(r.parents) == 0 {
 		text, err = cutJSONMemberAtPath(r, text, r.parents, r.serversKey)
 		if err != nil {
 			return "", err
-		}
-		for i := len(r.parents) - 1; i >= 0; i-- {
-			view, root, err = rootObject(r, text)
-			if err != nil {
-				return "", err
-			}
-			parent, found, err := objectAtPath(view, root, r.parents[:i])
-			if err != nil || !found {
-				return text, err
-			}
-			childIndex := parent.find(r.parents[i])
-			if childIndex < 0 {
-				break
-			}
-			child, err := objectAt(view, parent.members[childIndex].valueStart)
-			if err != nil || len(child.members) != 0 {
-				break
-			}
-			text = parent.cut(text, childIndex)
 		}
 	}
 	return text, nil
@@ -194,12 +175,277 @@ func serversInside(r runtime, view string, container object) (object, member, bo
 	return inside, servers, true, nil
 }
 
+func DeclareZcodeSessionStartHook(text, command string, timeoutMs int) (string, error) {
+	if strings.TrimSpace(text) == "" {
+		text = "{}\n"
+	}
+	view, root, err := rootObject(runtime{kind: kindJSON}, text)
+	if err != nil {
+		return "", err
+	}
+	container := root
+	path := []string{"hooks", "events"}
+	for i, key := range path {
+		memberIndex := container.find(key)
+		if memberIndex < 0 {
+			pad := padUnder(view, container, indentOf(view, container.close)+indent)
+			keys := append(append([]string{}, path[i:]...), "SessionStart")
+			return container.insert(text,
+				renderJSONValuePath(keys, []zcodeHookGroup{{Hooks: []zcodeCommandHook{{
+					Type: "command", Command: command, TimeoutMs: timeoutMs,
+				}}}}, pad), indentOf(view, container.close)), nil
+		}
+		next, err := objectAt(view, container.members[memberIndex].valueStart)
+		if err != nil {
+			return "", fmt.Errorf("%s must be an object: %w", key, err)
+		}
+		container = next
+	}
+	sessionIndex := container.find("SessionStart")
+	if sessionIndex < 0 {
+		pad := padUnder(view, container, indentOf(view, container.close)+indent)
+		return container.insert(text, renderJSONValuePath([]string{"SessionStart"},
+			[]zcodeHookGroup{{Hooks: []zcodeCommandHook{{
+				Type: "command", Command: command, TimeoutMs: timeoutMs,
+			}}}}, pad), indentOf(view, container.close)), nil
+	}
+	entries, err := arrayAt(view, container.members[sessionIndex].valueStart)
+	if err != nil {
+		return "", fmt.Errorf("SessionStart must be an array: %w", err)
+	}
+	for _, entry := range entries.values {
+		group, err := objectAt(view, entry.start)
+		if err != nil {
+			continue
+		}
+		hooksIndex := group.find("hooks")
+		if hooksIndex < 0 {
+			continue
+		}
+		hooks, err := arrayAt(view, group.members[hooksIndex].valueStart)
+		if err != nil {
+			continue
+		}
+		for _, candidate := range hooks.values {
+			hook, err := objectAt(view, candidate.start)
+			if err != nil || jsonStringMember(view, hook, "command") != command {
+				continue
+			}
+			return setJSONObjectFields(text, view, hook, fields{
+				{"type", "command"}, {"timeoutMs", timeoutMs},
+			})
+		}
+	}
+	pad := arrayPadUnder(view, entries,
+		indentOf(view, container.members[sessionIndex].start)+indent)
+	rendered, err := json.MarshalIndent(zcodeHookGroup{Hooks: []zcodeCommandHook{{
+		Type: "command", Command: command, TimeoutMs: timeoutMs,
+	}}}, pad, indent)
+	if err != nil {
+		return "", err
+	}
+	return entries.insert(text, pad+string(rendered), indentOf(view, entries.close)), nil
+}
+
+func RemoveZcodeSessionStartHook(text, command string) (string, error) {
+	for {
+		next, found, err := removeOneZcodeSessionStartHook(text, command)
+		if err != nil || !found {
+			return next, err
+		}
+		text = next
+	}
+}
+
+func removeOneZcodeSessionStartHook(text, command string) (string, bool, error) {
+	if strings.TrimSpace(text) == "" {
+		return text, false, nil
+	}
+	view, root, err := rootObject(runtime{kind: kindJSON}, text)
+	if err != nil {
+		return "", false, err
+	}
+	container, ok, err := objectAtPath(view, root, []string{"hooks", "events"})
+	if err != nil || !ok {
+		return text, false, err
+	}
+	sessionIndex := container.find("SessionStart")
+	if sessionIndex < 0 {
+		return text, false, nil
+	}
+	entries, err := arrayAt(view, container.members[sessionIndex].valueStart)
+	if err != nil {
+		return "", false, fmt.Errorf("SessionStart must be an array: %w", err)
+	}
+	for entryIndex, entry := range entries.values {
+		group, err := objectAt(view, entry.start)
+		if err != nil {
+			continue
+		}
+		hooksIndex := group.find("hooks")
+		if hooksIndex < 0 {
+			continue
+		}
+		hooks, err := arrayAt(view, group.members[hooksIndex].valueStart)
+		if err != nil {
+			continue
+		}
+		for hookIndex, candidate := range hooks.values {
+			hook, err := objectAt(view, candidate.start)
+			if err != nil || jsonStringMember(view, hook, "command") != command ||
+				jsonStringMember(view, hook, "type") != "command" {
+				continue
+			}
+			if len(hooks.values) == 1 && len(group.members) == 1 {
+				return entries.cut(text, entryIndex), true, nil
+			}
+			return hooks.cut(text, hookIndex), true, nil
+		}
+	}
+	return text, false, nil
+}
+
+type zcodeHookGroup struct {
+	Hooks []zcodeCommandHook `json:"hooks"`
+}
+
+type zcodeCommandHook struct {
+	Type      string `json:"type"`
+	Command   string `json:"command"`
+	TimeoutMs int    `json:"timeoutMs"`
+}
+
+func renderJSONValuePath(keys []string, value any, pad string) string {
+	if len(keys) == 1 {
+		rendered, _ := json.MarshalIndent(value, pad, indent)
+		return pad + quote(keys[0]) + ": " + string(rendered)
+	}
+	childPad := pad + indent
+	return pad + quote(keys[0]) + ": {\n" +
+		renderJSONValuePath(keys[1:], value, childPad) + "\n" + pad + "}"
+}
+
+func jsonStringMember(view string, object object, key string) string {
+	i := object.find(key)
+	if i < 0 {
+		return ""
+	}
+	member := object.members[i]
+	var value string
+	_ = json.Unmarshal([]byte(view[member.valueStart:member.end]), &value)
+	return value
+}
+
+func setJSONObjectFields(text, view string, object object, values fields) (string, error) {
+	missing := make(fields, 0, len(values))
+	type replacement struct {
+		start, end int
+		value      string
+	}
+	var replacements []replacement
+	for _, value := range values {
+		i := object.find(value.key)
+		if i < 0 {
+			missing = append(missing, value)
+			continue
+		}
+		member := object.members[i]
+		rendered := jsonScalar(value.value)
+		if view[member.valueStart:member.end] != rendered {
+			replacements = append(replacements, replacement{
+				start: member.valueStart, end: member.end, value: rendered,
+			})
+		}
+	}
+	slices.SortFunc(replacements, func(a, b replacement) int { return b.start - a.start })
+	for _, replacement := range replacements {
+		text = text[:replacement.start] + replacement.value + text[replacement.end:]
+	}
+	if len(missing) == 0 {
+		return text, nil
+	}
+	view, _, err := jsonView(runtime{kind: kindJSON}, text)
+	if err != nil {
+		return "", err
+	}
+	object, err = objectAt(view, object.open)
+	if err != nil {
+		return "", err
+	}
+	pad := padUnder(view, object, indentOf(view, object.close)+indent)
+	members := make([]string, len(missing))
+	for i, value := range missing {
+		members[i] = pad + quote(value.key) + ": " + jsonScalar(value.value)
+	}
+	return object.insert(text, strings.Join(members, ",\n"), indentOf(view, object.close)), nil
+}
+
 // --- the object scanner ---
 
 type object struct {
 	members []member
 	// open and close are the braces' own offsets.
 	open, close int
+}
+
+type arrayValue struct {
+	start, end int
+}
+
+type array struct {
+	values      []arrayValue
+	open, close int
+}
+
+func arrayAt(view string, open int) (array, error) {
+	if open >= len(view) || view[open] != '[' {
+		return array{}, fmt.Errorf("an array was expected at offset %d", open)
+	}
+	result := array{open: open}
+	for i := open + 1; ; {
+		i = skipSpace(view, i)
+		if view[i] == ']' {
+			result.close = i
+			return result, nil
+		}
+		if view[i] == ',' {
+			i++
+			continue
+		}
+		end := skipValue(view, i)
+		result.values = append(result.values, arrayValue{start: i, end: end})
+		i = end
+	}
+}
+
+func arrayPadUnder(view string, values array, fallback string) string {
+	if len(values.values) > 0 {
+		if pad := indentOf(view, values.values[0].start); pad != "" {
+			return pad
+		}
+	}
+	return fallback
+}
+
+func (a array) insert(text, rendered, closePad string) string {
+	if len(a.values) == 0 {
+		return text[:a.open+1] + "\n" + rendered + "\n" + closePad + text[a.close:]
+	}
+	last := a.values[len(a.values)-1].end
+	return text[:last] + ",\n" + rendered + text[last:]
+}
+
+func (a array) cut(text string, i int) string {
+	switch {
+	case len(a.values) == 1:
+		return text[:a.open+1] + text[a.close:]
+	case i > 0:
+		return text[:a.values[i-1].end] + text[a.values[i].end:]
+	default:
+		between := text[a.values[0].end:a.values[1].start]
+		comma := strings.IndexByte(between, ',')
+		return text[:a.values[0].start] + text[a.values[0].end+comma+1:]
+	}
 }
 
 // find is where a member sits in the object, or -1. An index and not the member

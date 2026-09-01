@@ -30,7 +30,7 @@ printf '%s\n' '{"rows":[{"content":"synthetic handoff"}]}'
 	if err := os.MkdirAll(filepath.Dir(config), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	initial := `{"theme":"dark","hooks":{"enabled":false,"events":{"SessionStart":[{"hooks":[{"type":"command","command":"operator-hook","timeoutMs":5000}]}]}}}`
+	initial := `{"numeric_spelling":9007199254740993,"theme":"dark","hooks":{"enabled":false,"events":{"SessionStart":[{"hooks":[{"type":"command","command":"operator-hook","timeoutMs":5000}]}]}}}`
 	if err := os.WriteFile(config, []byte(initial), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -52,8 +52,11 @@ printf '%s\n' '{"rows":[{"content":"synthetic handoff"}]}'
 		t.Fatal(err)
 	}
 	hooks := document["hooks"].(map[string]any)
-	if hooks["enabled"] != true {
-		t.Fatalf("hooks.enabled = %#v", hooks["enabled"])
+	if hooks["enabled"] != false {
+		t.Fatalf("hooks.enabled = %#v, want the operator's false value", hooks["enabled"])
+	}
+	if !strings.Contains(string(body), `"numeric_spelling":9007199254740993`) {
+		t.Fatalf("installer re-encoded neighboring numeric configuration: %s", body)
 	}
 	if _, flat := hooks["SessionStart"]; flat {
 		t.Fatal("installer wrote the rejected flat SessionStart shape")
@@ -93,6 +96,9 @@ printf '%s\n' '{"rows":[{"content":"synthetic handoff"}]}'
 	if err := json.Unmarshal(output, &context); err != nil {
 		t.Fatalf("degraded wrapper stdout is not JSON: %v\n%s", err, output)
 	}
+	if context["additionalContext"] != "" {
+		t.Fatalf("degraded wrapper context = %#v", context)
+	}
 
 	root := rootCommand(&cliEnv{out: io.Discard, build: Build{Version: "test"}})
 	root.SetArgs([]string{"hooks", "uninstall", "zcode"})
@@ -106,8 +112,65 @@ printf '%s\n' '{"rows":[{"content":"synthetic handoff"}]}'
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(body), "operator-hook") || strings.Contains(string(body), "roca-handoff.sh") {
-		t.Fatalf("uninstall did not preserve only the operator hook: %s", body)
+	if string(body) != initial {
+		t.Fatalf("uninstall did not restore neighboring settings exactly:\nwant %s\n got %s", initial, body)
+	}
+
+	root = rootCommand(&cliEnv{out: io.Discard, build: Build{Version: "test"}})
+	root.SetArgs([]string{"hooks", "install", "zcode"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	report := lifecycle.Report{Purged: true, Deleted: []string{}}
+	(&cliEnv{out: io.Discard, errOut: io.Discard}).withdrawTheIntegrations(&report, false)
+	if _, err := os.Stat(wrapper); !os.IsNotExist(err) {
+		t.Fatal("zcode hook wrapper survived full uninstall")
+	}
+	body, err = os.ReadFile(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), "roca-handoff.sh") {
+		t.Fatalf("zcode hook survived full uninstall: %s", body)
+	}
+}
+
+func TestZcodeHookInstallRollsBackWrapperWhenConfigEditFails(t *testing.T) {
+	for _, test := range []struct {
+		name, previous string
+	}{
+		{name: "new wrapper"},
+		{name: "existing wrapper", previous: "operator wrapper\n"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			home := t.TempDir()
+			config := filepath.Join(home, "config.json")
+			wrapper := filepath.Join(home, "hooks", "roca-handoff.sh")
+			if err := os.WriteFile(config, []byte(`{"hooks":[]}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if test.previous != "" {
+				if err := os.MkdirAll(filepath.Dir(wrapper), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(wrapper, []byte(test.previous), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, _, err := installZcodeHandoffHook(config, wrapper, filepath.Join(home, "roca")); err == nil {
+				t.Fatal("install accepted a non-object hooks setting")
+			}
+			body, err := os.ReadFile(wrapper)
+			if test.previous == "" {
+				if !os.IsNotExist(err) {
+					t.Fatalf("failed install left a wrapper: %v", err)
+				}
+				return
+			}
+			if err != nil || string(body) != test.previous {
+				t.Fatalf("failed install did not restore wrapper: body=%q err=%v", body, err)
+			}
+		})
 	}
 }
 

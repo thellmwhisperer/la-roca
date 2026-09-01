@@ -466,7 +466,13 @@ func TestPluginLifecycleRefreshesTheInstalledCatalogSkill(t *testing.T) {
 	home := skillTestHome(t)
 	var output strings.Builder
 	runSkill(t, &output, "skill", "install", "claude")
+	runSkill(t, &output, "skill", "install", "zcode")
 	catalogPath := filepath.Join(home, ".claude", "skills", "roca-semantica", "SKILL.md")
+	zcodeCatalogPath := filepath.Join(home, ".zcode", "skills", "roca-semantica", "SKILL.md")
+	zcodeBefore, err := os.ReadFile(zcodeCatalogPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	before, err := os.ReadFile(catalogPath)
 	if err != nil {
 		t.Fatal(err)
@@ -513,6 +519,13 @@ tables:
 		if !strings.Contains(string(after), needle) {
 			t.Errorf("the refreshed catalog missing %q:\n%s", needle, after)
 		}
+	}
+	zcodeAfter, err := os.ReadFile(zcodeCatalogPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(zcodeAfter) != string(zcodeBefore) {
+		t.Fatal("plugin lifecycle refreshed the opt-in ZCode catalog")
 	}
 	unregistered := filepath.Join(home, ".codex", "skills", "roca-semantica", "SKILL.md")
 	if _, err := os.Stat(unregistered); !os.IsNotExist(err) {
