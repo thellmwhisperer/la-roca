@@ -480,33 +480,36 @@ func (env *cliEnv) uninstallZcodeMCP(path string, finalize ...func(artifact.Entr
 
 func (env *cliEnv) uninstallZcodeMCPLocked(path string, finalize ...func(artifact.Entry, os.FileInfo) error) (outcome agentcfg.Outcome, err error) {
 	outcome = agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: path}
-	preimage := agentcfg.ZcodeMCPPreimageNone
 	entry, found, err := env.registeredArtifact(artifactKindMCP, agentcfg.RuntimeZcode, path)
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: path}, err
 	}
-	if found {
-		rootContinuous, rootExists, continuityErr := zcodeRootContinuity(path, entry)
-		if continuityErr != nil {
-			return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: path}, continuityErr
+	if !found {
+		if env.errOut != nil {
+			fmt.Fprintf(env.errOut, "warning: no managed ZCode MCP ownership for %s; left operator configuration unchanged\n", path)
 		}
-		if !rootContinuous {
-			if !rootExists && env.errOut != nil {
-				fmt.Fprintf(env.errOut, "warning: ZCode MCP root is absent; removed stale ownership for %s\n", path)
-			}
-			err = env.unregisterArtifactEntry(entry)
-			return outcome, err
+		return outcome, nil
+	}
+	rootContinuous, rootExists, continuityErr := zcodeRootContinuity(path, entry)
+	if continuityErr != nil {
+		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: path}, continuityErr
+	}
+	if !rootContinuous {
+		if !rootExists && env.errOut != nil {
+			fmt.Fprintf(env.errOut, "warning: ZCode MCP root is absent; removed stale ownership for %s\n", path)
 		}
-		preimage, err = zcodeMCPPreimageFromEntry(entry)
-		if err != nil {
-			return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: path}, err
-		}
+		err = env.unregisterArtifactEntry(entry)
+		return outcome, err
+	}
+	preimage, err := zcodeMCPPreimageFromEntry(entry)
+	if err != nil {
+		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: path}, err
 	}
 	outcome, err = agentcfg.UninstallZcodeMCP(path, preimage)
-	if err == nil && found && len(finalize) > 0 {
+	if err == nil && len(finalize) > 0 {
 		err = finalize[0](entry, outcome.FileIdentity)
 	}
-	if err == nil && found {
+	if err == nil {
 		err = env.unregisterArtifactEntry(entry)
 	}
 	return outcome, err

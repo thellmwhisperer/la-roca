@@ -931,19 +931,17 @@ func (env *cliEnv) uninstallManagedZcodeHandoffHookLocked(configPath, wrapperPat
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
-	if !found && !zcodeManagedHookPresent(configPath) {
-		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", nil
+	if !found {
+		warning = fmt.Sprintf("warning: no managed ZCode hook ownership for %s; left operator configuration unchanged", configPath)
+		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, warning, nil
 	}
-	rootContinuous := true
-	if found {
-		rootContinuous, _, err = zcodeRootContinuity(configPath, entry)
-		if err != nil {
-			return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
-		}
-		if !rootContinuous {
-			err = env.unregisterArtifactEntry(entry)
-			return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
-		}
+	rootContinuous, _, err := zcodeRootContinuity(configPath, entry)
+	if err != nil {
+		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
+	}
+	if !rootContinuous {
+		err = env.unregisterArtifactEntry(entry)
+		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
 	release, _, err := lockZcodeHookLifecycle(configPath, wrapperPath, false)
 	if err != nil {
@@ -955,13 +953,11 @@ func (env *cliEnv) uninstallManagedZcodeHandoffHookLocked(configPath, wrapperPat
 			err = errors.Join(err, release())
 		}
 	}()
-	removeEnabled := found && entry.CreatedHooksEnabled
+	removeEnabled := entry.CreatedHooksEnabled
 	outcome, warning, err = uninstallZcodeHandoffHookUnlocked(configPath, wrapperPath, expected, removeEnabled)
 	present, verified := zcodeManagedHookState(configPath)
 	if err == nil && len(finalize) > 0 {
 		switch {
-		case !found:
-			err = fmt.Errorf("ZCode hook ownership state for %s is missing", wrapperPath)
 		case !verified || present:
 			err = fmt.Errorf("ZCode hook withdrawal from %s could not be verified", configPath)
 		default:
@@ -971,7 +967,7 @@ func (env *cliEnv) uninstallManagedZcodeHandoffHookLocked(configPath, wrapperPat
 				err = finalize[0](entry, outcome.FileIdentity)
 			}
 		}
-	} else if err == nil && found && verified && !present {
+	} else if err == nil && verified && !present {
 		err = env.unregisterArtifactEntry(entry)
 	}
 	return outcome, warning, err
