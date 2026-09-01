@@ -8,6 +8,9 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/axi"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
+	"github.com/thellmwhisperer/la-roca/internal/provider/config"
+	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
 func pillCommand(env *cliEnv) *cobra.Command {
@@ -35,7 +38,7 @@ func pillShowCommand(env *cliEnv, project *string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			svc, _, err := env.openStoreService()
+			svc, _, err := env.openSessionContextService()
 			if err != nil {
 				return err
 			}
@@ -85,7 +88,7 @@ func runPillList(ctx context.Context, env *cliEnv, project string) error {
 	if err != nil {
 		return err
 	}
-	svc, _, err := env.openStoreService()
+	svc, _, err := env.openSessionContextService()
 	if err != nil {
 		return err
 	}
@@ -106,7 +109,7 @@ func runLatestHandoffs(ctx context.Context, env *cliEnv, project string) error {
 	if err != nil {
 		return err
 	}
-	svc, _, err := env.openStoreService()
+	svc, _, err := env.openSessionContextService()
 	if err != nil {
 		return err
 	}
@@ -120,6 +123,32 @@ func runLatestHandoffs(ctx context.Context, env *cliEnv, project string) error {
 	}
 	env.print("%s", axi.Handoffs(list))
 	return nil
+}
+
+func (env *cliEnv) openSessionContextService() (*service.Service, config.Paths, error) {
+	paths, err := env.resolvePaths()
+	if err != nil {
+		return nil, paths, err
+	}
+	file, err := config.LoadFile(paths.Config)
+	if err != nil {
+		return nil, paths, err
+	}
+	if !file.Features.RocaOps {
+		return nil, paths, fmt.Errorf("session context requires features.roca_ops and an existing roca-ops database")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return nil, paths, fmt.Errorf("session context requires a HOME containing the roca-ops database")
+	}
+	opsDatabase := filepath.Join(home, config.DirOwn, "plugins", rocaops.Name, rocaops.DatabaseFilename)
+	if !fileExists(opsDatabase) {
+		return nil, paths, fmt.Errorf("session context requires the existing roca-ops database at %s", opsDatabase)
+	}
+	scoped := *env
+	scoped.omitCorpus = true
+	scoped.forceReadOnly = true
+	return scoped.openService()
 }
 
 func resolveProject(project string) (string, error) {

@@ -32,6 +32,41 @@ func TestListPillsDedupesSlugDuplicatesKeepingTheNewest(t *testing.T) {
 	}
 }
 
+func TestListPillsNormalizesTimestampsAndOrdersUnknownDatesDeterministically(t *testing.T) {
+	svc := sessionContextService(t)
+	insertPill(t, svc, pillSeed{
+		slug: "mixed", content: "ISO midnight", createdAt: "2026-06-01T00:00:00Z",
+		project: "demo",
+	})
+	later := insertPill(t, svc, pillSeed{
+		slug: "mixed", content: "SQLite one o'clock", createdAt: "2026-06-01 01:00:00",
+		project: "demo",
+	})
+	insertPill(t, svc, pillSeed{
+		slug: "unknown", content: "invalid timestamp", createdAt: "not-a-time",
+		project: "demo",
+	})
+	newerUnknown := insertPill(t, svc, pillSeed{
+		slug: "unknown", content: "null timestamp", createdAt: nil,
+		project: "demo",
+	})
+
+	got, err := svc.ListPills(t.Context(), "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bySlug := map[string]service.MemoryRecord{}
+	for _, pill := range got.Pills {
+		bySlug[pill.Slug] = pill
+	}
+	if bySlug["mixed"].ID != later || bySlug["mixed"].Content != "SQLite one o'clock" {
+		t.Fatalf("mixed timestamp winner = %+v, want later id %d", bySlug["mixed"], later)
+	}
+	if bySlug["unknown"].ID != newerUnknown || bySlug["unknown"].CreatedAt != "" {
+		t.Fatalf("unknown timestamp winner = %+v, want highest id %d with empty date", bySlug["unknown"], newerUnknown)
+	}
+}
+
 func TestListPillsScopesToTheProjectAndIncludesGlobals(t *testing.T) {
 	svc := sessionContextService(t)
 	insertPill(t, svc, pillSeed{
@@ -265,7 +300,8 @@ func sessionContextService(t *testing.T) *sessionContextFixture {
 }
 
 type pillSeed struct {
-	slug, content, project, createdAt string
+	slug, content, project string
+	createdAt              any
 }
 
 func insertPill(t *testing.T, svc *sessionContextFixture, seed pillSeed) int64 {
@@ -287,7 +323,7 @@ func insertHandoff(t *testing.T, svc *sessionContextFixture, seed handoffSeed) i
 	return insertMemory(t, svc, "handoff", seed.content, seed.project, seed.createdAt, seed.supersedes, nil)
 }
 
-func insertMemory(t *testing.T, svc *sessionContextFixture, layer, content, project, createdAt string,
+func insertMemory(t *testing.T, svc *sessionContextFixture, layer, content, project string, createdAt any,
 	supersedes int64, metadata map[string]any) int64 {
 	t.Helper()
 	if metadata == nil {

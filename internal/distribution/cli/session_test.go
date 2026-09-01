@@ -96,6 +96,49 @@ func TestHandoffLatestFallsBackToGlobal(t *testing.T) {
 	}
 }
 
+func TestSessionContextCommandsRequireEnabledExistingRocaOps(t *testing.T) {
+	t.Run("feature disabled", func(t *testing.T) {
+		home := sessionHome(t)
+		configPath := filepath.Join(home, ".roca", "config.toml")
+		body, err := os.ReadFile(configPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		disabled := strings.Replace(string(body), "roca_ops = true", "roca_ops = false", 1)
+		if disabled == string(body) {
+			t.Fatal("fixture config did not enable roca_ops")
+		}
+		if err := os.WriteFile(configPath, []byte(disabled), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		for _, args := range [][]string{
+			{"pill", "--project", "demo"},
+			{"pill", "show", "build", "--project", "demo"},
+			{"handoff", "latest", "--project", "demo"},
+		} {
+			_, err = runRootErr(t, contractBuild(), nil, args...)
+			if err == nil || !strings.Contains(err.Error(), "features.roca_ops") {
+				t.Fatalf("roca %v did not refuse disabled roca_ops: %v", args, err)
+			}
+		}
+	})
+
+	t.Run("database missing", func(t *testing.T) {
+		home := sessionHome(t)
+		opsPath := filepath.Join(home, ".roca", "plugins", "roca-ops", "roca-ops.db")
+		if err := os.Remove(opsPath); err != nil {
+			t.Fatal(err)
+		}
+		_, err := runRootErr(t, contractBuild(), nil, "handoff", "latest", "--project", "demo")
+		if err == nil || !strings.Contains(err.Error(), "existing roca-ops database") {
+			t.Fatalf("handoff did not refuse missing roca_ops: %v", err)
+		}
+		if _, statErr := os.Stat(opsPath); !os.IsNotExist(statErr) {
+			t.Fatalf("session context recreated the missing ops database: %v", statErr)
+		}
+	})
+}
+
 func TestClaudeSessionHookRunnersLoadSessionContext(t *testing.T) {
 	home := sessionHome(t)
 	cwd, err := os.Getwd()

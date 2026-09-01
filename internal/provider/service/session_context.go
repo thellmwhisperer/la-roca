@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 )
 
 // MemoryRecord is one operational memory returned with its full content.
@@ -36,7 +37,9 @@ type HandoffList struct {
 
 type loadedMemory struct {
 	MemoryRecord
-	Metadata string
+	Metadata       string
+	createdAt      time.Time
+	createdAtValid bool
 }
 
 // ListPills loads active pills for the project, including globals, then keeps
@@ -48,7 +51,7 @@ func (s *Service) ListPills(ctx context.Context, project string) (PillList, erro
 		return PillList{}, err
 	}
 	result := PillList{Project: project}
-	newest := map[string]MemoryRecord{}
+	newest := map[string]loadedMemory{}
 	for _, row := range rows {
 		slug := pillSlug(row.Metadata)
 		if slug == "" {
@@ -57,21 +60,28 @@ func (s *Service) ListPills(ctx context.Context, project string) (PillList, erro
 		}
 		row.Slug = slug
 		previous, seen := newest[slug]
-		if !seen || row.CreatedAt > previous.CreatedAt ||
-			(row.CreatedAt == previous.CreatedAt && row.ID > previous.ID) {
-			newest[slug] = row.MemoryRecord
+		if !seen || compareCreatedAt(row, previous) > 0 ||
+			(compareCreatedAt(row, previous) == 0 && row.ID > previous.ID) {
+			newest[slug] = row
 		}
 	}
-	result.Pills = make([]MemoryRecord, 0, len(newest))
+	selected := make([]loadedMemory, 0, len(newest))
 	for _, pill := range newest {
-		result.Pills = append(result.Pills, pill)
+		selected = append(selected, pill)
 	}
-	sort.Slice(result.Pills, func(i, j int) bool {
-		if result.Pills[i].CreatedAt == result.Pills[j].CreatedAt {
-			return result.Pills[i].Slug < result.Pills[j].Slug
+	sort.Slice(selected, func(i, j int) bool {
+		if compared := compareCreatedAt(selected[i], selected[j]); compared != 0 {
+			return compared > 0
 		}
-		return result.Pills[i].CreatedAt > result.Pills[j].CreatedAt
+		if selected[i].Slug != selected[j].Slug {
+			return selected[i].Slug < selected[j].Slug
+		}
+		return selected[i].ID > selected[j].ID
 	})
+	result.Pills = make([]MemoryRecord, 0, len(selected))
+	for _, pill := range selected {
+		result.Pills = append(result.Pills, pill.MemoryRecord)
+	}
 	sort.Slice(result.Unslugged, func(i, j int) bool { return result.Unslugged[i] < result.Unslugged[j] })
 	return result, nil
 }
@@ -133,7 +143,7 @@ func (s *Service) loadLayer(ctx context.Context, layer, project string, includeG
 	}
 	defer closeReader()
 
-	query := `SELECT id, layer, content, IFNULL(metadata, '{}'), IFNULL(project, ''), status, created_at
+	query := `SELECT id, layer, content, IFNULL(metadata, '{}'), IFNULL(project, ''), status, IFNULL(created_at, '')
 		FROM memories
 		WHERE layer = ? AND status = 'active'`
 	args := []any{layer}
@@ -162,6 +172,7 @@ func (s *Service) loadLayer(ctx context.Context, layer, project string, includeG
 			&row.Status, &row.CreatedAt); err != nil {
 			return nil, fmt.Errorf("read a %s memory: %w", layer, err)
 		}
+		row.createdAt, row.createdAtValid = normalizeCreatedAt(row.CreatedAt)
 		rows = append(rows, row)
 	}
 	return rows, rs.Err()
@@ -177,7 +188,7 @@ func (s *Service) loadCurrentHandoffs(ctx context.Context, project string) ([]lo
 	rs, err := reader.QueryContext(ctx, `
 		SELECT candidate.id, candidate.layer, candidate.content,
 		       IFNULL(candidate.metadata, '{}'), IFNULL(candidate.project, ''),
-		       candidate.status, candidate.created_at
+		       candidate.status, IFNULL(candidate.created_at, '')
 		FROM memories AS candidate
 		WHERE candidate.layer = 'handoff'
 		  AND candidate.status = 'active'
@@ -199,9 +210,50 @@ func (s *Service) loadCurrentHandoffs(ctx context.Context, project string) ([]lo
 			&row.Status, &row.CreatedAt); err != nil {
 			return nil, fmt.Errorf("read a handoff memory: %w", err)
 		}
+		row.createdAt, row.createdAtValid = normalizeCreatedAt(row.CreatedAt)
 		rows = append(rows, row)
 	}
-	return rows, rs.Err()
+	if err := rs.Err(); err != nil {
+		return nil, err
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if compared := compareCreatedAt(rows[i], rows[j]); compared != 0 {
+			return compared > 0
+		}
+		return rows[i].ID > rows[j].ID
+	})
+	return rows, nil
+}
+
+func compareCreatedAt(left, right loadedMemory) int {
+	if left.createdAtValid != right.createdAtValid {
+		if left.createdAtValid {
+			return 1
+		}
+		return -1
+	}
+	if !left.createdAtValid || left.createdAt.Equal(right.createdAt) {
+		return 0
+	}
+	if left.createdAt.After(right.createdAt) {
+		return 1
+	}
+	return -1
+}
+
+func normalizeCreatedAt(value string) (time.Time, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, false
+	}
+	if parsed, err := time.Parse(time.RFC3339Nano, value); err == nil {
+		return parsed.UTC(), true
+	}
+	parsed, err := time.ParseInLocation("2006-01-02 15:04:05", value, time.UTC)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return parsed, true
 }
 
 func pillSlug(metadata string) string {

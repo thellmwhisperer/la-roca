@@ -78,7 +78,7 @@ func uninstallClaudeSessionHook(path, kind string) (agentcfg.Outcome, string, er
 	outcome, err := agentcfg.Edit("claude", path, func(previous string) (string, error) {
 		settings, hooks, entries, err := claudeEventHookSettings(previous, claudeSessionStartEvent)
 		if err != nil {
-			warning = foreignClaudeSettingsWarning(path)
+			warning = foreignClaudeSessionSettingsWarning(path, kind)
 			return previous, nil
 		}
 		remaining, withdrawn := withoutSessionHook(entries, matcher)
@@ -96,6 +96,16 @@ func uninstallClaudeSessionHook(path, kind string) (agentcfg.Outcome, string, er
 		return encodeClaudeSettings(settings)
 	}, false)
 	return outcome, warning, err
+}
+
+func foreignClaudeSessionSettingsWarning(path, kind string) string {
+	marker := "claude-pills"
+	if kind == "handoff" {
+		marker = "claude-handoff"
+	}
+	return fmt.Sprintf("warning: %s is not readable as Claude SessionStart settings, "+
+		"so nothing there was changed; remove the hooks.SessionStart entry whose "+
+		"command ends in `hooks run %s` by hand", path, marker)
 }
 
 func claudeEventHookSettings(previous, event string) (settings, hooks map[string]any, entries []any, err error) {

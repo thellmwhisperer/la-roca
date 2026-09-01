@@ -276,10 +276,13 @@ func encodedJSONString(t *testing.T, value string) string {
 // never be held hostage by a file the product never owned, so the withdrawal
 // changes nothing, succeeds, and names what to take out by hand.
 func TestMalformedClaudeSettingsRefuseInstallAndNeverBlockWithdrawal(t *testing.T) {
-	for _, test := range []struct{ name, body string }{
-		{"settings are not JSON", "{not json"},
-		{"hooks is not an object", `{"hooks":"none"}`},
-		{"PreToolUse is not an array", `{"hooks":{"PreToolUse":"none"}}`},
+	for _, test := range []struct {
+		name, body        string
+		sessionUnreadable bool
+	}{
+		{"settings are not JSON", "{not json", true},
+		{"hooks is not an object", `{"hooks":"none"}`, true},
+		{"PreToolUse is not an array", `{"hooks":{"PreToolUse":"none"}}`, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			home := skillTestHome(t)
@@ -307,7 +310,7 @@ func TestMalformedClaudeSettingsRefuseInstallAndNeverBlockWithdrawal(t *testing.
 			errOut.Reset()
 			report := lifecycle.Report{Purged: true, Deleted: []string{}}
 			env.withdrawTheIntegrations(&report, false)
-			assertClaudeWithdrawalWarning(t, errOut.String(), path)
+			assertClaudeProductWithdrawalWarnings(t, errOut.String(), path, test.sessionUnreadable)
 			for _, failure := range report.Errors {
 				if strings.Contains(failure, "signing hook") {
 					t.Errorf("foreign settings blocked the uninstall: %s", failure)
@@ -333,6 +336,54 @@ func assertClaudeWithdrawalWarning(t *testing.T, warned, path string) {
 	if !strings.Contains(warned, path) || !strings.Contains(warned, "hooks run claude") ||
 		!strings.Contains(warned, "PreToolUse") {
 		t.Fatalf("the warning does not name the file and the entry to remove: %q", warned)
+	}
+}
+
+func assertClaudeProductWithdrawalWarnings(t *testing.T, warned, path string, sessionUnreadable bool) {
+	t.Helper()
+	if !strings.Contains(warned, path) || !strings.Contains(warned, "PreToolUse") {
+		t.Fatalf("product withdrawal did not name the unreadable signing hook: %q", warned)
+	}
+	if sessionUnreadable {
+		for _, marker := range []string{"hooks.SessionStart", "hooks run claude-pills", "hooks run claude-handoff"} {
+			if !strings.Contains(warned, marker) {
+				t.Fatalf("product withdrawal warning does not name %q: %q", marker, warned)
+			}
+		}
+	}
+}
+
+func TestProductUninstallWithdrawsSessionHooksWhenPreToolUseIsUnreadable(t *testing.T) {
+	home := skillTestHome(t)
+	path := filepath.Join(home, ".claude", "settings.json")
+	binary := filepath.Join(home, "bin", "roca")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	settings := map[string]any{"hooks": map[string]any{
+		"PreToolUse": "unreadable",
+		"SessionStart": []any{
+			map[string]any{"hooks": []any{map[string]any{"type": "command", "command": claudePillsHookCommand(binary)}}},
+			map[string]any{"hooks": []any{map[string]any{"type": "command", "command": claudeHandoffHookCommand(binary)}}},
+		},
+	}}
+	encoded, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, encoded, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errOut strings.Builder
+	env := &cliEnv{out: &out, errOut: &errOut}
+	report := lifecycle.Report{Purged: true, Deleted: []string{}}
+	env.withdrawTheIntegrations(&report, false)
+	groups := readClaudeSessionStartHooks(t, path)
+	assertHookCommand(t, groups, "", claudePillsHookCommand(binary), 0)
+	assertHookCommand(t, groups, "", claudeHandoffHookCommand(binary), 0)
+	if !strings.Contains(errOut.String(), "PreToolUse") {
+		t.Fatalf("product uninstall did not warn about the unreadable signing hook: %q", errOut.String())
 	}
 }
 
@@ -438,6 +489,23 @@ type claudeHookGroup struct {
 type claudeCommandHook struct {
 	Type    string `json:"type"`
 	Command string `json:"command"`
+}
+
+func readClaudeSessionStartHooks(t *testing.T, path string) []claudeHookGroup {
+	t.Helper()
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var settings struct {
+		Hooks struct {
+			SessionStart []claudeHookGroup `json:"SessionStart"`
+		} `json:"hooks"`
+	}
+	if err := json.Unmarshal(body, &settings); err != nil {
+		t.Fatalf("settings are no longer valid Claude SessionStart settings: %v", err)
+	}
+	return settings.Hooks.SessionStart
 }
 
 func readClaudeHookSettings(t *testing.T, path string) claudeHookSettingsModel {
