@@ -36,12 +36,7 @@ func TestZcodeSkillInstallUsesLifecycleLock(t *testing.T) {
 		t.Fatalf("ZCode skill install bypassed lifecycle lock: %v", err)
 	case <-time.After(50 * time.Millisecond):
 	}
-	if err := release(); err != nil {
-		t.Fatal(err)
-	}
-	if err := <-done; err != nil {
-		t.Fatal(err)
-	}
+	finishZcodeTestLock(t, release, done)
 	path, err := skill.NamedPath("zcode", "roca", home, os.Getenv)
 	if err != nil {
 		t.Fatal(err)

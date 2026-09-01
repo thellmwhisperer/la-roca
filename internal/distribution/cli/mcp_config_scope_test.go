@@ -77,13 +77,7 @@ func TestZcodeMCPReinstallMergesNewPathOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	installZcodeTestIntegration(t, "mcp", home)
-	report := purgeZcodeTestIntegrations(true)
-	if len(report.Errors) != 0 {
-		t.Fatalf("purge errors = %v", report.Errors)
-	}
-	if _, err := os.Stat(rootPath); !os.IsNotExist(err) {
-		t.Fatalf("reinstall-created MCP paths survived purge: %v", err)
-	}
+	assertZcodeTestPurgeRemoves(t, rootPath, "reinstall-created MCP paths survived purge")
 }
 
 func TestZcodeMCPReinstallExpiresOwnershipWithoutManagedContinuity(t *testing.T) {
@@ -97,21 +91,11 @@ func TestZcodeMCPReinstallPreservesOwnershipAfterDeclarationRemoval(t *testing.T
 	installZcodeTestIntegration(t, "mcp", home)
 	writeFile(t, config, "{}")
 	installZcodeTestIntegration(t, "mcp", home)
-	registry, err := artifact.LoadRegistry(filepath.Join(home, ".roca", "artifacts.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	entry, found := registry.Find(artifactKindMCP, agentcfg.RuntimeZcode, config)
+	entry, found := findZcodeTestArtifact(t, home, artifactKindMCP, config)
 	if !found || !entry.CreatedRoot || !entry.CreatedConfigDir || !entry.CreatedConfig {
 		t.Fatalf("continuous MCP ownership = %#v, found=%v", entry, found)
 	}
-	report := purgeZcodeTestIntegrations(true)
-	if len(report.Errors) != 0 {
-		t.Fatalf("purge errors = %v", report.Errors)
-	}
-	if _, err := os.Stat(rootPath); !os.IsNotExist(err) {
-		t.Fatalf("continuously owned MCP tree survived purge: %v", err)
-	}
+	assertZcodeTestPurgeRemoves(t, rootPath, "continuously owned MCP tree survived purge")
 }
 
 func TestZcodeMCPUninstallReconcilesBrokenRootIdentity(t *testing.T) {
@@ -147,22 +131,16 @@ func TestZcodeMCPUninstallReconcilesBrokenRootIdentity(t *testing.T) {
 			if warned != test.expectWarning {
 				t.Fatalf("root warning = %q", errOut.String())
 			}
-			registry, err := artifact.LoadRegistry(filepath.Join(home, ".roca", "artifacts.json"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, found := registry.Find(artifactKindMCP, agentcfg.RuntimeZcode, config); found {
-				t.Fatal("broken root identity retained stale MCP ownership")
-			}
+			assertNoZcodeTestArtifact(t, home, artifactKindMCP, config,
+				"broken root identity retained stale MCP ownership")
 		})
 	}
 }
 
 func TestZcodeMCPPurgeDropsOwnershipOnRecreatedRoot(t *testing.T) {
-	home := skillTestHome(t)
+	home := installedZcodeTestHome(t, "mcp")
 	rootPath := filepath.Join(home, ".zcode")
 	config := filepath.Join(rootPath, "cli", "config.json")
-	installZcodeTestIntegration(t, "mcp", home)
 	if err := os.RemoveAll(rootPath); err != nil {
 		t.Fatal(err)
 	}
@@ -173,13 +151,7 @@ func TestZcodeMCPPurgeDropsOwnershipOnRecreatedRoot(t *testing.T) {
 	if len(report.Errors) != 0 {
 		t.Fatalf("recreated root produced purge errors: %v", report.Errors)
 	}
-	registry, err := artifact.LoadRegistry(filepath.Join(home, ".roca", "artifacts.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, found := registry.Find(artifactKindMCP, agentcfg.RuntimeZcode, config); found {
-		t.Fatal("recreated root retained stale MCP ownership")
-	}
+	assertNoZcodeTestArtifact(t, home, artifactKindMCP, config, "recreated root retained stale MCP ownership")
 	if info, err := os.Stat(rootPath); err != nil || !info.IsDir() {
 		t.Fatalf("replacement root was not preserved: info=%v err=%v", info, err)
 	}
@@ -199,11 +171,7 @@ func TestZcodeMCPReinstallDropsOwnershipOnRecreatedManagedTree(t *testing.T) {
 	}
 	writeFile(t, config, string(managed))
 	installZcodeTestIntegration(t, "mcp", home)
-	registry, err := artifact.LoadRegistry(filepath.Join(home, ".roca", "artifacts.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	entry, found := registry.Find(artifactKindMCP, agentcfg.RuntimeZcode, config)
+	entry, found := findZcodeTestArtifact(t, home, artifactKindMCP, config)
 	if !found || entry.CreatedRoot || entry.CreatedConfigDir || entry.CreatedConfig {
 		t.Fatalf("recreated MCP path ownership = %#v, found=%v", entry, found)
 	}
@@ -239,11 +207,7 @@ func TestZcodeMCPUninstallPreservesDivergedManagedEntry(t *testing.T) {
 	if !strings.Contains(output.String(), "diverged") {
 		t.Fatalf("diverged MCP was not explained: %s", output.String())
 	}
-	registry, err := artifact.LoadRegistry(filepath.Join(home, ".roca", "artifacts.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, found := registry.Find(artifactKindMCP, agentcfg.RuntimeZcode, config); !found {
+	if _, found := findZcodeTestArtifact(t, home, artifactKindMCP, config); !found {
 		t.Fatal("diverged MCP lost recovery ownership")
 	}
 	output.Reset()
@@ -437,19 +401,8 @@ func TestFullUninstallRetainsBinaryWhenZcodeWithdrawalFails(t *testing.T) {
 	if err := os.WriteFile(registryPath, []byte("{broken"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	var output strings.Builder
-	env := &cliEnv{out: &output, errOut: &output}
-	if err := env.uninstall(uninstallCommand(env), strings.NewReader(""), false); err != nil {
-		t.Fatal(err)
-	}
-	running, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(output.String(), running) ||
-		!strings.Contains(output.String(), "integration withdrawal failed") {
-		t.Fatalf("retained binary was not reported:\n%s", output.String())
-	}
+	output := runZcodeTestFullUninstall(t)
+	assertZcodeTestRetainedBinary(t, output, "retained binary was not reported")
 	matched, err := agentcfg.ZcodeMCPMatches(config, filepath.Join(home, "roca"))
 	if err != nil || !matched {
 		t.Fatalf("failed withdrawal changed active MCP: matched=%v err=%v", matched, err)
@@ -496,10 +449,7 @@ func TestZcodeMCPAndHooksShareLifecycleLock(t *testing.T) {
 func TestZcodeLifecycleLockSerializesRegistryWrites(t *testing.T) {
 	home := skillTestHome(t)
 	holder := &cliEnv{out: io.Discard, errOut: io.Discard}
-	release, err := holder.lockManagedZcodeLifecycle()
-	if err != nil {
-		t.Fatal(err)
-	}
+	release := lockZcodeTestLifecycle(t, holder)
 	done := make(chan error, 1)
 	go func() {
 		contender := &cliEnv{build: Build{Version: "test"}, zcodeLockWait: time.Second}
@@ -510,12 +460,7 @@ func TestZcodeLifecycleLockSerializesRegistryWrites(t *testing.T) {
 		t.Fatalf("registry write bypassed ZCode lifecycle lock: %v", err)
 	case <-time.After(50 * time.Millisecond):
 	}
-	if err := release(); err != nil {
-		t.Fatal(err)
-	}
-	if err := <-done; err != nil {
-		t.Fatal(err)
-	}
+	finishZcodeTestLock(t, release, done)
 }
 
 func TestFullUninstallTimesOutBeforeChangingZcodeState(t *testing.T) {
@@ -523,16 +468,13 @@ func TestFullUninstallTimesOutBeforeChangingZcodeState(t *testing.T) {
 	config := filepath.Join(home, ".zcode", "cli", "config.json")
 	installZcodeTestIntegration(t, "mcp", home)
 	holder := &cliEnv{out: io.Discard, errOut: io.Discard}
-	release, err := holder.lockManagedZcodeLifecycle()
-	if err != nil {
-		t.Fatal(err)
-	}
+	release := lockZcodeTestLifecycle(t, holder)
 	contender := &cliEnv{out: io.Discard, errOut: io.Discard}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
 	command := uninstallCommand(contender)
 	command.SetContext(ctx)
-	err = contender.uninstall(command, strings.NewReader(""), false)
+	err := contender.uninstall(command, strings.NewReader(""), false)
 	if err == nil || !strings.Contains(err.Error(), "timed out") {
 		t.Fatalf("contended uninstall error = %v", err)
 	}
@@ -550,10 +492,8 @@ func TestExplicitZcodeCommandsTimeOutOnLifecycleLock(t *testing.T) {
 		t.Run(operation, func(t *testing.T) {
 			home := skillTestHome(t)
 			holder := &cliEnv{out: io.Discard, errOut: io.Discard}
-			release, err := holder.lockManagedZcodeLifecycle()
-			if err != nil {
-				t.Fatal(err)
-			}
+			release := lockZcodeTestLifecycle(t, holder)
+			var err error
 			contender := &cliEnv{out: io.Discard, errOut: io.Discard,
 				build: Build{Version: "test"}, zcodeLockWait: 20 * time.Millisecond}
 			switch operation {
@@ -577,22 +517,20 @@ func TestExplicitZcodeCommandsTimeOutOnLifecycleLock(t *testing.T) {
 	}
 }
 
-func TestZcodePurgeDiscoversRegistryUnderLifecycleLock(t *testing.T) {
+func assertZcodeWithdrawalDiscoversRegistryUnderLifecycleLock(t *testing.T, purge bool) {
+	t.Helper()
 	home := skillTestHome(t)
 	env := &cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}}
-	release, err := env.lockManagedZcodeLifecycle()
-	if err != nil {
-		t.Fatal(err)
-	}
+	release := lockZcodeTestLifecycle(t, env)
 	done := make(chan lifecycle.Report, 1)
 	go func() {
 		report := lifecycle.Report{Purged: true, Deleted: []string{}}
-		env.withdrawTheIntegrations(&report, true)
+		env.withdrawTheIntegrations(&report, purge)
 		done <- report
 	}()
 	select {
 	case report := <-done:
-		t.Fatalf("purge discovered targets before acquiring lifecycle lock: %#v", report)
+		t.Fatalf("withdrawal discovered targets before acquiring lifecycle lock: %#v", report)
 	case <-time.After(50 * time.Millisecond):
 	}
 	custom := filepath.Join(home, "custom", "config.json")
@@ -600,10 +538,12 @@ func TestZcodePurgeDiscoversRegistryUnderLifecycleLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := agentcfg.InstallZcodeMCP(custom, filepath.Join(home, "roca"), nil); err != nil {
+	executable := filepath.Join(home, "roca")
+	if _, err := agentcfg.InstallZcodeMCP(custom, executable, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := env.recordZcodeMCPPreimage(custom, custom, filepath.Join(home, "roca"), agentcfg.ZcodeMCPPreimageMCPServers, false, preimage); err != nil {
+	if _, err := env.recordZcodeMCPPreimage(custom, custom, executable,
+		agentcfg.ZcodeMCPPreimageMCPServers, false, preimage); err != nil {
 		t.Fatal(err)
 	}
 	if err := release(); err != nil {
@@ -611,11 +551,22 @@ func TestZcodePurgeDiscoversRegistryUnderLifecycleLock(t *testing.T) {
 	}
 	report := <-done
 	if len(report.Errors) != 0 {
-		t.Fatalf("purge errors = %v", report.Errors)
+		t.Fatalf("withdrawal errors = %v", report.Errors)
 	}
-	if _, err := os.Stat(custom); !os.IsNotExist(err) {
-		t.Fatalf("late registered custom ZCode config survived purge: %v", err)
+	if purge {
+		if _, err := os.Stat(custom); !os.IsNotExist(err) {
+			t.Fatalf("late registered custom ZCode config survived purge: %v", err)
+		}
+		return
 	}
+	matched, err := agentcfg.ZcodeMCPMatches(custom, executable)
+	if err != nil || matched {
+		t.Fatalf("late registered custom MCP survived withdrawal: matched=%v err=%v", matched, err)
+	}
+}
+
+func TestZcodePurgeDiscoversRegistryUnderLifecycleLock(t *testing.T) {
+	assertZcodeWithdrawalDiscoversRegistryUnderLifecycleLock(t, true)
 }
 
 func TestZcodeMCPReinstallRefreshesExecutableProvenance(t *testing.T) {
@@ -626,65 +577,16 @@ func TestZcodeMCPReinstallRefreshesExecutableProvenance(t *testing.T) {
 	for _, executable := range []string{first, second} {
 		runZcodeTestCLI(t, "mcp", "install", "zcode", "--executable", executable)
 	}
-	registry, err := artifact.LoadRegistry(filepath.Join(home, ".roca", "artifacts.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	entry, found := registry.Find(artifactKindMCP, agentcfg.RuntimeZcode, config)
+	entry, found := findZcodeTestArtifact(t, home, artifactKindMCP, config)
 	if !found || entry.Executable != second || !entry.CreatedConfig || !entry.CreatedConfigDir ||
 		!entry.CreatedRoot || entry.RootIdentity == "" {
 		t.Fatalf("refreshed MCP provenance = %#v, found=%v", entry, found)
 	}
-	report := purgeZcodeTestIntegrations(true)
-	if len(report.Errors) != 0 {
-		t.Fatalf("purge errors = %v", report.Errors)
-	}
-	if _, err := os.Stat(filepath.Join(home, ".zcode")); !os.IsNotExist(err) {
-		t.Fatalf("continuously owned MCP tree survived purge: %v", err)
-	}
+	assertZcodeTestPurgeRemoves(t, filepath.Join(home, ".zcode"), "continuously owned MCP tree survived purge")
 }
 
 func TestZcodeFullUninstallDiscoversRegistryUnderLifecycleLock(t *testing.T) {
-	home := skillTestHome(t)
-	env := &cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}}
-	release, err := env.lockManagedZcodeLifecycle()
-	if err != nil {
-		t.Fatal(err)
-	}
-	done := make(chan lifecycle.Report, 1)
-	go func() {
-		report := lifecycle.Report{Purged: true, Deleted: []string{}}
-		env.withdrawTheIntegrations(&report, false)
-		done <- report
-	}()
-	select {
-	case report := <-done:
-		t.Fatalf("full uninstall discovered targets before acquiring lifecycle lock: %#v", report)
-	case <-time.After(50 * time.Millisecond):
-	}
-	custom := filepath.Join(home, "custom", "config.json")
-	preimage, err := zcodeMCPPathPreimage(custom)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := agentcfg.InstallZcodeMCP(custom, filepath.Join(home, "roca"), nil); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := env.recordZcodeMCPPreimage(custom, custom, filepath.Join(home, "roca"),
-		agentcfg.ZcodeMCPPreimageMCPServers, false, preimage); err != nil {
-		t.Fatal(err)
-	}
-	if err := release(); err != nil {
-		t.Fatal(err)
-	}
-	report := <-done
-	if len(report.Errors) != 0 {
-		t.Fatalf("full uninstall errors = %v", report.Errors)
-	}
-	matched, err := agentcfg.ZcodeMCPMatches(custom, filepath.Join(home, "roca"))
-	if err != nil || matched {
-		t.Fatalf("late registered custom MCP survived full uninstall: matched=%v err=%v", matched, err)
-	}
+	assertZcodeWithdrawalDiscoversRegistryUnderLifecycleLock(t, false)
 }
 
 func TestManagedArtifactLocksRejectSymlinksWithoutChangingTargets(t *testing.T) {
@@ -714,28 +616,12 @@ func TestManagedArtifactLocksRejectSymlinksWithoutChangingTargets(t *testing.T) 
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			home := skillTestHome(t)
-			if err := os.MkdirAll(filepath.Join(home, ".roca"), 0o700); err != nil {
-				t.Fatal(err)
-			}
-			target := filepath.Join(home, "operator-data")
-			if err := os.WriteFile(target, []byte("operator data\n"), 0o744); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.Chmod(target, 0o744); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.Symlink(target, test.lockPath(home)); err != nil {
-				t.Fatal(err)
-			}
+			target := createZcodeTestLockSymlink(t, home, test.lockPath(home))
 			release, err := test.acquire(&cliEnv{}, home)
 			if release != nil || err == nil || !strings.Contains(err.Error(), "non-regular managed lock") {
 				t.Fatalf("symlink lock result: release=%v err=%v", release != nil, err)
 			}
-			info, statErr := os.Stat(target)
-			body, readErr := os.ReadFile(target)
-			if statErr != nil || readErr != nil || info.Mode().Perm() != 0o744 || string(body) != "operator data\n" {
-				t.Fatalf("lock target changed: info=%v body=%q statErr=%v readErr=%v", info, body, statErr, readErr)
-			}
+			assertZcodeTestLockTargetUnchanged(t, target)
 		})
 	}
 }
@@ -851,14 +737,12 @@ func TestPurgeRetainsBackupWhenRecordedConfigTargetIsMissing(t *testing.T) {
 func TestZcodeConfigCleanupRetainsReplacedEmptyFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	before := `{}`
-	if err := os.WriteFile(path, []byte(before), 0o600); err != nil {
+	writeFile(t, path, before)
+	if _, err := agentcfg.Install(agentcfg.RuntimeZcode, path, "roca"); err != nil {
 		t.Fatal(err)
 	}
 	preimage, err := agentcfg.ZcodeMCPPreimage(before)
 	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := agentcfg.Install(agentcfg.RuntimeZcode, path, "roca"); err != nil {
 		t.Fatal(err)
 	}
 	outcome, err := agentcfg.UninstallZcodeMCP(path, preimage)
