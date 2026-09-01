@@ -1,29 +1,3 @@
-/**
- * @overview Verifies completed CLI snapshot cleanup and telemetry. ~185 lines, no public symbols.
- *
- *   READING GUIDE
- *   -------------
- *   1. Start at TestCompletedReadOnlyCommandRemovesSnapshots  <- executable contract
- *   2. TestCompletedCommandDrainsExistingSnapshots            <- process boundary
- *   3. TestCustodySnapshotUsesCLITelemetry                     <- pre-service logging
- *
- *   MAIN FLOW
- *   ---------
- *   fixtureInstallation -> CLI command -> process-boundary drain -> empty snapshot namespace
- *
- *   PUBLIC API
- *   ----------
- *   None.
- *
- *   INTERNALS
- *   ---------
- *   TestCompletedReadOnlyCommandRemovesSnapshots, TestCompletedCommandDrainsExistingSnapshots
- *   TestCustodySnapshotUsesCLITelemetry
- *   snapshotDirectories
- *
- * @exports
- * @deps context; os/exec; internal/logfile, rocaops, and store; testing
- */
 package cli
 
 import (
@@ -43,8 +17,6 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 	"github.com/thellmwhisperer/la-roca/internal/store"
 )
-
-// -- 1/1 CORE · TestCompletedReadOnlyCommandRemovesSnapshots -- <- START HERE
 
 func TestCompletedReadOnlyCommandRemovesSnapshots(t *testing.T) {
 	if os.Getenv("ROCA_CLI_SNAPSHOT_HELPER") == "1" {
@@ -210,5 +182,3 @@ func TestCustodySnapshotUsesCLITelemetry(t *testing.T) {
 func snapshotDirectories(root string) ([]string, error) {
 	return store.SnapshotDirectories(root)
 }
-
-// -/ 1/1

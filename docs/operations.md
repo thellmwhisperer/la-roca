@@ -103,12 +103,17 @@ non-failing writer contract. This DATA SPLIT stage deliberately keeps rotation
 and both call-stream writes unchanged as the rollback path; retiring those two
 JSONL streams requires a separately proven rollback transition. The ops copy
 has no automatic expiry, and its retention policy cannot prune corpus or cron.
-Read-only snapshot create and reap events go to the dated `snapshots` JSONL
-stream in the same directory: source, size, reason, count, and megabytes reclaimed.
-Startup reaping is limited to snapshots carrying the current lease protocol.
-Lease-less legacy temp directories are preserved because their owner's death
-cannot be proven safely; [issue 286](https://github.com/thellmwhisperer/la-roca/issues/286)
-tracks a future ownership protocol or explicit cleanup flow.
+Read-only snapshot events go to the dated `snapshots` JSONL stream in the same
+directory. A `create` record carries the redacted absolute `source`, `size_bytes`,
+and `reason` (`copy`). A `reap` record carries `count`, `reclaimed_bytes`, and
+whole `reclaimed_mb`. Each unchanged source-database fingerprint reuses one
+process-local copy until process cleanup.
+
+Startup reaping is limited to snapshots carrying the current lease protocol and
+removes one only after acquiring its abandoned lease. Lease-less legacy temp
+directories are preserved because their owner's death cannot be proven safely;
+[issue 286](https://github.com/thellmwhisperer/la-roca/issues/286) tracks a future
+ownership protocol or explicit cleanup flow.
 
 `executions` and `mcp-audit` share one top-level call contract. Surface-specific
 fields are `command` plus `flags` for CLI and `tool` for MCP:

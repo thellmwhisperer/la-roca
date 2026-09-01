@@ -119,6 +119,7 @@ func (w *Writer) Append(stream string, record any) error {
 	return w.append(context.Background(), stream, record, true)
 }
 
+// AppendContext appends a record while allowing ctx to cancel lock acquisition.
 func (w *Writer) AppendContext(ctx context.Context, stream string, record any) error {
 	return w.append(ctx, stream, record, true)
 }
