@@ -96,13 +96,7 @@ func TestClaudeDesktopInstallRefusesSymlinkedConfigWithoutMutation(t *testing.T)
 }
 
 func TestClaudeDesktopEditPreservesPathCreatedDuringMissingConfigEdit(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "claude_desktop_config.json")
-	target := filepath.Join(dir, "managed.json")
-	before := []byte("operator configuration")
-	if err := os.WriteFile(target, before, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	path, target, before := symlinkEditFixture(t, false)
 	var symlinkErr error
 
 	outcome, err := agentcfg.Edit(agentcfg.RuntimeClaudeDesktop, path, func(string) (string, error) {
@@ -122,16 +116,7 @@ func TestClaudeDesktopEditPreservesPathCreatedDuringMissingConfigEdit(t *testing
 }
 
 func TestClaudeDesktopEditPreservesSameContentSymlinkReplacement(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "claude_desktop_config.json")
-	target := filepath.Join(dir, "managed.json")
-	before := []byte("operator configuration")
-	if err := os.WriteFile(path, before, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(target, before, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	path, target, before := symlinkEditFixture(t, true)
 	var symlinkErr error
 
 	outcome, err := agentcfg.Edit(agentcfg.RuntimeClaudeDesktop, path, func(string) (string, error) {
@@ -151,6 +136,23 @@ func TestClaudeDesktopEditPreservesSameContentSymlinkReplacement(t *testing.T) {
 		t.Fatalf("outcome = %+v, want unchanged", outcome)
 	}
 	assertSymlinkAndTarget(t, path, target, before)
+}
+
+func symlinkEditFixture(t *testing.T, existingConfig bool) (string, string, []byte) {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "claude_desktop_config.json")
+	target := filepath.Join(dir, "managed.json")
+	before := []byte("operator configuration")
+	if existingConfig {
+		if err := os.WriteFile(path, before, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(target, before, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path, target, before
 }
 
 func assertSymlinkAndTarget(t *testing.T, path, target string, want []byte) {
