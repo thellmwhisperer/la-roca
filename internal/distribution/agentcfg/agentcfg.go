@@ -443,11 +443,7 @@ func EditWithBackup(name, path string, transform, backupTransform func(string) (
 // returning a reportable Outcome. A missing file and an unchanged transform
 // are both no-ops.
 func Rewrite(path string, transform func(string) (string, error)) error {
-	target, err := configMutationPath(path)
-	if err != nil {
-		return err
-	}
-	previous, err := os.ReadFile(target)
+	previous, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return nil
 	}
@@ -461,7 +457,7 @@ func Rewrite(path string, transform func(string) (string, error)) error {
 	if next == string(previous) {
 		return nil
 	}
-	return securefile.Replace(target, []byte(next), previous)
+	return securefile.Replace(path, []byte(next), previous)
 }
 
 func configMutationPath(path string) (string, error) {
@@ -495,9 +491,13 @@ func configMutationPath(path string) (string, error) {
 func edit(name, path string, transform func(string, bool) (string, error),
 	backupTransform func(string) (string, error), createMissing bool) (Outcome, error) {
 	outcome := Outcome{Runtime: name, Path: path}
-	target, err := configMutationPath(path)
-	if err != nil {
-		return outcome, err
+	target := path
+	if name == RuntimeZcode || name == RuntimeClaudeDesktop {
+		var err error
+		target, err = configMutationPath(path)
+		if err != nil {
+			return outcome, err
+		}
 	}
 
 	previous, err := os.ReadFile(target)
