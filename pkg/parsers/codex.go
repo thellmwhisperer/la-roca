@@ -154,7 +154,7 @@ func ParseCodexSession(content []byte, meta FileMeta) (Records, error) {
 	PlaceThinking(exchanges)
 
 	session := reader.session
-	session.OrphanedTools = reader.orphanedTools(turns)
+	session.OrphanedTools = reader.orphanedTools(reader.turns)
 	if len(exchanges) == 0 && len(reader.legacy) > 0 {
 		// The prompt-only reading carries no answer, so the session is marked for
 		// the reconciliation a richer rollout of it later gets, and the last
@@ -513,7 +513,7 @@ func (r *codexReader) exchanges(turns []codexTurn) []Exchange {
 					usage.AddReasoningTokens(*signal.usage.Reasoning)
 				}
 			case signal.tool != nil:
-				if r.orphaned[signal.tool] {
+				if r.orphaned[signal.tool] || !codexTurnOwnsRecord(r.turns, signal.record) {
 					continue
 				}
 				exchange.Tools = append(exchange.Tools, *signal.tool)
