@@ -177,8 +177,8 @@ func snapshotLogWriter(dataDir string) store.SnapshotLogWriter {
 		return nil
 	}
 	writer := logfile.New(dataDir)
-	return func(record map[string]any) error {
-		return writer.Append(logfile.Snapshots, record)
+	return func(ctx context.Context, record map[string]any) error {
+		return writer.AppendContext(ctx, logfile.Snapshots, record)
 	}
 }
 

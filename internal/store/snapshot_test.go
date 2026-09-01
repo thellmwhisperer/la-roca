@@ -142,6 +142,75 @@ func TestReadOnlySnapshotLifecycle(t *testing.T) {
 
 // -- 2/5 HELPER · Cache identity and context-aware flights --
 
+func TestSnapshotCacheDistinguishesSameMetadataReplacement(t *testing.T) {
+	root := isolateSnapshotTemp(t)
+	source := fixtureDatabase(t)
+	database, err := Open(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.SQL().Exec(`INSERT INTO fixture VALUES (1)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	first, err := OpenReadOnlySnapshot(context.Background(), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	replacement := fixtureDatabase(t)
+	database, err = Open(replacement)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.SQL().Exec(`INSERT INTO fixture VALUES (2)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.Stat(replacement)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Size() != before.Size() {
+		t.Fatalf("replacement size = %d, want %d", after.Size(), before.Size())
+	}
+	if err := os.Remove(source); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(replacement, source); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(source, before.ModTime(), before.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	second, err := OpenReadOnlySnapshot(context.Background(), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+	var value int
+	if err := second.SQL().QueryRow(`SELECT id FROM fixture`).Scan(&value); err != nil {
+		t.Fatal(err)
+	}
+	if value != 2 || first.directory == second.directory {
+		t.Fatalf("replacement value/directory = %d, %q; first %q", value, second.directory, first.directory)
+	}
+	if dirs := listSnapshotDirs(t, root); len(dirs) != 2 {
+		t.Fatalf("replacement cache dirs = %v, want two fingerprints", dirs)
+	}
+}
+
 func TestSnapshotNamespaceIsPrivatePerUser(t *testing.T) {
 	originalIdentity := snapshotUserIdentityFn
 	t.Cleanup(func() { snapshotUserIdentityFn = originalIdentity })
@@ -699,6 +768,49 @@ func TestAlreadyAbsentSnapshotRemovalIsBenign(t *testing.T) {
 	}
 }
 
+func TestSnapshotTelemetryHonorsCoordinationTimeout(t *testing.T) {
+	isolateSnapshotTemp(t)
+	ctx := WithSnapshotLogWriter(context.Background(), func(ctx context.Context, _ map[string]any) error {
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	ctx = WithSnapshotCoordinationTimeout(ctx, 50*time.Millisecond)
+	started := time.Now()
+	snapshot, err := OpenReadOnlySnapshot(ctx, fixtureDatabase(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("snapshot telemetry exceeded its coordination timeout: %v", elapsed)
+	}
+	if err := snapshot.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSnapshotReapLogsAfterNamespaceRelease(t *testing.T) {
+	root := snapshotNamespaceForTest(t, isolateSnapshotTemp(t))
+	createLeasedOrphan(t, root, "logged-after-release", 1)
+	var acquired bool
+	ctx := WithSnapshotLogWriter(context.Background(), func(_ context.Context, record map[string]any) error {
+		if record["event"] != "reap" {
+			return nil
+		}
+		release, err := securefile.TryLock(filepath.Join(root, snapshotNamespaceLeaseName))
+		if err != nil {
+			return err
+		}
+		acquired = true
+		return release()
+	})
+	if err := scavengeReadOnlySnapshots(ctx, root); err != nil {
+		t.Fatal(err)
+	}
+	if !acquired {
+		t.Fatal("reap telemetry ran while the namespace remained locked")
+	}
+}
+
 func TestSnapshotTelemetryLogsCreateAndReap(t *testing.T) {
 	root, ctx, records := newReapFixture(t)
 	createPayloadOrphan(t, root, "orphan", 3<<20)
@@ -977,7 +1089,7 @@ func snapshotNamespaceForTest(t *testing.T, tempRoot string) string {
 func captureSnapshotRecords() (context.Context, func() []map[string]any) {
 	var mu sync.Mutex
 	var records []map[string]any
-	ctx := WithSnapshotLogWriter(context.Background(), func(record map[string]any) error {
+	ctx := WithSnapshotLogWriter(context.Background(), func(_ context.Context, record map[string]any) error {
 		copied := make(map[string]any, len(record))
 		for key, value := range record {
 			copied[key] = value

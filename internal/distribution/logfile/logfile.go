@@ -116,11 +116,15 @@ func New(dataDir string) *Writer {
 }
 
 func (w *Writer) Append(stream string, record any) error {
-	return w.append(stream, record, true)
+	return w.append(context.Background(), stream, record, true)
+}
+
+func (w *Writer) AppendContext(ctx context.Context, stream string, record any) error {
+	return w.append(ctx, stream, record, true)
 }
 
 func (w *Writer) AppendExisting(stream string, record any) error {
-	return w.append(stream, record, false)
+	return w.append(context.Background(), stream, record, false)
 }
 
 func (w *Writer) Prepare() error {
@@ -155,7 +159,7 @@ func (w *Writer) LockPath() string {
 	return filepath.Join(w.dir, lockName)
 }
 
-func (w *Writer) append(stream string, record any, createDir bool) error {
+func (w *Writer) append(ctx context.Context, stream string, record any, createDir bool) error {
 	if w == nil || w.dir == "" {
 		return fmt.Errorf("the log directory is not configured")
 	}
@@ -178,12 +182,7 @@ func (w *Writer) append(stream string, record any, createDir bool) error {
 		callhistory.Available(w.opsDatabase)
 	var historyErr error
 	fileErr := func() error {
-		if createDir {
-			if err := w.Prepare(); err != nil {
-				return err
-			}
-		}
-		release, err := securefile.LockExisting(w.LockPath())
+		release, err := w.lockContext(ctx, createDir)
 		if err != nil {
 			return fmt.Errorf("lock the log directory: %w", err)
 		}
@@ -239,6 +238,48 @@ func (w *Writer) append(stream string, record any, createDir bool) error {
 	databaseErr := errors.Join(historyErr,
 		w.persistCall(stream, filepath.Base(path), sourceLine, line))
 	return combineLogErrors(fileErr, databaseErr)
+}
+
+func (w *Writer) lockContext(ctx context.Context, createDir bool) (func() error, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if createDir {
+		if err := os.MkdirAll(w.dir, 0o700); err != nil {
+			return nil, fmt.Errorf("create the log directory: %w", err)
+		}
+		file, err := os.OpenFile(w.LockPath(), os.O_CREATE|os.O_RDWR, 0o600)
+		if err != nil {
+			return nil, err
+		}
+		if err := errors.Join(file.Chmod(0o600), file.Close()); err != nil {
+			return nil, err
+		}
+	}
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		release, err := securefile.TryLock(w.LockPath())
+		if err == nil {
+			return release, nil
+		}
+		if !errors.Is(err, securefile.ErrBusy) {
+			return nil, err
+		}
+		timer := time.NewTimer(10 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
 }
 
 func nextSourceLine(path string) (int, error) {
