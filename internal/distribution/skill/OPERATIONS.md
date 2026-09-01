@@ -137,7 +137,9 @@ most sessions in July". For memories you store, carry identity too:
 - `roca store --model <id>` (and `--agent <harness>`) states the writing
   identity explicitly;
 - `roca hooks install claude` installs the Claude Code signing hook, so every
-  store from that runtime is stamped without remembering the flags.
+  store from that runtime is stamped without remembering the flags;
+- `roca hooks install zcode` writes a SessionStart wrapper that injects the
+  latest handoff as JSON `additionalContext`.
 
 Over MCP, authorship comes from the session itself and cannot be spoofed by
 arguments.

@@ -91,12 +91,16 @@ type Outcome struct {
 // surfaces are not part of that measurement, so agentcfg's smaller runtime set
 // stays what `roca mcp install` knows.
 //
+// ZCode is both a skill seat and an MCP/hooks runtime. It is opt-in: init and
+// update never seed it, even when ~/.zcode already exists.
+//
 // Cursor's user skills live at ~/.cursor/skills/. ~/.cursor/skills-cursor/ is
 // reserved for Cursor's built-in skills and is never written. Detection is the
 // ~/.cursor config root existing; Cursor itself does not create skills/.
 var rootOf = map[string]struct {
 	dirVar, pathVar string
 	dir             []string
+	optIn           bool
 }{
 	agentcfg.RuntimeClaude:   {dirVar: "CLAUDE_CONFIG_DIR", dir: []string{".claude"}},
 	agentcfg.RuntimeCodex:    {dirVar: "CODEX_HOME", dir: []string{".codex"}},
@@ -106,6 +110,7 @@ var rootOf = map[string]struct {
 	agentcfg.RuntimeHermes:   {dirVar: "HERMES_HOME", dir: []string{".hermes"}},
 	agentcfg.RuntimePi:       {dirVar: "PI_CODING_AGENT_DIR", dir: []string{".pi", "agent"}},
 	agentcfg.RuntimeQwen:     {dirVar: "QWEN_HOME", dir: []string{".qwen"}},
+	agentcfg.RuntimeZcode:    {dirVar: "ZCODE_HOME", dir: []string{".zcode"}, optIn: true},
 }
 
 // Payload is the AGENTS.md whole-file source the definitive skill is generated
@@ -171,8 +176,8 @@ func ContentForPath(path string) (string, string) {
 	}
 }
 
-// Runtimes are the supported skill seats, sorted. Five of them are also the
-// MCP runtimes agentcfg knows; grok, qwen, and cursor are skill seats only.
+// Runtimes are the supported skill seats, sorted. Six of them are also MCP
+// runtimes agentcfg knows; grok, qwen, and cursor are skill seats only.
 func Runtimes() []string {
 	names := make([]string, 0, len(rootOf))
 	for name := range rootOf {
@@ -217,10 +222,21 @@ func Root(name, home string, env func(string) string) (string, error) {
 	return filepath.Dir(filepath.Dir(filepath.Dir(path))), nil
 }
 
-// Detected names the skill seats whose config directory exists under home.
+// SeedsOnDetect reports whether init and update write skills for this runtime
+// when its config root exists. ZCode is opt-in and never auto-seeded.
+func SeedsOnDetect(name string) bool {
+	spec, ok := rootOf[name]
+	return ok && !spec.optIn
+}
+
+// Detected names the skill seats whose config directory exists under home
+// and that init is allowed to seed.
 func Detected(home string, env func(string) string) []string {
 	var names []string
 	for _, name := range Runtimes() {
+		if !SeedsOnDetect(name) {
+			continue
+		}
 		root, err := Root(name, home, env)
 		if err != nil {
 			continue

@@ -259,7 +259,7 @@ func TestDetectedFindsCursorFromTheConfigRootWithoutASkillsDir(t *testing.T) {
 }
 
 func TestRuntimesAreTheSkillSeatsThisProductMeasured(t *testing.T) {
-	want := []string{"claude", "codex", "cursor", "grok", "hermes", "opencode", "pi", "qwen"}
+	want := []string{"claude", "codex", "cursor", "grok", "hermes", "opencode", "pi", "qwen", "zcode"}
 	got := skill.Runtimes()
 	if len(got) != len(want) {
 		t.Fatalf("runtimes = %v, want %v", got, want)
@@ -284,6 +284,7 @@ func TestPathResolvesEachRuntimeUnderATempHome(t *testing.T) {
 		"opencode": {".config", "opencode"},
 		"pi":       {".pi", "agent"},
 		"qwen":     {".qwen"},
+		"zcode":    {".zcode"},
 	}
 	for runtime, dir := range roots {
 		for _, owned := range ownedSkillDestinations {
@@ -305,7 +306,7 @@ func TestPathHonoursRuntimeEnvOverrides(t *testing.T) {
 	env := func(key string) string {
 		switch key {
 		case "CLAUDE_CONFIG_DIR", "CODEX_HOME", "CURSOR_HOME", "GROK_HOME", "HERMES_HOME",
-			"PI_CODING_AGENT_DIR", "QWEN_HOME":
+			"PI_CODING_AGENT_DIR", "QWEN_HOME", "ZCODE_HOME":
 			return elsewhere
 		case "OPENCODE_CONFIG":
 			return filepath.Join(elsewhere, "opencode.json")

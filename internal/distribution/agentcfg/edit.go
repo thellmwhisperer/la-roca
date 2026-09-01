@@ -44,6 +44,13 @@ func withdraw(r runtime, text string) (string, error) {
 	return editors[r.kind].remove(r, text, []string{ServerName})
 }
 
+func withdrawCreated(r runtime, text string, created []string) (string, error) {
+	if (r.kind == kindJSON || r.kind == kindJSONC) && len(r.parents) > 0 {
+		return jsonRemoveCreated(r, text, []string{ServerName}, created)
+	}
+	return withdraw(r, text)
+}
+
 // installed answers what an operator wants to know at a glance: is Roca
 // declared here, and which binary is this agent about to launch.
 func installed(r runtime, text string) (string, bool, error) {
@@ -54,7 +61,14 @@ func installed(r runtime, text string) (string, bool, error) {
 	if err != nil {
 		return "", false, err
 	}
-	servers, _ := document[r.serversKey].(map[string]any)
+	container := document
+	for _, parent := range r.parents {
+		container, _ = container[parent].(map[string]any)
+		if container == nil {
+			return "", false, nil
+		}
+	}
+	servers, _ := container[r.serversKey].(map[string]any)
 	entry, ok := servers[ServerName].(map[string]any)
 	if !ok {
 		return "", false, nil

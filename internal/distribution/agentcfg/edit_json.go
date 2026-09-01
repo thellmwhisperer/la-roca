@@ -35,18 +35,32 @@ func jsonDeclare(r runtime, text string, entry fields) (string, error) {
 		return "", err
 	}
 
-	inside, servers, ok, err := serversInside(r, view, root)
+	container := root
+	for i, parent := range r.parents {
+		memberIndex := container.find(parent)
+		if memberIndex < 0 {
+			pad := padUnder(view, container, indentOf(view, container.close)+indent)
+			keys := append(append([]string{}, r.parents[i:]...), r.serversKey)
+			return container.insert(text, renderJSONPath(keys, entry, pad),
+				indentOf(view, container.close)), nil
+		}
+		next, err := objectAt(view, container.members[memberIndex].valueStart)
+		if err != nil {
+			return "", fmt.Errorf("%s must be an object: %w", parent, err)
+		}
+		container = next
+	}
+
+	inside, servers, ok, err := serversInside(r, view, container)
 	if err != nil {
 		return "", err
 	}
 	if !ok {
 		// This runtime has never declared a server. The whole map goes in as one
-		// new member of the root object.
-		pad := padUnder(view, root, indent)
-		rendered := pad + quote(r.serversKey) + ": {\n" +
-			pad + indent + quote(ServerName) + ": " +
-			renderJSON(entry, pad+indent) + "\n" + pad + "}"
-		return root.insert(text, rendered, indentOf(view, root.close)), nil
+		// new member of the container object.
+		pad := padUnder(view, container, indentOf(view, container.close)+indent)
+		return container.insert(text, renderJSONPath([]string{r.serversKey}, entry, pad),
+			indentOf(view, container.close)), nil
 	}
 
 	pad := padUnder(view, inside, indentOf(view, servers.start)+indent)
@@ -61,6 +75,10 @@ func jsonDeclare(r runtime, text string, entry fields) (string, error) {
 }
 
 func jsonRemove(r runtime, text string, entries []string) (string, error) {
+	return jsonRemoveCreated(r, text, entries, nil)
+}
+
+func jsonRemoveCreated(r runtime, text string, entries, created []string) (string, error) {
 	if strings.TrimSpace(text) == "" {
 		return text, nil
 	}
@@ -68,7 +86,11 @@ func jsonRemove(r runtime, text string, entries []string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	inside, _, ok, err := serversInside(r, view, root)
+	container, ok, err := objectAtPath(view, root, r.parents)
+	if err != nil || !ok {
+		return text, err
+	}
+	inside, _, ok, err := serversInside(r, view, container)
 	if err != nil || !ok {
 		return text, err
 	}
@@ -81,20 +103,127 @@ func jsonRemove(r runtime, text string, entries []string) (string, error) {
 			removed++
 		}
 	}
-	// When this operation emptied the servers object, remove the key from the
-	// root so that withdrawing from a file whose serversKey was created by the
-	// install gives back the exact previous bytes (not an empty object left
-	// behind where there was none before).
-	if removed > 0 && removed == len(inside.members) {
-		_, root2, err := rootObject(r, text)
+	if removed == 0 || removed != len(inside.members) {
+		return text, nil
+	}
+	serversPath := strings.Join(append(append([]string{}, r.parents...), r.serversKey), ".")
+	// Top-level serversKey still uses emptiness: that is the existing Claude,
+	// OpenCode and Pi contract. Nested parents prune only what this install
+	// recorded as created.
+	if len(r.parents) == 0 || containsString(created, serversPath) {
+		text, err = cutJSONMemberAtPath(r, text, r.parents, r.serversKey)
 		if err != nil {
 			return "", err
 		}
-		if key := root2.find(r.serversKey); key >= 0 {
-			text = root2.cut(text, key)
+	}
+	if len(r.parents) == 0 {
+		return text, nil
+	}
+	for i := len(r.parents) - 1; i >= 0; i-- {
+		if !containsString(created, strings.Join(r.parents[:i+1], ".")) {
+			continue
 		}
+		view, root, err = rootObject(r, text)
+		if err != nil {
+			return "", err
+		}
+		parent, found, err := objectAtPath(view, root, r.parents[:i])
+		if err != nil || !found {
+			return text, err
+		}
+		childIndex := parent.find(r.parents[i])
+		if childIndex < 0 {
+			break
+		}
+		child, err := objectAt(view, parent.members[childIndex].valueStart)
+		if err != nil || len(child.members) != 0 {
+			break
+		}
+		text = parent.cut(text, childIndex)
 	}
 	return text, nil
+}
+
+func renderJSONPath(keys []string, entry fields, pad string) string {
+	if len(keys) == 0 {
+		return pad + quote(ServerName) + ": " + renderJSON(entry, pad)
+	}
+	childPad := pad + indent
+	return pad + quote(keys[0]) + ": {\n" +
+		renderJSONPath(keys[1:], entry, childPad) + "\n" + pad + "}"
+}
+
+func objectAtPath(view string, root object, path []string) (object, bool, error) {
+	current := root
+	for _, key := range path {
+		i := current.find(key)
+		if i < 0 {
+			return object{}, false, nil
+		}
+		next, err := objectAt(view, current.members[i].valueStart)
+		if err != nil {
+			return object{}, false, fmt.Errorf("%s must be an object: %w", key, err)
+		}
+		current = next
+	}
+	return current, true, nil
+}
+
+func cutJSONMemberAtPath(r runtime, text string, path []string, key string) (string, error) {
+	view, root, err := rootObject(r, text)
+	if err != nil {
+		return "", err
+	}
+	container, ok, err := objectAtPath(view, root, path)
+	if err != nil || !ok {
+		return text, err
+	}
+	i := container.find(key)
+	if i < 0 {
+		return text, nil
+	}
+	return container.cut(text, i), nil
+}
+
+func missingServerContainers(r runtime, text string) []string {
+	if len(r.parents) == 0 {
+		return nil
+	}
+	keys := append(append([]string{}, r.parents...), r.serversKey)
+	if strings.TrimSpace(text) == "" {
+		return containerPaths(keys)
+	}
+	view, root, err := rootObject(r, text)
+	if err != nil {
+		return nil
+	}
+	current := root
+	for i, key := range keys {
+		idx := current.find(key)
+		if idx < 0 {
+			return containerPaths(keys[i:], keys[:i]...)
+		}
+		next, err := objectAt(view, current.members[idx].valueStart)
+		if err != nil {
+			return nil
+		}
+		current = next
+	}
+	return nil
+}
+
+func containerPaths(keys []string, prefix ...string) []string {
+	out := make([]string, 0, len(keys))
+	path := append([]string{}, prefix...)
+	for _, key := range keys {
+		path = append(path, key)
+		out = append(out, strings.Join(path, "."))
+	}
+	return out
+}
+
+func containsString(list []string, want string) bool {
+	return slices.Contains(list, want)
 }
 
 // jsonDecode reads the view and not the text: a JSONC comment would not survive
@@ -106,12 +235,12 @@ func jsonDecode(r runtime, text string) (map[string]any, error) {
 }
 
 // serversInside is the object at serversKey, or ok=false when the key is absent.
-func serversInside(r runtime, view string, root object) (object, member, bool, error) {
-	key := root.find(r.serversKey)
+func serversInside(r runtime, view string, container object) (object, member, bool, error) {
+	key := container.find(r.serversKey)
 	if key < 0 {
 		return object{}, member{}, false, nil
 	}
-	servers := root.members[key]
+	servers := container.members[key]
 	inside, err := objectAt(view, servers.valueStart)
 	if err != nil {
 		return object{}, member{}, false, fmt.Errorf("%s must be an object: %w", r.serversKey, err)
