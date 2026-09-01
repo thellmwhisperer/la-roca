@@ -807,17 +807,8 @@ func (env *cliEnv) recordZcodeWrapperState(path, mutationPath, executable string
 	var priorFound bool
 	_, err = env.mutateArtifactRegistry(paths.Artifacts, func(registry *artifact.Registry) (bool, error) {
 		prior, priorFound = registry.Find(artifactKindHook, agentcfg.RuntimeZcode, path)
-		if priorFound && continuousZcodeOwnership(prior, transaction) && zcodeReplacedRootClaim(prior) {
-			transaction.RootIdentity = prior.RootIdentity
-		} else if priorFound && prior.RootIdentity != "" && !transaction.CreatedConfig &&
-			!continuousZcodeOwnership(prior, transaction) {
-			transaction.RootIdentity = zcodeReplacedRootIdentityPrefix + transaction.RootIdentity
-		}
-		if priorFound && continuousZcodeOwnership(prior, transaction) {
-			transaction.CreatedRoot = transaction.CreatedRoot || prior.CreatedRoot
-			transaction.CreatedConfigDir = transaction.CreatedConfigDir || prior.CreatedConfigDir
+		if carryForwardZcodeConfigOwnership(prior, priorFound, &transaction) {
 			transaction.CreatedHooksDir = transaction.CreatedHooksDir || prior.CreatedHooksDir
-			transaction.CreatedConfig = transaction.CreatedConfig || prior.CreatedConfig
 			transaction.CreatedLock = transaction.CreatedLock || prior.CreatedLock
 			transaction.CreatedHooksEnabled = transaction.CreatedHooksEnabled ||
 				(prior.CreatedHooksEnabled && managedDeclarationContinuous)

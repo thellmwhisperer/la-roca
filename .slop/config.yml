@@ -81,6 +81,8 @@ orphan_scopes:
       - "internal/distribution/cli/openfiles_linux.go"
       - "internal/distribution/cli/openfiles_other.go"
       - "internal/distribution/cli/zcode_reference.go"
+      - "internal/distribution/cli/zcode_identity_unix.go"
+      - "internal/distribution/cli/zcode_identity_windows.go"
 
 # Claims select the same registered capability files. Any new registrator or
 # embedded asset is therefore rejected until it points at a surviving scenario.
@@ -101,6 +103,8 @@ claims:
         - "internal/distribution/cli/openfiles_linux.go"
         - "internal/distribution/cli/openfiles_other.go"
         - "internal/distribution/cli/zcode_reference.go"
+        - "internal/distribution/cli/zcode_identity_unix.go"
+        - "internal/distribution/cli/zcode_identity_windows.go"
     mcp_tools:
       files: ["internal/distribution/mcpplug/tools.go"]
     embedded_assets:

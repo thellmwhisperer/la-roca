@@ -346,6 +346,21 @@ func continuousZcodeOwnership(prior, current artifact.Entry) bool {
 	return priorIdentity != "" && priorIdentity == zcodeComparableRootIdentity(current.RootIdentity)
 }
 
+func carryForwardZcodeConfigOwnership(prior artifact.Entry, found bool, current *artifact.Entry) bool {
+	continuous := found && continuousZcodeOwnership(prior, *current)
+	if continuous && zcodeReplacedRootClaim(prior) {
+		current.RootIdentity = prior.RootIdentity
+	} else if found && prior.RootIdentity != "" && !current.CreatedConfig && !continuous {
+		current.RootIdentity = zcodeReplacedRootIdentityPrefix + current.RootIdentity
+	}
+	if continuous {
+		current.CreatedRoot = current.CreatedRoot || prior.CreatedRoot
+		current.CreatedConfigDir = current.CreatedConfigDir || prior.CreatedConfigDir
+		current.CreatedConfig = current.CreatedConfig || prior.CreatedConfig
+	}
+	return continuous
+}
+
 func zcodeRootClaimAllowsWithdrawal(entry artifact.Entry) bool {
 	return entry.RootIdentity == ""
 }
@@ -370,16 +385,7 @@ func (env *cliEnv) recordZcodeMCPPreimage(path, mutationPath, executable, preima
 	var priorFound bool
 	changed, err := env.mutateArtifactRegistry(paths.Artifacts, func(registry *artifact.Registry) (bool, error) {
 		prior, priorFound = registry.Find(artifactKindMCP, agentcfg.RuntimeZcode, path)
-		if priorFound && continuousZcodeOwnership(prior, transaction) && zcodeReplacedRootClaim(prior) {
-			transaction.RootIdentity = prior.RootIdentity
-		} else if priorFound && prior.RootIdentity != "" && !transaction.CreatedConfig &&
-			!continuousZcodeOwnership(prior, transaction) {
-			transaction.RootIdentity = zcodeReplacedRootIdentityPrefix + transaction.RootIdentity
-		}
-		if priorFound && continuousZcodeOwnership(prior, transaction) {
-			transaction.CreatedRoot = transaction.CreatedRoot || prior.CreatedRoot
-			transaction.CreatedConfigDir = transaction.CreatedConfigDir || prior.CreatedConfigDir
-			transaction.CreatedConfig = transaction.CreatedConfig || prior.CreatedConfig
+		if carryForwardZcodeConfigOwnership(prior, priorFound, &transaction) {
 			if configured {
 				if _, err := zcodeMCPPreimageFromEntry(prior); err != nil {
 					return false, err

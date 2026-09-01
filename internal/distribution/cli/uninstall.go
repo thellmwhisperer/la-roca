@@ -911,6 +911,12 @@ func (env *cliEnv) purgeRegisteredZcodeIntegrations(report *lifecycle.Report, re
 				fmt.Fprintf(env.errOut, "warning: retained operator-recreated ZCode state at %s\n", config)
 			}
 			var configIdentity os.FileInfo
+			recordOutcome := func(outcome agentcfg.Outcome) {
+				if outcome.Changed {
+					outcomes = append(outcomes, outcome)
+					configIdentity = outcome.FileIdentity
+				}
+			}
 			for _, entry := range withdrawOnlyHooks {
 				outcome, warning, uninstallErr := uninstallZcodeHandoffHookUnlocked(
 					config, entry.Path, nil, entry.CreatedHooksEnabled)
@@ -920,10 +926,7 @@ func (env *cliEnv) purgeRegisteredZcodeIntegrations(report *lifecycle.Report, re
 				if uninstallErr != nil {
 					return fmt.Errorf("withdraw the ZCode handoff hook from %s: %w", config, uninstallErr)
 				}
-				if outcome.Changed {
-					outcomes = append(outcomes, outcome)
-					configIdentity = outcome.FileIdentity
-				}
+				recordOutcome(outcome)
 				removeRuntimeRecoveryBackups(env.errOut, report, agentcfg.RuntimeZcode, config, entry.MutationPath)
 				if err := env.unregisterArtifactEntry(entry); err != nil {
 					return err
@@ -946,10 +949,7 @@ func (env *cliEnv) purgeRegisteredZcodeIntegrations(report *lifecycle.Report, re
 				if uninstallErr != nil {
 					return fmt.Errorf("withdraw the ZCode handoff hook from %s: %w", config, uninstallErr)
 				}
-				if outcome.Changed {
-					outcomes = append(outcomes, outcome)
-					configIdentity = outcome.FileIdentity
-				}
+				recordOutcome(outcome)
 				removeRuntimeRecoveryBackups(env.errOut, report, agentcfg.RuntimeZcode, config, entry.MutationPath)
 				aggregateZcodeProvenance(&aggregate, entry)
 				wrappers = append(wrappers, entry.Path)
@@ -963,10 +963,7 @@ func (env *cliEnv) purgeRegisteredZcodeIntegrations(report *lifecycle.Report, re
 				if uninstallErr != nil {
 					return fmt.Errorf("withdraw roca from zcode at %s: %w", config, uninstallErr)
 				}
-				if outcome.Changed {
-					outcomes = append(outcomes, outcome)
-					configIdentity = outcome.FileIdentity
-				}
+				recordOutcome(outcome)
 				removeRuntimeRecoveryBackups(env.errOut, report, agentcfg.RuntimeZcode, config, entry.MutationPath)
 				aggregateZcodeProvenance(&aggregate, entry)
 			}

@@ -440,10 +440,7 @@ func TestSkillUninstallRetainsOperatorSymlinkOwnership(t *testing.T) {
 	t.Setenv("ZCODE_HOME", root)
 	runZcodeTestCLI(t, "skill", "install", "zcode")
 	path := filepath.Join(root, "skills", "roca", "SKILL.md")
-	body, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	body := readZcodeTestFile(t, path)
 	target := filepath.Join(home, "shared-skill.md")
 	if err := os.WriteFile(target, body, 0o600); err != nil {
 		t.Fatal(err)
