@@ -78,6 +78,38 @@ func TestZcodeMCPStateRestoresContainerPreimage(t *testing.T) {
 	}
 }
 
+func TestZcodeMCPReinstallMergesNewPathOwnership(t *testing.T) {
+	home := skillTestHome(t)
+	rootPath := filepath.Join(home, ".zcode")
+	config := filepath.Join(rootPath, "cli", "config.json")
+	if err := os.MkdirAll(filepath.Dir(config), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config, []byte(`{"operator":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	install := func() {
+		root := rootCommand(&cliEnv{out: io.Discard, errOut: io.Discard, build: Build{Version: "test"}})
+		root.SetArgs([]string{"mcp", "install", "zcode", "--executable", filepath.Join(home, "roca")})
+		if err := root.Execute(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	install()
+	if err := os.RemoveAll(rootPath); err != nil {
+		t.Fatal(err)
+	}
+	install()
+	report := lifecycle.Report{Purged: true, Deleted: []string{}}
+	(&cliEnv{out: io.Discard, errOut: io.Discard}).withdrawTheIntegrations(&report, true)
+	if len(report.Errors) != 0 {
+		t.Fatalf("purge errors = %v", report.Errors)
+	}
+	if _, err := os.Stat(rootPath); !os.IsNotExist(err) {
+		t.Fatalf("reinstall-created MCP paths survived purge: %v", err)
+	}
+}
+
 func TestZcodeMCPPersistsAbsoluteConfigPath(t *testing.T) {
 	home := skillTestHome(t)
 	first := t.TempDir()

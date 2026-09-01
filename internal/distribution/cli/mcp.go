@@ -248,9 +248,9 @@ func (env *cliEnv) recordZcodeMCPPreimage(path, preimage string, configured bool
 			return false, err
 		}
 		if priorFound {
-			transaction.CreatedRoot = prior.CreatedRoot
-			transaction.CreatedConfigDir = prior.CreatedConfigDir
-			transaction.CreatedConfig = prior.CreatedConfig
+			transaction.CreatedRoot = transaction.CreatedRoot || prior.CreatedRoot
+			transaction.CreatedConfigDir = transaction.CreatedConfigDir || prior.CreatedConfigDir
+			transaction.CreatedConfig = transaction.CreatedConfig || prior.CreatedConfig
 		}
 		registry.Upsert(transaction)
 		return true, nil
