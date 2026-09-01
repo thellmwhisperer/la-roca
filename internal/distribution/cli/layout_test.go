@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
@@ -109,7 +110,9 @@ func TestShadowCLIOrchestratesCustodyBeforeComparingTheHub(t *testing.T) {
 	}
 	defer legacy.Close()
 	stored, err := legacy.Store(t.Context(), service.StoreRequest{
-		Layer: "handoff", Content: "Synthetic post-rollback destination write",
+		Layer:      "handoff",
+		Content:    "Synthetic post-rollback destination write\nbranch: fixture\ndone: recorded\nstate: stored\nnext: continue\n",
+		Authorship: service.Authorship{Agent: "claude", Model: "sonnet", Surface: service.SurfaceCLI},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -120,7 +123,7 @@ func TestShadowCLIOrchestratesCustodyBeforeComparingTheHub(t *testing.T) {
 	if err := verification.QueryRow("SELECT content FROM memories WHERE id = ?", stored.ID).Scan(&storedContent); err != nil {
 		t.Fatal(err)
 	}
-	if storedContent != "Synthetic post-rollback destination write" {
+	if !strings.Contains(storedContent, "Synthetic post-rollback destination write") {
 		t.Fatalf("post-rollback write = %q", storedContent)
 	}
 }

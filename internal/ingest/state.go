@@ -38,6 +38,7 @@ var parserVersions = map[parsers.Kind]string{
 	parsers.KindClaudeWebProjects:       "claude-web-projects-v1",
 	parsers.KindClaudeWebDesignChats:    "claude-web-design-chats-v1",
 	parsers.KindChatGPTWebConversations: "chatgpt-web-conversations-v4",
+	parsers.KindChatGPTCodex:            "chatgpt-codex-v1",
 	parsers.KindGrokSession:             "grok-session-v4",
 	parsers.KindGrokSessionMetadata:     "grok-session-metadata-v1",
 }
