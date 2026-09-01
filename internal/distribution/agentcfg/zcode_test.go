@@ -12,13 +12,8 @@ import (
 
 func TestZcodeUsesTheNestedMCPServersShape(t *testing.T) {
 	path := fixtureFile(t, agentcfg.RuntimeZcode)
-	if _, err := agentcfg.Install(agentcfg.RuntimeZcode, path, "roca"); err != nil {
-		t.Fatal(err)
-	}
-	var document map[string]any
-	if err := json.Unmarshal([]byte(read(t, path)), &document); err != nil {
-		t.Fatal(err)
-	}
+	requireZcodeInstall(t, path)
+	document := readZcodeDocument(t, path)
 	mcp, ok := document["mcp"].(map[string]any)
 	if !ok {
 		t.Fatal("zcode config has no mcp object")
@@ -63,12 +58,8 @@ func TestZcodeUninstallPrunesOnlyContainersThisInstallCreated(t *testing.T) {
 
 	empty := filepath.Join(dir, "empty.json")
 	writeFile(t, empty, "{}\n")
-	if _, err := agentcfg.Install(agentcfg.RuntimeZcode, empty, "roca"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := agentcfg.Uninstall(agentcfg.RuntimeZcode, empty); err != nil {
-		t.Fatal(err)
-	}
+	requireZcodeInstall(t, empty)
+	requireZcodeUninstall(t, empty)
 	if got := read(t, empty); got != "{}\n" {
 		t.Fatalf("empty file did not come back:\n%s", got)
 	}
@@ -79,12 +70,8 @@ func TestZcodeUninstallPrunesOnlyContainersThisInstallCreated(t *testing.T) {
 	ownedMCP := filepath.Join(dir, "owned-mcp.json")
 	writeFile(t, ownedMCP, "{\n  \"mcp\": {}\n}\n")
 	before := read(t, ownedMCP)
-	if _, err := agentcfg.Install(agentcfg.RuntimeZcode, ownedMCP, "roca"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := agentcfg.Uninstall(agentcfg.RuntimeZcode, ownedMCP); err != nil {
-		t.Fatal(err)
-	}
+	requireZcodeInstall(t, ownedMCP)
+	requireZcodeUninstall(t, ownedMCP)
 	if got := read(t, ownedMCP); got != before {
 		t.Fatalf("operator-owned empty mcp was deduced from emptiness:\n--- before ---\n%s\n--- after ---\n%s", before, got)
 	}
@@ -92,12 +79,8 @@ func TestZcodeUninstallPrunesOnlyContainersThisInstallCreated(t *testing.T) {
 	ownedServers := filepath.Join(dir, "owned-servers.json")
 	writeFile(t, ownedServers, "{\n  \"mcp\": {\n    \"servers\": {}\n  }\n}\n")
 	before = read(t, ownedServers)
-	if _, err := agentcfg.Install(agentcfg.RuntimeZcode, ownedServers, "roca"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := agentcfg.Uninstall(agentcfg.RuntimeZcode, ownedServers); err != nil {
-		t.Fatal(err)
-	}
+	requireZcodeInstall(t, ownedServers)
+	requireZcodeUninstall(t, ownedServers)
 	if got := read(t, ownedServers); got != before {
 		t.Fatalf("operator-owned empty servers was deduced from emptiness:\n--- before ---\n%s\n--- after ---\n%s", before, got)
 	}
@@ -107,9 +90,7 @@ func TestZcodeUninstallClearsStaleOwnershipBeforeOperatorContainersAppear(t *tes
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.json")
 	writeFile(t, path, "{}\n")
-	if _, err := agentcfg.Install(agentcfg.RuntimeZcode, path, "roca"); err != nil {
-		t.Fatal(err)
-	}
+	requireZcodeInstall(t, path)
 	writeFile(t, path, "{}\n")
 	if outcome, err := agentcfg.Uninstall(agentcfg.RuntimeZcode, path); err != nil {
 		t.Fatal(err)
@@ -122,12 +103,8 @@ func TestZcodeUninstallClearsStaleOwnershipBeforeOperatorContainersAppear(t *tes
 
 	before := "{\n  \"mcp\": {\n    \"servers\": {}\n  }\n}\n"
 	writeFile(t, path, before)
-	if _, err := agentcfg.Install(agentcfg.RuntimeZcode, path, "roca"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := agentcfg.Uninstall(agentcfg.RuntimeZcode, path); err != nil {
-		t.Fatal(err)
-	}
+	requireZcodeInstall(t, path)
+	requireZcodeUninstall(t, path)
 	if got := read(t, path); got != before {
 		t.Fatalf("stale ownership pruned operator containers:\n--- before ---\n%s\n--- after ---\n%s", before, got)
 	}
@@ -136,9 +113,7 @@ func TestZcodeUninstallClearsStaleOwnershipBeforeOperatorContainersAppear(t *tes
 func TestZcodeUninstallRejectsUnreadableOwnershipBeforeEditingConfig(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	writeFile(t, path, "{}\n")
-	if _, err := agentcfg.Install(agentcfg.RuntimeZcode, path, "roca"); err != nil {
-		t.Fatal(err)
-	}
+	requireZcodeInstall(t, path)
 	before := read(t, path)
 	writeFile(t, path+".roca-owned", "{not-json\n")
 
@@ -180,20 +155,11 @@ func TestZcodeInstallRejectsUnreadableOwnershipBeforeEditingConfig(t *testing.T)
 func TestZcodeReinstallPreservesMCPContainerOwnership(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	writeFile(t, path, "{}\n")
-	if _, err := agentcfg.Install(agentcfg.RuntimeZcode, path, "roca"); err != nil {
-		t.Fatal(err)
-	}
+	requireZcodeInstall(t, path)
 	writeFile(t, path, "{\"mcp\":{}}\n")
-	if _, err := agentcfg.Install(agentcfg.RuntimeZcode, path, "roca"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := agentcfg.Uninstall(agentcfg.RuntimeZcode, path); err != nil {
-		t.Fatal(err)
-	}
-	var document map[string]any
-	if err := json.Unmarshal([]byte(read(t, path)), &document); err != nil {
-		t.Fatal(err)
-	}
+	requireZcodeInstall(t, path)
+	requireZcodeUninstall(t, path)
+	document := readZcodeDocument(t, path)
 	if _, ok := document["mcp"]; ok {
 		t.Fatalf("reinstall lost ownership of the product-created mcp container: %#v", document)
 	}
@@ -206,19 +172,38 @@ func writeFile(t *testing.T, path, body string) {
 	}
 }
 
-func TestZcodeInstallLeavesNeighbouringServersAndTheme(t *testing.T) {
-	path := fixtureFile(t, agentcfg.RuntimeZcode)
-	before := read(t, path)
+func requireZcodeInstall(t *testing.T, path string) {
+	t.Helper()
 	if _, err := agentcfg.Install(agentcfg.RuntimeZcode, path, "roca"); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func requireZcodeUninstall(t *testing.T, path string) {
+	t.Helper()
+	if _, err := agentcfg.Uninstall(agentcfg.RuntimeZcode, path); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func readZcodeDocument(t *testing.T, path string) map[string]any {
+	t.Helper()
+	var document map[string]any
+	if err := json.Unmarshal([]byte(read(t, path)), &document); err != nil {
+		t.Fatal(err)
+	}
+	return document
+}
+
+func TestZcodeInstallLeavesNeighbouringServersAndTheme(t *testing.T) {
+	path := fixtureFile(t, agentcfg.RuntimeZcode)
+	before := read(t, path)
+	requireZcodeInstall(t, path)
 	body := read(t, path)
 	if !strings.Contains(body, `"theme"`) || !strings.Contains(body, "some-other-server") {
 		t.Fatalf("install ate neighbouring zcode config: %s", body)
 	}
-	if _, err := agentcfg.Uninstall(agentcfg.RuntimeZcode, path); err != nil {
-		t.Fatal(err)
-	}
+	requireZcodeUninstall(t, path)
 	if got := read(t, path); got != before {
 		t.Fatalf("zcode uninstall did not restore neighbouring config")
 	}
