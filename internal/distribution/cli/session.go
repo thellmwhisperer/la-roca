@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,24 +17,7 @@ func pillCommand(env *cliEnv) *cobra.Command {
 		Short: "Load active pills for the current project",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			resolved, err := resolveProject(project)
-			if err != nil {
-				return err
-			}
-			svc, _, err := env.openStoreService()
-			if err != nil {
-				return err
-			}
-			defer svc.Close()
-			list, err := svc.ListPills(cmd.Context(), resolved)
-			if err != nil {
-				return err
-			}
-			if env.json {
-				return env.printJSON(list)
-			}
-			env.print("%s", axi.Pills(list))
-			return nil
+			return runPillList(cmd.Context(), env, project)
 		},
 	}
 	cmd.PersistentFlags().StringVar(&project, "project", "", "project scope (default: basename of the working directory)")
@@ -89,28 +73,53 @@ func handoffLatestCommand(env *cliEnv) *cobra.Command {
 		Short: "Load active handoffs the project has not superseded",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			resolved, err := resolveProject(project)
-			if err != nil {
-				return err
-			}
-			svc, _, err := env.openStoreService()
-			if err != nil {
-				return err
-			}
-			defer svc.Close()
-			list, err := svc.LatestHandoffs(cmd.Context(), resolved)
-			if err != nil {
-				return err
-			}
-			if env.json {
-				return env.printJSON(list)
-			}
-			env.print("%s", axi.Handoffs(list))
-			return nil
+			return runLatestHandoffs(cmd.Context(), env, project)
 		},
 	}
 	cmd.Flags().StringVar(&project, "project", "", "project scope (default: basename of the working directory)")
 	return cmd
+}
+
+func runPillList(ctx context.Context, env *cliEnv, project string) error {
+	resolved, err := resolveProject(project)
+	if err != nil {
+		return err
+	}
+	svc, _, err := env.openStoreService()
+	if err != nil {
+		return err
+	}
+	defer svc.Close()
+	list, err := svc.ListPills(ctx, resolved)
+	if err != nil {
+		return err
+	}
+	if env.json {
+		return env.printJSON(list)
+	}
+	env.print("%s", axi.Pills(list))
+	return nil
+}
+
+func runLatestHandoffs(ctx context.Context, env *cliEnv, project string) error {
+	resolved, err := resolveProject(project)
+	if err != nil {
+		return err
+	}
+	svc, _, err := env.openStoreService()
+	if err != nil {
+		return err
+	}
+	defer svc.Close()
+	list, err := svc.LatestHandoffs(ctx, resolved)
+	if err != nil {
+		return err
+	}
+	if env.json {
+		return env.printJSON(list)
+	}
+	env.print("%s", axi.Handoffs(list))
+	return nil
 }
 
 func resolveProject(project string) (string, error) {

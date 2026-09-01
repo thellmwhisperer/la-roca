@@ -563,25 +563,31 @@ func supportedHookRuntime(name string) error {
 
 func hooksRunCommand(env *cliEnv) *cobra.Command {
 	command := &cobra.Command{
-		Use:    "run [runtime]",
+		Use:    "run [hook]",
 		Hidden: true,
 		Args:   cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := supportedHookRuntime(args[0]); err != nil {
-				return err
+			switch args[0] {
+			case "claude":
+				input, err := io.ReadAll(cmd.InOrStdin())
+				if err != nil {
+					return fmt.Errorf("read Claude hook input: %w", err)
+				}
+				output, err := runClaudeAuthorshipHook(input)
+				if err != nil {
+					return err
+				}
+				if len(output) > 0 {
+					fmt.Fprintln(env.out, string(output))
+				}
+				return nil
+			case "claude-pills":
+				return runPillList(cmd.Context(), env, "")
+			case "claude-handoff":
+				return runLatestHandoffs(cmd.Context(), env, "")
+			default:
+				return fmt.Errorf("unsupported hook %q", args[0])
 			}
-			input, err := io.ReadAll(cmd.InOrStdin())
-			if err != nil {
-				return fmt.Errorf("read Claude hook input: %w", err)
-			}
-			output, err := runClaudeAuthorshipHook(input)
-			if err != nil {
-				return err
-			}
-			if len(output) > 0 {
-				fmt.Fprintln(env.out, string(output))
-			}
-			return nil
 		},
 	}
 	return command

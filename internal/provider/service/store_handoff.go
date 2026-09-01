@@ -20,15 +20,11 @@ var sessionHandoffSurfaces = map[string]bool{
 	SurfaceMCP: true,
 }
 
-var handoffShapeLabels = []struct {
-	name    string
-	pattern *regexp.Regexp
-}{
-	{"branch/scope", regexp.MustCompile(`(?i)\b(?:branch/scope|branch|scope)\s*:`)},
-	{"done", regexp.MustCompile(`(?i)\bdone\s*:`)},
-	{"state", regexp.MustCompile(`(?i)\b(?:current\s+state|state)\s*:`)},
-	{"next", regexp.MustCompile(`(?i)\b(?:next\s+step|next)\s*:`)},
-}
+var handoffShapeLabel = regexp.MustCompile(
+	`(?i)\b(branch/scope|branch|scope|done|current\s+state|state|next\s+step|next)\s*:`,
+)
+
+var requiredHandoffFields = []string{"branch/scope", "done", "state", "next"}
 
 func refuseHandoffWrite(physical string, origin string, authorship Authorship, content string) error {
 	if physical != "handoff" {
@@ -54,17 +50,39 @@ func refuseHandoffWriter(origin string, authorship Authorship) error {
 }
 
 func refuseHandoffShape(content string) error {
-	missing := make([]string, 0, len(handoffShapeLabels))
-	for _, label := range handoffShapeLabels {
-		if !label.pattern.MatchString(content) {
-			missing = append(missing, label.name)
+	matches := handoffShapeLabel.FindAllStringSubmatchIndex(content, -1)
+	populated := map[string]bool{}
+	for i, match := range matches {
+		valueEnd := len(content)
+		if i+1 < len(matches) {
+			valueEnd = matches[i+1][0]
+		}
+		if strings.TrimSpace(content[match[1]:valueEnd]) == "" {
+			continue
+		}
+		label := strings.ToLower(strings.Join(strings.Fields(content[match[2]:match[3]]), " "))
+		switch label {
+		case "branch/scope", "branch", "scope":
+			populated["branch/scope"] = true
+		case "current state", "state":
+			populated["state"] = true
+		case "next step", "next":
+			populated["next"] = true
+		default:
+			populated[label] = true
+		}
+	}
+	missing := make([]string, 0, len(requiredHandoffFields))
+	for _, field := range requiredHandoffFields {
+		if !populated[field] {
+			missing = append(missing, field)
 		}
 	}
 	if len(missing) == 0 {
 		return nil
 	}
 	return fmt.Errorf(
-		"a handoff must name branch/scope, done, current state, and next step (missing %s); "+
+		"a handoff must name branch/scope, done, current state, and next step (missing or blank %s); "+
 			"declare replacement with --supersedes, not in prose",
 		strings.Join(missing, ", "))
 }

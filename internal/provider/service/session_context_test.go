@@ -1,6 +1,7 @@
 package service_test
 
 import (
+	"database/sql"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -9,7 +10,7 @@ import (
 )
 
 func TestListPillsDedupesSlugDuplicatesKeepingTheNewest(t *testing.T) {
-	svc, _ := serviceWithPaths(t)
+	svc := sessionContextService(t)
 	insertPill(t, svc, pillSeed{
 		slug: "build", content: "April build pill", createdAt: "2026-04-01 00:00:00",
 		project: "demo",
@@ -32,7 +33,7 @@ func TestListPillsDedupesSlugDuplicatesKeepingTheNewest(t *testing.T) {
 }
 
 func TestListPillsScopesToTheProjectAndIncludesGlobals(t *testing.T) {
-	svc, _ := serviceWithPaths(t)
+	svc := sessionContextService(t)
 	insertPill(t, svc, pillSeed{
 		slug: "build", content: "demo build", createdAt: "2026-06-01 00:00:00",
 		project: "demo",
@@ -59,7 +60,7 @@ func TestListPillsScopesToTheProjectAndIncludesGlobals(t *testing.T) {
 }
 
 func TestListPillsReportsUnsluggedIdsWithoutLoadingThem(t *testing.T) {
-	svc, _ := serviceWithPaths(t)
+	svc := sessionContextService(t)
 	insertPill(t, svc, pillSeed{
 		slug: "build", content: "slugged", createdAt: "2026-06-01 00:00:00",
 		project: "demo",
@@ -82,7 +83,7 @@ func TestListPillsReportsUnsluggedIdsWithoutLoadingThem(t *testing.T) {
 }
 
 func TestListPillsKeepsContentLongerThanTheTableRendererBudget(t *testing.T) {
-	svc, _ := serviceWithPaths(t)
+	svc := sessionContextService(t)
 	body := "full pill body " + strings.Repeat("x", 200)
 	insertPill(t, svc, pillSeed{
 		slug: "long", content: body, createdAt: "2026-06-01 00:00:00",
@@ -99,7 +100,7 @@ func TestListPillsKeepsContentLongerThanTheTableRendererBudget(t *testing.T) {
 }
 
 func TestShowPillReturnsOneCompletePill(t *testing.T) {
-	svc, _ := serviceWithPaths(t)
+	svc := sessionContextService(t)
 	insertPill(t, svc, pillSeed{
 		slug: "build", content: "April", createdAt: "2026-04-01 00:00:00",
 		project: "demo",
@@ -119,7 +120,7 @@ func TestShowPillReturnsOneCompletePill(t *testing.T) {
 }
 
 func TestLatestHandoffsSkipsSupersededRows(t *testing.T) {
-	svc, _ := serviceWithPaths(t)
+	svc := sessionContextService(t)
 	first := insertHandoff(t, svc, handoffSeed{
 		content: "first close", createdAt: "2026-08-01 00:00:00", project: "demo",
 	})
@@ -138,7 +139,7 @@ func TestLatestHandoffsSkipsSupersededRows(t *testing.T) {
 }
 
 func TestLatestHandoffsKeepsANewHandoffThatDoesNotSupersede(t *testing.T) {
-	svc, _ := serviceWithPaths(t)
+	svc := sessionContextService(t)
 	insertHandoff(t, svc, handoffSeed{
 		content: "session close", createdAt: "2026-08-01 00:00:00", project: "demo",
 	})
@@ -158,7 +159,7 @@ func TestLatestHandoffsKeepsANewHandoffThatDoesNotSupersede(t *testing.T) {
 }
 
 func TestLatestHandoffsFallsBackToGlobalWhenTheProjectHasNone(t *testing.T) {
-	svc, _ := serviceWithPaths(t)
+	svc := sessionContextService(t)
 	insertHandoff(t, svc, handoffSeed{
 		content: "global close", createdAt: "2026-08-01 00:00:00",
 	})
@@ -180,7 +181,7 @@ func TestLatestHandoffsFallsBackToGlobalWhenTheProjectHasNone(t *testing.T) {
 }
 
 func TestLatestHandoffsPrefersProjectRowsOverGlobals(t *testing.T) {
-	svc, _ := serviceWithPaths(t)
+	svc := sessionContextService(t)
 	insertHandoff(t, svc, handoffSeed{
 		content: "global close", createdAt: "2026-08-03 00:00:00",
 	})
@@ -197,13 +198,44 @@ func TestLatestHandoffsPrefersProjectRowsOverGlobals(t *testing.T) {
 	}
 }
 
-func TestListPillsIgnoresInactiveRows(t *testing.T) {
+func TestLatestHandoffsFallsBackAfterProjectRowsAreSuperseded(t *testing.T) {
+	svc := sessionContextService(t)
+	insertHandoff(t, svc, handoffSeed{
+		content: "global close", createdAt: "2026-08-01 00:00:00",
+	})
+	old := insertHandoff(t, svc, handoffSeed{
+		content: "obsolete demo close", createdAt: "2026-08-02 00:00:00", project: "demo",
+	})
+	insertMemory(t, svc, "decision", "replacement decision", "demo", "2026-08-03 00:00:00", old, nil)
+
+	got, err := svc.LatestHandoffs(t.Context(), "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.GlobalFallback || len(got.Handoffs) != 1 || got.Handoffs[0].Content != "global close" {
+		t.Fatalf("got %+v, want the global current handoff", got)
+	}
+}
+
+func TestSessionContextRequiresRocaOps(t *testing.T) {
 	svc, _ := serviceWithPaths(t)
+	for _, load := range []func() error{
+		func() error { _, err := svc.ListPills(t.Context(), "demo"); return err },
+		func() error { _, err := svc.LatestHandoffs(t.Context(), "demo"); return err },
+	} {
+		if err := load(); err == nil || !strings.Contains(err.Error(), "features.roca_ops") {
+			t.Fatalf("session context did not require roca-ops: %v", err)
+		}
+	}
+}
+
+func TestListPillsIgnoresInactiveRows(t *testing.T) {
+	svc := sessionContextService(t)
 	metadata, err := json.Marshal(map[string]any{"pill_slug": "retired"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.DB().SQL().Exec(
+	if _, err := svc.memories.Exec(
 		`INSERT INTO memories (layer, content, metadata, origin, project, status, created_at)
 		 VALUES ('pill', 'old', ?, 'agent', 'demo', 'resolved', '2026-06-01 00:00:00')`,
 		string(metadata)); err != nil {
@@ -219,11 +251,24 @@ func TestListPillsIgnoresInactiveRows(t *testing.T) {
 	}
 }
 
+type sessionContextFixture struct {
+	*service.Service
+	memories *sql.DB
+}
+
+func sessionContextService(t *testing.T) *sessionContextFixture {
+	t.Helper()
+	svc, plugins := enabledRocaOps(t)
+	memories := openRocaOps(t, plugins)
+	t.Cleanup(func() { _ = memories.Close() })
+	return &sessionContextFixture{Service: svc, memories: memories}
+}
+
 type pillSeed struct {
 	slug, content, project, createdAt string
 }
 
-func insertPill(t *testing.T, svc *service.Service, seed pillSeed) int64 {
+func insertPill(t *testing.T, svc *sessionContextFixture, seed pillSeed) int64 {
 	t.Helper()
 	metadata := map[string]any{}
 	if seed.slug != "" {
@@ -237,12 +282,12 @@ type handoffSeed struct {
 	supersedes                  int64
 }
 
-func insertHandoff(t *testing.T, svc *service.Service, seed handoffSeed) int64 {
+func insertHandoff(t *testing.T, svc *sessionContextFixture, seed handoffSeed) int64 {
 	t.Helper()
 	return insertMemory(t, svc, "handoff", seed.content, seed.project, seed.createdAt, seed.supersedes, nil)
 }
 
-func insertMemory(t *testing.T, svc *service.Service, layer, content, project, createdAt string,
+func insertMemory(t *testing.T, svc *sessionContextFixture, layer, content, project, createdAt string,
 	supersedes int64, metadata map[string]any) int64 {
 	t.Helper()
 	if metadata == nil {
@@ -260,7 +305,7 @@ func insertMemory(t *testing.T, svc *service.Service, layer, content, project, c
 	if supersedes != 0 {
 		supersedesArg = supersedes
 	}
-	result, err := svc.DB().SQL().Exec(
+	result, err := svc.memories.Exec(
 		`INSERT INTO memories (layer, content, metadata, origin, project, status, supersedes, created_at)
 		 VALUES (?, ?, ?, 'agent', ?, 'active', ?, ?)`,
 		layer, content, string(encoded), projectArg, supersedesArg, createdAt)

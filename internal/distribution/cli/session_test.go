@@ -3,6 +3,7 @@ package cli
 import (
 	"database/sql"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -92,6 +93,30 @@ func TestHandoffLatestFallsBackToGlobal(t *testing.T) {
 	out := runRoot(t, contractBuild(), "handoff", "latest", "--project", "demo")
 	if !strings.Contains(out, "global close") {
 		t.Fatalf("global fallback missing:\n%s", out)
+	}
+}
+
+func TestClaudeSessionHookRunnersLoadSessionContext(t *testing.T) {
+	home := sessionHome(t)
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Base(cwd)
+	insertOpsMemory(t, home, opsMemory{
+		layer: "pill", project: project, createdAt: "2026-08-01 00:00:00",
+		content: "hook pill", metadata: map[string]any{"pill_slug": "hook"},
+	})
+	insertOpsMemory(t, home, opsMemory{
+		layer: "handoff", project: project, createdAt: "2026-08-01 00:00:00",
+		content: "hook handoff",
+	})
+
+	if out := runRoot(t, contractBuild(), "hooks", "run", "claude-pills"); !strings.Contains(out, "hook pill") {
+		t.Fatalf("pills hook did not execute the pill loader:\n%s", out)
+	}
+	if out := runRoot(t, contractBuild(), "hooks", "run", "claude-handoff"); !strings.Contains(out, "hook handoff") {
+		t.Fatalf("handoff hook did not execute the handoff loader:\n%s", out)
 	}
 }
 

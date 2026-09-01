@@ -99,33 +99,35 @@ func (s *Service) ShowPill(ctx context.Context, project, slug string) (MemoryRec
 // predecessor leaves that predecessor current. When the project has none, it
 // falls back to global handoffs (project IS NULL).
 func (s *Service) LatestHandoffs(ctx context.Context, project string) (HandoffList, error) {
-	rows, err := s.loadLayer(ctx, "handoff", project, false)
+	rows, err := s.loadCurrentHandoffs(ctx, project)
 	if err != nil {
 		return HandoffList{}, err
 	}
 	result := HandoffList{Project: project}
-	if len(rows) == 0 {
-		rows, err = s.loadLayer(ctx, "handoff", "", false)
-		if err != nil {
-			return HandoffList{}, err
-		}
-		result.GlobalFallback = true
-	}
-	superseded, err := s.supersededIDs(ctx)
-	if err != nil {
-		return HandoffList{}, err
-	}
+	var globals []MemoryRecord
 	for _, row := range rows {
-		if superseded[row.ID] {
-			continue
+		if project != "" && row.Project == project {
+			result.Handoffs = append(result.Handoffs, row.MemoryRecord)
+		} else if row.Project == "" {
+			globals = append(globals, row.MemoryRecord)
 		}
-		result.Handoffs = append(result.Handoffs, row.MemoryRecord)
+	}
+	if len(result.Handoffs) == 0 {
+		result.Handoffs = globals
+		result.GlobalFallback = project != ""
 	}
 	return result, nil
 }
 
+func (s *Service) sessionContextReader(ctx context.Context) (*sql.DB, func(), error) {
+	if !s.opts.RocaOpsEnabled {
+		return nil, func() {}, fmt.Errorf("session context requires features.roca_ops and the %s database", rocaOpsPluginName)
+	}
+	return s.memoryReader(ctx)
+}
+
 func (s *Service) loadLayer(ctx context.Context, layer, project string, includeGlobal bool) ([]loadedMemory, error) {
-	reader, closeReader, err := s.memoryReader(ctx)
+	reader, closeReader, err := s.sessionContextReader(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -165,30 +167,41 @@ func (s *Service) loadLayer(ctx context.Context, layer, project string, includeG
 	return rows, rs.Err()
 }
 
-func (s *Service) supersededIDs(ctx context.Context) (map[int64]bool, error) {
-	reader, closeReader, err := s.memoryReader(ctx)
+func (s *Service) loadCurrentHandoffs(ctx context.Context, project string) ([]loadedMemory, error) {
+	reader, closeReader, err := s.sessionContextReader(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer closeReader()
 
-	rs, err := reader.QueryContext(ctx, `SELECT supersedes FROM memories WHERE supersedes IS NOT NULL`)
+	rs, err := reader.QueryContext(ctx, `
+		SELECT candidate.id, candidate.layer, candidate.content,
+		       IFNULL(candidate.metadata, '{}'), IFNULL(candidate.project, ''),
+		       candidate.status, candidate.created_at
+		FROM memories AS candidate
+		WHERE candidate.layer = 'handoff'
+		  AND candidate.status = 'active'
+		  AND ((? <> '' AND candidate.project = ?) OR candidate.project IS NULL)
+		  AND NOT EXISTS (
+		      SELECT 1 FROM memories AS replacement
+		      WHERE replacement.supersedes = candidate.id
+		  )
+		ORDER BY candidate.created_at DESC, candidate.id DESC`, project, project)
 	if err != nil {
-		return nil, fmt.Errorf("load superseded memory ids: %w", err)
+		return nil, fmt.Errorf("load current handoff memories: %w", err)
 	}
 	defer rs.Close()
 
-	ids := map[int64]bool{}
+	var rows []loadedMemory
 	for rs.Next() {
-		var id sql.NullInt64
-		if err := rs.Scan(&id); err != nil {
-			return nil, fmt.Errorf("read a superseded memory id: %w", err)
+		var row loadedMemory
+		if err := rs.Scan(&row.ID, &row.Layer, &row.Content, &row.Metadata, &row.Project,
+			&row.Status, &row.CreatedAt); err != nil {
+			return nil, fmt.Errorf("read a handoff memory: %w", err)
 		}
-		if id.Valid {
-			ids[id.Int64] = true
-		}
+		rows = append(rows, row)
 	}
-	return ids, rs.Err()
+	return rows, rs.Err()
 }
 
 func pillSlug(metadata string) string {

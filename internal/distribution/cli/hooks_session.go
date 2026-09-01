@@ -12,19 +12,19 @@ const claudeSessionStartEvent = "SessionStart"
 
 var (
 	claudePillsHookInvocation = regexp.MustCompile(
-		`^(?:'[^']*'|"[^"]*"|\S+)[ \t]+pill$`,
+		`^(?:'[^']*'|"[^"]*"|\S+)[ \t]+hooks[ \t]+run[ \t]+claude-pills$`,
 	)
 	claudeHandoffHookInvocation = regexp.MustCompile(
-		`^(?:'[^']*'|"[^"]*"|\S+)[ \t]+handoff[ \t]+latest$`,
+		`^(?:'[^']*'|"[^"]*"|\S+)[ \t]+hooks[ \t]+run[ \t]+claude-handoff$`,
 	)
 )
 
 func claudePillsHookCommand(executable string) string {
-	return shellQuote(executable) + " pill"
+	return shellQuote(executable) + " hooks run claude-pills"
 }
 
 func claudeHandoffHookCommand(executable string) string {
-	return shellQuote(executable) + " handoff latest"
+	return shellQuote(executable) + " hooks run claude-handoff"
 }
 
 func claudeSessionHookCommand(kind, executable string) string {
@@ -178,6 +178,8 @@ func installClaudeAuthorshipAndSessionHooks(env *cliEnv, path, declared string, 
 		return agentcfg.Outcome{Runtime: "claude", Path: path}, "", err
 	}
 	var outcome agentcfg.Outcome
+	var warning string
+	signatureCurrent := true
 	if registered {
 		refreshed, err := refreshClaudeHook(path, declared, entry.SystemSHA256, true, force)
 		outcome = agentcfg.Outcome{Runtime: "claude", Path: path,
@@ -186,9 +188,9 @@ func installClaudeAuthorshipAndSessionHooks(env *cliEnv, path, declared string, 
 			return outcome, "", err
 		}
 		if refreshed.Diverged {
-			return outcome, fmt.Sprintf("warning: %s has edits in its SYSTEM fragment; run `roca hooks install claude --force` to replace it", path), nil
-		}
-		if !refreshed.Current {
+			signatureCurrent = false
+			warning = fmt.Sprintf("warning: %s has edits in its SYSTEM fragment; run `roca hooks install claude --force` to replace it", path)
+		} else if !refreshed.Current {
 			return outcome, "", fmt.Errorf("the installed Claude hook was not found in %s", path)
 		}
 	} else {
@@ -197,15 +199,17 @@ func installClaudeAuthorshipAndSessionHooks(env *cliEnv, path, declared string, 
 			return outcome, "", err
 		}
 	}
-	system, found, err := claudeHookSystem(path)
-	if err != nil || !found {
-		if err == nil {
-			err = fmt.Errorf("the installed Claude hook was not found in %s", path)
+	if signatureCurrent {
+		system, found, err := claudeHookSystem(path)
+		if err != nil || !found {
+			if err == nil {
+				err = fmt.Errorf("the installed Claude hook was not found in %s", path)
+			}
+			return outcome, "", err
 		}
-		return outcome, "", err
-	}
-	if err := env.registerHook(path, "claude", system); err != nil {
-		return outcome, "", err
+		if err := env.registerHook(path, "claude", system); err != nil {
+			return outcome, "", err
+		}
 	}
 	if pills {
 		extra, err := installClaudeSessionHook(path, declared, "pills")
@@ -221,7 +225,7 @@ func installClaudeAuthorshipAndSessionHooks(env *cliEnv, path, declared string, 
 		}
 		outcome = mergeHookOutcomes(outcome, extra)
 	}
-	return outcome, "", nil
+	return outcome, warning, nil
 }
 
 func uninstallClaudeAuthorshipAndSessionHooks(env *cliEnv, path string, pills, handoff bool) (agentcfg.Outcome, string, error) {

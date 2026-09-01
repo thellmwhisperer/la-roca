@@ -66,6 +66,21 @@ func TestStoreRefusesAHandoffThatOmitsTheRequiredShape(t *testing.T) {
 	}
 }
 
+func TestStoreRefusesAHandoffWithBlankLabeledFields(t *testing.T) {
+	svc, _ := serviceWithPaths(t)
+	_, err := svc.Store(t.Context(), service.StoreRequest{
+		Layer: "handoff", Content: "branch: done: state: next:", Authorship: sessionWriter(),
+	})
+	if err == nil {
+		t.Fatal("store accepted blank handoff fields")
+	}
+	for _, want := range []string{"branch/scope", "done", "state", "next"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("blank-field refusal does not name %q: %v", want, err)
+		}
+	}
+}
+
 func TestStoreAcceptsASessionHandoffWithTheRequiredShape(t *testing.T) {
 	svc, _ := serviceWithPaths(t)
 	result, err := svc.Store(t.Context(), sessionHandoff("the session closed on this branch"))
