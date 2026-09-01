@@ -241,6 +241,58 @@ func TestZcodeInstallPreservesOperatorHookUsingSameWrapper(t *testing.T) {
 	}
 }
 
+func TestZcodeUninstallKeepsWrapperForEquivalentOperatorPaths(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		command func(string, string) (string, error)
+	}{
+		{name: "home alias", command: func(_, _ string) (string, error) {
+			return "~/.zcode/hooks/roca-handoff.sh", nil
+		}},
+		{name: "symlink alias", command: func(home, wrapper string) (string, error) {
+			alias := filepath.Join(home, "operator-wrapper")
+			return shellQuote(alias), os.Symlink(wrapper, alias)
+		}},
+		{name: "ambiguous shell", command: func(_, _ string) (string, error) {
+			return `test -x "$HOME/.zcode/hooks/roca-handoff.sh" && "$HOME/.zcode/hooks/roca-handoff.sh"`, nil
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			config := filepath.Join(home, ".zcode", "cli", "config.json")
+			wrapper := filepath.Join(home, ".zcode", "hooks", "roca-handoff.sh")
+			if err := os.MkdirAll(filepath.Dir(config), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			operatorCommand, err := test.command(home, wrapper)
+			if err != nil {
+				t.Fatal(err)
+			}
+			initial := fmt.Sprintf(`{"hooks":{"enabled":true,"events":{"SessionStart":[{"hooks":[{"type":"command","command":%q,"timeoutMs":4000}]}]}}}`, operatorCommand)
+			if err := os.WriteFile(config, []byte(initial), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := installZcodeHandoffHook(config, wrapper, filepath.Join(home, "roca")); err != nil {
+				t.Fatal(err)
+			}
+			_, warning, err := uninstallZcodeHandoffHook(config, wrapper)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(warning, "remaining operator-owned hook references it") {
+				t.Fatalf("wrapper retention warning = %q", warning)
+			}
+			if _, err := os.Stat(wrapper); err != nil {
+				t.Fatalf("operator-referenced wrapper was removed: %v", err)
+			}
+			if body, err := os.ReadFile(config); err != nil || string(body) != initial {
+				t.Fatalf("operator config changed: body=%q err=%v", body, err)
+			}
+		})
+	}
+}
+
 func TestZcodeHookRefusesPreexistingOperatorWrapper(t *testing.T) {
 	home := t.TempDir()
 	config := filepath.Join(home, "config.json")
@@ -284,6 +336,31 @@ func TestZcodeWrapperInstallUsesCapturedPreimage(t *testing.T) {
 	body, err := os.ReadFile(path)
 	if err != nil || string(body) != string(concurrent) {
 		t.Fatalf("wrapper install changed concurrent bytes: body=%q err=%v", body, err)
+	}
+}
+
+func TestZcodeWrapperInstallNormalizesManagedMode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "roca-handoff.sh")
+	content := zcodeWrapper("/bin/roca")
+	if err := os.WriteFile(path, []byte(content), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	state, err := readZcodeWrapperState(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeZcodeWrapper(path, content, state); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o700 {
+		t.Fatalf("managed wrapper mode = %o, want 700", info.Mode().Perm())
 	}
 }
 
