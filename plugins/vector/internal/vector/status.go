@@ -1,7 +1,6 @@
 package vector
 
 import (
-	"bufio"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -9,12 +8,9 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/thellmwhisperer/la-roca-vector/internal/telemetry"
 )
 
 const (
@@ -27,11 +23,14 @@ const (
 	statusBusyTimeoutMS  = 250
 	statusCountTimeout   = time.Second
 	statusOverallTimeout = 3 * time.Second
+	workerActivityFile   = ".worker-status.json"
+	sourceMarkerMetaKey  = "source_marker"
 )
 
 var (
 	candidateCountTimeout = 500 * time.Millisecond
-	countDeclaredSources  = readDeclaredSourceCount
+	countDeclaredChunks   = readDeclaredChunkCount
+	workerActivityMu      sync.Mutex
 )
 
 // StatusRequest is the filesystem seat status reads. It does not take an
@@ -39,7 +38,6 @@ var (
 type StatusRequest struct {
 	PluginRoot string
 	StateDir   string
-	DataDir    string
 }
 
 type Vectorization struct {
@@ -77,7 +75,7 @@ func ReportVectorization(ctx context.Context, req StatusRequest) (Vectorization,
 		return Vectorization{}, err
 	}
 	report := Vectorization{
-		Worker:    readWorkerStatus(req.StateDir, req.DataDir),
+		Worker:    readWorkerStatus(req.StateDir),
 		Databases: make([]DatabaseVectorization, len(registry.Databases)),
 	}
 	var wg sync.WaitGroup
@@ -85,30 +83,40 @@ func ReportVectorization(ctx context.Context, req StatusRequest) (Vectorization,
 		wg.Add(1)
 		go func(index int, database vectorDatabase) {
 			defer wg.Done()
-			report.Databases[index] = inspectDatabase(ctx, pluginRoot, database, report.Worker.Running)
+			active := report.Worker.Database != nil && *report.Worker.Database == database.owner()
+			report.Databases[index] = inspectDatabase(ctx, pluginRoot, database, active)
 		}(index, database)
 	}
 	wg.Wait()
 	return report, nil
 }
 
-func readWorkerStatus(stateDir, dataDir string) WorkerStatus {
+func readWorkerStatus(stateDir string) WorkerStatus {
 	status := WorkerStatus{}
-	if stateDir == "" {
-		status.Backend = latestWriterBackend(dataDir)
+	if stateDir == "" || !WorkerRunning(stateDir) {
 		return status
 	}
-	status.Running = WorkerRunning(stateDir)
-	if status.Running {
-		if pid := ReadWorkerPID(stateDir); pid > 0 {
-			status.PID = &pid
-		}
+	pid := ReadWorkerPID(stateDir)
+	if pid <= 0 {
+		return status
 	}
-	status.Backend = latestWriterBackend(dataDir)
+	status.Running = true
+	status.PID = &pid
+	activity, err := readWorkerActivity(stateDir)
+	if err != nil || activity.PID != pid {
+		return status
+	}
+	backend := strings.ToLower(strings.TrimSpace(activity.Backend))
+	if backend == "cpu" || backend == "metal" {
+		status.Backend = &backend
+	}
+	if database := strings.TrimSpace(activity.Database); database != "" {
+		status.Database = &database
+	}
 	return status
 }
 
-func inspectDatabase(ctx context.Context, pluginRoot string, database vectorDatabase, workerRunning bool) DatabaseVectorization {
+func inspectDatabase(ctx context.Context, pluginRoot string, database vectorDatabase, workerActive bool) DatabaseVectorization {
 	row := DatabaseVectorization{
 		Plugin:   database.Plugin,
 		Database: database.Database,
@@ -117,51 +125,50 @@ func inspectDatabase(ctx context.Context, pluginRoot string, database vectorData
 	}
 	sourcePath := filepath.Join(pluginRoot, database.Plugin, database.Path)
 	sidecarPath := SidecarPath(sourcePath)
-	bytes, lastWrite, exists := sidecarFileFacts(sidecarPath)
+	bytes, lastWrite, exists, statErr := sidecarFileFacts(sidecarPath)
 	row.SidecarBytes, row.LastWrite = bytes, lastWrite
 	row.CandidateChunks = boundedCandidateCount(ctx, database, sourcePath)
+	if statErr != nil {
+		return row
+	}
 	if !exists {
 		row.State = StateEmpty
 		return row
 	}
 	store, err := openSQLiteBusy(sidecarPath, true, statusBusyTimeoutMS)
 	if err != nil {
-		row.State = StateUnknown
 		return row
 	}
 	defer store.Close()
-	row.EmbeddedChunks = readEmbeddedChunks(ctx, store, sidecarPath)
+	row.EmbeddedChunks = readEmbeddedChunks(ctx, store)
 	contract := optionalMeta(store, "contract")
 	fingerprint := optionalMeta(store, "source_fingerprint")
-	row.State = classifySidecar(exists, true, workerRunning, row.EmbeddedChunks, contract,
-		database.contractFingerprint(), fingerprint)
+	storedMarker := optionalMeta(store, sourceMarkerMetaKey)
+	currentMarker, markerErr := sourceFileMarker(sourcePath)
+	var marker *string
+	if markerErr == nil {
+		marker = &currentMarker
+	} else if os.IsNotExist(markerErr) {
+		missing := "missing"
+		marker = &missing
+	}
+	row.State = classifySidecar(exists, true, workerActive, row.EmbeddedChunks, contract,
+		database.contractFingerprint(), fingerprint, storedMarker, marker)
 	return row
 }
 
-func readEmbeddedChunks(ctx context.Context, store *sql.DB, sidecarPath string) *int64 {
+func readEmbeddedChunks(ctx context.Context, store *sql.DB) *int64 {
 	countCtx, cancel := boundContext(ctx, statusCountTimeout)
 	defer cancel()
 	var chunks int64
-	if err := store.QueryRowContext(countCtx, `SELECT COUNT(*) FROM chunks`).Scan(&chunks); err == nil {
-		return &chunks
-	}
-	// COUNT on a multi-gigabyte sidecar scans the whole btree and would block
-	// status. MAX(id) is the highest stored chunk identity and is O(log n).
-	maxCtx, cancelMax := boundContext(ctx, 200*time.Millisecond)
-	defer cancelMax()
-	fallback, err := openSQLiteBusy(sidecarPath, true, statusBusyTimeoutMS)
-	if err != nil {
+	if err := store.QueryRowContext(countCtx, `SELECT COUNT(*) FROM chunks`).Scan(&chunks); err != nil {
 		return nil
 	}
-	defer fallback.Close()
-	var maxID sql.NullInt64
-	if err := fallback.QueryRowContext(maxCtx, `SELECT MAX(id) FROM chunks`).Scan(&maxID); err != nil || !maxID.Valid {
-		return nil
-	}
-	return &maxID.Int64
+	return &chunks
 }
 
-func classifySidecar(exists, readable, workerRunning bool, chunks *int64, storedContract, currentContract, fingerprint string) string {
+func classifySidecar(exists, readable, workerActive bool, chunks *int64, storedContract,
+	currentContract, fingerprint, storedMarker string, currentMarker *string) string {
 	if exists && !readable {
 		return StateUnknown
 	}
@@ -171,14 +178,21 @@ func classifySidecar(exists, readable, workerRunning bool, chunks *int64, stored
 	if storedContract != "" && currentContract != "" && storedContract != currentContract {
 		return StateOutdated
 	}
-	if fingerprint != "" && (storedContract == "" || storedContract == currentContract) {
+	if fingerprint != "" {
+		if storedContract == "" || currentContract == "" || storedContract != currentContract ||
+			storedMarker == "" || currentMarker == nil {
+			return StateUnknown
+		}
+		if storedMarker != *currentMarker {
+			return StateOutdated
+		}
 		return StateComplete
 	}
-	if chunks != nil && *chunks == 0 && fingerprint == "" {
-		return StateEmpty
-	}
-	if fingerprint == "" && (workerRunning || (chunks != nil && *chunks > 0)) {
+	if workerActive {
 		return StateBuilding
+	}
+	if chunks != nil && *chunks == 0 {
+		return StateEmpty
 	}
 	return StateUnknown
 }
@@ -191,17 +205,23 @@ func declaredTableNames(database vectorDatabase) []string {
 	return names
 }
 
-func sidecarFileFacts(path string) (*int64, *string, bool) {
+func sidecarFileFacts(path string) (*int64, *string, bool, error) {
 	info, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return nil, nil, false, nil
+	}
 	if err != nil {
-		return nil, nil, false
+		return nil, nil, false, err
 	}
 	size := info.Size()
 	mtime := info.ModTime()
 	for _, extra := range []string{path + "-wal", path + "-shm"} {
 		extraInfo, extraErr := os.Stat(extra)
-		if extraErr != nil {
+		if os.IsNotExist(extraErr) {
 			continue
+		}
+		if extraErr != nil {
+			return nil, nil, true, extraErr
 		}
 		size += extraInfo.Size()
 		if extraInfo.ModTime().After(mtime) {
@@ -209,7 +229,7 @@ func sidecarFileFacts(path string) (*int64, *string, bool) {
 		}
 	}
 	stamp := mtime.UTC().Format(time.RFC3339)
-	return &size, &stamp, true
+	return &size, &stamp, true, nil
 }
 
 func optionalMeta(store *sql.DB, key string) string {
@@ -229,7 +249,7 @@ func boundedCandidateCount(ctx context.Context, database vectorDatabase, path st
 	}
 	ch := make(chan reply, 1)
 	go func() {
-		n, err := countDeclaredSources(ctx, database, path)
+		n, err := countDeclaredChunks(ctx, database, path)
 		ch <- reply{n, err}
 	}()
 	select {
@@ -243,9 +263,11 @@ func boundedCandidateCount(ctx context.Context, database vectorDatabase, path st
 	}
 }
 
-func readDeclaredSourceCount(ctx context.Context, database vectorDatabase, path string) (*int64, error) {
-	if _, err := os.Stat(path); err != nil {
+func readDeclaredChunkCount(ctx context.Context, database vectorDatabase, path string) (*int64, error) {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return nil, nil
+	} else if err != nil {
+		return nil, err
 	}
 	store, err := openSQLiteBusy(path, true, int(candidateCountTimeout/time.Millisecond))
 	if err != nil {
@@ -254,48 +276,124 @@ func readDeclaredSourceCount(ctx context.Context, database vectorDatabase, path 
 	defer store.Close()
 	var total int64
 	for _, table := range database.Tables {
-		statement := `SELECT COUNT(*) FROM ` + quoteIdentifier(table.Name) + ` WHERE ` +
-			declaredSourcePredicate("", table)
-		var count int64
-		if err := store.QueryRowContext(ctx, statement).Scan(&count); err != nil {
+		columns := make([]string, len(table.TextColumns))
+		for index, column := range table.TextColumns {
+			columns[index] = `COALESCE(CAST(` + quoteIdentifier(column) + ` AS TEXT),'')`
+		}
+		statement := `SELECT ` + strings.Join(columns, ",") + ` FROM ` + quoteIdentifier(table.Name) +
+			` WHERE ` + declaredSourcePredicate("", table)
+		rows, err := store.QueryContext(ctx, statement)
+		if err != nil {
 			return nil, err
 		}
-		total += count
+		for rows.Next() {
+			values := make([]string, len(columns))
+			targets := make([]any, len(columns))
+			for index := range values {
+				targets[index] = &values[index]
+			}
+			if err := rows.Scan(targets...); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			for _, value := range values {
+				text := strings.TrimSpace(value)
+				if table.Chunking != nil &&
+					(table.Chunking.MaxChars != nil || table.Chunking.OverlapChars != nil) {
+					size, overlap := table.chunking()
+					total += int64(len(chunks(text, size, overlap)))
+				} else {
+					total += int64(len(tokenChunks(text, defaultChunkTokens, defaultOverlapTokens)))
+				}
+			}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		if err := rows.Close(); err != nil {
+			return nil, err
+		}
 	}
 	return &total, nil
 }
 
-func latestWriterBackend(dataDir string) *string {
-	if strings.TrimSpace(dataDir) == "" {
-		return nil
-	}
-	matches, err := filepath.Glob(filepath.Join(telemetry.Dir(dataDir), telemetry.Stream+"-*.jsonl"))
-	if err != nil || len(matches) == 0 {
-		return nil
-	}
-	sort.Strings(matches)
-	file, err := os.Open(matches[len(matches)-1])
+type workerActivity struct {
+	PID      int    `json:"pid"`
+	Backend  string `json:"backend,omitempty"`
+	Database string `json:"database,omitempty"`
+}
+
+func readWorkerActivity(stateDir string) (workerActivity, error) {
+	raw, err := os.ReadFile(filepath.Join(stateDir, workerActivityFile))
 	if err != nil {
+		return workerActivity{}, err
+	}
+	var activity workerActivity
+	if err := json.Unmarshal(raw, &activity); err != nil {
+		return workerActivity{}, err
+	}
+	return activity, nil
+}
+
+func updateWorkerActivity(stateDir, backend, database string) error {
+	if stateDir == "" || ReadWorkerPID(stateDir) != os.Getpid() {
 		return nil
 	}
-	defer file.Close()
-	var backend string
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for scanner.Scan() {
-		var record telemetry.Record
-		if json.Unmarshal(scanner.Bytes(), &record) != nil {
+	workerActivityMu.Lock()
+	defer workerActivityMu.Unlock()
+	activity, _ := readWorkerActivity(stateDir)
+	if activity.PID != os.Getpid() {
+		activity = workerActivity{PID: os.Getpid()}
+	}
+	if backend != "" {
+		activity.Backend = backend
+	}
+	if database != "" {
+		activity.Database = database
+	}
+	raw, err := json.Marshal(activity)
+	if err != nil {
+		return err
+	}
+	temporary := filepath.Join(stateDir, ".worker-status.tmp")
+	if err := os.WriteFile(temporary, append(raw, '\n'), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(temporary, filepath.Join(stateDir, workerActivityFile))
+}
+
+func clearWorkerActivity(stateDir string) {
+	workerActivityMu.Lock()
+	defer workerActivityMu.Unlock()
+	_ = os.Remove(filepath.Join(stateDir, workerActivityFile))
+}
+
+type sourceMarkerFact struct {
+	Path    string `json:"path"`
+	Size    int64  `json:"size"`
+	ModTime int64  `json:"mtime_ns"`
+}
+
+func sourceFileMarker(path string) (string, error) {
+	facts := make([]sourceMarkerFact, 0, 2)
+	for _, candidate := range []string{path, path + "-wal"} {
+		info, err := os.Stat(candidate)
+		if os.IsNotExist(err) && candidate != path {
 			continue
 		}
-		switch strings.ToLower(strings.TrimSpace(record.Backend)) {
-		case "metal", "cpu":
-			backend = strings.ToLower(record.Backend)
+		if err != nil {
+			return "", err
 		}
+		absolute, err := filepath.Abs(candidate)
+		if err != nil {
+			return "", err
+		}
+		facts = append(facts, sourceMarkerFact{Path: filepath.Clean(absolute), Size: info.Size(),
+			ModTime: info.ModTime().UnixNano()})
 	}
-	if backend == "" {
-		return nil
-	}
-	return &backend
+	raw, err := json.Marshal(facts)
+	return string(raw), err
 }
 
 func openSQLiteBusy(path string, readOnly bool, busyMS int) (*sql.DB, error) {

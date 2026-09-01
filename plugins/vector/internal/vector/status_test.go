@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -13,21 +14,12 @@ import (
 func TestReportVectorizationReadsSidecarFactsAndNeverInventZero(t *testing.T) {
 	root := t.TempDir()
 	state := filepath.Join(root, "state")
-	dataDir := filepath.Join(root, "data")
 	if err := os.MkdirAll(state, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(state, WorkerClaimFilename), []byte(fmt.Sprintf("%d\n", os.Getpid())), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(dataDir, "logs"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	engineLine := `{"timestamp":"2026-09-01T20:20:17Z","kind":"embed","operation":"ingest","backend":"metal","fallback_reason":"bulk build default"}` + "\n"
-	if err := os.WriteFile(filepath.Join(dataDir, "logs", "engine-2026-09-01.jsonl"), []byte(engineLine), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
 	corpus := vectorDatabase{
 		Plugin: "roca-corpus", Database: "corpus", Path: "roca-corpus.db", Alias: "corpus",
 		Tables: []vectorTable{{Name: "notes", IDColumn: "id", TextColumns: []string{"body"}}},
@@ -56,12 +48,23 @@ func TestReportVectorizationReadsSidecarFactsAndNeverInventZero(t *testing.T) {
 	writeSourceRows(t, filepath.Join(root, corpus.Plugin, corpus.Path),
 		`CREATE TABLE notes(id TEXT PRIMARY KEY, body TEXT);
 		 INSERT INTO notes VALUES ('a','alpha'),('b','bravo'),('c','charlie');`)
+	opsPath := filepath.Join(root, ops.Plugin, ops.Path)
+	writeSourceRows(t, opsPath,
+		`CREATE TABLE memories(id TEXT PRIMARY KEY, content TEXT);
+		 INSERT INTO memories VALUES ('a','alpha');`)
 	writeSidecarWithChunks(t, SidecarPath(filepath.Join(root, corpus.Plugin, corpus.Path)),
 		corpus.owner(), 7, map[string]string{"contract": corpus.contractFingerprint()})
-	writeSidecarWithChunks(t, SidecarPath(filepath.Join(root, ops.Plugin, ops.Path)),
-		ops.owner(), 4, map[string]string{
-			"contract": ops.contractFingerprint(), "source_fingerprint": "sealed-ops",
-		})
+	opsMarker, err := sourceFileMarker(opsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeSidecarWithChunks(t, SidecarPath(opsPath), ops.owner(), 4, map[string]string{
+		"contract": ops.contractFingerprint(), "source_fingerprint": "sealed-ops",
+		sourceMarkerMetaKey: opsMarker,
+	})
+	if err := updateWorkerActivity(state, "metal", corpus.owner()); err != nil {
+		t.Fatal(err)
+	}
 	writeSidecarWithChunks(t, SidecarPath(filepath.Join(root, notesPlugin.Plugin, notesPlugin.Path)),
 		notesPlugin.owner(), 2, map[string]string{"contract": "stale-contract"})
 	if err := os.MkdirAll(filepath.Join(root, galactic.Plugin), 0o700); err != nil {
@@ -73,7 +76,7 @@ func TestReportVectorizationReadsSidecarFactsAndNeverInventZero(t *testing.T) {
 
 	started := time.Now()
 	report, err := ReportVectorization(context.Background(), StatusRequest{
-		PluginRoot: root, StateDir: state, DataDir: dataDir,
+		PluginRoot: root, StateDir: state,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -91,8 +94,8 @@ func TestReportVectorizationReadsSidecarFactsAndNeverInventZero(t *testing.T) {
 	if report.Worker.Backend == nil || *report.Worker.Backend != "metal" {
 		t.Fatalf("worker backend = %v, want metal", report.Worker.Backend)
 	}
-	if report.Worker.Database != nil {
-		t.Fatalf("worker database was deduced as %q; it was not recorded", *report.Worker.Database)
+	if report.Worker.Database == nil || *report.Worker.Database != corpus.owner() {
+		t.Fatalf("worker database = %v, want %s", report.Worker.Database, corpus.owner())
 	}
 
 	if len(report.Databases) != 5 {
@@ -127,8 +130,8 @@ func TestReportVectorizationReadsSidecarFactsAndNeverInventZero(t *testing.T) {
 	if opsRow.EmbeddedChunks == nil || *opsRow.EmbeddedChunks != 4 {
 		t.Fatalf("ops embedded = %v, want 4", opsRow.EmbeddedChunks)
 	}
-	if opsRow.CandidateChunks != nil {
-		t.Fatalf("ops candidates = %v, want unknown because the source database is absent", opsRow.CandidateChunks)
+	if opsRow.CandidateChunks == nil || *opsRow.CandidateChunks != 1 {
+		t.Fatalf("ops candidates = %v, want 1", opsRow.CandidateChunks)
 	}
 	if opsRow.State != StateComplete {
 		t.Fatalf("sealed ops = %q, want complete", opsRow.State)
@@ -196,12 +199,12 @@ func TestReportVectorizationUnknownNeverBecomesZeroOnAHungSourceCount(t *testing
 	previous := candidateCountTimeout
 	candidateCountTimeout = 30 * time.Millisecond
 	t.Cleanup(func() { candidateCountTimeout = previous })
-	countDeclaredSources = func(context.Context, vectorDatabase, string) (*int64, error) {
+	countDeclaredChunks = func(context.Context, vectorDatabase, string) (*int64, error) {
 		time.Sleep(200 * time.Millisecond)
 		zero := int64(0)
 		return &zero, nil
 	}
-	t.Cleanup(func() { countDeclaredSources = readDeclaredSourceCount })
+	t.Cleanup(func() { countDeclaredChunks = readDeclaredChunkCount })
 
 	started := time.Now()
 	report, err := ReportVectorization(context.Background(), StatusRequest{PluginRoot: root})
@@ -216,6 +219,166 @@ func TestReportVectorizationUnknownNeverBecomesZeroOnAHungSourceCount(t *testing
 	}
 	if report.Databases[0].EmbeddedChunks == nil || *report.Databases[0].EmbeddedChunks != 5 {
 		t.Fatalf("embedded chunks were lost when candidates timed out: %v", report.Databases[0].EmbeddedChunks)
+	}
+}
+
+func TestEmbeddingSchedulerRecordsTheDatabaseItIsEmbedding(t *testing.T) {
+	state := t.TempDir()
+	if err := os.WriteFile(filepath.Join(state, WorkerClaimFilename), []byte(fmt.Sprintf("%d\n", os.Getpid())), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	base := &delayedEmbedder{delay: 100 * time.Millisecond}
+	scheduler := newEmbeddingScheduler(context.Background(), base, 1)
+	runDone := make(chan error, 1)
+	go func() { runDone <- scheduler.run() }()
+	embedDone := make(chan error, 1)
+	go func() {
+		ctx := context.WithValue(context.Background(), sourceOrderKey{}, sourceOrder{id: "a"})
+		_, err := (scheduledEmbedder{base: base, id: 0, scheduler: scheduler,
+			database: "roca-corpus/corpus", stateDir: state}).Embed(ctx, DefaultModel, []string{"alpha"})
+		embedDone <- err
+	}()
+	deadline := time.Now().Add(time.Second)
+	for {
+		status := readWorkerStatus(state)
+		if status.Database != nil && *status.Database == "roca-corpus/corpus" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("worker database was not recorded: %+v", status)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if err := <-embedDone; err != nil {
+		t.Fatal(err)
+	}
+	scheduler.finished <- 0
+	if err := <-runDone; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReportVectorizationCountsDeclaredChunksExactly(t *testing.T) {
+	root := t.TempDir()
+	maxChars, overlap := 4, 1
+	database := vectorDatabase{
+		Plugin: "roca-corpus", Database: "corpus", Path: "roca-corpus.db", Alias: "corpus",
+		Tables: []vectorTable{
+			{Name: "notes", IDColumn: "id", TextColumns: []string{"body", "answer"},
+				Chunking: &chunkingHints{MaxChars: &maxChars, OverlapChars: &overlap}},
+			{Name: "entries", IDColumn: "id", TextColumns: []string{"body"}},
+		},
+	}
+	writeRegistry(t, root, vectorRegistry{Schema: 2, Databases: []vectorDatabase{database}})
+	path := filepath.Join(root, database.Plugin, database.Path)
+	writeSourceRows(t, path, `CREATE TABLE notes(id TEXT PRIMARY KEY, body TEXT, answer TEXT);
+		CREATE TABLE entries(id TEXT PRIMARY KEY, body TEXT);`)
+	store := openTestSQLite(t, path)
+	if _, err := store.Exec(`INSERT INTO notes VALUES ('a','abcdef','xy')`); err != nil {
+		store.Close()
+		t.Fatal(err)
+	}
+	longText := strings.TrimSpace(strings.Repeat("token ", defaultChunkTokens+1))
+	if _, err := store.Exec(`INSERT INTO entries VALUES ('a',?)`, longText); err != nil {
+		store.Close()
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := ReportVectorization(context.Background(), StatusRequest{PluginRoot: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate := report.Databases[0].CandidateChunks
+	if candidate == nil || *candidate != 5 {
+		t.Fatalf("candidate chunks = %v, want 5", candidate)
+	}
+}
+
+func TestReportVectorizationMarksChangedCompletedSourceOutdated(t *testing.T) {
+	root := t.TempDir()
+	database := vectorDatabase{
+		Plugin: "roca-corpus", Database: "corpus", Path: "roca-corpus.db", Alias: "corpus",
+		Tables: []vectorTable{{Name: "notes", IDColumn: "id", TextColumns: []string{"body"}}},
+	}
+	writeRegistry(t, root, vectorRegistry{Schema: 2, Databases: []vectorDatabase{database}})
+	path := filepath.Join(root, database.Plugin, database.Path)
+	writeSourceRows(t, path, `CREATE TABLE notes(id TEXT PRIMARY KEY, body TEXT);
+		INSERT INTO notes VALUES ('a','alpha');`)
+	marker, err := sourceFileMarker(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeSidecarWithChunks(t, SidecarPath(path), database.owner(), 1, map[string]string{
+		"contract": database.contractFingerprint(), "source_fingerprint": "sealed",
+		sourceMarkerMetaKey: marker,
+	})
+
+	report, err := ReportVectorization(context.Background(), StatusRequest{PluginRoot: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Databases[0].State != StateComplete {
+		t.Fatalf("unchanged state = %q, want complete", report.Databases[0].State)
+	}
+	store := openTestSQLite(t, path)
+	if _, err := store.Exec(`INSERT INTO notes VALUES ('b','bravo')`); err != nil {
+		store.Close()
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	report, err = ReportVectorization(context.Background(), StatusRequest{PluginRoot: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Databases[0].State != StateOutdated {
+		t.Fatalf("changed state = %q, want outdated", report.Databases[0].State)
+	}
+}
+
+func TestReadEmbeddedChunksReturnsUnknownInsteadOfHighestID(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "index.db")
+	writeSidecarWithChunks(t, path, "roca-corpus/corpus", 3, nil)
+	store := openTestSQLite(t, path)
+	if _, err := store.Exec(`DELETE FROM chunks WHERE id=2`); err != nil {
+		store.Close()
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if count := readEmbeddedChunks(ctx, store); count != nil {
+		store.Close()
+		t.Fatalf("unreadable embedded count = %v, want unknown", *count)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReportVectorizationTreatsSidecarStatErrorsAsUnknown(t *testing.T) {
+	root := t.TempDir()
+	database := vectorDatabase{
+		Plugin: "roca-corpus", Database: "corpus", Path: "roca-corpus.db", Alias: "corpus",
+		Tables: []vectorTable{{Name: "notes", IDColumn: "id", TextColumns: []string{"body"}}},
+	}
+	writeRegistry(t, root, vectorRegistry{Schema: 2, Databases: []vectorDatabase{database}})
+	sidecar := SidecarPath(filepath.Join(root, database.Plugin, database.Path))
+	if err := os.MkdirAll(filepath.Dir(sidecar), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Base(sidecar), sidecar); err != nil {
+		t.Skipf("cannot create a looping sidecar symlink: %v", err)
+	}
+	report, err := ReportVectorization(context.Background(), StatusRequest{PluginRoot: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Databases[0].State != StateUnknown {
+		t.Fatalf("unreadable sidecar state = %q, want unknown", report.Databases[0].State)
 	}
 }
 

@@ -45,6 +45,8 @@ type Worker struct {
 }
 
 func (w Worker) Run(ctx context.Context) Completion {
+	clearWorkerActivity(w.DataDir)
+	defer clearWorkerActivity(w.DataDir)
 	started := time.Now().UTC()
 	completion := Completion{ExitStatus: 0, Model: w.Index.Model, StartedAt: started}
 	failIf := func(err error) {

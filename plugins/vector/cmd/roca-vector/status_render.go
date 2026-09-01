@@ -24,7 +24,6 @@ func (env *environment) vectorizationStatus(ctx context.Context) (vector.Vectori
 	return vector.ReportVectorization(ctx, vector.StatusRequest{
 		PluginRoot: pluginRoot,
 		StateDir:   state,
-		DataDir:    coreDataDir(env.dbPath),
 	})
 }
 

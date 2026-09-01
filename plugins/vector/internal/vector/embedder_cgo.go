@@ -128,6 +128,7 @@ func (n *Native) open(ctx context.Context) error {
 	n.engine = loaded
 	n.backend = loaded.Backend
 	n.fallback = loaded.FallbackReason
+	_ = updateWorkerActivity(n.StateDir, n.backend, "")
 	n.record(telemetry.Record{
 		Kind: telemetry.KindLoad, Backend: n.backend, Fallback: n.fallback,
 		DurationMS: time.Since(started).Milliseconds(), MemoryHWM: memoryHighWater(),
