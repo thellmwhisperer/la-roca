@@ -23,6 +23,7 @@ const (
 	artifactKindSkillCatalog = "skill-catalog"
 	artifactKindPrompt       = "prompt"
 	artifactKindHook         = "hook"
+	artifactKindMCP          = "mcp-config"
 )
 
 func artifactsCommand(env *cliEnv) *cobra.Command {

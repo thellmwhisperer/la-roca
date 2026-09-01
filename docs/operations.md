@@ -79,8 +79,9 @@ to true. A pre-existing unrecognized wrapper is left untouched and blocks the
 install with a clear remedy. Reinstalling is idempotent, and `roca hooks
 uninstall zcode` removes only that marked entry. It removes the managed wrapper
 unless a remaining operator-owned hook references it; in that case it keeps the
-wrapper and reports why. Neither init nor update installs or refreshes this
-integration.
+wrapper and reports why. The Bash wrapper limits hook installation to macOS and
+Linux; ZCode skills and MCP remain available on their supported platforms.
+Neither init nor update installs or refreshes this integration.
 
 Other harnesses can use the same client-side pattern: intercept the shell tool,
 read identity only from a harness-owned session source, and inject both flags;

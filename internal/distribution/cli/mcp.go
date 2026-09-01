@@ -1,12 +1,14 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/thellmwhisperer/la-roca/internal/artifact"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/agentcfg"
 )
 
@@ -49,8 +51,18 @@ func mcpInstallCommand(env *cliEnv) *cobra.Command {
 			if !filepath.IsAbs(declared) {
 				return fmt.Errorf("resolve the running executable %q to an absolute path", declared)
 			}
+			var rollback func() error
+			if args[0] == agentcfg.RuntimeZcode {
+				rollback, err = env.recordZcodeMCPPreimage(path)
+				if err != nil {
+					return err
+				}
+			}
 			outcome, err := agentcfg.Install(args[0], path, declared)
 			if err != nil {
+				if rollback != nil {
+					err = errors.Join(err, rollback())
+				}
 				return err
 			}
 			if env.json {
@@ -106,7 +118,7 @@ func mcpUninstallCommand(env *cliEnv) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				outcome, err := agentcfg.Uninstall(runtime, path)
+				outcome, err := env.uninstallMCP(runtime, path)
 				if err != nil {
 					return err
 				}
@@ -148,6 +160,98 @@ func mcpStatusCommand(env *cliEnv) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&configPath, "config", "", "the configuration file to read")
 	return cmd
+}
+
+const zcodeMCPPreimageFormat = "zcode-mcp-preimage-v1:"
+
+func (env *cliEnv) recordZcodeMCPPreimage(path string) (func() error, error) {
+	registryPath, registry, err := env.artifactRegistry()
+	if err != nil {
+		return nil, err
+	}
+	if entry, found := registry.Find(artifactKindMCP, agentcfg.RuntimeZcode, path); found {
+		status, statusErr := agentcfg.Status(agentcfg.RuntimeZcode, path)
+		if statusErr != nil {
+			return nil, statusErr
+		}
+		if status.State == agentcfg.StateConfigured {
+			if _, err := zcodeMCPPreimageFromEntry(entry); err != nil {
+				return nil, err
+			}
+			return nil, nil
+		}
+	}
+	body, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		body = nil
+	} else if err != nil {
+		return nil, err
+	}
+	preimage, err := agentcfg.ZcodeMCPPreimage(string(body))
+	if err != nil {
+		return nil, err
+	}
+	before := registry
+	before.Entries = append([]artifact.Entry(nil), registry.Entries...)
+	_, statErr := os.Stat(registryPath)
+	registryExisted := statErr == nil
+	if statErr != nil && !os.IsNotExist(statErr) {
+		return nil, statErr
+	}
+	registry.Upsert(artifact.Entry{
+		Kind: artifactKindMCP, Runtime: agentcfg.RuntimeZcode, Path: path,
+		InstalledVersion: env.build.Version, AvailableVersion: env.build.Version,
+		Format: zcodeMCPPreimageFormat + preimage,
+	})
+	if err := artifact.SaveRegistry(registryPath, registry); err != nil {
+		return nil, err
+	}
+	return func() error {
+		if registryExisted {
+			return artifact.SaveRegistry(registryPath, before)
+		}
+		if err := os.Remove(registryPath); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}, nil
+}
+
+func zcodeMCPPreimageFromEntry(entry artifact.Entry) (string, error) {
+	if !strings.HasPrefix(entry.Format, zcodeMCPPreimageFormat) {
+		return "", fmt.Errorf("ZCode MCP ownership state for %s has unknown format %q", entry.Path, entry.Format)
+	}
+	preimage := strings.TrimPrefix(entry.Format, zcodeMCPPreimageFormat)
+	if preimage != agentcfg.ZcodeMCPPreimageNone && preimage != agentcfg.ZcodeMCPPreimageServers &&
+		preimage != agentcfg.ZcodeMCPPreimageMCPServers {
+		return "", fmt.Errorf("ZCode MCP ownership state for %s has invalid preimage %q", entry.Path, preimage)
+	}
+	return preimage, nil
+}
+
+func (env *cliEnv) uninstallMCP(runtime, path string) (agentcfg.Outcome, error) {
+	if runtime != agentcfg.RuntimeZcode {
+		return agentcfg.Uninstall(runtime, path)
+	}
+	preimage := agentcfg.ZcodeMCPPreimageNone
+	entry, found, err := env.registeredArtifact(artifactKindMCP, runtime, path)
+	if err != nil {
+		return agentcfg.Outcome{Runtime: runtime, Path: path}, err
+	}
+	if found {
+		preimage, err = zcodeMCPPreimageFromEntry(entry)
+		if err != nil {
+			return agentcfg.Outcome{Runtime: runtime, Path: path}, err
+		}
+	}
+	outcome, err := agentcfg.UninstallZcodeMCP(path, preimage)
+	if err != nil {
+		return outcome, err
+	}
+	if found {
+		err = env.unregisterArtifact(artifactKindMCP, runtime, path)
+	}
+	return outcome, err
 }
 
 func (env *cliEnv) renderOutcome(outcome agentcfg.Outcome, verb string) error {

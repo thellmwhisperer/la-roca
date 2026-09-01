@@ -1,8 +1,14 @@
 package cli
 
 import (
+	"encoding/json"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thellmwhisperer/la-roca/internal/artifact"
 )
 
 // `--config` names ONE runtime's configuration file. Applied to every runtime it
@@ -21,6 +27,54 @@ func TestAConfigPathIsRefusedForMoreThanOneRuntime(t *testing.T) {
 }
 
 // Naming the one runtime it belongs to still works.
+func TestZcodeMCPStateRestoresContainerPreimage(t *testing.T) {
+	home := skillTestHome(t)
+	path := filepath.Join(home, "operator", "config.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	before := `{"mcp":{}}`
+	if err := os.WriteFile(path, []byte(before), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := rootCommand(&cliEnv{out: io.Discard, build: Build{Version: "test"}})
+	root.SetArgs([]string{"mcp", "install", "zcode", "--config", path, "--executable", filepath.Join(home, "roca")})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(body, &document); err != nil {
+		t.Fatal(err)
+	}
+	entry := document["mcp"].(map[string]any)["servers"].(map[string]any)["roca"].(map[string]any)
+	if len(entry) != 3 || entry["type"] != "stdio" {
+		t.Fatalf("ZCode MCP entry = %#v", entry)
+	}
+	registry, err := artifact.LoadRegistry(filepath.Join(home, ".roca", "artifacts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, found := registry.Find(artifactKindMCP, "zcode", path); !found {
+		t.Fatal("ZCode MCP preimage was not recorded in La Roca state")
+	}
+	root = rootCommand(&cliEnv{out: io.Discard, build: Build{Version: "test"}})
+	root.SetArgs([]string{"mcp", "uninstall", "zcode", "--config", path})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != before {
+		t.Fatalf("ZCode MCP preimage changed: want %s, got %s", before, after)
+	}
+}
+
 func TestAConfigPathIsAcceptedForOneNamedRuntime(t *testing.T) {
 	out, _ := runRootSplit(t, contractBuild(), nil,
 		"mcp", "status", "claude", "--config", "/tmp/not-read.json")
