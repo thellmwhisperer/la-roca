@@ -165,6 +165,28 @@ func TestZcodeReinstallPreservesMCPContainerOwnership(t *testing.T) {
 	}
 }
 
+func TestZcodeStatusRejectsInvalidMCPContainers(t *testing.T) {
+	for name, body := range map[string]string{
+		"mcp null":     `{"mcp":null}`,
+		"mcp list":     `{"mcp":[]}`,
+		"servers null": `{"mcp":{"servers":null}}`,
+		"servers list": `{"mcp":{"servers":[]}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.json")
+			writeFile(t, path, body)
+
+			status, err := agentcfg.Status(agentcfg.RuntimeZcode, path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if status.State != agentcfg.StateInvalid {
+				t.Fatalf("state = %q, want %q", status.State, agentcfg.StateInvalid)
+			}
+		})
+	}
+}
+
 func writeFile(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {

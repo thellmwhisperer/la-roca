@@ -210,6 +210,32 @@ func TestZcodeHookInstallRejectsUnreadableOwnershipBeforeMutation(t *testing.T) 
 	}
 }
 
+func TestZcodeHookInstallRejectsInvalidContainersBeforeWritingWrapper(t *testing.T) {
+	for name, initial := range map[string]string{
+		"hooks null":         `{"hooks":null}`,
+		"hooks list":         `{"hooks":[]}`,
+		"events null":        `{"hooks":{"events":null}}`,
+		"session start null": `{"hooks":{"events":{"SessionStart":null}}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			home, config := zcodeHookTestPaths(t)
+			writeZcodeHookExecutable(t, home, "#!/bin/sh\nexit 0\n")
+			writeFile(t, config, initial)
+
+			if err := executeZcodeHooks("install"); err == nil {
+				t.Fatal("install accepted an invalid hook container")
+			}
+			if got := string(mustRead(t, config)); got != initial {
+				t.Fatalf("install edited invalid config: %s", got)
+			}
+			wrapper := filepath.Join(home, ".zcode", "hooks", "roca-handoff.sh")
+			if _, err := os.Stat(wrapper); !os.IsNotExist(err) {
+				t.Fatalf("install wrote wrapper before rejecting config: %v", err)
+			}
+		})
+	}
+}
+
 func TestZcodeHookReinstallPreservesContainerOwnership(t *testing.T) {
 	_, config := zcodeHookTestPaths(t)
 	writeFile(t, config, "{}\n")
