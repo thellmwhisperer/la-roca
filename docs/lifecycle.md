@@ -134,7 +134,8 @@ There is no `roca init --vectors` flag. Non-interactive init, CI, and runs with
 `--db-path` are not asked and do not start the optional download. Machines that
 opt in later enable `features.vector` and start the pass with
 `roca vector install`. Word search keeps answering while it runs, and
-`roca vector status` reports progress as a fraction of this machine's history.
+`roca vector status` reports per-database sidecar facts without waiting for the
+model.
 
 Init also writes and registers `prompt.md` in the selected data directory. Its
 marked SYSTEM zone is shipped by La Roca; its marked USER zone belongs to the

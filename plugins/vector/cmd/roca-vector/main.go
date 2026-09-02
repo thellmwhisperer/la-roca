@@ -177,140 +177,28 @@ func installCommand(env *environment) *cobra.Command {
 	return command
 }
 
-// indexStatus is the whole answer to "how is it going", in the terms the person
-// asking has: how much of their history has been read, whether reading is still
-// going on, and what stopped it if it stopped.
-type indexStatus struct {
-	HistoryKnown bool                      `json:"history_known"`
-	Running      bool                      `json:"running"`
-	Completed    bool                      `json:"completed"`
-	Read         int                       `json:"read"`
-	Total        int                       `json:"total"`
-	Databases    []vector.DatabaseProgress `json:"databases,omitempty"`
-	Stopped      string                    `json:"stopped,omitempty"`
-}
-
 func statusCommand(env *environment) *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
-		Short: "Report how much of your history has been read for meaning",
+		Short: "Report per-database vectorization without waiting for the model",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			status, err := env.indexStatus(command.Context())
+			report, err := env.vectorizationStatus(command.Context())
 			if err != nil {
 				return err
 			}
+			help := statusHelp(report)
+			out := command.OutOrStdout()
 			if env.json {
-				return printJSON(status)
+				return printJSONTo(out, map[string]any{
+					"worker":    report.Worker,
+					"databases": report.Databases,
+					"help":      help,
+				})
 			}
-			for _, line := range statusLines(status) {
-				fmt.Println(line)
-			}
-			return nil
+			_, err = fmt.Fprintln(out, renderVectorization(report, help))
+			return err
 		},
-	}
-}
-
-func (env *environment) indexStatus(ctx context.Context) (indexStatus, error) {
-	state, err := env.resolveStateDir()
-	if err != nil {
-		return indexStatus{}, err
-	}
-	status := indexStatus{Running: vector.WorkerRunning(state)}
-	if completion, ok := vector.ReadCompletion(state); ok && !status.Running {
-		status.Completed = completion.ExitStatus == 0 && strings.TrimSpace(completion.Error) == ""
-		if !status.Completed {
-			status.Stopped = productStopReason(completion.Error)
-			if status.Stopped == "" {
-				status.Stopped = "the pass stopped before it finished"
-			}
-		}
-	}
-	federation, err := env.federation("")
-	if err != nil {
-		return status, nil
-	}
-	progress, err := federation.HistoryProgress(ctx)
-	if err != nil {
-		return status, nil
-	}
-	status.HistoryKnown = true
-	status.Read, status.Total, status.Databases = progress.Read, progress.Total, progress.Databases
-	return status, nil
-}
-
-// statusLines keeps the report in product language. A pass that has not finished
-// is never the same sentence as a product with nothing in it, and word search is
-// named every time reading is not complete, because it is answering right then.
-func statusLines(status indexStatus) []string {
-	if !status.HistoryKnown {
-		if status.Stopped != "" {
-			return []string{"deep search: progress unavailable · word search is answering now",
-				"  it stopped because " + productStopReason(status.Stopped),
-				"  next step: `roca vector install`"}
-		}
-		return []string{"deep search: progress unavailable · word search is answering now",
-			"  next step: `roca vector install`"}
-	}
-	fraction := fmt.Sprintf("%d of %d read", status.Read, status.Total)
-	switch {
-	case status.Running:
-		return []string{"deep search: reading your history · " + fraction,
-			"  word search keeps answering while it runs"}
-	case status.Stopped != "":
-		return []string{"deep search: stopped · " + fraction,
-			"  what it read already answers, and word search answers for the rest",
-			"  it stopped because " + productStopReason(status.Stopped),
-			"  next step: `roca vector install`"}
-	case status.Total == 0:
-		return []string{"deep search: nothing to read yet · there is no history on this machine"}
-	case status.Completed && status.Read >= status.Total:
-		return []string{"deep search: ready · your history is understood, not only searched"}
-	case status.Read >= status.Total:
-		return []string{"deep search: stopped before it finished · " + fraction,
-			"  word search is answering now", "  next step: `roca vector install`"}
-	case status.Read > 0:
-		lines := []string{"deep search: stopped partway · " + fraction,
-			"  what it read already answers, and word search answers for the rest"}
-		return append(lines, "  next step: `roca vector install`")
-	default:
-		return []string{"deep search: not started · word search is answering now",
-			"  next step: `roca vector install`"}
-	}
-}
-
-func productStopReason(raw string) string {
-	reason := strings.TrimSpace(raw)
-	if reason == "" {
-		return ""
-	}
-	switch reason {
-	case "the pass was interrupted",
-		"this machine ran out of storage space",
-		"the local reading service stopped answering",
-		"the history could not be read",
-		"the pass stopped before it finished":
-		return reason
-	}
-	lower := strings.ToLower(reason)
-	switch {
-	case strings.Contains(lower, "interrupt"), strings.Contains(lower, "canceled"),
-		strings.Contains(lower, "cancelled"), strings.Contains(lower, "signal"),
-		strings.Contains(lower, "deadline"):
-		return "the pass was interrupted"
-	case strings.Contains(lower, "no space"), strings.Contains(lower, "disk full"):
-		return "this machine ran out of storage space"
-	case strings.Contains(lower, "ollama"), strings.Contains(lower, "embedding"),
-		strings.Contains(lower, "model"), strings.Contains(lower, "runtime"),
-		strings.Contains(lower, "connection refused"):
-		return "the local reading service stopped answering"
-	case strings.Contains(lower, "sqlite"), strings.Contains(lower, "database"),
-		strings.Contains(lower, "registry"), strings.Contains(lower, "sidecar"),
-		strings.Contains(lower, ".db"), strings.Contains(lower, "no such table"),
-		strings.Contains(lower, "permission denied"):
-		return "the history could not be read"
-	default:
-		return "the pass stopped before it finished"
 	}
 }
 
@@ -643,7 +531,14 @@ func workerCommand(env *environment) *cobra.Command {
 				return err
 			}
 			defer release()
-			defer vector.ReleaseWorkerClaim(state)
+			releaseClaim, err := vector.LockWorkerClaim(state)
+			if err != nil {
+				return err
+			}
+			defer func() {
+				_ = releaseClaim()
+				vector.ReleaseWorkerClaim(state)
+			}()
 			federation, federationErr := env.federation(model)
 			var completion vector.Completion
 			if federationErr == nil {
@@ -779,7 +674,12 @@ func (env *environment) federationWithEmbedder(model string, embedder vector.Emb
 	if err != nil {
 		return vector.Federation{}, err
 	}
+	state, err := env.resolveStateDir()
+	if err != nil {
+		return vector.Federation{}, err
+	}
 	loaded.Events = events
+	loaded.WorkerStateDir = state
 	return loaded, nil
 }
 

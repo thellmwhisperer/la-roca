@@ -78,17 +78,18 @@ type chunkingHints struct {
 }
 
 type Federation struct {
-	Core         CoreCLI
-	PluginRoot   string
-	Model        string
-	BuildVersion string
-	Embedder     Embedder
-	Notice       func(string)
-	Progress     func(IngestProgress)
-	Reembed      bool
-	Events       engine.Sink
-	databases    []vectorDatabase
-	routes       []vectorRoute
+	Core           CoreCLI
+	PluginRoot     string
+	Model          string
+	BuildVersion   string
+	Embedder       Embedder
+	Notice         func(string)
+	Progress       func(IngestProgress)
+	Reembed        bool
+	Events         engine.Sink
+	WorkerStateDir string
+	databases      []vectorDatabase
+	routes         []vectorRoute
 }
 
 func LoadFederation(core CoreCLI, pluginRoot, model, buildVersion string,
@@ -647,11 +648,11 @@ func (f Federation) Ingest(ctx context.Context, sourceKind string) (FederationDe
 	matched := sourceKind == ""
 	var preparationErr error
 	type ingestJob struct {
-		database                       vectorDatabase
-		reader                         DeclaredCorpus
-		sidecar, contract, fingerprint string
-		delta                          Delta
-		err                            error
+		database                               vectorDatabase
+		reader                                 DeclaredCorpus
+		sidecar, contract, fingerprint, marker string
+		delta                                  Delta
+		err                                    error
 	}
 	jobs := []*ingestJob{}
 	for _, database := range f.databases {
@@ -666,17 +667,17 @@ func (f Federation) Ingest(ctx context.Context, sourceKind string) (FederationDe
 			return FederationDelta{}, err
 		}
 		contract := database.contractFingerprint()
-		fingerprint, err := databaseFingerprint(databasePath, contract)
+		fingerprint, marker, err := stableDatabaseIdentity(databasePath, contract)
 		if err != nil {
 			if preparationErr == nil {
-				preparationErr = fmt.Errorf("fingerprint vector source %s: %w", database.owner(), err)
+				preparationErr = fmt.Errorf("identify vector source %s: %w", database.owner(), err)
 			}
 			continue
 		}
 		if sourceKind == "" && !f.Reembed {
 			delta, unchangedErr := unchangedSidecar(sidecar, database.owner(), f.Model, contract, fingerprint)
 			if unchangedErr == nil {
-				if err := sealSidecar(sidecar, database.owner(), f.Model, f.BuildVersion, contract, fingerprint); err != nil {
+				if err := sealSidecar(sidecar, database.owner(), f.Model, f.BuildVersion, contract, fingerprint, marker); err != nil {
 					return FederationDelta{}, err
 				}
 				result.add(database.owner(), delta)
@@ -690,7 +691,7 @@ func (f Federation) Ingest(ctx context.Context, sourceKind string) (FederationDe
 			return FederationDelta{}, err
 		}
 		jobs = append(jobs, &ingestJob{database: database, reader: reader, sidecar: sidecar,
-			contract: contract, fingerprint: fingerprint})
+			contract: contract, fingerprint: fingerprint, marker: marker})
 	}
 	if !matched {
 		return FederationDelta{}, fmt.Errorf("unknown vector source %q", sourceKind)
@@ -709,7 +710,8 @@ func (f Federation) Ingest(ctx context.Context, sourceKind string) (FederationDe
 			index := f.index(job.database, job.reader, job.sidecar)
 			index.BatchSize = 1
 			index.liveness = scheduler.heartbeat
-			index.Embedder = scheduledEmbedder{base: f.Embedder, id: id, scheduler: scheduler}
+			index.Embedder = scheduledEmbedder{base: f.Embedder, id: id, scheduler: scheduler,
+				database: job.database.owner(), stateDir: f.WorkerStateDir}
 			if sourceKind == "" {
 				job.delta, job.err = index.Ingest(orderedCtx)
 			} else {
@@ -731,12 +733,13 @@ func (f Federation) Ingest(ctx context.Context, sourceKind string) (FederationDe
 			}
 			continue
 		}
-		storedFingerprint := ""
+		storedFingerprint, storedMarker := "", ""
 		if sourceKind == "" {
 			storedFingerprint = job.fingerprint
+			storedMarker = job.marker
 		}
 		if err := sealSidecar(job.sidecar, job.database.owner(), f.Model, f.BuildVersion,
-			job.contract, storedFingerprint); err != nil {
+			job.contract, storedFingerprint, storedMarker); err != nil {
 			return FederationDelta{}, err
 		}
 		result.add(job.database.owner(), job.delta)
@@ -757,12 +760,14 @@ func (f Federation) Ingest(ctx context.Context, sourceKind string) (FederationDe
 }
 
 type embeddingRequest struct {
-	id    int
-	ctx   context.Context
-	model string
-	input []string
-	order sourceOrder
-	reply chan embeddingReply
+	id       int
+	ctx      context.Context
+	model    string
+	input    []string
+	order    sourceOrder
+	database string
+	stateDir string
+	reply    chan embeddingReply
 }
 
 type embeddingReply struct {
@@ -903,7 +908,19 @@ func (s *embeddingScheduler) run() error {
 		}
 		request := pending[selected]
 		delete(pending, selected)
+		database := request.database
+		if err := updateWorkerActivity(request.stateDir, "", &database); err != nil {
+			err = fmt.Errorf("record current vector database: %w", err)
+			request.reply <- embeddingReply{err: err}
+			return failPending(err)
+		}
 		vectors, err := s.embed(request.ctx, request.model, request.input)
+		database = ""
+		if clearErr := updateWorkerActivity(request.stateDir, "", &database); clearErr != nil {
+			clearErr = fmt.Errorf("clear current vector database: %w", clearErr)
+			request.reply <- embeddingReply{err: errors.Join(err, clearErr)}
+			return failPending(clearErr)
+		}
 		request.reply <- embeddingReply{vectors: vectors, err: err}
 		resetStall()
 	}
@@ -927,6 +944,8 @@ type scheduledEmbedder struct {
 	base      Embedder
 	id        int
 	scheduler *embeddingScheduler
+	database  string
+	stateDir  string
 }
 
 func (e scheduledEmbedder) Pull(ctx context.Context, model string) error {
@@ -939,7 +958,8 @@ func (e scheduledEmbedder) Embed(ctx context.Context, model string, input []stri
 		return e.scheduler.embed(ctx, model, input)
 	}
 	reply := make(chan embeddingReply, 1)
-	request := embeddingRequest{id: e.id, ctx: ctx, model: model, input: input, order: order, reply: reply}
+	request := embeddingRequest{id: e.id, ctx: ctx, model: model, input: input, order: order,
+		database: e.database, stateDir: e.stateDir, reply: reply}
 	select {
 	case e.scheduler.requests <- request:
 	case <-ctx.Done():
@@ -1457,7 +1477,30 @@ func (d DeclaredCorpus) hasTable(name string) bool {
 	return ok
 }
 
-var errSidecarChanged = errors.New("sidecar source changed")
+var (
+	errSidecarChanged       = errors.New("sidecar source changed")
+	errSourceChanged        = errors.New("vector source changed while it was inspected")
+	fingerprintVectorSource = databaseFingerprint
+)
+
+func stableDatabaseIdentity(path, contract string) (string, string, error) {
+	before, err := sourceFileMarker(path)
+	if err != nil {
+		return "", "", err
+	}
+	fingerprint, err := fingerprintVectorSource(path, contract)
+	if err != nil {
+		return "", "", err
+	}
+	after, err := sourceFileMarker(path)
+	if err != nil {
+		return "", "", err
+	}
+	if before != after {
+		return "", "", errSourceChanged
+	}
+	return fingerprint, after, nil
+}
 
 func databaseFingerprint(path, contract string) (string, error) {
 	return incrementality.TargetFingerprint(incrementality.Target{
@@ -1592,15 +1635,18 @@ func SidecarPath(databasePath string) string {
 // An empty file is not enough: delta ingest inspects owner metadata before it
 // opens a writer.
 func InitOwnedSidecar(path, owner, model string) error {
-	return sealSidecar(path, owner, model, "", "", "")
+	return sealSidecar(path, owner, model, "", "", "", "")
 }
 
-func sealSidecar(path, owner, model, buildVersion, contract, sourceFingerprint string) error {
+func sealSidecar(path, owner, model, buildVersion, contract, sourceFingerprint, sourceMarker string) error {
 	values := map[string]string{
 		"owner": owner, "model": model, "version": buildVersion, "contract": contract,
 	}
 	if sourceFingerprint != "" {
 		values["source_fingerprint"] = sourceFingerprint
+	}
+	if sourceMarker != "" {
+		values[sourceMarkerMetaKey] = sourceMarker
 	}
 	return writeSidecarMeta(path, owner, values, nil)
 }
@@ -1611,9 +1657,9 @@ func sealSidecar(path, owner, model, buildVersion, contract, sourceFingerprint s
 // The fingerprint of the source goes in the same breath, because an index that
 // has not finished must never claim to already match what it was built from.
 func claimSidecar(path, owner, buildVersion, contract string, full bool) error {
-	var clear []string
+	clear := []string{sourceMarkerMetaKey}
 	if full {
-		clear = []string{"source_fingerprint"}
+		clear = append(clear, "source_fingerprint")
 	}
 	return writeSidecarMeta(path, owner, map[string]string{
 		"owner": owner, "version": buildVersion, "contract": contract}, clear)
@@ -1874,6 +1920,8 @@ type FederatedWorker struct {
 }
 
 func (w FederatedWorker) Run(ctx context.Context) Completion {
+	_ = clearWorkerActivity(w.DataDir)
+	defer func() { _ = clearWorkerActivity(w.DataDir) }()
 	started := time.Now().UTC()
 	completion := Completion{ExitStatus: 0, Model: w.Federation.Model, StartedAt: started}
 	failIf := func(err error) {
