@@ -219,6 +219,7 @@ func TestZcodeHookInstallRejectsInvalidContainersBeforeWritingWrapper(t *testing
 		"group not object":     `{"hooks":{"events":{"SessionStart":[null]}}}`,
 		"group hooks missing":  `{"hooks":{"events":{"SessionStart":[{}]}}}`,
 		"group hooks null":     `{"hooks":{"events":{"SessionStart":[{"hooks":null}]}}}`,
+		"group hooks empty":    `{"hooks":{"enabled":true,"events":{"SessionStart":[{"hooks":[]}]}}}`,
 		"hook not object":      `{"hooks":{"events":{"SessionStart":[{"hooks":[null]}]}}}`,
 		"hook type missing":    `{"hooks":{"events":{"SessionStart":[{"hooks":[{}]}]}}}`,
 		"command null":         `{"hooks":{"events":{"SessionStart":[{"hooks":[{"type":"command","command":null,"timeoutMs":5000}]}]}}}`,
@@ -419,23 +420,6 @@ func TestZcodeHookUninstallPreservesGroupMetadata(t *testing.T) {
 	groupHooks, ok := group["hooks"].([]any)
 	if !ok || len(groupHooks) != 0 {
 		t.Fatalf("uninstall did not remove only the Roca command: %#v", group)
-	}
-}
-
-func TestZcodeHookInstallRejectsOperatorOwnedEmptyGroup(t *testing.T) {
-	home, config := zcodeHookTestPaths(t)
-	initial := `{"hooks":{"enabled":true,"events":{"SessionStart":[{"hooks":[]}]}}}`
-	writeFile(t, config, initial)
-
-	if err := executeZcodeHooks("install"); err == nil {
-		t.Fatal("install accepted an empty operator-owned hook group")
-	}
-	if got := string(mustRead(t, config)); got != initial {
-		t.Fatalf("install edited invalid config: %s", got)
-	}
-	wrapper := filepath.Join(home, ".zcode", "hooks", "roca-handoff.sh")
-	if _, err := os.Stat(wrapper); !os.IsNotExist(err) {
-		t.Fatalf("install wrote wrapper before rejecting config: %v", err)
 	}
 }
 
