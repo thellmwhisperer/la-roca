@@ -5,6 +5,7 @@ package vector
 import (
 	"errors"
 	"os"
+	"strconv"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -24,17 +25,17 @@ func processAlive(pid int) bool {
 	return windows.GetExitCodeProcess(handle, &code) == nil && code == stillActiveExitCode
 }
 
-func processStartUnixNano(pid int) (int64, error) {
+func processStartIdentity(pid int) (string, error) {
 	handle, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
 	if err != nil {
-		return 0, err
+		return "", err
 	}
 	defer windows.CloseHandle(handle)
 	var created, exited, kernel, user windows.Filetime
 	if err := windows.GetProcessTimes(handle, &created, &exited, &kernel, &user); err != nil {
-		return 0, err
+		return "", err
 	}
-	return created.Nanoseconds(), nil
+	return strconv.FormatInt(created.Nanoseconds(), 10), nil
 }
 
 func replaceFile(source, destination string) error {

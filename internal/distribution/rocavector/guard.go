@@ -175,9 +175,9 @@ func reserveWorker(state string) (workerReservation, error) {
 }
 
 type workerClaim struct {
-	pid       int
-	runID     string
-	startedAt int64
+	pid             int
+	runID           string
+	processIdentity string
 }
 
 type workerClaimLiveness uint8
@@ -201,22 +201,18 @@ func readWorkerClaim(path string) (workerClaim, error) {
 	if err != nil || pid <= 0 {
 		return workerClaim{}, fmt.Errorf("parse vector worker pid")
 	}
-	startedAt, err := strconv.ParseInt(fields[2], 10, 64)
-	if err != nil || startedAt <= 0 {
-		return workerClaim{}, fmt.Errorf("parse vector worker process identity")
-	}
-	return workerClaim{pid: pid, runID: fields[1], startedAt: startedAt}, nil
+	return workerClaim{pid: pid, runID: fields[1], processIdentity: fields[2]}, nil
 }
 
 func inspectWorkerClaim(claim workerClaim) workerClaimLiveness {
 	if !processAlive(claim.pid) {
 		return workerClaimStale
 	}
-	startedAt, err := processStartUnixNano(claim.pid)
+	processIdentity, err := processStartIdentity(claim.pid)
 	if err != nil {
 		return workerClaimUnknown
 	}
-	if startedAt != claim.startedAt {
+	if processIdentity != claim.processIdentity {
 		return workerClaimStale
 	}
 	return workerClaimLive

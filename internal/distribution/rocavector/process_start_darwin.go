@@ -2,12 +2,16 @@
 
 package rocavector
 
-import "golang.org/x/sys/unix"
+import (
+	"strconv"
 
-func processStartUnixNano(pid int) (int64, error) {
+	"golang.org/x/sys/unix"
+)
+
+func processStartIdentity(pid int) (string, error) {
 	info, err := unix.SysctlKinfoProc("kern.proc.pid", pid)
 	if err != nil {
-		return 0, err
+		return "", err
 	}
-	return info.Proc.P_starttime.Nano(), nil
+	return strconv.FormatInt(info.Proc.P_starttime.Nano(), 10), nil
 }

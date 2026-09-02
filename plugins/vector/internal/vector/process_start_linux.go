@@ -10,41 +10,35 @@ import (
 	"strings"
 )
 
-const linuxUserHZ = 100
-
-func processStartUnixNano(pid int) (int64, error) {
+func processStartIdentity(pid int) (string, error) {
 	stat, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
 	if err != nil {
-		return 0, err
+		return "", err
 	}
+	bootID, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
+	if err != nil {
+		return "", err
+	}
+	return linuxProcessIdentity(pid, stat, bootID)
+}
+
+func linuxProcessIdentity(pid int, stat, rawBootID []byte) (string, error) {
 	cut := bytes.LastIndexByte(stat, ')')
 	if cut < 0 {
-		return 0, fmt.Errorf("parse /proc/%d/stat", pid)
+		return "", fmt.Errorf("parse /proc/%d/stat", pid)
 	}
 	fields := strings.Fields(string(stat[cut+1:]))
 	if len(fields) < 20 {
-		return 0, fmt.Errorf("parse /proc/%d/stat", pid)
+		return "", fmt.Errorf("parse /proc/%d/stat", pid)
 	}
 	startTicks, err := strconv.ParseUint(fields[19], 10, 64)
 	if err != nil {
-		return 0, err
+		return "", err
 	}
-	boot, err := linuxBootTimeUnix()
-	if err != nil {
-		return 0, err
+	bootID := strings.TrimSpace(string(rawBootID))
+	bootFields := strings.Fields(bootID)
+	if len(bootFields) != 1 || bootFields[0] != bootID {
+		return "", fmt.Errorf("parse Linux boot identity")
 	}
-	return boot*1e9 + int64(startTicks)*1e9/linuxUserHZ, nil
-}
-
-func linuxBootTimeUnix() (int64, error) {
-	body, err := os.ReadFile("/proc/stat")
-	if err != nil {
-		return 0, err
-	}
-	for _, line := range strings.Split(string(body), "\n") {
-		if value, ok := strings.CutPrefix(line, "btime "); ok {
-			return strconv.ParseInt(strings.TrimSpace(value), 10, 64)
-		}
-	}
-	return 0, fmt.Errorf("read Linux boot time")
+	return bootID + ":" + strconv.FormatUint(startTicks, 10), nil
 }

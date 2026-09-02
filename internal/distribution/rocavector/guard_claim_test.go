@@ -13,13 +13,13 @@ func TestWorkerRunningRequiresTheClaimedProcessStart(t *testing.T) {
 	if err := os.MkdirAll(state, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	startedAt, err := processStartUnixNano(os.Getpid())
+	processIdentity, err := processStartIdentity(os.Getpid())
 	if err != nil {
 		t.Fatal(err)
 	}
 	claimPath := filepath.Join(state, workerClaimFilename)
 	if err := os.WriteFile(claimPath,
-		[]byte(fmt.Sprintf("%d current-run %d\n", os.Getpid(), startedAt)), 0o600); err != nil {
+		[]byte(fmt.Sprintf("%d current-run %s\n", os.Getpid(), processIdentity)), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if !WorkerRunning(root) {

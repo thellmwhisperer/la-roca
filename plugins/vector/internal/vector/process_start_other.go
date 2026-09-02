@@ -4,6 +4,6 @@ package vector
 
 import "fmt"
 
-func processStartUnixNano(int) (int64, error) {
-	return 0, fmt.Errorf("process start identity is unavailable")
+func processStartIdentity(int) (string, error) {
+	return "", fmt.Errorf("process start identity is unavailable")
 }

@@ -85,22 +85,22 @@ func TestLaunchKeepsLiveProgressConnectedAfterLauncherReturns(t *testing.T) {
 func TestWorkerClaimDistinguishesLiveAndStaleProcesses(t *testing.T) {
 	directory := t.TempDir()
 	claimPath := filepath.Join(directory, WorkerClaimFilename)
-	if err := os.WriteFile(claimPath, []byte("123 current-run 99\n"), 0o600); err != nil {
+	if err := os.WriteFile(claimPath, []byte("123 current-run boot-a:99\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	oldAlive, oldStart := workerProcessAlive, workerProcessStart
+	oldAlive, oldIdentity := workerProcessAlive, workerProcessIdentity
 	t.Cleanup(func() {
 		workerProcessAlive = oldAlive
-		workerProcessStart = oldStart
+		workerProcessIdentity = oldIdentity
 	})
 	workerProcessAlive = func(int) bool { return true }
-	workerProcessStart = func(int) (int64, error) { return 99, nil }
+	workerProcessIdentity = func(int) (string, error) { return "boot-a:99", nil }
 	claim, err := claimWorker(claimPath)
 	if err != nil || claim != nil {
 		t.Fatalf("live claim = %v, err=%v", claim, err)
 	}
 
-	workerProcessStart = func(int) (int64, error) { return 100, nil }
+	workerProcessIdentity = func(int) (string, error) { return "boot-a:100", nil }
 	claim, err = claimWorker(claimPath)
 	if err != nil || claim == nil {
 		t.Fatalf("stale claim = %v, err=%v", claim, err)
