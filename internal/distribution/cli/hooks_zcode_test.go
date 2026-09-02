@@ -212,10 +212,14 @@ func TestZcodeHookInstallRejectsUnreadableOwnershipBeforeMutation(t *testing.T) 
 
 func TestZcodeHookInstallRejectsInvalidContainersBeforeWritingWrapper(t *testing.T) {
 	for name, initial := range map[string]string{
-		"hooks null":         `{"hooks":null}`,
-		"hooks list":         `{"hooks":[]}`,
-		"events null":        `{"hooks":{"events":null}}`,
-		"session start null": `{"hooks":{"events":{"SessionStart":null}}}`,
+		"hooks null":          `{"hooks":null}`,
+		"hooks list":          `{"hooks":[]}`,
+		"events null":         `{"hooks":{"events":null}}`,
+		"session start null":  `{"hooks":{"events":{"SessionStart":null}}}`,
+		"group not object":    `{"hooks":{"events":{"SessionStart":[null]}}}`,
+		"group hooks missing": `{"hooks":{"events":{"SessionStart":[{}]}}}`,
+		"group hooks null":    `{"hooks":{"events":{"SessionStart":[{"hooks":null}]}}}`,
+		"hook not object":     `{"hooks":{"events":{"SessionStart":[{"hooks":[null]}]}}}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			home, config := zcodeHookTestPaths(t)
@@ -231,6 +235,63 @@ func TestZcodeHookInstallRejectsInvalidContainersBeforeWritingWrapper(t *testing
 			wrapper := filepath.Join(home, ".zcode", "hooks", "roca-handoff.sh")
 			if _, err := os.Stat(wrapper); !os.IsNotExist(err) {
 				t.Fatalf("install wrote wrapper before rejecting config: %v", err)
+			}
+		})
+	}
+}
+
+func TestZcodeHookInstallRollsBackWrapperAfterConfigEditFailure(t *testing.T) {
+	for _, existing := range []bool{false, true} {
+		name := "new wrapper"
+		if existing {
+			name = "existing wrapper"
+		}
+		t.Run(name, func(t *testing.T) {
+			home, config := zcodeHookTestPaths(t)
+			writeZcodeHookExecutable(t, home, "#!/bin/sh\nexit 0\n")
+			writeFile(t, config, "{}\n")
+			wrapper := filepath.Join(home, ".zcode", "hooks", "roca-handoff.sh")
+			before := "#!/bin/sh\nprintf 'operator wrapper\\n'\n"
+			if existing {
+				writeFile(t, wrapper, before)
+				if err := os.Chmod(wrapper, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			configDir := filepath.Dir(config)
+			if err := os.Chmod(configDir, 0o500); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(configDir, 0o700) })
+			probe := filepath.Join(configDir, "write-probe")
+			if err := os.WriteFile(probe, []byte("probe"), 0o600); err == nil {
+				_ = os.Remove(probe)
+				t.Skip("directory permissions are not enforced")
+			}
+
+			if err := executeZcodeHooks("install"); err == nil {
+				t.Fatal("install succeeded despite an unwritable config directory")
+			}
+			if got := string(mustRead(t, config)); got != "{}\n" {
+				t.Fatalf("failed install edited config: %s", got)
+			}
+			if existing {
+				if got := string(mustRead(t, wrapper)); got != before {
+					t.Fatalf("failed install did not restore wrapper: %s", got)
+				}
+				info, err := os.Stat(wrapper)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if info.Mode().Perm() != 0o600 {
+					t.Fatalf("wrapper mode = %o, want 600", info.Mode().Perm())
+				}
+			} else if _, err := os.Stat(wrapper); !os.IsNotExist(err) {
+				t.Fatalf("failed install left wrapper behind: %v", err)
+			}
+			if _, err := os.Stat(wrapper + ".roca.bak"); !os.IsNotExist(err) {
+				t.Fatalf("failed install left wrapper backup behind: %v", err)
 			}
 		})
 	}

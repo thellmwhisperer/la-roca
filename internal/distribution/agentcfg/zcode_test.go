@@ -187,6 +187,26 @@ func TestZcodeStatusRejectsInvalidMCPContainers(t *testing.T) {
 	}
 }
 
+func TestZcodeRejectsInvalidTrailingJSON(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	before := "{} trailing\n"
+	writeFile(t, path, before)
+
+	status, err := agentcfg.Status(agentcfg.RuntimeZcode, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.State != agentcfg.StateInvalid {
+		t.Fatalf("state = %q, want %q", status.State, agentcfg.StateInvalid)
+	}
+	if _, err := agentcfg.Install(agentcfg.RuntimeZcode, path, "roca"); err == nil {
+		t.Fatal("install accepted invalid trailing JSON")
+	}
+	if got := read(t, path); got != before {
+		t.Fatalf("install edited invalid JSON: %s", got)
+	}
+}
+
 func writeFile(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
