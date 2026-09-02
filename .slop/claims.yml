@@ -24,6 +24,10 @@ claims:
     contract:
       file: features/distribution/skill.feature
       item: "Nothing is ever installed into an agent without being asked"
+  internal/distribution/cli/hooks_zcode.go:
+    contract:
+      file: features/distribution/skill.feature
+      item: "Nothing is ever installed into an agent without being asked"
   internal/distribution/cli/mcp.go:
     contract:
       file: features/distribution/mcp.feature

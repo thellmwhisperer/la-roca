@@ -279,10 +279,11 @@ func (env *cliEnv) installRuntimeSkillsFiltered(runtime, catalog string,
 	return outcomes, refused
 }
 
-// seedDetectedSkills writes the embedded skills into every skill seat whose
-// config directory exists. restoreMissing is init's consent to write again;
-// ingest reseed skips a runtime that already has a registry entry so a later
-// agent still receives the skills without rewriting ones already placed.
+// seedDetectedSkills writes the embedded skills into every auto-seeded skill
+// seat whose config directory exists. Opt-in seats such as ZCode are excluded.
+// restoreMissing is init's consent to write again; ingest reseed skips a runtime
+// that already has a registry entry so a later agent still receives the skills
+// without rewriting ones already placed.
 //
 // Init also writes the generated catalog. It is the map of what is searchable on
 // this machine, and an agent that has the craft skills but not the catalog
@@ -448,7 +449,7 @@ func (env *cliEnv) warnVectorRegistryRefresh(err error) {
 func hooksCommand(env *cliEnv) *cobra.Command {
 	command := &cobra.Command{
 		Use:   "hooks",
-		Short: "Install and withdraw client-side authorship signing hooks",
+		Short: "Install and withdraw authorship and session-context hooks",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return cmd.Help()
@@ -465,7 +466,7 @@ func hooksCommand(env *cliEnv) *cobra.Command {
 // that has something to say about a file it left alone returns one warning line,
 // printed here and only here so it cannot be doubled.
 func hooksEditCommand(env *cliEnv, use, short, verb string,
-	edit func(path string) (agentcfg.Outcome, string, error)) *cobra.Command {
+	edit func(runtime, path string) (agentcfg.Outcome, string, error)) *cobra.Command {
 	return &cobra.Command{
 		Use:   use,
 		Short: short,
@@ -474,11 +475,11 @@ func hooksEditCommand(env *cliEnv, use, short, verb string,
 			if err := supportedHookRuntime(args[0]); err != nil {
 				return err
 			}
-			path, err := claudeSettingsPath()
+			path, err := hookConfigPath(args[0])
 			if err != nil {
 				return err
 			}
-			outcome, warning, err := edit(path)
+			outcome, warning, err := edit(args[0], path)
 			if err != nil {
 				return err
 			}
@@ -494,8 +495,15 @@ func hooksInstallCommand(env *cliEnv) *cobra.Command {
 	var executable string
 	var force, pills, handoff bool
 	cmd := hooksEditCommand(env, "install [runtime]",
-		"Install Claude Code hooks for authorship signing and optional session context", "updated",
-		func(path string) (agentcfg.Outcome, string, error) {
+		"Install a runtime's La Roca hooks", "updated",
+		func(runtime, path string) (agentcfg.Outcome, string, error) {
+			if runtime == agentcfg.RuntimeZcode {
+				if pills || force {
+					return agentcfg.Outcome{Runtime: runtime, Path: path}, "",
+						fmt.Errorf("zcode hooks install writes the SessionStart wrapper; it does not take --pills or --force")
+				}
+				return installZcodeHandoffHook(path, chosenExecutable(executable))
+			}
 			return installClaudeAuthorshipAndSessionHooks(
 				env, path, chosenExecutable(executable), force, pills, handoff)
 		})
@@ -510,8 +518,19 @@ func hooksInstallCommand(env *cliEnv) *cobra.Command {
 func hooksUninstallCommand(env *cliEnv) *cobra.Command {
 	var pills, handoff bool
 	cmd := hooksEditCommand(env, "uninstall [runtime]",
-		"Withdraw Claude Code hooks this product installed", "withdrawn",
-		func(path string) (agentcfg.Outcome, string, error) {
+		"Withdraw a runtime's La Roca hooks, leaving its other settings in place", "withdrawn",
+		func(runtime, path string) (agentcfg.Outcome, string, error) {
+			if runtime == agentcfg.RuntimeZcode {
+				if pills {
+					return agentcfg.Outcome{Runtime: runtime, Path: path}, "",
+						fmt.Errorf("zcode hooks uninstall withdraws the SessionStart wrapper; it does not take --pills")
+				}
+				wrapper, err := zcodeHookWrapperPath()
+				if err != nil {
+					return agentcfg.Outcome{Runtime: runtime, Path: path}, "", err
+				}
+				return uninstallZcodeHandoffHook(path, wrapper)
+			}
 			return uninstallClaudeAuthorshipAndSessionHooks(env, path, pills, handoff)
 		})
 	cmd.Flags().BoolVar(&pills, "pills", false, "withdraw the SessionStart `roca pill` hook")
@@ -520,8 +539,8 @@ func hooksUninstallCommand(env *cliEnv) *cobra.Command {
 }
 
 func supportedHookRuntime(name string) error {
-	if name != "claude" {
-		return fmt.Errorf("unsupported hook runtime %q (want claude)", name)
+	if name != agentcfg.RuntimeClaude && name != agentcfg.RuntimeZcode {
+		return fmt.Errorf("unsupported hook runtime %q (want claude, zcode)", name)
 	}
 	return nil
 }
@@ -550,6 +569,8 @@ func hooksRunCommand(env *cliEnv) *cobra.Command {
 				return runPillList(cmd.Context(), env, "")
 			case "claude-handoff":
 				return runLatestHandoffs(cmd.Context(), env, "")
+			case agentcfg.RuntimeZcode:
+				return runZcodeHandoffHook(cmd.Context(), env)
 			default:
 				return fmt.Errorf("unsupported hook %q", args[0])
 			}

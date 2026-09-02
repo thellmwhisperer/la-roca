@@ -308,6 +308,9 @@ Newest-by-clock is the wrong question: a short worker receipt can bury a real
 session close.
 
 Handoffs live on ops. The qualified table is `plugin_roca_ops.memories`.
+ZCode can inject those handoffs at SessionStart as JSON `additionalContext`;
+the operator enables that integration explicitly with `roca hooks install
+zcode`.
 
 ## Investigation method
 
