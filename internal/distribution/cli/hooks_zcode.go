@@ -155,15 +155,17 @@ func uninstallZcodeHandoffHook(configPath, wrapperPath string) (agentcfg.Outcome
 				continue
 			}
 			kept := make([]any, 0, len(groupHooks))
+			removed := false
 			for _, candidate := range groupHooks {
 				hook, ok := candidate.(map[string]any)
 				if ok && hook["type"] == "command" && commandOf(hook) == wrapperPath {
 					withdrawn = true
+					removed = true
 					continue
 				}
 				kept = append(kept, candidate)
 			}
-			if len(kept) == 0 && len(group) == 1 {
+			if removed && len(kept) == 0 && len(group) == 1 {
 				continue
 			}
 			group["hooks"] = kept

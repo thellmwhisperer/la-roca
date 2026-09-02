@@ -375,6 +375,26 @@ func TestZcodeHookUninstallPreservesGroupMetadata(t *testing.T) {
 	}
 }
 
+func TestZcodeHookUninstallPreservesOperatorOwnedEmptyGroup(t *testing.T) {
+	_, config := zcodeHookTestPaths(t)
+	writeFile(t, config, `{"hooks":{"enabled":true,"events":{"SessionStart":[{"hooks":[]}]}}}`)
+	requireZcodeHooks(t, "install")
+	requireZcodeHooks(t, "uninstall")
+
+	document := readZcodeHookDocument(t, config)
+	hooks := document["hooks"].(map[string]any)
+	events := hooks["events"].(map[string]any)
+	groups := events["SessionStart"].([]any)
+	if len(groups) != 1 {
+		t.Fatalf("SessionStart groups = %d, want operator-owned empty group", len(groups))
+	}
+	group := groups[0].(map[string]any)
+	groupHooks, ok := group["hooks"].([]any)
+	if !ok || len(groupHooks) != 0 {
+		t.Fatalf("operator-owned empty group changed: %#v", group)
+	}
+}
+
 func TestZcodeHookLifecyclePreservesLargeOperatorNumbers(t *testing.T) {
 	_, config := zcodeHookTestPaths(t)
 	initial := `{"hooks":{"enabled":true,"events":{"SessionStart":[{"operatorSequence":9007199254740993,"hooks":[{"type":"command","command":"operator-hook","timeoutMs":5000}]}]}}}`
