@@ -49,7 +49,8 @@ parser:
 
 - claims its own fixture, and rejects both a foreign control and every fixture
   another registered parser owns;
-- returns the golden normalized sessions, exchanges, or memories;
+- returns the golden normalized sessions, exchanges, tool calls (including
+  session-level orphan calls), or memories;
 - emits no record outside its declared destination;
 - labels every normalized record with the registry's canonical harness;
 - has exactly the registry entry named by the fixture.
@@ -78,8 +79,9 @@ or `.md` suffix is not proof of ownership. The parser can use any encoding
 internally, but format must never become its public identity.
 
 `Parse` is deterministic normalization. It receives bytes plus `FileMeta` and
-returns `Records`: corpus-bound `Session` values with their exchanges, or
-store-bound `Memory` values. It must not read the database, consult the clock,
+returns `Records`: corpus-bound `Session` values with their exchanges and any
+tool calls outside completed exchanges in `OrphanedTools`, or store-bound
+`Memory` values. It must not read the database, consult the clock,
 contact a service, or invent missing provenance. A source that says nothing
 about a value leaves it absent. Report an independently unreadable source record
 as a `Discard`; do not lose the rest of a valid file.

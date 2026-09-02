@@ -2,6 +2,8 @@ package parsers
 
 import (
 	"encoding/json"
+	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -120,8 +122,9 @@ type codexTurn struct {
 // ParseCodexSession turns a Codex rollout into one session.
 //
 // A turn is closed by `task_complete`, and one aborted by `turn_aborted` is
-// discarded whole: half a turn in the corpus is worse than no turn, because it
-// reads as an answer the agent never gave.
+// discarded from the conversation: half a turn in the corpus is worse than no
+// turn, because it reads as an answer the agent never gave. Its tool calls still
+// hang directly from the session so analytics do not lose runtime telemetry.
 //
 // When that event stream recognizes no turn at all the response items are read
 // instead: a rollout whose process died before writing a `task_complete` still
@@ -136,8 +139,10 @@ func ParseCodexSession(content []byte, meta FileMeta) (Records, error) {
 			Project:     meta.Project,
 			Metadata:    map[string]any{},
 		},
-		pending:      map[string]*ToolUse{},
-		numberOffset: meta.ExchangeNumberOffset,
+		pending:       map[string]*ToolUse{},
+		orphanPending: map[string]*ToolUse{},
+		orphaned:      map[*ToolUse]bool{},
+		numberOffset:  meta.ExchangeNumberOffset,
 	}
 	reader.read(content)
 
@@ -149,6 +154,7 @@ func ParseCodexSession(content []byte, meta FileMeta) (Records, error) {
 	PlaceThinking(exchanges)
 
 	session := reader.session
+	session.OrphanedTools = reader.orphanedTools(reader.turns)
 	if len(exchanges) == 0 && len(reader.legacy) > 0 {
 		// The prompt-only reading carries no answer, so the session is marked for
 		// the reconciliation a richer rollout of it later gets, and the last
@@ -198,8 +204,11 @@ type codexReader struct {
 	// those records recover.
 	legacy []Exchange
 
-	pending      map[string]*ToolUse
-	numberOffset int
+	pending       map[string]*ToolUse
+	orphanPending map[string]*ToolUse
+	orphaned      map[*ToolUse]bool
+	turnTools     []*ToolUse
+	numberOffset  int
 
 	// open is the turn the event stream has started and not closed.
 	open      *codexTurn
@@ -207,8 +216,9 @@ type codexReader struct {
 
 	// recovering is the same for the response-item reading, which is only used
 	// when the event stream recognized nothing.
-	recovering *codexTurn
-	recovered  []codexTurn
+	recovering     *codexTurn
+	recovered      []codexTurn
+	recoveryOpened int
 }
 
 func (r *codexReader) read(content []byte) {
@@ -254,6 +264,7 @@ func (r *codexReader) read(content []byte) {
 		// answering. That turn is deferred and not discarded: the next run reads a
 		// longer file and lands it.
 		r.deferred++
+		r.orphanTurnScope()
 	}
 	if r.recovering != nil && len(r.turns) == 0 {
 		r.deferred++
@@ -295,12 +306,14 @@ func (r *codexReader) event(record int, line codexLine, payload codexPayload) {
 		if r.open != nil {
 			r.discards = append(r.discards, Discard{Record: r.open.opened,
 				Reason: "turn superseded by a later question before it completed"})
+			r.orphanTurnScope()
+		} else {
+			r.orphanTurnScope()
 		}
 		r.open = &codexTurn{
 			opened: record, humanText: payload.Message, humanTS: validInstant(line.Timestamp),
 			model: r.model, effort: r.effort,
 		}
-		r.resetTurnScope()
 	case "agent_message":
 		// The agent's own words. They do not close the turn, because a turn holds
 		// several of them and closing on the first would split one answer into
@@ -330,21 +343,48 @@ func (r *codexReader) event(record int, line codexLine, payload codexPayload) {
 	case "turn_aborted":
 		if r.open != nil {
 			r.discards = append(r.discards, Discard{Record: record, Reason: "aborted turn"})
+			r.orphanTurnScope()
+		} else {
+			r.orphanRecoveredScope(record)
+			r.orphanTurnScope()
 		}
 		r.open = nil
-		r.resetTurnScope()
 	default:
 		r.exclude(record, "event", payload.InnerType)
 	}
 }
 
-// resetTurnScope drops what only made sense inside the turn that just ended: the
-// agent's last words and the tool calls still waiting for a verdict. A verdict
-// arriving after the turn closed answers a call nothing stores any more, and it
-// is counted as the orphan it is instead of patching a tool use of another turn.
 func (r *codexReader) resetTurnScope() {
 	r.agentSaid = ""
 	r.pending = map[string]*ToolUse{}
+	r.turnTools = nil
+	r.recoveryOpened = 0
+}
+
+func (r *codexReader) orphanTurnScope() {
+	for _, tool := range r.turnTools {
+		r.orphaned[tool] = true
+	}
+	for callID, tool := range r.pending {
+		r.orphanPending[callID] = tool
+	}
+	r.resetTurnScope()
+}
+
+func (r *codexReader) orphanRecoveredScope(record int) {
+	if r.recoveryOpened == 0 {
+		return
+	}
+	for _, signal := range r.signals {
+		if signal.tool != nil && signal.record > r.recoveryOpened && signal.record < record {
+			r.orphaned[signal.tool] = true
+		}
+	}
+	for callID, tool := range r.pending {
+		if r.orphaned[tool] {
+			r.orphanPending[callID] = tool
+		}
+	}
 }
 
 func (r *codexReader) responseItem(record int, line codexLine, payload codexPayload) {
@@ -366,12 +406,18 @@ func (r *codexReader) responseItem(record int, line codexLine, payload codexPayl
 			ParamsSummary: Clip(firstNonEmpty(rawText(payload.Arguments), payload.Input), paramsBudget),
 		}
 		r.signals = append(r.signals, codexSignal{record: record, tool: tool})
+		if r.open != nil {
+			r.turnTools = append(r.turnTools, tool)
+		}
 		if payload.CallID != "" {
 			r.pending[payload.CallID] = tool
 		}
 	case "function_call_output", "custom_tool_call_output":
 		output := rawText(payload.Output)
 		tool, ok := r.pending[payload.CallID]
+		if !ok {
+			tool, ok = r.orphanPending[payload.CallID]
+		}
 		if !ok {
 			r.discards = append(r.discards, Discard{Record: record,
 				Reason:   "tool verdict has unknown call_id: " + payload.CallID,
@@ -409,6 +455,7 @@ func (r *codexReader) recover(record int, line codexLine, payload codexPayload) 
 			opened: record, humanText: text, humanTS: validInstant(line.Timestamp),
 			model: r.model, effort: r.effort,
 		}
+		r.recoveryOpened = record
 	case "assistant":
 		if r.recovering == nil {
 			return
@@ -466,6 +513,9 @@ func (r *codexReader) exchanges(turns []codexTurn) []Exchange {
 					usage.AddReasoningTokens(*signal.usage.Reasoning)
 				}
 			case signal.tool != nil:
+				if r.orphaned[signal.tool] || !codexTurnOwnsRecord(r.turns, signal.record) {
+					continue
+				}
 				exchange.Tools = append(exchange.Tools, *signal.tool)
 			default:
 				// The streamed reasoning event and the response item that persists
@@ -487,6 +537,35 @@ func (r *codexReader) exchanges(turns []codexTurn) []Exchange {
 	return exchanges
 }
 
+// orphanedTools keeps runtime telemetry that belongs to superseded, aborted or
+// still-open turns without manufacturing a conversational exchange for them.
+// Completed spans continue to own exactly the signals they owned before.
+func (r *codexReader) orphanedTools(turns []codexTurn) []ToolUse {
+	tools := make([]ToolUse, 0)
+	for _, signal := range r.signals {
+		if signal.tool == nil {
+			continue
+		}
+		if !r.orphaned[signal.tool] && codexTurnOwnsRecord(turns, signal.record) {
+			continue
+		}
+		tools = append(tools, *signal.tool)
+	}
+	return tools
+}
+
+func codexTurnOwnsRecord(turns []codexTurn, record int) bool {
+	for _, turn := range turns {
+		if record <= turn.opened {
+			return false
+		}
+		if record <= turn.closed {
+			return true
+		}
+	}
+	return false
+}
+
 func codexContentText(blocks []codexContent) string {
 	return joinBlockTexts(blocks, func(block codexContent) string { return block.Text }, "\n")
 }
@@ -504,19 +583,28 @@ func rawText(value json.RawMessage) string {
 	return string(value)
 }
 
-// isToolError recognizes only a non-zero exit code inside output metadata.
-// Guessing an error out of the text would file
-// every command that printed the word "error" as a failure.
+var codexProcessExit = regexp.MustCompile(`(?m)^Process exited with code ([0-9]+)\r?$`)
+
+// isToolError recognizes only an explicit non-zero exit code: first in the
+// structured metadata older outputs carried, then in the status line real
+// rollouts write around plain-text command output. Arbitrary output text is not
+// a verdict; in particular, the word "error" says nothing about the exit code.
 func isToolError(output string) bool {
 	var document struct {
 		Metadata struct {
 			ExitCode *float64 `json:"exit_code"`
 		} `json:"metadata"`
 	}
-	if err := json.Unmarshal([]byte(output), &document); err != nil {
-		return false
+	if err := json.Unmarshal([]byte(output), &document); err == nil && document.Metadata.ExitCode != nil {
+		return *document.Metadata.ExitCode != 0
 	}
-	return document.Metadata.ExitCode != nil && *document.Metadata.ExitCode != 0
+	for _, match := range codexProcessExit.FindAllStringSubmatch(output, -1) {
+		code, err := strconv.ParseUint(match[1], 10, 64)
+		if err == nil && code != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func putIfSet(payload map[string]any, key, value string) {

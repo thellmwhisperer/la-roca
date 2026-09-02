@@ -17,7 +17,13 @@
         "exchanges": [
           {
             "human_text": "map the synthetic lighthouse",
-            "agent_text": "The synthetic lighthouse is mapped."
+            "agent_text": "The synthetic lighthouse is mapped.",
+            "tools": [
+              {
+                "name": "read_file",
+                "params_summary": "{synthetic beacon}"
+              }
+            ]
           },
           {
             "human_text": "confirm the invented beacon color",

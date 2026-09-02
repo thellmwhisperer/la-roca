@@ -215,6 +215,8 @@ func (w *writer) sessionWithPolicy(ctx context.Context, session parsers.Session,
 		counts.Sessions = 1
 	}
 
+	reconcileOrphans := session.OrphanedTools != nil && !session.Incremental
+	var unresolvedOrphanTools []parsers.ToolUse
 	for _, exchange := range session.Exchanges {
 		number := exchange.Number
 		known, identityKnown := assigned[exchange.SourceID]
@@ -278,6 +280,9 @@ func (w *writer) sessionWithPolicy(ctx context.Context, session parsers.Session,
 			} else {
 				_, conflicts := compareContent(stored, exchange)
 				if conflicts {
+					if reconcileOrphans {
+						unresolvedOrphanTools = append(unresolvedOrphanTools, exchange.Tools...)
+					}
 					matcher.claim(stored, number, exchange)
 					counts.ExchangesChanged++
 					continue
@@ -291,6 +296,16 @@ func (w *writer) sessionWithPolicy(ctx context.Context, session parsers.Session,
 		if outcome == exchangeMatched {
 			if !matched.numberValid {
 				counts.ThinkingBlocksDiscarded += len(exchange.Thinking)
+			}
+			if reconcileOrphans && matched.numberValid && len(exchange.Tools) > 0 &&
+				(matched.agentText != "" || matched.agentTimestamp != "") {
+				hasTools, err := w.exchangeHasTools(ctx, session.ID, matched.number)
+				if err != nil {
+					return counts, err
+				}
+				if !hasTools {
+					unresolvedOrphanTools = append(unresolvedOrphanTools, exchange.Tools...)
+				}
 			}
 			// A reading that stated more about this answer than the one the row
 			// carries owns its provenance, in this run or in one months later.
@@ -326,6 +341,9 @@ func (w *writer) sessionWithPolicy(ctx context.Context, session parsers.Session,
 		}
 		if outcome == exchangeAnchorConflict || outcome == exchangeAmbiguous {
 			counts.AnchorConflicts++
+			if reconcileOrphans {
+				unresolvedOrphanTools = append(unresolvedOrphanTools, exchange.Tools...)
+			}
 			continue
 		}
 		// A known source identity or a claimed historical row may already be
@@ -385,6 +403,19 @@ func (w *writer) sessionWithPolicy(ctx context.Context, session parsers.Session,
 		if landed {
 			counts.ThinkingBlocks++
 		}
+	}
+	if session.OrphanedTools != nil {
+		var tools int
+		if session.Incremental {
+			tools, err = w.insertTools(ctx, session.ID, nil, session.OrphanedTools)
+		} else {
+			tools, err = w.replaceOrphanedTools(ctx, session.ID, session.OrphanedTools,
+				unresolvedOrphanTools)
+		}
+		if err != nil {
+			return counts, err
+		}
+		counts.ToolUses += tools
 	}
 	rewroteAssignments := false
 	if session.Snapshot && session.PruneUnmappedExchanges {
@@ -1377,7 +1408,16 @@ func latencyBetween(human, agent string) *int {
 	return &milliseconds
 }
 
-func (w *writer) insertTools(ctx context.Context, sessionID string, number int,
+func (w *writer) exchangeHasTools(ctx context.Context, sessionID string, number int) (bool, error) {
+	var count int
+	if err := w.tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM tool_uses
+		WHERE session_id = ? AND exchange_number = ?`, sessionID, number).Scan(&count); err != nil {
+		return false, fmt.Errorf("count tools of %s/%d: %w", sessionID, number, err)
+	}
+	return count > 0, nil
+}
+
+func (w *writer) insertTools(ctx context.Context, sessionID string, number any,
 	tools []parsers.ToolUse) (int, error) {
 	inserted := 0
 	for _, tool := range tools {
@@ -1393,11 +1433,81 @@ func (w *writer) insertTools(ctx context.Context, sessionID string, number int,
 			if isExactPayloadConflict(err) || isUniqueConstraint(err) {
 				continue
 			}
-			return inserted, fmt.Errorf("insert a tool use of %s/%d: %w", sessionID, number, err)
+			return inserted, fmt.Errorf("insert a tool use of %s/%v: %w", sessionID, number, err)
 		}
 		inserted++
 	}
 	return inserted, nil
+}
+
+func (w *writer) storedOrphanedTools(ctx context.Context,
+	sessionID string) ([]parsers.ToolUse, error) {
+	rows, err := w.tx.QueryContext(ctx, `
+		SELECT tool_name, tool_params_summary, had_error, error_message, initiative_type
+		FROM tool_uses WHERE session_id = ? AND exchange_number IS NULL ORDER BY id`, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("read orphaned tools of %s: %w", sessionID, err)
+	}
+	var stored []parsers.ToolUse
+	for rows.Next() {
+		var name string
+		var params, message, initiative sql.NullString
+		var hadError int
+		if err := rows.Scan(&name, &params, &hadError, &message, &initiative); err != nil {
+			_ = rows.Close()
+			return nil, fmt.Errorf("scan orphaned tools of %s: %w", sessionID, err)
+		}
+		stored = append(stored, parsers.ToolUse{
+			Name: name, ParamsSummary: params.String, HadError: hadError != 0,
+			ErrorMessage: message.String, InitiativeType: initiative.String,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, fmt.Errorf("iterate orphaned tools of %s: %w", sessionID, err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("close orphaned tools of %s: %w", sessionID, err)
+	}
+	return stored, nil
+}
+
+// replaceOrphanedTools writes a full parse's desired session-level projection
+// plus transition calls that exchange reconciliation could not safely attach. A
+// full rollout can grow between reads, so these rows are compared as an ordered
+// list and replaced together instead of accumulating duplicates.
+func (w *writer) replaceOrphanedTools(ctx context.Context, sessionID string,
+	tools, unresolved []parsers.ToolUse) (int, error) {
+	stored, err := w.storedOrphanedTools(ctx, sessionID)
+	if err != nil {
+		return 0, err
+	}
+	tools = preserveUnresolvedOrphanTools(tools, unresolved)
+	if equalToolUses(stored, tools) {
+		return 0, nil
+	}
+	if _, err := w.tx.ExecContext(ctx,
+		`DELETE FROM tool_uses WHERE session_id = ? AND exchange_number IS NULL`, sessionID); err != nil {
+		return 0, fmt.Errorf("replace orphaned tools of %s: %w", sessionID, err)
+	}
+	return w.insertTools(ctx, sessionID, nil, tools)
+}
+
+func preserveUnresolvedOrphanTools(desired, unresolved []parsers.ToolUse) []parsers.ToolUse {
+	result := append([]parsers.ToolUse(nil), desired...)
+	return append(result, unresolved...)
+}
+
+func equalToolUses(left, right []parsers.ToolUse) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func (w *writer) children(ctx context.Context, sessionID string, number int,
