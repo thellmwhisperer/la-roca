@@ -78,6 +78,18 @@ logging: verbose
   }
 }
 `,
+	agentcfg.RuntimeZcode: `{
+  "theme": "dark",
+  "mcp": {
+    "servers": {
+      "some-other-server": {
+        "type": "stdio",
+        "command": "other-binary"
+      }
+    }
+  }
+}
+`,
 }
 
 func TestInstallDeclaresTheStdioServerInEveryRuntime(t *testing.T) {
@@ -457,6 +469,7 @@ func TestWithdrawingFromAConfigWhoseServersKeyWasCreatedByInstallRestoresTheExac
 	verify(agentcfg.RuntimeClaude)
 	verify(agentcfg.RuntimeOpencode)
 	verify(agentcfg.RuntimePi)
+	verify(agentcfg.RuntimeZcode)
 }
 
 // Where each runtime keeps its config comes from the home and the environment,
@@ -477,6 +490,7 @@ func TestTheConfigPathComesFromTheHomeAndTheEnvironment(t *testing.T) {
 			filepath.Join(home, ".config", "opencode", "opencode.json")},
 		{agentcfg.RuntimeHermes, nil, filepath.Join(home, ".hermes", "config.yaml")},
 		{agentcfg.RuntimePi, nil, filepath.Join(home, ".pi", "agent", "mcp.json")},
+		{agentcfg.RuntimeZcode, nil, filepath.Join(home, ".zcode", "cli", "config.json")},
 	}
 	for _, tc := range cases {
 		t.Run(tc.runtime, func(t *testing.T) {

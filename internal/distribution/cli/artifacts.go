@@ -384,6 +384,9 @@ func (env *cliEnv) adoptLegacyArtifacts(paths config.Paths, executable string,
 			if embedded.Name != skill.SkillName || proposed {
 				continue
 			}
+			if !skill.SeedsOnDetect(runtime) {
+				continue
+			}
 			root := filepath.Dir(filepath.Dir(filepath.Dir(path)))
 			if info, err := os.Stat(root); err == nil && info.IsDir() {
 				report.Proposals = append(report.Proposals, "roca skill install "+runtime)
