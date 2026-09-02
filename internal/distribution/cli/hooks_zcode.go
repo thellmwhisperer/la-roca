@@ -285,6 +285,9 @@ func zcodeHookTree(settings map[string]any) (hooks, events map[string]any, entri
 			if !ok {
 				return nil, nil, nil, fmt.Errorf("zcode settings hooks.events.SessionStart[%d].hooks must be an array", i)
 			}
+			if len(groupHooks) == 0 {
+				return nil, nil, nil, fmt.Errorf("zcode settings hooks.events.SessionStart[%d].hooks must contain at least one hook", i)
+			}
 			for j, hook := range groupHooks {
 				entry, ok := hook.(map[string]any)
 				if !ok {
