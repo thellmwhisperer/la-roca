@@ -75,18 +75,18 @@ func TestBundledVectorRefreshAndCollisionPolicy(t *testing.T) {
 	}
 }
 
-func TestWorkerRunningReadsCurrentClaimFormat(t *testing.T) {
+func TestWorkerRunningRejectsAReusedPID(t *testing.T) {
 	root := t.TempDir()
 	state := filepath.Join(root, rocavector.Name, rocavector.StateDir)
 	if err := os.MkdirAll(state, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(state, ".worker"),
-		[]byte(strconv.Itoa(os.Getpid())+" current-run\n"), 0o600); err != nil {
+		[]byte(strconv.Itoa(os.Getpid())+" previous-run 1\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if !rocavector.WorkerRunning(root) {
-		t.Fatal("current worker claim was reported stopped")
+	if rocavector.WorkerRunning(root) {
+		t.Fatal("reused pid was reported as the vector worker")
 	}
 }
 

@@ -23,7 +23,10 @@ const (
 	relocationLockFile  = ".roca-vector.relocation.lock"
 )
 
-var workerProcessAlive = processAlive
+var (
+	workerProcessAlive = processAlive
+	workerProcessStart = processStartUnixNano
+)
 
 type Completion struct {
 	ExitStatus int       `json:"exit_status"`
@@ -189,16 +192,20 @@ func Launch(request LaunchRequest) (LaunchResult, error) {
 		command.Args = append(command.Args, "--progress-fd=3")
 	}
 	command.SysProcAttr = detachedProcessAttributes
+	runID, err := newWorkerRunID()
+	if err != nil {
+		return LaunchResult{}, err
+	}
 	if err := command.Start(); err != nil {
 		return LaunchResult{}, fmt.Errorf("start vector worker: %w", err)
 	}
 	pid := command.Process.Pid
-	runID, err := newWorkerRunID()
+	claimBytes, err := EncodeWorkerClaim(pid, runID)
 	if err != nil {
 		_ = command.Process.Kill()
-		return LaunchResult{}, err
+		return LaunchResult{}, fmt.Errorf("identify vector worker process: %w", err)
 	}
-	if _, err := fmt.Fprintf(claim, "%d %s\n", pid, runID); err != nil {
+	if _, err := claim.Write(claimBytes); err != nil {
 		_ = command.Process.Kill()
 		return LaunchResult{}, err
 	}
@@ -223,9 +230,12 @@ func claimWorker(path string) (*os.File, error) {
 			return nil, fmt.Errorf("claim vector worker: %w", err)
 		}
 		info, statErr := os.Stat(path)
-		pid := ReadWorkerPID(filepath.Dir(path))
+		record, readErr := readWorkerClaim(filepath.Dir(path))
 		fresh := statErr == nil && time.Since(info.ModTime()) < 5*time.Minute
-		if (pid > 0 && workerProcessAlive(pid)) || (pid == 0 && fresh) {
+		if readErr == nil && inspectWorkerClaim(record) != workerClaimStale {
+			return nil, nil
+		}
+		if readErr != nil && fresh {
 			return nil, nil
 		}
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
@@ -237,10 +247,14 @@ func claimWorker(path string) (*os.File, error) {
 
 func LockWorkerClaim(directory string) (func() error, error) {
 	path := filepath.Join(directory, WorkerClaimFilename)
+	startedAt, err := workerProcessStart(os.Getpid())
+	if err != nil {
+		return nil, fmt.Errorf("identify vector worker process: %w", err)
+	}
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		claim, err := readWorkerClaim(directory)
-		if err == nil && claim.PID == os.Getpid() && claim.RunID != "" {
+		if err == nil && claim.PID == os.Getpid() && claim.StartedAt == startedAt {
 			release, err := lockFile(path)
 			if err != nil {
 				return nil, err
@@ -256,7 +270,7 @@ func LockWorkerClaim(directory string) (func() error, error) {
 			}
 			return release, nil
 		}
-		if err == nil && claim.PID > 0 && claim.PID != os.Getpid() {
+		if err == nil && (claim.PID != os.Getpid() || claim.StartedAt != startedAt) {
 			return nil, fmt.Errorf("vector worker claim belongs to pid %d", claim.PID)
 		}
 		if time.Now().After(deadline) {
@@ -316,7 +330,7 @@ func WorkerRunning(directory string) bool {
 
 func liveWorkerClaim(directory string) (workerClaimRecord, bool) {
 	claim, err := readWorkerClaim(directory)
-	if err != nil || claim.PID <= 0 || claim.RunID == "" || !workerProcessAlive(claim.PID) {
+	if err != nil || inspectWorkerClaim(claim) != workerClaimLive {
 		return workerClaimRecord{}, false
 	}
 	release, held, err := tryLockExisting(filepath.Join(directory, WorkerClaimFilename))
@@ -347,8 +361,31 @@ func ReadCompletion(directory string) (Completion, bool) {
 }
 
 type workerClaimRecord struct {
-	PID   int
-	RunID string
+	PID       int
+	RunID     string
+	StartedAt int64
+}
+
+type workerClaimLiveness uint8
+
+const (
+	workerClaimStale workerClaimLiveness = iota
+	workerClaimLive
+	workerClaimUnknown
+)
+
+func inspectWorkerClaim(claim workerClaimRecord) workerClaimLiveness {
+	if !workerProcessAlive(claim.PID) {
+		return workerClaimStale
+	}
+	startedAt, err := workerProcessStart(claim.PID)
+	if err != nil {
+		return workerClaimUnknown
+	}
+	if startedAt != claim.StartedAt {
+		return workerClaimStale
+	}
+	return workerClaimLive
 }
 
 func newWorkerRunID() (string, error) {
@@ -359,24 +396,36 @@ func newWorkerRunID() (string, error) {
 	return hex.EncodeToString(raw), nil
 }
 
+func EncodeWorkerClaim(pid int, runID string) ([]byte, error) {
+	fields := strings.Fields(runID)
+	if pid <= 0 || len(fields) != 1 || fields[0] != runID {
+		return nil, fmt.Errorf("vector worker pid and run identity are required")
+	}
+	startedAt, err := workerProcessStart(pid)
+	if err != nil {
+		return nil, err
+	}
+	return []byte(fmt.Sprintf("%d %s %d\n", pid, runID, startedAt)), nil
+}
+
 func readWorkerClaim(directory string) (workerClaimRecord, error) {
 	raw, err := os.ReadFile(filepath.Join(directory, WorkerClaimFilename))
 	if err != nil {
 		return workerClaimRecord{}, err
 	}
 	fields := strings.Fields(string(raw))
-	if len(fields) == 0 {
-		return workerClaimRecord{}, fmt.Errorf("vector worker claim is empty")
+	if len(fields) != 3 {
+		return workerClaimRecord{}, fmt.Errorf("vector worker claim is incomplete")
 	}
 	pid, err := strconv.Atoi(fields[0])
-	if err != nil {
-		return workerClaimRecord{}, err
+	if err != nil || pid <= 0 {
+		return workerClaimRecord{}, fmt.Errorf("parse vector worker pid")
 	}
-	claim := workerClaimRecord{PID: pid}
-	if len(fields) > 1 {
-		claim.RunID = fields[1]
+	startedAt, err := strconv.ParseInt(fields[2], 10, 64)
+	if err != nil || startedAt <= 0 {
+		return workerClaimRecord{}, fmt.Errorf("parse vector worker process identity")
 	}
-	return claim, nil
+	return workerClaimRecord{PID: pid, RunID: fields[1], StartedAt: startedAt}, nil
 }
 
 func ReadWorkerPID(directory string) int {

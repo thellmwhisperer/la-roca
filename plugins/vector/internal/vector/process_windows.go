@@ -24,6 +24,19 @@ func processAlive(pid int) bool {
 	return windows.GetExitCodeProcess(handle, &code) == nil && code == stillActiveExitCode
 }
 
+func processStartUnixNano(pid int) (int64, error) {
+	handle, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
+	if err != nil {
+		return 0, err
+	}
+	defer windows.CloseHandle(handle)
+	var created, exited, kernel, user windows.Filetime
+	if err := windows.GetProcessTimes(handle, &created, &exited, &kernel, &user); err != nil {
+		return 0, err
+	}
+	return created.Nanoseconds(), nil
+}
+
 func replaceFile(source, destination string) error {
 	replacement, err := windows.UTF16PtrFromString(source)
 	if err != nil {

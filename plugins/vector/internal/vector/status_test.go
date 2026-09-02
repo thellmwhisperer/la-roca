@@ -591,9 +591,7 @@ func TestWorkerStatusRejectsActivityFromAnotherRun(t *testing.T) {
 func holdTestWorkerClaim(t *testing.T, state, runID string) {
 	t.Helper()
 	path := filepath.Join(state, WorkerClaimFilename)
-	if err := os.WriteFile(path, []byte(fmt.Sprintf("%d %s\n", os.Getpid(), runID)), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeTestWorkerClaim(t, path, runID)
 	release, err := lockFile(path)
 	if err != nil {
 		t.Fatal(err)
