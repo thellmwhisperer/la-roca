@@ -1,6 +1,7 @@
 package parsers
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -129,7 +130,7 @@ func TestCodexCountsAUserMessageThatSupersedesAnUnclosedTurn(t *testing.T) {
 	}
 }
 
-func TestCodexCountsToolVerdictWithUnknownCallID(t *testing.T) {
+func TestCodexAppliesALateVerdictToTheSupersededOrphan(t *testing.T) {
 	content := `{"type":"event_msg","payload":{"type":"user_message","message":"first"}}
 {"type":"response_item","payload":{"type":"function_call","call_id":"old","name":"shell"}}
 {"type":"event_msg","payload":{"type":"user_message","message":"replacement"}}
@@ -139,12 +140,158 @@ func TestCodexCountsToolVerdictWithUnknownCallID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(records.Discards) != 2 {
-		t.Fatalf("discards = %+v", records.Discards)
+	if len(records.Discards) != 1 {
+		t.Fatalf("discards = %+v, want only the superseded turn", records.Discards)
 	}
-	if !strings.Contains(records.Discards[1].Reason, "unknown call_id") ||
-		records.Discards[1].Category != "tool verdict has unknown call_id" {
-		t.Fatalf("tool verdict discard = %q", records.Discards[1].Reason)
+	session := records.Sessions[0]
+	if len(session.Exchanges) != 1 || len(session.Exchanges[0].Tools) != 0 {
+		t.Fatalf("replacement exchange = %+v, want no superseded tool", session.Exchanges)
+	}
+	if len(session.OrphanedTools) != 1 {
+		t.Fatalf("orphaned tools = %+v, want the superseded call", session.OrphanedTools)
+	}
+	tool := session.OrphanedTools[0]
+	if !tool.HadError || tool.ErrorMessage != `{"metadata":{"exit_code":1}}` {
+		t.Fatalf("superseded tool verdict = %+v", tool)
+	}
+}
+
+func TestCodexRecoveryDoesNotAttachToolsFromAnAbortedEventTurn(t *testing.T) {
+	content := `{"type":"event_msg","payload":{"type":"user_message","message":"interrupted"}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"interrupted"}]}}
+{"type":"response_item","payload":{"type":"function_call","call_id":"aborted","name":"shell"}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"partial answer"}]}}
+{"type":"event_msg","payload":{"type":"turn_aborted"}}`
+	records, err := Parse(KindCodexSession, []byte(content), FileMeta{SessionID: "recovered-abort"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := records.Sessions[0]
+	if len(session.Exchanges) != 1 || session.Exchanges[0].HumanText != "interrupted" ||
+		session.Exchanges[0].AgentText != "partial answer" {
+		t.Fatalf("recovered conversation = %+v", session.Exchanges)
+	}
+	if len(session.Exchanges[0].Tools) != 0 || len(session.OrphanedTools) != 1 ||
+		session.OrphanedTools[0].Name != "shell" {
+		t.Fatalf("recovered tool ownership = attached:%+v orphaned:%+v",
+			session.Exchanges[0].Tools, session.OrphanedTools)
+	}
+}
+
+func TestCodexResponseOnlyRecoveryKeepsToolsOrphaned(t *testing.T) {
+	content := `{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"interrupted"}]}}
+{"type":"response_item","payload":{"type":"function_call","call_id":"response-only","name":"shell"}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"partial answer"}]}}`
+	for _, testCase := range []struct {
+		name, suffix string
+	}{
+		{name: "open"},
+		{name: "aborted", suffix: `
+{"type":"event_msg","payload":{"type":"turn_aborted"}}`},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			records, err := Parse(KindCodexSession, []byte(content+testCase.suffix),
+				FileMeta{SessionID: "response-only"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			session := records.Sessions[0]
+			if len(session.Exchanges) != 1 || session.Exchanges[0].HumanText != "interrupted" ||
+				session.Exchanges[0].AgentText != "partial answer" {
+				t.Fatalf("recovered conversation = %+v", session.Exchanges)
+			}
+			if len(session.Exchanges[0].Tools) != 0 || len(session.OrphanedTools) != 1 ||
+				session.OrphanedTools[0].Name != "shell" {
+				t.Fatalf("response-only tool ownership = attached:%+v orphaned:%+v",
+					session.Exchanges[0].Tools, session.OrphanedTools)
+			}
+		})
+	}
+}
+
+func TestCodexAppliesALateVerdictToAResponseOnlyOrphan(t *testing.T) {
+	content := `{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"interrupted"}]}}
+{"type":"response_item","payload":{"type":"function_call","call_id":"response-only","name":"shell"}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"partial answer"}]}}
+{"type":"event_msg","payload":{"type":"user_message","message":"next"}}
+{"type":"response_item","payload":{"type":"function_call_output","call_id":"response-only","output":"failure\nProcess exited with code 1"}}
+{"type":"event_msg","payload":{"type":"task_complete","last_agent_message":"done"}}`
+	records, err := Parse(KindCodexSession, []byte(content), FileMeta{SessionID: "response-only-verdict"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := records.Sessions[0]
+	if len(session.Exchanges) != 1 || session.Exchanges[0].HumanText != "next" ||
+		session.Exchanges[0].AgentText != "done" || len(session.Exchanges[0].Tools) != 0 {
+		t.Fatalf("completed event turn = %+v", session.Exchanges)
+	}
+	if len(session.OrphanedTools) != 1 {
+		t.Fatalf("orphaned tools = %+v, want the response-only call", session.OrphanedTools)
+	}
+	tool := session.OrphanedTools[0]
+	if !tool.HadError || tool.ErrorMessage != "failure\nProcess exited with code 1" {
+		t.Fatalf("response-only tool verdict = %+v", tool)
+	}
+}
+
+func TestCodexAppliesALateVerdictAfterAResponseOnlyAbort(t *testing.T) {
+	content := `{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"first"}]}}
+{"type":"response_item","payload":{"type":"function_call","call_id":"first-call","name":"shell"}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"first answer"}]}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"second"}]}}
+{"type":"event_msg","payload":{"type":"turn_aborted"}}
+{"type":"response_item","payload":{"type":"function_call_output","call_id":"first-call","output":"failure\nProcess exited with code 1"}}`
+	records, err := Parse(KindCodexSession, []byte(content), FileMeta{SessionID: "response-only-abort-verdict"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := records.Sessions[0]
+	if len(session.Exchanges) != 1 || session.Exchanges[0].HumanText != "first" ||
+		session.Exchanges[0].AgentText != "first answer" || len(session.Exchanges[0].Tools) != 0 {
+		t.Fatalf("recovered conversation = %+v", session.Exchanges)
+	}
+	if len(session.OrphanedTools) != 1 {
+		t.Fatalf("orphaned tools = %+v, want the first response-only call", session.OrphanedTools)
+	}
+	tool := session.OrphanedTools[0]
+	if !tool.HadError || tool.ErrorMessage != "failure\nProcess exited with code 1" {
+		t.Fatalf("response-only aborted tool verdict = %+v", tool)
+	}
+}
+
+func TestCodexKeepsToolTelemetryFromInterruptedTurns(t *testing.T) {
+	var rollout strings.Builder
+	writeUser := func(message string) {
+		fmt.Fprintf(&rollout, `{"type":"event_msg","payload":{"type":"user_message","message":%q}}`, message)
+		rollout.WriteByte('\n')
+	}
+	writeTools := func(prefix string, count int) {
+		for index := range count {
+			fmt.Fprintf(&rollout, `{"type":"response_item","payload":{"type":"function_call","call_id":"%s-%d","name":"shell","arguments":"{}"}}`, prefix, index)
+			rollout.WriteByte('\n')
+		}
+	}
+
+	writeUser("superseded turn")
+	writeTools("superseded", 550)
+	writeUser("aborted turn")
+	writeTools("aborted", 550)
+	rollout.WriteString("{\"type\":\"event_msg\",\"payload\":{\"type\":\"turn_aborted\"}}\n")
+	writeUser("completed turn")
+	writeTools("attached", 471)
+	rollout.WriteString("{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\",\"last_agent_message\":\"done\"}}\n")
+
+	records, err := Parse(KindCodexSession, []byte(rollout.String()), FileMeta{SessionID: "interrupt-heavy"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := records.Sessions[0]
+	if len(session.Exchanges) != 1 || len(session.Exchanges[0].Tools) != 471 {
+		t.Fatalf("recognized exchanges/tools = %d/%d, want 1/471",
+			len(session.Exchanges), len(session.Exchanges[0].Tools))
+	}
+	if len(session.OrphanedTools) != 1100 {
+		t.Fatalf("orphaned tools = %d, want 1100 of 1571 total", len(session.OrphanedTools))
 	}
 }
 

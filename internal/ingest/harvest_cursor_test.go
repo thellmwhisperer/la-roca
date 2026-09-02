@@ -196,6 +196,347 @@ func TestAppendableSessionParsersUseStoredExchangeCursor(t *testing.T) {
 	}
 }
 
+func TestCompletedCodexTurnKeepsRecoveredToolWithoutIdentity(t *testing.T) {
+	prefix := `{"type":"session_meta","payload":{"id":"completed-recovery"}}
+{"type":"event_msg","payload":{"type":"user_message","message":"question"}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"question"}]}}
+{"type":"response_item","payload":{"type":"function_call","call_id":"open","name":"shell","arguments":"{\"cmd\":\"inspect\"}"}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer"}]}}
+`
+	completion := `{"type":"response_item","payload":{"type":"function_call_output","call_id":"open","output":{"metadata":{"exit_code":1}}}}
+{"type":"event_msg","payload":{"type":"task_complete","last_agent_message":"answer"}}
+`
+	db := corpusDatabase(t)
+	for _, content := range []string{prefix, prefix + completion} {
+		records, err := parsers.Parse(parsers.KindCodexSession, []byte(content),
+			parsers.FileMeta{SessionID: "completed-recovery"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeHarvestRecords(t, db, records)
+	}
+	var count, exchangeNumber, orphaned, hadError int
+	var message string
+	if err := db.SQL().QueryRow(`SELECT COUNT(*), COALESCE(MAX(exchange_number), 0),
+		SUM(exchange_number IS NULL), MAX(had_error), COALESCE(MAX(error_message), '')
+		FROM tool_uses WHERE session_id = ?`, "completed-recovery").
+		Scan(&count, &exchangeNumber, &orphaned, &hadError, &message); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 || exchangeNumber != 0 || orphaned != 1 || hadError != 1 ||
+		message != `{"metadata":{"exit_code":1}}` {
+		t.Fatalf("completed recovered tool = count:%d exchange:%d orphaned:%d error:%d message:%q",
+			count, exchangeNumber, orphaned, hadError, message)
+	}
+}
+
+func TestCompletedRecoveredCodexExchangeKeepsNewToolAsOrphan(t *testing.T) {
+	prefix := `{"type":"session_meta","payload":{"id":"completed-new-tool"}}
+{"type":"event_msg","payload":{"type":"user_message","message":"question"}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"question"}]}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer"}]}}
+`
+	tail := `{"type":"response_item","payload":{"type":"function_call","call_id":"late","name":"shell","arguments":"{\"cmd\":\"finish\"}"}}
+{"type":"event_msg","payload":{"type":"task_complete","last_agent_message":"answer"}}
+`
+	db, second := writeGrowingSessionInTwoPasses(t, prefix, tail, Target{
+		FileName: "rollout.jsonl", Kind: parsers.KindCodexSession,
+		SessionID: "completed-new-tool", SourceAgent: "codex",
+	})
+	if len(second.Sessions) != 1 || second.Sessions[0].Incremental {
+		t.Fatalf("completed rollout did not fall back to a full read: %+v", second.Sessions)
+	}
+	var count, exchangeNumber, orphaned int
+	var name, params string
+	if err := db.SQL().QueryRow(`SELECT COUNT(*), COALESCE(MAX(exchange_number), 0),
+		SUM(exchange_number IS NULL), MAX(tool_name), MAX(tool_params_summary)
+		FROM tool_uses WHERE session_id = ?`, "completed-new-tool").
+		Scan(&count, &exchangeNumber, &orphaned, &name, &params); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 || exchangeNumber != 0 || orphaned != 1 || name != "shell" ||
+		params != `{"cmd":"finish"}` {
+		t.Fatalf("completed new tool = count:%d exchange:%d orphaned:%d name:%q params:%q",
+			count, exchangeNumber, orphaned, name, params)
+	}
+}
+
+func TestOrphanProjectionDoesNotDeleteAttachedTools(t *testing.T) {
+	db := corpusDatabase(t)
+	exchange := parsers.Exchange{
+		Number: 1, HumanText: "question", AgentText: "answer",
+		Tools: []parsers.ToolUse{{Name: "shell", ParamsSummary: "inspect"}},
+	}
+	writeHarvestRecords(t, db, parsers.Records{Sessions: []parsers.Session{{
+		ID: "existing-attached-tool", ExchangeNumbersAuthoritative: true,
+		Exchanges: []parsers.Exchange{exchange},
+	}}})
+	exchange.Tools = nil
+	writeHarvestRecords(t, db, parsers.Records{Sessions: []parsers.Session{{
+		ID: "existing-attached-tool", ExchangeNumbersAuthoritative: true,
+		Exchanges:     []parsers.Exchange{exchange},
+		OrphanedTools: []parsers.ToolUse{{Name: "interrupt", ParamsSummary: "later"}},
+	}}})
+	var attached, orphaned int
+	if err := db.SQL().QueryRow(`SELECT
+		(SELECT COUNT(*) FROM tool_uses WHERE session_id = 'existing-attached-tool'
+		 AND exchange_number = 1 AND tool_name = 'shell'),
+		(SELECT COUNT(*) FROM tool_uses WHERE session_id = 'existing-attached-tool'
+		 AND exchange_number IS NULL AND tool_name = 'interrupt')`).Scan(&attached, &orphaned); err != nil {
+		t.Fatal(err)
+	}
+	if attached != 1 || orphaned != 1 {
+		t.Fatalf("tool rows = attached:%d orphaned:%d, want 1/1", attached, orphaned)
+	}
+}
+
+func TestConflictedCodexCompletionPreservesRecoveredOrphan(t *testing.T) {
+	prefix := `{"type":"session_meta","payload":{"id":"conflicted-recovery"}}
+{"type":"event_msg","payload":{"type":"user_message","message":"question"}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"question"}]}}
+{"type":"response_item","payload":{"type":"function_call","call_id":"open","name":"shell","arguments":"{\"cmd\":\"inspect\"}"}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"draft"}]}}
+`
+	completion := `{"type":"event_msg","payload":{"type":"task_complete","last_agent_message":"final"}}
+`
+	db := corpusDatabase(t)
+	for _, content := range []string{prefix, prefix + completion} {
+		records, err := parsers.Parse(parsers.KindCodexSession, []byte(content),
+			parsers.FileMeta{SessionID: "conflicted-recovery"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeHarvestRecords(t, db, records)
+	}
+	var answer string
+	var total, orphaned, attached int
+	if err := db.SQL().QueryRow(`SELECT agent_text,
+		(SELECT COUNT(*) FROM tool_uses WHERE session_id = 'conflicted-recovery'),
+		(SELECT COUNT(*) FROM tool_uses WHERE session_id = 'conflicted-recovery'
+		 AND exchange_number IS NULL),
+		(SELECT COUNT(*) FROM tool_uses WHERE session_id = 'conflicted-recovery'
+		 AND exchange_number IS NOT NULL)
+		FROM exchanges WHERE session_id = 'conflicted-recovery'`).
+		Scan(&answer, &total, &orphaned, &attached); err != nil {
+		t.Fatal(err)
+	}
+	if answer != "draft" || total != 1 || orphaned != 1 || attached != 0 {
+		t.Fatalf("conflicted completion = answer:%q total:%d orphaned:%d attached:%d",
+			answer, total, orphaned, attached)
+	}
+}
+
+func TestMappedExchangeConflictPreservesToolsAsOrphans(t *testing.T) {
+	db := corpusDatabase(t)
+	writeHarvestRecords(t, db, parsers.Records{Sessions: []parsers.Session{{
+		ID: "mapped-exchange-conflict",
+		Exchanges: []parsers.Exchange{{
+			Number: 1, SourceID: "source-turn", Fingerprint: "draft",
+			HumanText: "question", AgentText: "draft answer",
+		}},
+	}}})
+	writeHarvestRecords(t, db, parsers.Records{Sessions: []parsers.Session{{
+		ID: "mapped-exchange-conflict",
+		Exchanges: []parsers.Exchange{{
+			Number: 1, SourceID: "source-turn", Fingerprint: "final",
+			HumanText: "question", AgentText: "conflicting final answer",
+			Tools: []parsers.ToolUse{{Name: "shell", ParamsSummary: "inspect"}},
+		}},
+		OrphanedTools: []parsers.ToolUse{},
+	}}})
+
+	var answer string
+	var total, orphaned, attached int
+	if err := db.SQL().QueryRow(`SELECT agent_text,
+		(SELECT COUNT(*) FROM tool_uses WHERE session_id = 'mapped-exchange-conflict'),
+		(SELECT COUNT(*) FROM tool_uses WHERE session_id = 'mapped-exchange-conflict'
+		 AND exchange_number IS NULL),
+		(SELECT COUNT(*) FROM tool_uses WHERE session_id = 'mapped-exchange-conflict'
+		 AND exchange_number IS NOT NULL)
+		FROM exchanges WHERE session_id = 'mapped-exchange-conflict'`).
+		Scan(&answer, &total, &orphaned, &attached); err != nil {
+		t.Fatal(err)
+	}
+	if answer != "draft answer" || total != 1 || orphaned != 1 || attached != 0 {
+		t.Fatalf("mapped conflict = answer:%q total:%d orphaned:%d attached:%d",
+			answer, total, orphaned, attached)
+	}
+}
+
+func TestConflictedCodexCompletionPreservesDistinctIdenticalCalls(t *testing.T) {
+	prefix := `{"type":"session_meta","payload":{"id":"conflicted-identical-calls"}}
+{"type":"event_msg","payload":{"type":"user_message","message":"question"}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"question"}]}}
+{"type":"response_item","payload":{"type":"function_call","call_id":"transitioning","name":"shell","arguments":"{\"cmd\":\"inspect\"}"}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"draft"}]}}
+`
+	tail := `{"type":"event_msg","payload":{"type":"task_complete","last_agent_message":"final"}}
+{"type":"event_msg","payload":{"type":"user_message","message":"second"}}
+{"type":"response_item","payload":{"type":"function_call","call_id":"aborted","name":"shell","arguments":"{\"cmd\":\"inspect\"}"}}
+{"type":"event_msg","payload":{"type":"turn_aborted"}}
+`
+	db, _ := writeGrowingSessionInTwoPasses(t, prefix, tail, Target{
+		FileName: "rollout.jsonl", Kind: parsers.KindCodexSession,
+		SessionID: "conflicted-identical-calls", SourceAgent: "codex",
+	})
+	rows, err := db.SQL().Query(`SELECT exchange_number, tool_name, tool_params_summary
+		FROM tool_uses WHERE session_id = ? ORDER BY id`, "conflicted-identical-calls")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	count := 0
+	for rows.Next() {
+		var exchangeNumber sql.NullInt64
+		var name, params string
+		if err := rows.Scan(&exchangeNumber, &name, &params); err != nil {
+			t.Fatal(err)
+		}
+		if exchangeNumber.Valid || name != "shell" || params != `{"cmd":"inspect"}` {
+			t.Fatalf("conflicted tool = exchange:%v name:%q params:%q",
+				exchangeNumber, name, params)
+		}
+		count++
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("preserved identical calls = %d, want 2", count)
+	}
+}
+
+func TestIncrementalCodexLateVerdictFallsBackToTheFullRollout(t *testing.T) {
+	prefix := `{"type":"session_meta","payload":{"id":"late-verdict"}}
+{"type":"event_msg","payload":{"type":"user_message","message":"first"}}
+{"type":"response_item","payload":{"type":"function_call","call_id":"old","name":"shell"}}
+{"type":"event_msg","payload":{"type":"user_message","message":"replacement"}}
+{"type":"event_msg","payload":{"type":"task_complete","last_agent_message":"done"}}
+`
+	tail := `{"type":"event_msg","payload":{"type":"user_message","message":"next"}}
+{"type":"response_item","payload":{"type":"function_call_output","call_id":"old","output":{"metadata":{"exit_code":1}}}}
+{"type":"event_msg","payload":{"type":"task_complete","last_agent_message":"done again"}}
+`
+	db, second := writeGrowingSessionInTwoPasses(t, prefix, tail, Target{
+		FileName: "rollout.jsonl", Kind: parsers.KindCodexSession,
+		SessionID: "late-verdict", SourceAgent: "codex",
+	})
+	if len(second.Sessions) != 1 || second.Sessions[0].Incremental {
+		t.Fatalf("late-verdict reading did not fall back to the full rollout: %+v", second.Sessions)
+	}
+	var count, hadError int
+	var message string
+	if err := db.SQL().QueryRow(`SELECT COUNT(*), had_error, error_message FROM tool_uses
+		WHERE session_id = ? AND exchange_number IS NULL`, "late-verdict").
+		Scan(&count, &hadError, &message); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 || hadError != 1 || message != `{"metadata":{"exit_code":1}}` {
+		t.Fatalf("persisted late verdict = count:%d error:%d message:%q", count, hadError, message)
+	}
+}
+
+func TestIncrementalCodexInterruptedTailsFallBackToTheFullRollout(t *testing.T) {
+	prefix := `{"type":"session_meta","payload":{"id":"interrupted-tail"}}
+{"type":"event_msg","payload":{"type":"user_message","message":"complete question"}}
+{"type":"event_msg","payload":{"type":"task_complete","last_agent_message":"complete answer"}}
+`
+	responseTail := `{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"interrupted"}]}}
+{"type":"response_item","payload":{"type":"function_call","call_id":"interrupted-call","name":"shell","arguments":"{}"}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"partial"}]}}
+`
+	eventTail := `{"type":"event_msg","payload":{"type":"user_message","message":"interrupted"}}
+` + responseTail
+	abort := `{"type":"event_msg","payload":{"type":"turn_aborted"}}
+`
+	invalidCompletion := `{"type":"event_msg","payload":{"type":"task_complete","content":{}}}
+`
+	invalidOpener := `{"type":"event_msg","payload":{"type":"user_message","message":"interrupted","content":{}}}
+` + responseTail + `{"type":"event_msg","payload":{"type":"task_complete","last_agent_message":"partial"}}
+`
+	cases := []struct {
+		name, tail string
+	}{
+		{name: "aborted", tail: eventTail + abort},
+		{name: "open", tail: eventTail},
+		{name: "response only", tail: responseTail},
+		{name: "response only abort", tail: responseTail + abort},
+		{name: "parser deferred invalid completion", tail: eventTail + invalidCompletion},
+		{name: "parser rejected invalid opener", tail: invalidOpener},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			db, second := writeGrowingSessionInTwoPasses(t, prefix, testCase.tail, Target{
+				FileName: "rollout.jsonl", Kind: parsers.KindCodexSession,
+				SessionID: "interrupted-tail", SourceAgent: "codex",
+			})
+			if len(second.Sessions) != 1 || second.Sessions[0].Incremental ||
+				len(second.Sessions[0].Exchanges) != 1 {
+				t.Fatalf("interrupted tail records = %+v", second.Sessions)
+			}
+			var exchanges, orphaned int
+			if err := db.SQL().QueryRow(`SELECT
+				(SELECT COUNT(*) FROM exchanges WHERE session_id = 'interrupted-tail'),
+				(SELECT COUNT(*) FROM tool_uses WHERE session_id = 'interrupted-tail'
+				 AND exchange_number IS NULL)`).Scan(&exchanges, &orphaned); err != nil {
+				t.Fatal(err)
+			}
+			if exchanges != 1 || orphaned != 1 {
+				t.Fatalf("persisted interrupted tail = exchanges:%d orphaned:%d", exchanges, orphaned)
+			}
+		})
+	}
+}
+
+func TestIncrementalOrphanedToolsPreserveAndExtendTheFullProjection(t *testing.T) {
+	db := corpusDatabase(t)
+	const sessionID = "incremental-orphan-tools"
+	writeHarvestRecords(t, db, parsers.Records{Sessions: []parsers.Session{{
+		ID: sessionID,
+		OrphanedTools: []parsers.ToolUse{{
+			Name: "aborted", ParamsSummary: "full rollout",
+		}},
+	}}})
+	writeHarvestRecords(t, db, parsers.Records{Sessions: []parsers.Session{{
+		ID: sessionID, Incremental: true, OrphanedTools: []parsers.ToolUse{},
+	}}})
+
+	var afterCompletedTail int
+	if err := db.SQL().QueryRow(`SELECT COUNT(*) FROM tool_uses
+		WHERE session_id = ? AND exchange_number IS NULL`, sessionID).Scan(&afterCompletedTail); err != nil {
+		t.Fatal(err)
+	}
+	if afterCompletedTail != 1 {
+		t.Fatalf("orphaned tools after completed tail = %d, want the existing orphan preserved",
+			afterCompletedTail)
+	}
+
+	writeHarvestRecords(t, db, parsers.Records{Sessions: []parsers.Session{{
+		ID: sessionID, Incremental: true,
+		OrphanedTools: []parsers.ToolUse{{Name: "superseded", ParamsSummary: "tail rollout"}},
+	}}})
+	rows, err := db.SQL().Query(`SELECT tool_name FROM tool_uses
+		WHERE session_id = ? AND exchange_number IS NULL ORDER BY id`, sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		names = append(names, name)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(names) != 2 || names[0] != "aborted" || names[1] != "superseded" {
+		t.Fatalf("orphaned tools after orphan tail = %v, want preserved and appended rows", names)
+	}
+}
+
 func TestCodexHistoryCursorRemainsPerSession(t *testing.T) {
 	prefix := `{"session_id":"history-1","text":"one","ts":1785578401}` + "\n" +
 		`{"session_id":"history-2","text":"other","ts":1785578402}` + "\n"
@@ -334,35 +675,12 @@ func TestIncrementalPiSessionAdvancesItsTimeline(t *testing.T) {
 		`{"id":"a1","parentId":"u1","type":"message","timestamp":"2026-08-01T13:00:02Z","message":{"role":"assistant","content":"done","stopReason":"stop"}}` + "\n"
 	tail := `{"id":"u2","parentId":"a1","type":"message","timestamp":"2026-08-01T13:10:00Z","message":{"role":"user","content":"two"}}` + "\n" +
 		`{"id":"a2","parentId":"u2","type":"message","timestamp":"2026-08-01T13:10:02Z","message":{"role":"assistant","content":"done again","stopReason":"stop"}}` + "\n"
-	path := filepath.Join(t.TempDir(), "session.jsonl")
-	target := Target{Path: path, FileName: filepath.Base(path), Kind: parsers.KindPiSession}
-	if err := os.WriteFile(path, []byte(prefix), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	firstResult := Result{}
-	first, reason := read(t.Context(), Options{}, target, incrementality.FileState{}, &firstResult)
-	if reason != "" {
-		t.Fatal(reason)
-	}
-	db := corpusDatabase(t)
-	writeHarvestRecords(t, db, first)
-	metadata, err := json.Marshal(firstResult.harvestCursors[path])
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(prefix+tail), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	secondResult := Result{}
-	second, reason := read(t.Context(), Options{}, target,
-		incrementality.FileState{Metadata: metadata}, &secondResult)
-	if reason != "" {
-		t.Fatal(reason)
-	}
+	db, second := writeGrowingSessionInTwoPasses(t, prefix, tail, Target{
+		FileName: "session.jsonl", Kind: parsers.KindPiSession,
+	})
 	if len(second.Sessions) != 1 || !second.Sessions[0].Incremental {
 		t.Fatalf("incremental Pi session = %+v", second.Sessions)
 	}
-	writeHarvestRecords(t, db, second)
 	var started, ended string
 	var duration int
 	if err := db.SQL().QueryRow(`SELECT started_at, ended_at, duration_minutes FROM sessions
@@ -549,6 +867,39 @@ func assertHarvestCursorState(t *testing.T, db *store.DB, path string, cursor in
 		t.Fatalf("cursor state = %+v, size=%d; want cursor=%d complete=%t",
 			state, info.Size(), cursor, complete)
 	}
+}
+
+func writeGrowingSessionInTwoPasses(t *testing.T, prefix, tail string,
+	target Target,
+) (*store.DB, parsers.Records) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), target.FileName)
+	target.Path = path
+	if err := os.WriteFile(path, []byte(prefix), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	firstResult := Result{}
+	first, reason := read(t.Context(), Options{}, target, incrementality.FileState{}, &firstResult)
+	if reason != "" {
+		t.Fatal(reason)
+	}
+	db := corpusDatabase(t)
+	writeHarvestRecords(t, db, first)
+	metadata, err := json.Marshal(firstResult.harvestCursors[path])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(prefix+tail), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	secondResult := Result{}
+	second, reason := read(t.Context(), Options{}, target,
+		incrementality.FileState{Metadata: metadata}, &secondResult)
+	if reason != "" {
+		t.Fatal(reason)
+	}
+	writeHarvestRecords(t, db, second)
+	return db, second
 }
 
 func corpusDatabase(t *testing.T) *store.DB {
