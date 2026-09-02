@@ -49,12 +49,14 @@ Missing or unreadable evidence is `unknown`.
 
 One worker line says whether a pass is running, its pid, backend (`cpu` or
 `metal`), and current database. Backend and database are unknown unless they
-can be attributed to that live worker; a scheduled current database is cleared
-when its embedding call ends. Status never uses historical telemetry, waits
-for the model, or waits indefinitely for count work. Default output is bounded
-AXI; `--json` is the complete envelope; `help[]` names the next command.
-Registry or command errors return a non-zero exit status; unreadable facts for
-an individual database remain in the successful envelope as unknown.
+can be attributed to that live worker. Its claim is run-scoped and bound to the
+process-start identity, so PID reuse cannot revive activity from an earlier
+run; a scheduled current database is cleared when its embedding call ends.
+Status never uses historical telemetry, waits for the model, or waits
+indefinitely for count work. Default output is bounded AXI; `--json` is the
+complete envelope; `help[]` names the next command. Registry or command errors
+return a non-zero exit status; unreadable facts for an individual database
+remain in the successful envelope as unknown.
 
 ```sh
 roca vector status
