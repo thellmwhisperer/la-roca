@@ -64,7 +64,8 @@ the database selected with `--db-path`), then start the build:
 roca vector install
 ```
 
-Progress is a fraction of your user's own history, not a chunk count:
+`roca vector status` reports per-database sidecar facts. A number that cannot
+be read is unknown, never 0:
 
 ```sh
 roca vector status

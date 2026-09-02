@@ -32,17 +32,38 @@ not rewrite an existing configuration. On those machines the pass starts at the
 plugin instead, with `roca vector install`. There is no `--vectors` flag: a run
 nobody answered has not consented to a download.
 
-Progress is reported as a fraction of the history on this machine:
+`roca vector status` reports one row per database declared in
+`vector-registry.json`: plugin, database, declared tables, embedded chunks,
+candidate chunks, sidecar size, last write, and state. Embedded and candidate
+counts are exact under the declared chunking policy or unknown (`null`), never
+estimates or invented zeroes. Sidecar size and last write include its SQLite
+WAL and shared-memory files when present.
+
+The states are `building`, `complete`, `empty`, `outdated`, and `unknown`.
+`complete` requires a sealed source fingerprint, the current declaration, and
+a matching cheap source-file marker; status does not hash the corpus to prove
+that. A changed declaration or marker is `outdated`. A missing sidecar, or a
+readable unsealed sidecar with exactly zero chunks, is `empty`. An unsealed
+sidecar is `building` only while the live worker identifies that database.
+Missing or unreadable evidence is `unknown`.
+
+One worker line says whether a pass is running, its pid, backend (`cpu` or
+`metal`), and current database. Backend and database are unknown unless they
+can be attributed to that live worker. Its claim is run-scoped and bound to the
+process-start identity, so PID reuse cannot revive activity from an earlier
+run; a scheduled current database is cleared when its embedding call ends.
+Status never uses historical telemetry, waits for the model, or waits
+indefinitely for count work. Default output is bounded AXI; `--json` is the
+complete envelope; `help[]` names the next command. Registry or command errors
+return a non-zero exit status; unreadable facts for an individual database
+remain in the successful envelope as unknown.
 
 ```sh
 roca vector status
 ```
 
-It says whether a pass is reading right now, how much it has read, and what
-stopped it if it stopped. Progress counting has a 30-second deadline; if the
-counts cannot finish, status reports that progress is unavailable instead of
-waiting indefinitely. A pass that stopped partway leaves the rows it already
-wrote queryable; those rows answer, and full text answers for the rest.
+A pass that stopped partway leaves the rows it already wrote queryable; those
+rows answer, and full text answers for the rest.
 
 The rest of this document is the contract underneath, for operators who want
 each step separately or who are on a machine the one command cannot serve.
@@ -161,8 +182,9 @@ owns an adjacent sidecar: `roca-corpus.db` owns `roca-corpus.vector.db`,
 the same rule. Plugin update preserves that sidecar; uninstall archives or
 removes it under the database's custody policy. Manual filesystem operations
 must treat the pair together or discard the sidecar and regenerate it. Every
-sidecar records its owner, embedding model, dimensions, build version,
-declaration fingerprint, and source fingerprint.
+completed sidecar records its owner, embedding model, dimensions, build
+version, declaration fingerprint, source fingerprint, and the cheap source-file
+marker used by status.
 
 When upgrading from the former central `state/vector.db`, the first worker pass
 reuses compatible corpus and ops embeddings in their owned sidecars before it

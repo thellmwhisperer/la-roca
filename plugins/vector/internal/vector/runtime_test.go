@@ -44,7 +44,7 @@ func TestLaunchReportsTheClaimedWorkerPID(t *testing.T) {
 		t.Skipf("no shell to launch: %v", err)
 	}
 	directory := t.TempDir()
-	result, err := Launch(LaunchRequest{Executable: shell, Arguments: []string{"-c", "exit 0"}, DataDir: directory})
+	result, err := Launch(LaunchRequest{Executable: shell, Arguments: []string{"-c", "sleep 0.1"}, DataDir: directory})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,23 +85,91 @@ func TestLaunchKeepsLiveProgressConnectedAfterLauncherReturns(t *testing.T) {
 func TestWorkerClaimDistinguishesLiveAndStaleProcesses(t *testing.T) {
 	directory := t.TempDir()
 	claimPath := filepath.Join(directory, WorkerClaimFilename)
-	if err := os.WriteFile(claimPath, []byte("123\n"), 0o600); err != nil {
+	if err := os.WriteFile(claimPath, []byte("123 current-run boot-a:99\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	old := workerProcessAlive
-	t.Cleanup(func() { workerProcessAlive = old })
+	oldAlive, oldIdentity := workerProcessAlive, workerProcessIdentity
+	t.Cleanup(func() {
+		workerProcessAlive = oldAlive
+		workerProcessIdentity = oldIdentity
+	})
 	workerProcessAlive = func(int) bool { return true }
+	workerProcessIdentity = func(int) (string, error) { return "boot-a:99", nil }
 	claim, err := claimWorker(claimPath)
 	if err != nil || claim != nil {
 		t.Fatalf("live claim = %v, err=%v", claim, err)
 	}
 
-	workerProcessAlive = func(int) bool { return false }
+	workerProcessIdentity = func(int) (string, error) { return "boot-a:100", nil }
 	claim, err = claimWorker(claimPath)
 	if err != nil || claim == nil {
 		t.Fatalf("stale claim = %v, err=%v", claim, err)
 	}
 	claim.Close()
+}
+
+func TestWorkerRunningRequiresTheClaimOwnerLock(t *testing.T) {
+	directory := t.TempDir()
+	claimPath := filepath.Join(directory, WorkerClaimFilename)
+	writeTestWorkerClaim(t, claimPath, "current-run")
+	if WorkerRunning(directory) {
+		t.Fatal("unlocked stale claim reported a running worker")
+	}
+	release, err := LockWorkerClaim(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !WorkerRunning(directory) {
+		_ = release()
+		t.Fatal("locked live claim did not report a running worker")
+	}
+	if err := release(); err != nil {
+		t.Fatal(err)
+	}
+	if WorkerRunning(directory) {
+		t.Fatal("released claim owner lock still reported a running worker")
+	}
+}
+
+func TestLockWorkerClaimRequiresActivityInvalidation(t *testing.T) {
+	directory := t.TempDir()
+	claimPath := filepath.Join(directory, WorkerClaimFilename)
+	writeTestWorkerClaim(t, claimPath, "current-run")
+	activityPath := filepath.Join(directory, workerActivityFile)
+	if err := os.Mkdir(activityPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(activityPath, "blocked"), []byte("stale"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	release, err := LockWorkerClaim(directory)
+	if err == nil {
+		if release != nil {
+			_ = release()
+		}
+		t.Fatal("worker claim lock accepted uncleared activity")
+	}
+	if release != nil {
+		_ = release()
+		t.Fatal("failed activity invalidation retained the claim lock")
+	}
+	if !strings.Contains(err.Error(), "clear vector worker activity") {
+		t.Fatalf("lock error = %v", err)
+	}
+	if WorkerRunning(directory) {
+		t.Fatal("failed activity invalidation left the worker running")
+	}
+}
+
+func writeTestWorkerClaim(t *testing.T, path, runID string) {
+	t.Helper()
+	raw, err := EncodeWorkerClaim(os.Getpid(), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestManagedStateUsageLocksTheStablePluginRoot(t *testing.T) {
