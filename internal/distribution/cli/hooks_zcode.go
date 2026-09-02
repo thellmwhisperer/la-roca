@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -68,7 +69,13 @@ func installZcodeHandoffHook(configPath, executable string) (agentcfg.Outcome, s
 	}, true); err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
-	if err := writeZcodeWrapper(wrapperPath, zcodeWrapper(executable)); err != nil {
+	wrapperBefore, err := readZcodeWrapperState(wrapperPath)
+	if err != nil {
+		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
+	}
+	wrapperContent := zcodeWrapper(executable)
+	wrapperBackup, err := writeZcodeWrapper(wrapperPath, wrapperContent)
+	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
 	var created []string
@@ -105,11 +112,13 @@ func installZcodeHandoffHook(configPath, executable string) (agentcfg.Outcome, s
 		return agentcfg.ReplaceMember(previous, "hooks", hooks)
 	}, true)
 	if err != nil {
-		return outcome, "", err
+		return outcome, "", errors.Join(err,
+			rollbackZcodeWrapper(wrapperPath, wrapperContent, wrapperBefore, wrapperBackup))
 	}
 	if outcome.Changed {
 		if err := agentcfg.SaveOwnedHooks(configPath, created); err != nil {
-			return outcome, "", err
+			return outcome, "", errors.Join(err,
+				rollbackZcodeWrapper(wrapperPath, wrapperContent, wrapperBefore, wrapperBackup))
 		}
 	}
 	return outcome, "", nil
@@ -259,6 +268,21 @@ func zcodeHookTree(settings map[string]any) (hooks, events map[string]any, entri
 		if !ok {
 			return nil, nil, nil, fmt.Errorf("zcode settings hooks.events.SessionStart must be an array")
 		}
+		for i, raw := range entries {
+			group, ok := raw.(map[string]any)
+			if !ok {
+				return nil, nil, nil, fmt.Errorf("zcode settings hooks.events.SessionStart[%d] must be an object", i)
+			}
+			groupHooks, ok := group["hooks"].([]any)
+			if !ok {
+				return nil, nil, nil, fmt.Errorf("zcode settings hooks.events.SessionStart[%d].hooks must be an array", i)
+			}
+			for j, hook := range groupHooks {
+				if _, ok := hook.(map[string]any); !ok {
+					return nil, nil, nil, fmt.Errorf("zcode settings hooks.events.SessionStart[%d].hooks[%d] must be an object", i, j)
+				}
+			}
+		}
 	}
 	return hooks, events, entries, nil
 }
@@ -298,25 +322,79 @@ fi
 `
 }
 
-func writeZcodeWrapper(path, content string) error {
+type zcodeWrapperState struct {
+	body   []byte
+	mode   os.FileMode
+	exists bool
+}
+
+func readZcodeWrapperState(path string) (zcodeWrapperState, error) {
+	body, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return zcodeWrapperState{}, nil
+	}
+	if err != nil {
+		return zcodeWrapperState{}, fmt.Errorf("read %s: %w", path, err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return zcodeWrapperState{}, fmt.Errorf("inspect %s: %w", path, err)
+	}
+	return zcodeWrapperState{body: body, mode: info.Mode().Perm(), exists: true}, nil
+}
+
+func writeZcodeWrapper(path, content string) (string, error) {
 	previous, err := os.ReadFile(path)
 	if err == nil && string(previous) == content {
-		return os.Chmod(path, 0o700)
+		return "", os.Chmod(path, 0o700)
 	}
 	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("read %s: %w", path, err)
+		return "", fmt.Errorf("read %s: %w", path, err)
 	}
+	var backup string
 	if err == nil {
-		if _, backupErr := securefile.BackUp(path, previous); backupErr != nil {
-			return backupErr
+		backup, err = securefile.BackUp(path, previous)
+		if err != nil {
+			return "", err
 		}
 		if err := securefile.Replace(path, []byte(content), previous); err != nil {
-			return err
+			return backup, err
 		}
 	} else if err := securefile.Write(path, []byte(content), 0o700, 0o700); err != nil {
-		return err
+		return "", err
 	}
-	return os.Chmod(path, 0o700)
+	return backup, os.Chmod(path, 0o700)
+}
+
+func rollbackZcodeWrapper(path, installed string, previous zcodeWrapperState, backup string) error {
+	current, err := os.ReadFile(path)
+	if os.IsNotExist(err) && !previous.exists {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("roll back %s: %w", path, err)
+	}
+	if string(current) != installed {
+		return fmt.Errorf("refuse to roll back %s because it changed after installation", path)
+	}
+	if previous.exists {
+		if string(current) != string(previous.body) {
+			if err := securefile.Replace(path, previous.body, current); err != nil {
+				return fmt.Errorf("roll back %s: %w", path, err)
+			}
+		}
+		if err := os.Chmod(path, previous.mode); err != nil {
+			return fmt.Errorf("restore permissions on %s: %w", path, err)
+		}
+	} else if err := os.Remove(path); err != nil {
+		return fmt.Errorf("roll back %s: %w", path, err)
+	}
+	if backup != "" {
+		if err := os.Remove(backup); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove rolled-back backup %s: %w", backup, err)
+		}
+	}
+	return nil
 }
 
 func removeZcodeWrapper(path string) error {

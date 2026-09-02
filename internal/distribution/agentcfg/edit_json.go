@@ -3,6 +3,7 @@ package agentcfg
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"slices"
 	"strings"
 )
@@ -418,8 +419,11 @@ func jsonView(r runtime, text string) (string, map[string]any, error) {
 	if document == nil {
 		return "", nil, fmt.Errorf("the configuration is not a JSON object")
 	}
-	if err := decoder.Decode(new(any)); err == nil {
-		return "", nil, fmt.Errorf("there is more than one document in the file")
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		if err == nil {
+			return "", nil, fmt.Errorf("there is more than one document in the file")
+		}
+		return "", nil, err
 	}
 	return view, document, nil
 }
