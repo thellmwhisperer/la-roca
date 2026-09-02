@@ -142,6 +142,14 @@ easy and eats comments. It is measured the only way that is not a matter of
 opinion: installing and then withdrawing gives back the exact previous bytes
 (`internal/distribution/agentcfg/agentcfg_test.go`, every supported runtime).
 
+### Nested ZCode container ownership
+
+ZCode keeps MCP below `mcp.servers`. When an install creates either nested
+container, La Roca records that fact in `<file>.roca-owned`; uninstall prunes
+only recorded containers that are empty. The same sidecar carries ZCode hook
+container ownership and is removed when neither integration has records. An
+unrecognized sidecar is refused before the configuration is edited.
+
 Three more things the shared spine gives every edit: the previous bytes are
 backed up first (`<file>.roca.bak`, and an earlier copy is never overwritten);
 an existing symlink or other non-regular path is refused before backup or
@@ -193,7 +201,7 @@ runtime receives `skills/roca/SKILL.md`, `skills/roca-operations/SKILL.md`,
 | `hermes` | `$HERMES_HOME`/`~/.hermes` |
 | `pi` | `$PI_CODING_AGENT_DIR`/`~/.pi/agent` |
 | `qwen` | `$QWEN_HOME`/`~/.qwen` |
-| `zcode` | `$ZCODE_HOME`/`~/.zcode` (opt-in: init and update do not seed it) |
+| `zcode` | `$ZCODE_HOME`/`~/.zcode` ([opt-in lifecycle](lifecycle.md#skills)) |
 
 Only those files are created or refreshed. Explicit markers divide the shipped
 SYSTEM zone from the operator's USER zone. Re-running is a no-op when SYSTEM
@@ -238,9 +246,9 @@ store. The measurements behind the current list:
 - **zcode** (Z.ai ZCode): user skills live at `~/.zcode/skills/<name>/SKILL.md`
   with YAML `name` and `description` frontmatter. MCP is nested
   `mcp.servers` in `~/.zcode/cli/config.json`. The seat is opt-in:
-  `roca skill install zcode` writes it; init and update never do, even
-  when `~/.zcode` already exists. Claude Desktop MCP is a separate
-  `claude-desktop` target and is not written by this seat.
+  `roca skill install zcode` registers it. [Skills](lifecycle.md#skills) owns
+  its opt-in seeding and later refresh lifecycle. Claude Desktop MCP is a
+  separate `claude-desktop` target and is not written by this seat.
 
 ---
 
