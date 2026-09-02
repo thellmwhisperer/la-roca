@@ -552,6 +552,39 @@ func TestReportVectorizationTreatsSidecarStatErrorsAsUnknown(t *testing.T) {
 	}
 }
 
+func TestReportVectorizationRejectsFileFactsFromOlderSidecarGeneration(t *testing.T) {
+	root := t.TempDir()
+	database := vectorDatabase{
+		Plugin: "roca-corpus", Database: "corpus", Path: "roca-corpus.db", Alias: "corpus",
+		Tables: []vectorTable{{Name: "notes", IDColumn: "id", TextColumns: []string{"body"}}},
+	}
+	writeRegistry(t, root, vectorRegistry{Schema: 2, Databases: []vectorDatabase{database}})
+	sidecar := SidecarPath(filepath.Join(root, database.Plugin, database.Path))
+	writeSidecarWithChunks(t, sidecar, database.owner(), 2, nil)
+	writer := openTestSQLite(t, sidecar)
+	t.Cleanup(func() { _ = writer.Close() })
+
+	previous := countDeclaredChunks
+	countDeclaredChunks = func(context.Context, vectorDatabase, string) (candidateChunkSnapshot, error) {
+		_, err := writer.Exec(`INSERT INTO chunks(source_kind,source_id,text_column,chunk_index,fingerprint,locator)
+			VALUES('notes','id-new','body',0,'fp-new','loc-new')`)
+		return candidateChunkSnapshot{}, err
+	}
+	t.Cleanup(func() { countDeclaredChunks = previous })
+
+	report, err := ReportVectorization(context.Background(), StatusRequest{PluginRoot: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := report.Databases[0]
+	if row.EmbeddedChunks == nil || *row.EmbeddedChunks != 3 {
+		t.Fatalf("embedded chunks = %v, want current snapshot count 3", row.EmbeddedChunks)
+	}
+	if row.SidecarBytes != nil || row.LastWrite != nil {
+		t.Fatalf("older sidecar file facts were published: bytes=%v last_write=%v", row.SidecarBytes, row.LastWrite)
+	}
+}
+
 func TestSidecarFileFactsRejectCheckpointGenerationMix(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "index.db")
 	if err := os.WriteFile(path, []byte("old"), 0o600); err != nil {
@@ -576,12 +609,12 @@ func TestSidecarFileFactsRejectCheckpointGenerationMix(t *testing.T) {
 	}
 	t.Cleanup(func() { statVectorFile = previous })
 
-	bytes, lastWrite, _, err := sidecarFileFacts(path)
+	facts, err := sidecarFileFacts(path)
 	if !errors.Is(err, errSourceChanged) {
 		t.Fatalf("checkpointed sidecar facts error = %v, want %v", err, errSourceChanged)
 	}
-	if bytes != nil || lastWrite != nil {
-		t.Fatalf("checkpointed sidecar facts = %v, %v, want unknown", bytes, lastWrite)
+	if facts.Bytes != nil || facts.LastWrite != nil {
+		t.Fatalf("checkpointed sidecar facts = %v, %v, want unknown", facts.Bytes, facts.LastWrite)
 	}
 }
 

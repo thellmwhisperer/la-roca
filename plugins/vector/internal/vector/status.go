@@ -126,13 +126,13 @@ func inspectDatabase(ctx context.Context, pluginRoot string, database vectorData
 	}
 	sourcePath := filepath.Join(pluginRoot, database.Plugin, database.Path)
 	sidecarPath := SidecarPath(sourcePath)
-	bytes, lastWrite, exists, statErr := sidecarFileFacts(sidecarPath)
-	row.SidecarBytes, row.LastWrite = bytes, lastWrite
+	facts, statErr := sidecarFileFacts(sidecarPath)
+	row.SidecarBytes, row.LastWrite = facts.Bytes, facts.LastWrite
 	candidate := boundedCandidateCount(ctx, database, sourcePath)
 	if statErr != nil {
 		return row
 	}
-	if !exists {
+	if !facts.Exists {
 		row.CandidateChunks = candidateCountForMarker(candidate, currentSourceMarker(sourcePath))
 		row.State = StateEmpty
 		return row
@@ -149,8 +149,13 @@ func inspectDatabase(ctx context.Context, pluginRoot string, database vectorData
 	row.EmbeddedChunks = &snapshot.EmbeddedChunks
 	marker := currentSourceMarker(sourcePath)
 	row.CandidateChunks = candidateCountForMarker(candidate, marker)
-	row.State = classifySidecar(exists, true, workerActive, row.EmbeddedChunks, snapshot.Contract,
+	row.State = classifySidecar(facts.Exists, true, workerActive, row.EmbeddedChunks, snapshot.Contract,
 		database.contractFingerprint(), snapshot.Fingerprint, snapshot.SourceMarker, marker)
+	currentFacts, currentFactsErr := sidecarFileFacts(sidecarPath)
+	if currentFactsErr != nil || !sameSQLiteFileFacts(facts.Generation, currentFacts.Generation) {
+		row.SidecarBytes = nil
+		row.LastWrite = nil
+	}
 	return row
 }
 
@@ -244,13 +249,20 @@ func declaredTableNames(database vectorDatabase) []string {
 	return names
 }
 
-func sidecarFileFacts(path string) (*int64, *string, bool, error) {
+type sidecarFileSnapshot struct {
+	Bytes      *int64
+	LastWrite  *string
+	Exists     bool
+	Generation []sqliteFileFact
+}
+
+func sidecarFileFacts(path string) (sidecarFileSnapshot, error) {
 	facts, err := stableSQLiteFileFacts(path, []string{"", "-wal", "-shm"})
 	if err != nil {
-		return nil, nil, false, err
+		return sidecarFileSnapshot{}, err
 	}
 	if !facts[0].Exists {
-		return nil, nil, false, nil
+		return sidecarFileSnapshot{Generation: facts}, nil
 	}
 	size := facts[0].Size
 	mtime := facts[0].ModTime
@@ -264,7 +276,9 @@ func sidecarFileFacts(path string) (*int64, *string, bool, error) {
 		}
 	}
 	stamp := time.Unix(0, mtime).UTC().Format(time.RFC3339)
-	return &size, &stamp, true, nil
+	return sidecarFileSnapshot{
+		Bytes: &size, LastWrite: &stamp, Exists: true, Generation: facts,
+	}, nil
 }
 
 type candidateChunkSnapshot struct {
@@ -492,15 +506,22 @@ func stableSQLiteFileFacts(path string, suffixes []string) ([]sqliteFileFact, er
 	if err != nil {
 		return nil, err
 	}
-	if len(before) != len(after) {
+	if !sameSQLiteFileFacts(before, after) {
 		return nil, errSourceChanged
 	}
-	for index := range before {
-		if before[index] != after[index] {
-			return nil, errSourceChanged
+	return after, nil
+}
+
+func sameSQLiteFileFacts(left, right []sqliteFileFact) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
 		}
 	}
-	return after, nil
+	return true
 }
 
 func readSQLiteFileFacts(path string, suffixes []string) ([]sqliteFileFact, error) {
