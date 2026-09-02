@@ -1,3 +1,38 @@
+/*
+*
+@overview Exercises ZCode MCP configuration paths, ownership, and validation. ~300 lines, 10 test entry points.
+
+	READING GUIDE
+	-------------
+	1. Start at TestZcodeUsesTheNestedMCPServersShape <- CORE ZCode document contract
+	2. Continue with the ownership lifecycle tests   <- install/uninstall safety
+	3. Finish with malformed-config coverage          <- rejection behavior
+
+	MAIN FLOW
+	---------
+	fixture -> install/status/uninstall -> inspect config and sidecar -> assert preservation
+
+	PUBLIC API
+	----------
+	TestZcodeUsesTheNestedMCPServersShape
+	TestZcodeConfigPathTreatsZcodeHomeAsTheRuntimeRoot
+	TestZcodeUninstallPrunesOnlyContainersThisInstallCreated
+	TestZcodeUninstallClearsStaleOwnershipBeforeOperatorContainersAppear
+	TestZcodeUninstallRejectsUnreadableOwnershipBeforeEditingConfig
+	TestZcodeInstallRejectsUnreadableOwnershipBeforeEditingConfig
+	TestZcodeReinstallPreservesMCPContainerOwnership
+	TestZcodeStatusRejectsInvalidMCPContainers
+	TestZcodeRejectsInvalidTrailingJSON
+	TestZcodeInstallLeavesNeighbouringServersAndTheme
+
+	INTERNALS
+	---------
+	writeFile, requireZcodeInstall, requireZcodeUninstall,
+	requireZcodeInvalidStatus, readZcodeDocument
+
+@exports TestZcodeUsesTheNestedMCPServersShape, TestZcodeConfigPathTreatsZcodeHomeAsTheRuntimeRoot, TestZcodeUninstallPrunesOnlyContainersThisInstallCreated, TestZcodeUninstallClearsStaleOwnershipBeforeOperatorContainersAppear, TestZcodeUninstallRejectsUnreadableOwnershipBeforeEditingConfig, TestZcodeInstallRejectsUnreadableOwnershipBeforeEditingConfig, TestZcodeReinstallPreservesMCPContainerOwnership, TestZcodeStatusRejectsInvalidMCPContainers, TestZcodeRejectsInvalidTrailingJSON, TestZcodeInstallLeavesNeighbouringServersAndTheme
+@deps stdlib encoding/json, os, path/filepath, strings, testing; internal/distribution/agentcfg; shared agentcfg_test fixtures
+*/
 package agentcfg_test
 
 import (
@@ -9,6 +44,8 @@ import (
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/agentcfg"
 )
+
+// -- 1/4 CORE · ZCode MCP shape and path contracts -- <- START HERE
 
 func TestZcodeUsesTheNestedMCPServersShape(t *testing.T) {
 	path := fixtureFile(t, agentcfg.RuntimeZcode)
@@ -52,6 +89,10 @@ func TestZcodeConfigPathTreatsZcodeHomeAsTheRuntimeRoot(t *testing.T) {
 		t.Fatalf("default path = %q, want %q", got, want)
 	}
 }
+
+// -/ 1/4
+
+// -- 2/4 HELPER · ZCode ownership lifecycle contracts --
 
 func TestZcodeUninstallPrunesOnlyContainersThisInstallCreated(t *testing.T) {
 	dir := t.TempDir()
@@ -165,6 +206,10 @@ func TestZcodeReinstallPreservesMCPContainerOwnership(t *testing.T) {
 	}
 }
 
+// -/ 2/4
+
+// -- 3/4 HELPER · Invalid ZCode document contracts --
+
 func TestZcodeStatusRejectsInvalidMCPContainers(t *testing.T) {
 	for name, body := range map[string]string{
 		"mcp null":     `{"mcp":null}`,
@@ -175,14 +220,7 @@ func TestZcodeStatusRejectsInvalidMCPContainers(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "config.json")
 			writeFile(t, path, body)
-
-			status, err := agentcfg.Status(agentcfg.RuntimeZcode, path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if status.State != agentcfg.StateInvalid {
-				t.Fatalf("state = %q, want %q", status.State, agentcfg.StateInvalid)
-			}
+			requireZcodeInvalidStatus(t, path)
 		})
 	}
 }
@@ -191,14 +229,7 @@ func TestZcodeRejectsInvalidTrailingJSON(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	before := "{} trailing\n"
 	writeFile(t, path, before)
-
-	status, err := agentcfg.Status(agentcfg.RuntimeZcode, path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if status.State != agentcfg.StateInvalid {
-		t.Fatalf("state = %q, want %q", status.State, agentcfg.StateInvalid)
-	}
+	requireZcodeInvalidStatus(t, path)
 	if _, err := agentcfg.Install(agentcfg.RuntimeZcode, path, "roca"); err == nil {
 		t.Fatal("install accepted invalid trailing JSON")
 	}
@@ -206,6 +237,10 @@ func TestZcodeRejectsInvalidTrailingJSON(t *testing.T) {
 		t.Fatalf("install edited invalid JSON: %s", got)
 	}
 }
+
+// -/ 3/4
+
+// -- 4/4 HELPER · ZCode fixture operations and preservation check --
 
 func writeFile(t *testing.T, path, body string) {
 	t.Helper()
@@ -225,6 +260,17 @@ func requireZcodeUninstall(t *testing.T, path string) {
 	t.Helper()
 	if _, err := agentcfg.Uninstall(agentcfg.RuntimeZcode, path); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func requireZcodeInvalidStatus(t *testing.T, path string) {
+	t.Helper()
+	status, err := agentcfg.Status(agentcfg.RuntimeZcode, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.State != agentcfg.StateInvalid {
+		t.Fatalf("state = %q, want %q", status.State, agentcfg.StateInvalid)
 	}
 }
 
@@ -250,3 +296,5 @@ func TestZcodeInstallLeavesNeighbouringServersAndTheme(t *testing.T) {
 		t.Fatalf("zcode uninstall did not restore neighbouring config")
 	}
 }
+
+// -/ 4/4
