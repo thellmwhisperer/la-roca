@@ -31,18 +31,18 @@ Word search keeps answering while the meaning pass runs in the background.
 
 ## Watch progress
 
-Progress is a fraction of the user's own history, and that is the number to
-report:
+Use `roca vector status` for the bounded per-database report. Preserve `null`
+facts as unknown when reporting them; never turn them into zero.
 
 ```sh
 roca vector status
 ```
 
 The bounded status contract is in `docs/vector.md#the-one-command-path`.
-Report either the history fraction or the progress-unavailable diagnostic, and
-include the stop reason when there is one. A pass that stopped partway is not an
+A pass that stopped partway is not an
 empty product: the rows it already wrote are queryable, and word search covers
-the rest. Never report a machine with rows on disk as having nothing.
+the rest. Never report a machine with
+rows on disk as having nothing.
 
 `completion.json` under the plugin state directory records `started_at`,
 `finished_at`, and `exit_status` for the last pass. Read it to say whether the

@@ -39,12 +39,8 @@ func WorkerRunning(root string) bool {
 		if root == "" && !filepath.IsAbs(directory) {
 			continue
 		}
-		raw, err := os.ReadFile(filepath.Join(directory, workerClaimFilename))
-		if err != nil {
-			continue
-		}
-		pid, _ := strconv.Atoi(strings.TrimSpace(string(raw)))
-		if pid > 0 && processAlive(pid) {
+		claim, err := readWorkerClaim(filepath.Join(directory, workerClaimFilename))
+		if err == nil && inspectWorkerClaim(claim) == workerClaimLive {
 			return true
 		}
 	}
@@ -160,16 +156,15 @@ func reserveWorker(state string) (workerReservation, error) {
 			return workerReservation{}, fmt.Errorf("reserve vector worker state: %w", err)
 		}
 		info, statErr := os.Stat(path)
-		raw, readErr := os.ReadFile(path)
+		claim, readErr := readWorkerClaim(path)
 		if statErr != nil {
 			return workerReservation{}, fmt.Errorf("inspect vector worker claim: %w", statErr)
 		}
-		if readErr != nil {
-			return workerReservation{}, fmt.Errorf("read vector worker claim: %w", readErr)
-		}
-		pid, _ := strconv.Atoi(strings.TrimSpace(string(raw)))
 		fresh := time.Since(info.ModTime()) < 5*time.Minute
-		if (pid > 0 && processAlive(pid)) || (pid == 0 && fresh) {
+		if readErr == nil && inspectWorkerClaim(claim) != workerClaimStale {
+			return workerReservation{}, fmt.Errorf("an active vector worker holds %s; retry the update after it finishes", state)
+		}
+		if readErr != nil && fresh {
 			return workerReservation{}, fmt.Errorf("an active vector worker holds %s; retry the update after it finishes", state)
 		}
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
@@ -177,4 +172,48 @@ func reserveWorker(state string) (workerReservation, error) {
 		}
 	}
 	return workerReservation{}, fmt.Errorf("vector worker claim changed while it was inspected")
+}
+
+type workerClaim struct {
+	pid             int
+	runID           string
+	processIdentity string
+}
+
+type workerClaimLiveness uint8
+
+const (
+	workerClaimStale workerClaimLiveness = iota
+	workerClaimLive
+	workerClaimUnknown
+)
+
+func readWorkerClaim(path string) (workerClaim, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return workerClaim{}, err
+	}
+	fields := strings.Fields(string(raw))
+	if len(fields) != 3 {
+		return workerClaim{}, fmt.Errorf("vector worker claim is incomplete")
+	}
+	pid, err := strconv.Atoi(fields[0])
+	if err != nil || pid <= 0 {
+		return workerClaim{}, fmt.Errorf("parse vector worker pid")
+	}
+	return workerClaim{pid: pid, runID: fields[1], processIdentity: fields[2]}, nil
+}
+
+func inspectWorkerClaim(claim workerClaim) workerClaimLiveness {
+	if !processAlive(claim.pid) {
+		return workerClaimStale
+	}
+	processIdentity, err := processStartIdentity(claim.pid)
+	if err != nil {
+		return workerClaimUnknown
+	}
+	if processIdentity != claim.processIdentity {
+		return workerClaimStale
+	}
+	return workerClaimLive
 }
