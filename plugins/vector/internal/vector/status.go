@@ -456,7 +456,7 @@ func updateWorkerActivity(stateDir, backend string, database *string) error {
 	if err := os.WriteFile(temporary, append(raw, '\n'), 0o600); err != nil {
 		return err
 	}
-	return os.Rename(temporary, filepath.Join(stateDir, workerActivityFile))
+	return replaceFile(temporary, filepath.Join(stateDir, workerActivityFile))
 }
 
 func clearWorkerActivity(stateDir string) error {

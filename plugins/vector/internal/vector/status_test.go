@@ -686,6 +686,26 @@ func TestWorkerStatusRejectsActivityFromAnotherRun(t *testing.T) {
 	}
 }
 
+func TestUpdateWorkerActivityReplacesCurrentRecord(t *testing.T) {
+	state := t.TempDir()
+	holdTestWorkerClaim(t, state, "current-run")
+	database := "roca-corpus/corpus"
+	if err := updateWorkerActivity(state, "metal", &database); err != nil {
+		t.Fatal(err)
+	}
+	database = ""
+	if err := updateWorkerActivity(state, "", &database); err != nil {
+		t.Fatal(err)
+	}
+	activity, err := readWorkerActivity(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if activity.PID != os.Getpid() || activity.RunID != "current-run" || activity.Backend != "metal" || activity.Database != "" {
+		t.Fatalf("replaced worker activity = %+v", activity)
+	}
+}
+
 func holdTestWorkerClaim(t *testing.T, state, runID string) {
 	t.Helper()
 	path := filepath.Join(state, WorkerClaimFilename)
