@@ -117,7 +117,7 @@ answer the same, since there is nothing in the process to carry over.
 ## 2. `roca mcp`: declaring the server in an agent's config
 
 ```
-roca mcp install <runtime>     # claude, claude-desktop, codex, hermes, opencode, pi
+roca mcp install <runtime>     # claude, claude-desktop, codex, hermes, opencode, pi, zcode
 roca mcp uninstall <runtime>   # or --all
 roca mcp status [runtime]
 ```
@@ -132,6 +132,7 @@ Where each runtime keeps its configuration, and what Roca writes into it:
 | `opencode` | `$OPENCODE_CONFIG`/`~/.config/opencode/opencode.json` | `mcp` | `{"type": "local", "command": [...]}` |
 | `hermes` | `$HERMES_HOME`/`~/.hermes/config.yaml` | `mcp_servers` | a nested mapping |
 | `pi` | `$PI_CODING_AGENT_DIR`/`~/.pi/agent/mcp.json` | `mcpServers` | `command` and `args` |
+| `zcode` | `$ZCODE_HOME`/`~/.zcode/cli/config.json` | `mcp.servers` | `{"type": "stdio", "command", "args"}` |
 
 **The file belongs to the operator.** Roca owns exactly one entry inside it and
 every other byte comes back untouched: comments, ordering, blank lines, the
@@ -192,6 +193,7 @@ runtime receives `skills/roca/SKILL.md`, `skills/roca-operations/SKILL.md`,
 | `hermes` | `$HERMES_HOME`/`~/.hermes` |
 | `pi` | `$PI_CODING_AGENT_DIR`/`~/.pi/agent` |
 | `qwen` | `$QWEN_HOME`/`~/.qwen` |
+| `zcode` | `$ZCODE_HOME`/`~/.zcode` (opt-in: init and update do not seed it) |
 
 Only those files are created or refreshed. Explicit markers divide the shipped
 SYSTEM zone from the operator's USER zone. Re-running is a no-op when SYSTEM
@@ -233,6 +235,12 @@ store. The measurements behind the current list:
   skills are `~/.cursor/skills/<name>/SKILL.md`. `~/.cursor/skills-cursor/` is
   reserved for Cursor's built-in skills and is never written. Detection is the
   `~/.cursor` directory existing; Cursor does not create `skills/` itself.
+- **zcode** (Z.ai ZCode): user skills live at `~/.zcode/skills/<name>/SKILL.md`
+  with YAML `name` and `description` frontmatter. MCP is nested
+  `mcp.servers` in `~/.zcode/cli/config.json`. The seat is opt-in:
+  `roca skill install zcode` writes it; init and update never do, even
+  when `~/.zcode` already exists. Claude Desktop MCP is a separate
+  `claude-desktop` target and is not written by this seat.
 
 ---
 

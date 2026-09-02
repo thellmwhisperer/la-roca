@@ -296,6 +296,22 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 		}
 	}
 
+	if wrapper, err := zcodeHookWrapperPath(); err != nil {
+		failed(report, "%s", err)
+	} else if config, err := hookConfigPath(agentcfg.RuntimeZcode); err != nil {
+		failed(report, "%s", err)
+	} else {
+		outcome, warning, err := uninstallZcodeHandoffHook(config, wrapper)
+		if warning != "" {
+			fmt.Fprintln(env.errOut, warning)
+		}
+		withdrawn("the zcode SessionStart hook from "+config, outcome, err)
+		if purge {
+			removeRecoveryBackups(report, config)
+			removeRecoveryBackups(report, wrapper)
+		}
+	}
+
 	home, err := os.UserHomeDir()
 	if err != nil {
 		failed(report, "home: %v", err)

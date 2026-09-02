@@ -565,6 +565,19 @@ mcp_servers:
   }
 }
 `, nil
+	case "zcode":
+		return filepath.Join(home, ".zcode", "cli", "config.json"), `{
+  "theme": "dark",
+  "mcp": {
+    "servers": {
+      "other-server": {
+        "type": "stdio",
+        "command": "other-binary"
+      }
+    }
+  }
+}
+`, nil
 	default:
 		return "", "", fmt.Errorf("I do not know the runtime %q", agent)
 	}
