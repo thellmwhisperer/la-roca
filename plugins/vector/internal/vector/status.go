@@ -30,6 +30,7 @@ const (
 var (
 	candidateCountTimeout = 500 * time.Millisecond
 	countDeclaredChunks   = readDeclaredChunkCount
+	statVectorFile        = os.Stat
 	workerActivityMu      sync.Mutex
 )
 
@@ -244,29 +245,25 @@ func declaredTableNames(database vectorDatabase) []string {
 }
 
 func sidecarFileFacts(path string) (*int64, *string, bool, error) {
-	info, err := os.Stat(path)
-	if os.IsNotExist(err) {
-		return nil, nil, false, nil
-	}
+	facts, err := stableSQLiteFileFacts(path, []string{"", "-wal", "-shm"})
 	if err != nil {
 		return nil, nil, false, err
 	}
-	size := info.Size()
-	mtime := info.ModTime()
-	for _, extra := range []string{path + "-wal", path + "-shm"} {
-		extraInfo, extraErr := os.Stat(extra)
-		if os.IsNotExist(extraErr) {
+	if !facts[0].Exists {
+		return nil, nil, false, nil
+	}
+	size := facts[0].Size
+	mtime := facts[0].ModTime
+	for _, fact := range facts[1:] {
+		if !fact.Exists {
 			continue
 		}
-		if extraErr != nil {
-			return nil, nil, true, extraErr
-		}
-		size += extraInfo.Size()
-		if extraInfo.ModTime().After(mtime) {
-			mtime = extraInfo.ModTime()
+		size += fact.Size
+		if fact.ModTime > mtime {
+			mtime = fact.ModTime
 		}
 	}
-	stamp := mtime.UTC().Format(time.RFC3339)
+	stamp := time.Unix(0, mtime).UTC().Format(time.RFC3339)
 	return &size, &stamp, true, nil
 }
 
@@ -455,24 +452,70 @@ type sourceMarkerFact struct {
 }
 
 func sourceFileMarker(path string) (string, error) {
-	facts := make([]sourceMarkerFact, 0, 2)
-	for _, candidate := range []string{path, path + "-wal"} {
-		info, err := os.Stat(candidate)
-		if os.IsNotExist(err) && candidate != path {
+	suffixes := []string{"", "-wal"}
+	fileFacts, err := stableSQLiteFileFacts(path, suffixes)
+	if err != nil {
+		return "", err
+	}
+	if !fileFacts[0].Exists {
+		return "", &os.PathError{Op: "stat", Path: path, Err: os.ErrNotExist}
+	}
+	facts := make([]sourceMarkerFact, 0, len(fileFacts))
+	for index, fact := range fileFacts {
+		if !fact.Exists {
 			continue
 		}
-		if err != nil {
-			return "", err
-		}
+		candidate := path + suffixes[index]
 		absolute, err := filepath.Abs(candidate)
 		if err != nil {
 			return "", err
 		}
-		facts = append(facts, sourceMarkerFact{Path: filepath.Clean(absolute), Size: info.Size(),
-			ModTime: info.ModTime().UnixNano()})
+		facts = append(facts, sourceMarkerFact{Path: filepath.Clean(absolute), Size: fact.Size,
+			ModTime: fact.ModTime})
 	}
 	raw, err := json.Marshal(facts)
 	return string(raw), err
+}
+
+type sqliteFileFact struct {
+	Exists  bool
+	Size    int64
+	ModTime int64
+}
+
+func stableSQLiteFileFacts(path string, suffixes []string) ([]sqliteFileFact, error) {
+	before, err := readSQLiteFileFacts(path, suffixes)
+	if err != nil {
+		return nil, err
+	}
+	after, err := readSQLiteFileFacts(path, suffixes)
+	if err != nil {
+		return nil, err
+	}
+	if len(before) != len(after) {
+		return nil, errSourceChanged
+	}
+	for index := range before {
+		if before[index] != after[index] {
+			return nil, errSourceChanged
+		}
+	}
+	return after, nil
+}
+
+func readSQLiteFileFacts(path string, suffixes []string) ([]sqliteFileFact, error) {
+	facts := make([]sqliteFileFact, len(suffixes))
+	for index, suffix := range suffixes {
+		info, err := statVectorFile(path + suffix)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		facts[index] = sqliteFileFact{Exists: true, Size: info.Size(), ModTime: info.ModTime().UnixNano()}
+	}
+	return facts, nil
 }
 
 func openSQLiteBusy(path string, readOnly bool, busyMS int) (*sql.DB, error) {

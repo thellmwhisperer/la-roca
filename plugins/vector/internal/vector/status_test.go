@@ -552,6 +552,68 @@ func TestReportVectorizationTreatsSidecarStatErrorsAsUnknown(t *testing.T) {
 	}
 }
 
+func TestSidecarFileFactsRejectCheckpointGenerationMix(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "index.db")
+	if err := os.WriteFile(path, []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path+"-wal", []byte("pending"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	previous := statVectorFile
+	checkpointed := false
+	statVectorFile = func(name string) (os.FileInfo, error) {
+		if name == path+"-wal" && !checkpointed {
+			checkpointed = true
+			if err := os.WriteFile(path, []byte("checkpointed"), 0o600); err != nil {
+				return nil, err
+			}
+			if err := os.Remove(path + "-wal"); err != nil {
+				return nil, err
+			}
+		}
+		return previous(name)
+	}
+	t.Cleanup(func() { statVectorFile = previous })
+
+	bytes, lastWrite, _, err := sidecarFileFacts(path)
+	if !errors.Is(err, errSourceChanged) {
+		t.Fatalf("checkpointed sidecar facts error = %v, want %v", err, errSourceChanged)
+	}
+	if bytes != nil || lastWrite != nil {
+		t.Fatalf("checkpointed sidecar facts = %v, %v, want unknown", bytes, lastWrite)
+	}
+}
+
+func TestSourceFileMarkerRejectsCheckpointGenerationMix(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "source.db")
+	if err := os.WriteFile(path, []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path+"-wal", []byte("pending"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	previous := statVectorFile
+	checkpointed := false
+	statVectorFile = func(name string) (os.FileInfo, error) {
+		if name == path+"-wal" && !checkpointed {
+			checkpointed = true
+			if err := os.WriteFile(path, []byte("checkpointed"), 0o600); err != nil {
+				return nil, err
+			}
+			if err := os.Remove(path + "-wal"); err != nil {
+				return nil, err
+			}
+		}
+		return previous(name)
+	}
+	t.Cleanup(func() { statVectorFile = previous })
+
+	if _, err := sourceFileMarker(path); !errors.Is(err, errSourceChanged) {
+		t.Fatalf("checkpointed source marker error = %v, want %v", err, errSourceChanged)
+	}
+}
+
 func TestStableDatabaseIdentityRejectsAChangedSourceSnapshot(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "source.db")
 	if err := os.WriteFile(path, []byte("before"), 0o600); err != nil {
