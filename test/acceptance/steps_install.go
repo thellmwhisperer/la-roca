@@ -1288,6 +1288,8 @@ func (m *world) agentConfigPath(runtime string) (string, error) {
 		return filepath.Join(m.home, ".codex", "config.toml"), nil
 	case "claude":
 		return filepath.Join(m.home, ".claude.json"), nil
+	case "claude-desktop":
+		return claudeDesktopConfigPath(m.home), nil
 	case "opencode":
 		return filepath.Join(m.home, ".config", "opencode", "opencode.json"), nil
 	case "hermes":

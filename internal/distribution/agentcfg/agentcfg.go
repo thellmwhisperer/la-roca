@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"sort"
 	"strings"
 
@@ -22,11 +23,12 @@ import (
 
 // The supported runtimes.
 const (
-	RuntimeCodex    = "codex"
-	RuntimeClaude   = "claude"
-	RuntimeOpencode = "opencode"
-	RuntimeHermes   = "hermes"
-	RuntimePi       = "pi"
+	RuntimeCodex         = "codex"
+	RuntimeClaude        = "claude"
+	RuntimeClaudeDesktop = "claude-desktop"
+	RuntimeOpencode      = "opencode"
+	RuntimeHermes        = "hermes"
+	RuntimePi            = "pi"
 )
 
 // Skill seats whose user skill directory this product measured but whose MCP
@@ -50,8 +52,8 @@ const (
 	StateUnreadable    = "unreadable"
 )
 
-// The config formats. One per shape, not one per runtime: three runtimes speak
-// JSON and they differ only in which key holds their server map.
+// The config formats. One per shape, not one per runtime: JSON runtimes
+// differ only in which key holds their server map.
 const (
 	kindTOML  = "toml"
 	kindYAML  = "yaml"
@@ -59,9 +61,10 @@ const (
 	kindJSONC = "jsonc"
 )
 
-// runtime is everything that differs between the five: where its config lives,
-// what format it is in, which key holds its MCP servers, and the shape of the
-// entry inside that map. The name is the map key; adding a runtime is a row.
+// runtime is everything that differs between the supported runtimes: where its
+// config lives, what format it is in, which key holds its MCP servers, and the
+// shape of the entry inside that map. The name is the map key; adding a
+// runtime is a row.
 type runtime struct {
 	kind string
 	// dirVar is the environment variable that moves the config directory, and
@@ -76,6 +79,10 @@ type runtime struct {
 	serversKey string
 	// entry renders the value Roca owns inside that map.
 	entry func(executable string) fields
+	// locate, when set, replaces dir/file resolution. Claude Desktop keeps its
+	// config in the platform's application-support directory rather than under
+	// a dotted folder in the home.
+	locate func(home, goos string, env func(string) string) string
 }
 
 // fields is one entry as ordered key/value pairs. Ordered because a config file
@@ -88,10 +95,14 @@ type field struct {
 	value any
 }
 
-// commandAndArgs is the entry three of the five runtimes take: the binary and
-// its arguments as two members of their own.
+// commandAndArgs is the entry a runtime takes when the binary and its
+// arguments are two members of their own.
 func commandAndArgs(executable string) fields {
 	return fields{{"command", executable}, {"args", []string{"mcp", "serve"}}}
+}
+
+func claudeStdio(executable string) fields {
+	return append(fields{{"type", "stdio"}}, commandAndArgs(executable)...)
 }
 
 var runtimes = map[string]runtime{
@@ -101,10 +112,11 @@ var runtimes = map[string]runtime{
 	},
 	RuntimeClaude: {
 		kind: kindJSON, dirVar: "CLAUDE_CONFIG_DIR", file: ".claude.json",
-		serversKey: "mcpServers",
-		entry: func(e string) fields {
-			return append(fields{{"type", "stdio"}}, commandAndArgs(e)...)
-		},
+		serversKey: "mcpServers", entry: claudeStdio,
+	},
+	RuntimeClaudeDesktop: {
+		kind: kindJSON, serversKey: "mcpServers", entry: claudeStdio,
+		locate: claudeDesktopConfigPath,
 	},
 	RuntimeOpencode: {
 		kind: kindJSONC, dir: []string{".config", "opencode"}, file: "opencode.json",
@@ -159,9 +171,18 @@ type Report struct {
 // ConfigPath resolves where one runtime keeps its configuration: the home
 // first, then the environment, which wins.
 func ConfigPath(name, home string, env func(string) string) (string, error) {
+	return ConfigPathForOS(name, home, goruntime.GOOS, env)
+}
+
+// ConfigPathForOS is ConfigPath with an explicit platform so a Darwin, Windows
+// or Linux layout is a table case on any host.
+func ConfigPathForOS(name, home, goos string, env func(string) string) (string, error) {
 	r, err := find(name)
 	if err != nil {
 		return "", err
+	}
+	if r.locate != nil {
+		return r.locate(home, goos, env), nil
 	}
 	if r.pathVar != "" {
 		if declared := env(r.pathVar); declared != "" {
@@ -175,6 +196,26 @@ func ConfigPath(name, home string, env func(string) string) (string, error) {
 		}
 	}
 	return filepath.Join(directory, r.file), nil
+}
+
+func claudeDesktopConfigPath(home, goos string, env func(string) string) string {
+	const file = "claude_desktop_config.json"
+	switch goos {
+	case "darwin":
+		return filepath.Join(home, "Library", "Application Support", "Claude", file)
+	case "windows":
+		root := env("APPDATA")
+		if root == "" {
+			root = filepath.Join(home, "AppData", "Roaming")
+		}
+		return filepath.Join(root, "Claude", file)
+	default:
+		root := env("XDG_CONFIG_HOME")
+		if root == "" {
+			root = filepath.Join(home, ".config")
+		}
+		return filepath.Join(root, "Claude", file)
+	}
 }
 
 // Install declares the stdio server in one runtime's configuration.
@@ -275,15 +316,12 @@ func Rewrite(path string, transform func(string) (string, error)) error {
 func edit(name, path string, transform, backupTransform func(string) (string, error),
 	createMissing bool) (Outcome, error) {
 	outcome := Outcome{Runtime: name, Path: path}
-
-	previous, err := os.ReadFile(path)
-	switch {
-	case os.IsNotExist(err) && !createMissing:
+	previous, original, err := readRegularOrMissing(path)
+	if err != nil {
+		return outcome, err
+	}
+	if original == nil && !createMissing {
 		return outcome, nil
-	case os.IsNotExist(err):
-		previous = nil
-	case err != nil:
-		return outcome, fmt.Errorf("read %s: %w", path, err)
 	}
 
 	next, err := transform(string(previous))
@@ -294,7 +332,7 @@ func edit(name, path string, transform, backupTransform func(string) (string, er
 		return outcome, nil
 	}
 
-	if previous != nil {
+	if original != nil {
 		backupContent := previous
 		if backupTransform != nil {
 			content, err := backupTransform(string(previous))
@@ -312,11 +350,39 @@ func edit(name, path string, transform, backupTransform func(string) (string, er
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return outcome, fmt.Errorf("create the directory of %s: %w", path, err)
 	}
-	if err := securefile.Replace(path, []byte(next), previous); err != nil {
+	if original == nil {
+		err = securefile.CreatePreservingParentMode(path, []byte(next), 0o600, 0o700)
+	} else {
+		err = securefile.ReplaceRegular(path, []byte(next), previous, original)
+	}
+	if err != nil {
 		return outcome, err
 	}
 	outcome.Changed = true
 	return outcome, nil
+}
+
+func readRegularOrMissing(path string) ([]byte, os.FileInfo, error) {
+	info, err := os.Lstat(path)
+	switch {
+	case os.IsNotExist(err):
+		return nil, nil, nil
+	case err != nil:
+		return nil, nil, fmt.Errorf("inspect %s: %w", path, err)
+	case !info.Mode().IsRegular():
+		return nil, nil, fmt.Errorf("refuse to edit non-regular configuration %s", path)
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return nil, nil, fmt.Errorf("read %s: %w", path, err)
+	}
+	current, err := os.Lstat(path)
+	if err != nil || !current.Mode().IsRegular() || !os.SameFile(info, current) {
+		return nil, nil, fmt.Errorf(
+			"%s changed while it was being read: close the runtime that owns it and try again",
+			path)
+	}
+	return content, info, nil
 }
 
 func find(name string) (runtime, error) {
