@@ -95,10 +95,11 @@ single row.
 
 ### Give your whole fleet one memory
 
-A session loads its project context with `roca pill` and `roca handoff latest`;
-opt-in Claude SessionStart hooks can do that automatically. It stores a
-handoff only when you explicitly ask. The Claude session you open
-today knows what Codex did last night, without you re-explaining the project.
+A session loads its project context with `roca pill` and `roca handoff latest`.
+Opt-in Claude SessionStart hooks can load both automatically; ZCode's opt-in
+SessionStart hook injects the active handoffs. A handoff is stored only when
+you explicitly ask. The session you open today knows what Codex did last
+night, without you re-explaining the project.
 Every agent reads and writes the same database, from the shell or through
 [MCP](docs/mcp.md). See the
 [session-context contract](docs/queries.md#session-context).

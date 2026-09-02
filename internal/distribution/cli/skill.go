@@ -279,10 +279,11 @@ func (env *cliEnv) installRuntimeSkillsFiltered(runtime, catalog string,
 	return outcomes, refused
 }
 
-// seedDetectedSkills writes the embedded skills into every skill seat whose
-// config directory exists. restoreMissing is init's consent to write again;
-// ingest reseed skips a runtime that already has a registry entry so a later
-// agent still receives the skills without rewriting ones already placed.
+// seedDetectedSkills writes the embedded skills into every auto-seeded skill
+// seat whose config directory exists. Opt-in seats such as ZCode are excluded.
+// restoreMissing is init's consent to write again; ingest reseed skips a runtime
+// that already has a registry entry so a later agent still receives the skills
+// without rewriting ones already placed.
 //
 // Init also writes the generated catalog. It is the map of what is searchable on
 // this machine, and an agent that has the craft skills but not the catalog
