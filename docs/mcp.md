@@ -117,7 +117,7 @@ answer the same, since there is nothing in the process to carry over.
 ## 2. `roca mcp`: declaring the server in an agent's config
 
 ```
-roca mcp install <runtime>     # codex, claude, opencode, hermes, pi
+roca mcp install <runtime>     # claude, claude-desktop, codex, hermes, opencode, pi
 roca mcp uninstall <runtime>   # or --all
 roca mcp status [runtime]
 ```
@@ -128,6 +128,7 @@ Where each runtime keeps its configuration, and what Roca writes into it:
 |---|---|---|---|
 | `codex` | `$CODEX_HOME`/`~/.codex/config.toml` | `mcp_servers` | `[mcp_servers.roca]` with `command` and `args` |
 | `claude` | `$CLAUDE_CONFIG_DIR`/`~/.claude.json` | `mcpServers` | `{"type": "stdio", ...}` |
+| `claude-desktop` | macOS `~/Library/Application Support/Claude/claude_desktop_config.json`; Windows `%APPDATA%/Claude/claude_desktop_config.json`; Linux `$XDG_CONFIG_HOME`/`~/.config/Claude/claude_desktop_config.json` | `mcpServers` | same stdio entry as `claude` |
 | `opencode` | `$OPENCODE_CONFIG`/`~/.config/opencode/opencode.json` | `mcp` | `{"type": "local", "command": [...]}` |
 | `hermes` | `$HERMES_HOME`/`~/.hermes/config.yaml` | `mcp_servers` | a nested mapping |
 | `pi` | `$PI_CODING_AGENT_DIR`/`~/.pi/agent/mcp.json` | `mcpServers` | `command` and `args` |
@@ -138,12 +139,13 @@ JSONC OpenCode tolerates and the neighbouring servers. That is why the edits are
 surgical text-range edits and not a parse-and-reserialize round trip, which is
 easy and eats comments. It is measured the only way that is not a matter of
 opinion: installing and then withdrawing gives back the exact previous bytes
-(`internal/distribution/agentcfg/agentcfg_test.go`, five runtimes).
+(`internal/distribution/agentcfg/agentcfg_test.go`, every supported runtime).
 
-Two more things the shared spine gives every edit: the previous bytes are backed
-up first (`<file>.roca.bak`, and an earlier copy is never overwritten), and a file
-that changed underneath us aborts instead of clobbering the runtime that owns
-it.
+Three more things the shared spine gives every edit: the previous bytes are
+backed up first (`<file>.roca.bak`, and an earlier copy is never overwritten);
+an existing symlink or other non-regular path is refused before backup or
+mutation; and a file that changed underneath us aborts instead of clobbering the
+runtime that owns it.
 
 **One declared boundary.** A `codex` config that writes `mcp_servers` as an
 inline table is refused by name, with the remedy, instead of being edited.

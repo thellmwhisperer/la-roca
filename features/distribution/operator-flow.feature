@@ -27,10 +27,11 @@ Feature: The operator's real flow
     And a backup of the previous file exists
 
     Examples:
-      | agent    |
-      | codex    |
-      | claude   |
-      | opencode |
+      | agent           |
+      | codex           |
+      | claude          |
+      | claude-desktop  |
+      | opencode        |
 
   @fast
   Scenario: Updating is part of the flow and has an answer
