@@ -212,17 +212,18 @@ func TestZcodeHookInstallRejectsUnreadableOwnershipBeforeMutation(t *testing.T) 
 
 func TestZcodeHookInstallRejectsInvalidContainersBeforeWritingWrapper(t *testing.T) {
 	for name, initial := range map[string]string{
-		"hooks null":          `{"hooks":null}`,
-		"hooks list":          `{"hooks":[]}`,
-		"events null":         `{"hooks":{"events":null}}`,
-		"session start null":  `{"hooks":{"events":{"SessionStart":null}}}`,
-		"group not object":    `{"hooks":{"events":{"SessionStart":[null]}}}`,
-		"group hooks missing": `{"hooks":{"events":{"SessionStart":[{}]}}}`,
-		"group hooks null":    `{"hooks":{"events":{"SessionStart":[{"hooks":null}]}}}`,
-		"hook not object":     `{"hooks":{"events":{"SessionStart":[{"hooks":[null]}]}}}`,
-		"hook type missing":   `{"hooks":{"events":{"SessionStart":[{"hooks":[{}]}]}}}`,
-		"command null":        `{"hooks":{"events":{"SessionStart":[{"hooks":[{"type":"command","command":null,"timeoutMs":5000}]}]}}}`,
-		"timeout string":      `{"hooks":{"events":{"SessionStart":[{"hooks":[{"type":"command","command":"operator-hook","timeoutMs":"bad"}]}]}}}`,
+		"hooks null":           `{"hooks":null}`,
+		"hooks list":           `{"hooks":[]}`,
+		"events null":          `{"hooks":{"events":null}}`,
+		"session start null":   `{"hooks":{"events":{"SessionStart":null}}}`,
+		"group not object":     `{"hooks":{"events":{"SessionStart":[null]}}}`,
+		"group hooks missing":  `{"hooks":{"events":{"SessionStart":[{}]}}}`,
+		"group hooks null":     `{"hooks":{"events":{"SessionStart":[{"hooks":null}]}}}`,
+		"hook not object":      `{"hooks":{"events":{"SessionStart":[{"hooks":[null]}]}}}`,
+		"hook type missing":    `{"hooks":{"events":{"SessionStart":[{"hooks":[{}]}]}}}`,
+		"command null":         `{"hooks":{"events":{"SessionStart":[{"hooks":[{"type":"command","command":null,"timeoutMs":5000}]}]}}}`,
+		"process command null": `{"hooks":{"events":{"SessionStart":[{"hooks":[{"type":"process","command":null}]}]}}}`,
+		"timeout string":       `{"hooks":{"events":{"SessionStart":[{"hooks":[{"type":"command","command":"operator-hook","timeoutMs":"bad"}]}]}}}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			home, config := zcodeHookTestPaths(t)
@@ -240,6 +241,52 @@ func TestZcodeHookInstallRejectsInvalidContainersBeforeWritingWrapper(t *testing
 				t.Fatalf("install wrote wrapper before rejecting config: %v", err)
 			}
 		})
+	}
+}
+
+func TestZcodeHookInstallAcceptsSupportedHookUnion(t *testing.T) {
+	for name, operatorHook := range map[string]string{
+		"command defaults": `{"type":"command","command":"operator-hook"}`,
+		"command timeout":  `{"type":"command","command":"operator-hook","timeout":1.5}`,
+		"process":          `{"type":"process","command":"operator-hook","args":["one"],"timeoutMs":5000}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, config := zcodeHookTestPaths(t)
+			writeFile(t, config, `{"hooks":{"events":{"SessionStart":[{"hooks":[`+operatorHook+`]}]}}}`)
+			requireZcodeHooks(t, "install")
+		})
+	}
+}
+
+func TestZcodeHookQuotesWrapperCommandAndRecognizesLegacyRawPath(t *testing.T) {
+	home, _ := zcodeHookTestPaths(t)
+	zcodeHome := filepath.Join(home, "zcode home")
+	t.Setenv("ZCODE_HOME", zcodeHome)
+	config := filepath.Join(zcodeHome, "cli", "config.json")
+	writeZcodeHookExecutable(t, home, "#!/bin/sh\nexit 0\n")
+	writeFile(t, config, "{}\n")
+	requireZcodeHooks(t, "install")
+
+	wrapper := filepath.Join(zcodeHome, "hooks", "roca-handoff.sh")
+	document := readZcodeHookDocument(t, config)
+	hooks := document["hooks"].(map[string]any)
+	events := hooks["events"].(map[string]any)
+	group := events["SessionStart"].([]any)[0].(map[string]any)
+	hook := group["hooks"].([]any)[0].(map[string]any)
+	if hook["command"] != shellQuote(wrapper) {
+		t.Fatalf("wrapper command = %#v", hook["command"])
+	}
+
+	hook["command"] = wrapper
+	body, err := json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, config, string(body))
+	requireZcodeHooks(t, "install")
+	requireZcodeHooks(t, "uninstall")
+	if strings.Contains(string(mustRead(t, config)), wrapper) {
+		t.Fatal("legacy raw wrapper registration survived uninstall")
 	}
 }
 
