@@ -234,6 +234,31 @@ func TestCodexAppliesALateVerdictToAResponseOnlyOrphan(t *testing.T) {
 	}
 }
 
+func TestCodexAppliesALateVerdictAfterAResponseOnlyAbort(t *testing.T) {
+	content := `{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"first"}]}}
+{"type":"response_item","payload":{"type":"function_call","call_id":"first-call","name":"shell"}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"first answer"}]}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"second"}]}}
+{"type":"event_msg","payload":{"type":"turn_aborted"}}
+{"type":"response_item","payload":{"type":"function_call_output","call_id":"first-call","output":"failure\nProcess exited with code 1"}}`
+	records, err := Parse(KindCodexSession, []byte(content), FileMeta{SessionID: "response-only-abort-verdict"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := records.Sessions[0]
+	if len(session.Exchanges) != 1 || session.Exchanges[0].HumanText != "first" ||
+		session.Exchanges[0].AgentText != "first answer" || len(session.Exchanges[0].Tools) != 0 {
+		t.Fatalf("recovered conversation = %+v", session.Exchanges)
+	}
+	if len(session.OrphanedTools) != 1 {
+		t.Fatalf("orphaned tools = %+v, want the first response-only call", session.OrphanedTools)
+	}
+	tool := session.OrphanedTools[0]
+	if !tool.HadError || tool.ErrorMessage != "failure\nProcess exited with code 1" {
+		t.Fatalf("response-only aborted tool verdict = %+v", tool)
+	}
+}
+
 func TestCodexKeepsToolTelemetryFromInterruptedTurns(t *testing.T) {
 	var rollout strings.Builder
 	writeUser := func(message string) {

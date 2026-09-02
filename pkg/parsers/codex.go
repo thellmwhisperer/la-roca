@@ -346,7 +346,7 @@ func (r *codexReader) event(record int, line codexLine, payload codexPayload) {
 			r.orphanTurnScope()
 		} else {
 			r.orphanRecoveredScope(record)
-			r.resetTurnScope()
+			r.orphanTurnScope()
 		}
 		r.open = nil
 	default:
