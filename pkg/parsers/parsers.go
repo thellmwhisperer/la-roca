@@ -227,6 +227,10 @@ type Session struct {
 	// unique SourceID mapping; the writer verifies that before deleting anything.
 	PruneUnmappedExchanges bool
 	Exchanges              []Exchange
+	// OrphanedTools are calls the runtime recorded outside every completed
+	// conversational exchange. A non-nil slice from a full parse is an authoritative
+	// session-level projection; an incremental parse appends only its observed tail.
+	OrphanedTools []ToolUse
 	// Thinking are the blocks that hang off the session and not off an exchange:
 	// a subagent compact summary is the only one.
 	Thinking []Thinking
