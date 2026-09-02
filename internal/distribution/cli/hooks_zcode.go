@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -90,20 +91,22 @@ func installZcodeHandoffHook(configPath, executable string) (agentcfg.Outcome, s
 		}
 		created = zcodeMissingHookContainers(settings)
 		hooks["enabled"] = true
+		wrapperCommand := shellQuote(wrapperPath)
 		found := false
 		for _, raw := range entries {
 			for _, hook := range commandHooksOf(raw) {
-				if commandOf(hook) != wrapperPath {
+				if !zcodeWrapperCommand(commandOf(hook), wrapperPath) {
 					continue
 				}
 				hook["type"] = "command"
+				hook["command"] = wrapperCommand
 				hook["timeoutMs"] = zcodeHookTimeoutMs
 				found = true
 			}
 		}
 		if !found {
 			entries = append(entries, map[string]any{"hooks": []any{map[string]any{
-				"type": "command", "command": wrapperPath, "timeoutMs": zcodeHookTimeoutMs,
+				"type": "command", "command": wrapperCommand, "timeoutMs": zcodeHookTimeoutMs,
 			}}})
 		}
 		events["SessionStart"] = entries
@@ -158,7 +161,7 @@ func uninstallZcodeHandoffHook(configPath, wrapperPath string) (agentcfg.Outcome
 			removed := false
 			for _, candidate := range groupHooks {
 				hook, ok := candidate.(map[string]any)
-				if ok && hook["type"] == "command" && commandOf(hook) == wrapperPath {
+				if ok && hook["type"] == "command" && zcodeWrapperCommand(commandOf(hook), wrapperPath) {
 					withdrawn = true
 					removed = true
 					continue
@@ -207,6 +210,10 @@ func uninstallZcodeHandoffHook(configPath, wrapperPath string) (agentcfg.Outcome
 		return outcome, warning, err
 	}
 	return outcome, warning, nil
+}
+
+func zcodeWrapperCommand(command, wrapperPath string) bool {
+	return command == wrapperPath || command == shellQuote(wrapperPath)
 }
 
 func zcodeHooksOnlyEnabled(hooks map[string]any) bool {
@@ -284,28 +291,36 @@ func zcodeHookTree(settings map[string]any) (hooks, events map[string]any, entri
 					return nil, nil, nil, fmt.Errorf("zcode settings hooks.events.SessionStart[%d].hooks[%d] must be an object", i, j)
 				}
 				hookType, ok := entry["type"].(string)
-				if !ok || hookType == "" {
-					return nil, nil, nil, fmt.Errorf("zcode settings hooks.events.SessionStart[%d].hooks[%d].type must be a string", i, j)
-				}
-				if hookType != "command" {
-					continue
+				if !ok || (hookType != "command" && hookType != "process") {
+					return nil, nil, nil, fmt.Errorf("zcode settings hooks.events.SessionStart[%d].hooks[%d].type must be command or process", i, j)
 				}
 				command, ok := entry["command"].(string)
 				if !ok || strings.TrimSpace(command) == "" {
 					return nil, nil, nil, fmt.Errorf("zcode settings hooks.events.SessionStart[%d].hooks[%d].command must be a string", i, j)
 				}
-				timeout, ok := entry["timeoutMs"].(json.Number)
-				if !ok {
-					return nil, nil, nil, fmt.Errorf("zcode settings hooks.events.SessionStart[%d].hooks[%d].timeoutMs must be a number", i, j)
-				}
-				milliseconds, err := timeout.Int64()
-				if err != nil || milliseconds <= 0 {
+				if timeout, exists := entry["timeoutMs"]; exists && !zcodePositiveNumber(timeout, true) {
 					return nil, nil, nil, fmt.Errorf("zcode settings hooks.events.SessionStart[%d].hooks[%d].timeoutMs must be a positive integer", i, j)
+				}
+				if timeout, exists := entry["timeout"]; exists && (hookType != "command" || !zcodePositiveNumber(timeout, false)) {
+					return nil, nil, nil, fmt.Errorf("zcode settings hooks.events.SessionStart[%d].hooks[%d].timeout must be a positive number", i, j)
 				}
 			}
 		}
 	}
 	return hooks, events, entries, nil
+}
+
+func zcodePositiveNumber(value any, integer bool) bool {
+	number, ok := value.(json.Number)
+	if !ok {
+		return false
+	}
+	if integer {
+		parsed, err := number.Int64()
+		return err == nil && parsed > 0
+	}
+	parsed, err := number.Float64()
+	return err == nil && parsed > 0 && !math.IsInf(parsed, 0) && !math.IsNaN(parsed)
 }
 
 func jsonObject(previous string) (map[string]any, error) {
