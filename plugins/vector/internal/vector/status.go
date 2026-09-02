@@ -152,7 +152,17 @@ func inspectDatabase(ctx context.Context, pluginRoot string, database vectorData
 	row.State = classifySidecar(facts.Exists, true, workerActive, row.EmbeddedChunks, snapshot.Contract,
 		database.contractFingerprint(), snapshot.Fingerprint, snapshot.SourceMarker, marker)
 	currentFacts, currentFactsErr := sidecarFileFacts(sidecarPath)
-	if currentFactsErr != nil || !sameSQLiteFileFacts(facts.Generation, currentFacts.Generation) {
+	if currentFactsErr != nil {
+		row.SidecarBytes = nil
+		row.LastWrite = nil
+	} else if sameSQLiteFileFacts(facts.Generation, currentFacts.Generation) {
+		// Keep the facts that bracketed the SQLite snapshot.
+	} else if readerAuxiliaryChange(facts.Generation, currentFacts.Generation) {
+		// Opening or reading a WAL database may create its empty -wal file or
+		// update -shm. Neither changes vector data when main and WAL remain the
+		// same generation.
+		row.SidecarBytes, row.LastWrite = currentFacts.Bytes, currentFacts.LastWrite
+	} else {
 		row.SidecarBytes = nil
 		row.LastWrite = nil
 	}
@@ -522,6 +532,18 @@ func sameSQLiteFileFacts(left, right []sqliteFileFact) bool {
 		}
 	}
 	return true
+}
+
+func readerAuxiliaryChange(before, after []sqliteFileFact) bool {
+	if len(before) != 3 || len(after) != 3 || before[0] != after[0] {
+		return false
+	}
+	walUnchanged := before[1] == after[1]
+	walCreatedEmpty := !before[1].Exists && after[1].Exists && after[1].Size == 0
+	if !walUnchanged && !walCreatedEmpty {
+		return false
+	}
+	return before[2] != after[2] || walCreatedEmpty
 }
 
 func readSQLiteFileFacts(path string, suffixes []string) ([]sqliteFileFact, error) {

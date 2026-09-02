@@ -74,15 +74,18 @@ func TestReportVectorizationReadsSidecarFactsAndNeverInventZero(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	started := time.Now()
-	report, err := ReportVectorization(context.Background(), StatusRequest{
-		PluginRoot: root, StateDir: state,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if time.Since(started) > 2*time.Second {
-		t.Fatalf("status blocked for %s", time.Since(started))
+	var report Vectorization
+	for attempt := 1; attempt <= 2; attempt++ {
+		started := time.Now()
+		report, err = ReportVectorization(context.Background(), StatusRequest{
+			PluginRoot: root, StateDir: state,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if time.Since(started) > 2*time.Second {
+			t.Fatalf("status attempt %d blocked for %s", attempt, time.Since(started))
+		}
 	}
 
 	if !report.Worker.Running {
