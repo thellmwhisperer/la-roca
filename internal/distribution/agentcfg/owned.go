@@ -50,7 +50,7 @@ func writeOwned(path string, owned ownedContainers) error {
 	sidecar := ownedSidecar(path)
 	previous, err := os.ReadFile(sidecar)
 	if os.IsNotExist(err) {
-		return os.WriteFile(sidecar, body, 0o600)
+		return securefile.CreatePreservingParentMode(sidecar, body, 0o600, 0o700)
 	}
 	if err != nil {
 		return err
