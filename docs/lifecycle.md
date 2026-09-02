@@ -183,11 +183,13 @@ the final answer, one question away.
 `roca-vector`) into every detected skill seat, and with them `roca-semantica`,
 a catalog of every installed plugin's tables and example questions generated
 from the same fragments natural-language search uses. `roca skill install`
-writes the same four for a runtime init did not detect. An agent installed
-after init receives the three embedded skills after
-the next successful non-dry-run ingest, whether plain or nightly. Each
-installed skill and the generated prompt keep shipped SYSTEM content separate
-from an operator-owned USER zone, and `roca update` tracks their
+writes the same four for a runtime init did not detect. A newly installed
+auto-detected runtime receives the three embedded skills after the next
+successful non-dry-run ingest, whether plain or nightly. ZCode is explicitly
+opt-in and is never seeded by init, ingest, or update; use `roca skill install
+zcode` (or explicitly select every runtime with `roca skill install --all`).
+Each installed skill and the generated prompt keep shipped SYSTEM content
+separate from an operator-owned USER zone, and `roca update` tracks their
 release in `~/.roca/artifacts.json`. Automatic refresh is available behind the
 default-off `features.artifact_refresh` key.
 
@@ -264,8 +266,10 @@ copy is where the replaced bytes survive.
 
 The hook uses the same ownership split inside Claude's settings: the one entry
 whose command ends in `hooks run claude` is the explicitly marked SYSTEM
-fragment, while the surrounding settings and other hook entries are USER. No
-new harness target is introduced by this lifecycle.
+fragment, while the surrounding settings and other hook entries are USER.
+ZCode's explicit SessionStart hook follows its separate
+[hook lifecycle](operations.md#memory-authorship); it is outside this artifact
+registry and update does not seed or refresh it.
 
 This registry is only for the artifacts La Roca itself ships. Third-party
 skills, skill marketplaces, and remote artifact distribution are not part of
