@@ -449,7 +449,7 @@ func (env *cliEnv) warnVectorRegistryRefresh(err error) {
 func hooksCommand(env *cliEnv) *cobra.Command {
 	command := &cobra.Command{
 		Use:   "hooks",
-		Short: "Install and withdraw client-side authorship signing hooks",
+		Short: "Install and withdraw authorship and session-context hooks",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return cmd.Help()
