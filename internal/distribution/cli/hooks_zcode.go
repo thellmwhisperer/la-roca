@@ -117,8 +117,7 @@ func installZcodeHandoffHook(configPath, executable string) (agentcfg.Outcome, s
 	}
 	if outcome.Changed {
 		if err := agentcfg.SaveOwnedHooks(configPath, created); err != nil {
-			return outcome, "", errors.Join(err,
-				rollbackZcodeWrapper(wrapperPath, wrapperContent, wrapperBefore, wrapperBackup))
+			return outcome, "", err
 		}
 	}
 	return outcome, "", nil
@@ -278,8 +277,28 @@ func zcodeHookTree(settings map[string]any) (hooks, events map[string]any, entri
 				return nil, nil, nil, fmt.Errorf("zcode settings hooks.events.SessionStart[%d].hooks must be an array", i)
 			}
 			for j, hook := range groupHooks {
-				if _, ok := hook.(map[string]any); !ok {
+				entry, ok := hook.(map[string]any)
+				if !ok {
 					return nil, nil, nil, fmt.Errorf("zcode settings hooks.events.SessionStart[%d].hooks[%d] must be an object", i, j)
+				}
+				hookType, ok := entry["type"].(string)
+				if !ok || hookType == "" {
+					return nil, nil, nil, fmt.Errorf("zcode settings hooks.events.SessionStart[%d].hooks[%d].type must be a string", i, j)
+				}
+				if hookType != "command" {
+					continue
+				}
+				command, ok := entry["command"].(string)
+				if !ok || strings.TrimSpace(command) == "" {
+					return nil, nil, nil, fmt.Errorf("zcode settings hooks.events.SessionStart[%d].hooks[%d].command must be a string", i, j)
+				}
+				timeout, ok := entry["timeoutMs"].(json.Number)
+				if !ok {
+					return nil, nil, nil, fmt.Errorf("zcode settings hooks.events.SessionStart[%d].hooks[%d].timeoutMs must be a number", i, j)
+				}
+				milliseconds, err := timeout.Int64()
+				if err != nil || milliseconds <= 0 {
+					return nil, nil, nil, fmt.Errorf("zcode settings hooks.events.SessionStart[%d].hooks[%d].timeoutMs must be a positive integer", i, j)
 				}
 			}
 		}

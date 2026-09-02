@@ -220,6 +220,9 @@ func TestZcodeHookInstallRejectsInvalidContainersBeforeWritingWrapper(t *testing
 		"group hooks missing": `{"hooks":{"events":{"SessionStart":[{}]}}}`,
 		"group hooks null":    `{"hooks":{"events":{"SessionStart":[{"hooks":null}]}}}`,
 		"hook not object":     `{"hooks":{"events":{"SessionStart":[{"hooks":[null]}]}}}`,
+		"hook type missing":   `{"hooks":{"events":{"SessionStart":[{"hooks":[{}]}]}}}`,
+		"command null":        `{"hooks":{"events":{"SessionStart":[{"hooks":[{"type":"command","command":null,"timeoutMs":5000}]}]}}}`,
+		"timeout string":      `{"hooks":{"events":{"SessionStart":[{"hooks":[{"type":"command","command":"operator-hook","timeoutMs":"bad"}]}]}}}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			home, config := zcodeHookTestPaths(t)
@@ -237,6 +240,34 @@ func TestZcodeHookInstallRejectsInvalidContainersBeforeWritingWrapper(t *testing
 				t.Fatalf("install wrote wrapper before rejecting config: %v", err)
 			}
 		})
+	}
+}
+
+func TestZcodeHookOwnershipFailureRetainsWorkingHookWithoutFollowingSymlink(t *testing.T) {
+	home, config := zcodeHookTestPaths(t)
+	writeZcodeHookExecutable(t, home, "#!/bin/sh\nexit 0\n")
+	writeFile(t, config, "{}\n")
+	target := filepath.Join(home, "redirected-owned.json")
+	sidecar := config + ".roca-owned"
+	if err := os.Symlink(target, sidecar); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	if err := executeZcodeHooks("install"); err == nil {
+		t.Fatal("install followed a dangling ownership symlink")
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("ownership JSON was written through symlink: %v", err)
+	}
+	if info, err := os.Lstat(sidecar); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("ownership symlink was replaced: info=%v err=%v", info, err)
+	}
+	wrapper := filepath.Join(home, ".zcode", "hooks", "roca-handoff.sh")
+	if _, err := os.Stat(wrapper); err != nil {
+		t.Fatalf("working wrapper was rolled back after config mutation: %v", err)
+	}
+	if body := string(mustRead(t, config)); !strings.Contains(body, wrapper) {
+		t.Fatalf("failed install left no matching hook registration: %s", body)
 	}
 }
 
