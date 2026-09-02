@@ -24,10 +24,11 @@ func TestWritePersistsTheCorpusTreeWithDedupAndFTS(t *testing.T) {
 			Thinking: []corpuswriter.Thinking{{Position: 1, Text: "inspect the signal", WordCount: 3}},
 			Tools:    []corpuswriter.ToolUse{{Name: "inspect", ParamsSummary: "beacon"}},
 		}},
+		OrphanedTools: []corpuswriter.ToolUse{{Name: "interrupt", ParamsSummary: "open turn"}},
 	}}}
 
 	first := write(t, ctx, db, records)
-	if first.Sessions != 1 || first.Exchanges != 1 || first.ThinkingBlocks != 1 || first.ToolUses != 1 {
+	if first.Sessions != 1 || first.Exchanges != 1 || first.ThinkingBlocks != 1 || first.ToolUses != 2 {
 		t.Fatalf("first write counts = %+v", first)
 	}
 	replay := write(t, ctx, db, records)
@@ -38,7 +39,8 @@ func TestWritePersistsTheCorpusTreeWithDedupAndFTS(t *testing.T) {
 	assertCount(t, db, "sessions", 1)
 	assertCount(t, db, "exchanges", 1)
 	assertCount(t, db, "thinking_blocks", 1)
-	assertCount(t, db, "tool_uses", 1)
+	assertCount(t, db, "tool_uses", 2)
+	assertCount(t, db, "tool_uses WHERE exchange_number IS NULL", 1)
 	assertMatchCount(t, db, "sessions_fts", "synthetic", 1)
 	assertMatchCount(t, db, "exchanges_fts", "beacon", 1)
 	assertMatchCount(t, db, "thinking_fts", "signal", 1)
