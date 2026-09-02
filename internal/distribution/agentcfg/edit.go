@@ -63,12 +63,27 @@ func installed(r runtime, text string) (string, bool, error) {
 	}
 	container := document
 	for _, parent := range r.parents {
-		container, _ = container[parent].(map[string]any)
-		if container == nil {
+		raw, present := container[parent]
+		if !present {
 			return "", false, nil
 		}
+		next, ok := raw.(map[string]any)
+		if !ok {
+			return "", false, fmt.Errorf("%s must be an object", parent)
+		}
+		container = next
 	}
-	servers, _ := container[r.serversKey].(map[string]any)
+	rawServers, present := container[r.serversKey]
+	if !present {
+		return "", false, nil
+	}
+	servers, ok := rawServers.(map[string]any)
+	if !ok {
+		if len(r.parents) > 0 {
+			return "", false, fmt.Errorf("%s must be an object", r.serversKey)
+		}
+		return "", false, nil
+	}
 	entry, ok := servers[ServerName].(map[string]any)
 	if !ok {
 		return "", false, nil

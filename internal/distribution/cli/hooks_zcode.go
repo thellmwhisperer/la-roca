@@ -56,6 +56,18 @@ func installZcodeHandoffHook(configPath, executable string) (agentcfg.Outcome, s
 	if _, err := agentcfg.LoadOwnedHooks(configPath); err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
+	if _, err := agentcfg.Edit(agentcfg.RuntimeZcode, configPath, func(previous string) (string, error) {
+		settings, err := jsonObject(previous)
+		if err != nil {
+			return "", err
+		}
+		if _, _, _, err := zcodeHookTree(settings); err != nil {
+			return "", err
+		}
+		return previous, nil
+	}, true); err != nil {
+		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
+	}
 	if err := writeZcodeWrapper(wrapperPath, zcodeWrapper(executable)); err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
@@ -65,11 +77,11 @@ func installZcodeHandoffHook(configPath, executable string) (agentcfg.Outcome, s
 		if err != nil {
 			return "", err
 		}
-		created = zcodeMissingHookContainers(settings)
 		hooks, events, entries, err := zcodeHookTree(settings)
 		if err != nil {
 			return "", err
 		}
+		created = zcodeMissingHookContainers(settings)
 		hooks["enabled"] = true
 		found := false
 		for _, raw := range entries {
@@ -199,42 +211,54 @@ func zcodeHooksOnlyEnabled(hooks map[string]any) bool {
 }
 
 func zcodeMissingHookContainers(settings map[string]any) []string {
-	if settings["hooks"] == nil {
+	rawHooks, hasHooks := settings["hooks"]
+	if !hasHooks {
 		return []string{"hooks"}
 	}
-	hooks, ok := settings["hooks"].(map[string]any)
+	hooks, ok := rawHooks.(map[string]any)
 	if !ok {
 		return nil
 	}
 	var created []string
-	events, _ := hooks["events"].(map[string]any)
-	if hooks["events"] == nil {
-		created = append(created, "hooks.events")
+	rawEvents, hasEvents := hooks["events"]
+	if !hasEvents {
+		return append(created, "hooks.events", "hooks.events.SessionStart")
 	}
-	if events == nil || events["SessionStart"] == nil {
+	events, _ := rawEvents.(map[string]any)
+	if _, hasSessionStart := events["SessionStart"]; !hasSessionStart {
 		created = append(created, "hooks.events.SessionStart")
 	}
 	return created
 }
 
 func zcodeHookTree(settings map[string]any) (hooks, events map[string]any, entries []any, err error) {
-	hooks, ok := settings["hooks"].(map[string]any)
-	if settings["hooks"] != nil && !ok {
-		return nil, nil, nil, fmt.Errorf("zcode settings hooks must be an object")
-	}
-	if hooks == nil {
+	rawHooks, hasHooks := settings["hooks"]
+	if !hasHooks {
 		hooks = map[string]any{}
+	} else {
+		var ok bool
+		hooks, ok = rawHooks.(map[string]any)
+		if !ok {
+			return nil, nil, nil, fmt.Errorf("zcode settings hooks must be an object")
+		}
 	}
-	events, ok = hooks["events"].(map[string]any)
-	if hooks["events"] != nil && !ok {
-		return nil, nil, nil, fmt.Errorf("zcode settings hooks.events must be an object")
-	}
-	if events == nil {
+	rawEvents, hasEvents := hooks["events"]
+	if !hasEvents {
 		events = map[string]any{}
+	} else {
+		var ok bool
+		events, ok = rawEvents.(map[string]any)
+		if !ok {
+			return nil, nil, nil, fmt.Errorf("zcode settings hooks.events must be an object")
+		}
 	}
-	entries, ok = events["SessionStart"].([]any)
-	if events["SessionStart"] != nil && !ok {
-		return nil, nil, nil, fmt.Errorf("zcode settings hooks.events.SessionStart must be an array")
+	rawEntries, hasEntries := events["SessionStart"]
+	if hasEntries {
+		var ok bool
+		entries, ok = rawEntries.([]any)
+		if !ok {
+			return nil, nil, nil, fmt.Errorf("zcode settings hooks.events.SessionStart must be an array")
+		}
 	}
 	return hooks, events, entries, nil
 }
