@@ -133,29 +133,56 @@ func (s *Service) DeletePill(ctx context.Context, slug string) (PillDeleteResult
 	if err != nil {
 		return PillDeleteResult{}, err
 	}
-	known, err := s.allPillSlugs(ctx)
-	if err != nil {
-		return PillDeleteResult{}, err
-	}
-	if !slices.Contains(known, slug) {
-		return PillDeleteResult{Slug: slug, Known: known}, fmt.Errorf("no pill with slug %q", slug)
-	}
-	result := PillDeleteResult{Slug: slug, Known: known}
+	result := PillDeleteResult{Slug: slug}
 	err = target.Write(ctx, func(tx *sql.Tx) error {
-		outcome, err := tx.ExecContext(ctx, `
-			DELETE FROM memories
-			WHERE layer = 'pill'
-			  AND json_extract(IFNULL(metadata, '{}'), '$.pill_slug') = ?`, slug)
+		rs, err := tx.QueryContext(ctx, `SELECT id, IFNULL(metadata, '{}') FROM memories WHERE layer = 'pill'`)
 		if err != nil {
-			return fmt.Errorf("delete pill %q: %w", slug, err)
+			return fmt.Errorf("list pill slugs: %w", err)
 		}
-		result.Deleted, err = outcome.RowsAffected()
-		return err
+		defer rs.Close()
+		var ids []int64
+		for rs.Next() {
+			var id int64
+			var metadata string
+			if err := rs.Scan(&id, &metadata); err != nil {
+				return fmt.Errorf("read a pill slug: %w", err)
+			}
+			storedSlug := pillSlug(metadata)
+			if storedSlug != "" {
+				result.Known = append(result.Known, storedSlug)
+			}
+			if storedSlug == slug {
+				ids = append(ids, id)
+			}
+		}
+		if err := rs.Err(); err != nil {
+			return err
+		}
+		if err := rs.Close(); err != nil {
+			return err
+		}
+		sort.Strings(result.Known)
+		result.Known = slices.Compact(result.Known)
+		if len(ids) == 0 {
+			return fmt.Errorf("no pill with slug %q", slug)
+		}
+		for _, id := range ids {
+			outcome, err := tx.ExecContext(ctx, `DELETE FROM memories WHERE layer = 'pill' AND id = ?`, id)
+			if err != nil {
+				return fmt.Errorf("delete pill %q: %w", slug, err)
+			}
+			deleted, err := outcome.RowsAffected()
+			if err != nil {
+				return err
+			}
+			result.Deleted += deleted
+		}
+		return nil
 	})
 	if err != nil {
-		return PillDeleteResult{}, err
+		result.Deleted = 0
 	}
-	return result, nil
+	return result, err
 }
 
 // LatestHandoffs loads active handoffs for the project that no other memory has
@@ -258,41 +285,6 @@ func (s *Service) loadCurrentHandoffs(ctx context.Context, project string) ([]lo
 		return rows[i].ID > rows[j].ID
 	})
 	return rows, nil
-}
-
-func (s *Service) allPillSlugs(ctx context.Context) ([]string, error) {
-	reader, closeReader, err := s.sessionContextReader(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer closeReader()
-
-	rs, err := reader.QueryContext(ctx, `
-		SELECT DISTINCT json_extract(IFNULL(metadata, '{}'), '$.pill_slug')
-		FROM memories
-		WHERE layer = 'pill'
-		  AND json_extract(IFNULL(metadata, '{}'), '$.pill_slug') IS NOT NULL`)
-	if err != nil {
-		return nil, fmt.Errorf("list pill slugs: %w", err)
-	}
-	defer rs.Close()
-
-	var slugs []string
-	for rs.Next() {
-		var slug string
-		if err := rs.Scan(&slug); err != nil {
-			return nil, fmt.Errorf("read a pill slug: %w", err)
-		}
-		slug = strings.TrimSpace(slug)
-		if slug != "" {
-			slugs = append(slugs, slug)
-		}
-	}
-	if err := rs.Err(); err != nil {
-		return nil, err
-	}
-	sort.Strings(slugs)
-	return slugs, nil
 }
 
 func scanLoadedMemories(rs *sql.Rows, layer string) ([]loadedMemory, error) {

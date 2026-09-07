@@ -23,14 +23,14 @@ func pillCommand(env *cliEnv) *cobra.Command {
 			return runPillList(cmd.Context(), env, project)
 		},
 	}
-	cmd.PersistentFlags().StringVar(&project, "project", "", "project scope (default: basename of the working directory)")
+	cmd.Flags().StringVar(&project, "project", "", "project scope (default: basename of the working directory)")
 	cmd.AddCommand(pillShowCommand(env, &project))
 	cmd.AddCommand(pillDeleteCommand(env))
 	return cmd
 }
 
 func pillShowCommand(env *cliEnv, project *string) *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "show <slug>",
 		Short: "Load one complete pill by slug",
 		Args:  cobra.ExactArgs(1),
@@ -55,6 +55,8 @@ func pillShowCommand(env *cliEnv, project *string) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(project, "project", "", "project scope (default: basename of the working directory)")
+	return cmd
 }
 
 func pillDeleteCommand(env *cliEnv) *cobra.Command {
@@ -70,13 +72,10 @@ func pillDeleteCommand(env *cliEnv) *cobra.Command {
 			defer svc.Close()
 			result, err := svc.DeletePill(cmd.Context(), args[0])
 			if err != nil {
-				if len(result.Known) > 0 && !env.json {
+				if len(result.Known) > 0 {
 					env.print("%s\n", axi.RenderHelp(result.Known...))
 				}
 				return err
-			}
-			if env.json {
-				return env.printJSON(result)
 			}
 			env.print("deleted: %d\n", result.Deleted)
 			return nil

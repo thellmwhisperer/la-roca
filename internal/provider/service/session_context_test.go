@@ -188,6 +188,50 @@ func TestDeletePillRemovesEveryVersionOfTheSlug(t *testing.T) {
 	}
 }
 
+func TestDeletePillUsesListedSlugIdentityForAllVersions(t *testing.T) {
+	svc := sessionContextService(t)
+	for _, slug := range []string{"build", " build ", "\tbuild\n", "\u2003build\u00a0"} {
+		insertPill(t, svc, pillSeed{
+			slug: slug, content: "Build", project: "demo", createdAt: "2026-06-01 00:00:00",
+		})
+	}
+	inactive := insertPill(t, svc, pillSeed{
+		slug: " build ", content: "Old build", project: "other", createdAt: "2026-05-01 00:00:00",
+	})
+	if _, err := svc.memories.Exec(`UPDATE memories SET status = 'resolved' WHERE id = ?`, inactive); err != nil {
+		t.Fatal(err)
+	}
+	keep := insertPill(t, svc, pillSeed{
+		slug: "keep", content: "Keep", project: "demo", createdAt: "2026-06-01 00:00:00",
+	})
+	otherLayer := insertMemory(t, svc, "handoff", "Keep handoff", "demo", "2026-06-01 00:00:00", 0,
+		map[string]any{"pill_slug": " build "})
+
+	listed := mustListPills(t, svc, "demo")
+	if len(listed.Pills) != 2 || !containsAll(pillSlugs(listed), "build", "keep") {
+		t.Fatalf("listed pills = %+v, want build and keep", listed.Pills)
+	}
+	unknown, err := svc.DeletePill(t.Context(), "nope")
+	if err == nil || strings.Join(unknown.Known, ",") != "build,keep" {
+		t.Fatalf("unknown delete = %+v, %v; want unique listed slugs", unknown, err)
+	}
+	got, err := svc.DeletePill(t.Context(), "\t build\u2003")
+	if err != nil || got.Deleted != 5 {
+		t.Fatalf("delete = %+v, %v; want five versions deleted", got, err)
+	}
+	remaining := mustListPills(t, svc, "demo")
+	if len(remaining.Pills) != 1 || remaining.Pills[0].ID != keep {
+		t.Fatalf("remaining pills = %+v, want keep id %d", remaining.Pills, keep)
+	}
+	var total, preserved int
+	if err := svc.memories.QueryRow(`SELECT count(*), count(CASE WHEN id IN (?, ?) THEN 1 END) FROM memories`, keep, otherLayer).Scan(&total, &preserved); err != nil {
+		t.Fatal(err)
+	}
+	if total != 2 || preserved != 2 {
+		t.Fatalf("remaining rows = %d, preserved rows = %d; want 2 each", total, preserved)
+	}
+}
+
 func TestDeletePillRefusesUnknownSlugWithKnownSlugs(t *testing.T) {
 	svc := sessionContextService(t)
 	insertPill(t, svc, pillSeed{
