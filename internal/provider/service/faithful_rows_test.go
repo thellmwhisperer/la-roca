@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/thellmwhisperer/la-roca/internal/jsonid"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
@@ -36,7 +37,7 @@ func TestTheModelPathReturnsTheRowsItsSQLProduced(t *testing.T) {
 	seen := map[any]int{}
 	previous := int64(-1)
 	for i, row := range res.Rows {
-		id, ok := row["id"].(int64)
+		id, ok := jsonid.Int(row["id"])
 		if !ok {
 			t.Fatalf("row %d carries no id: %v", i, row)
 		}

@@ -9,8 +9,8 @@ import (
 )
 
 type MemoryResolution struct {
-	RequestedID int64  `json:"requested_id"`
-	CanonicalID int64  `json:"canonical_id"`
+	RequestedID int64  `json:"requested_id,string"`
+	CanonicalID int64  `json:"canonical_id,string"`
 	Alias       bool   `json:"alias"`
 	Database    string `json:"database"`
 	Layer       string `json:"layer"`
