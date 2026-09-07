@@ -118,6 +118,25 @@ func TestRowBudgetPreservesNumericAndBooleanScalars(t *testing.T) {
 	}
 }
 
+func TestRowBudgetPreservesMemoryIdentifiers(t *testing.T) {
+	const id = "1152921504606853875"
+	got := axi.RowOutputWithBudget([]string{"id"}, []map[string]any{{"id": id}}, 5)
+	if got != `"1152921504606853875"` {
+		t.Fatalf("identity scalar = %q, want the exact quoted id", got)
+	}
+	table := axi.RowOutputWithBudget(
+		[]string{"id", "content"},
+		[]map[string]any{{"id": id, "content": "abcdefghij"}},
+		5,
+	)
+	if !strings.Contains(table, `"1152921504606853875"`) {
+		t.Fatalf("identity cell was clipped:\n%s", table)
+	}
+	if !strings.Contains(table, "abcd…") {
+		t.Fatalf("content cell did not honor the budget:\n%s", table)
+	}
+}
+
 func TestRowOutputKeepsLegacyBudgetAndExecDefaultsTo500(t *testing.T) {
 	rows := []map[string]any{{"content": strings.Repeat("界", 600)}}
 	for _, columns := range [][]string{{"content"}, {"id", "content"}} {
