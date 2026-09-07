@@ -70,6 +70,128 @@ func TestQueryAndExecDeclareConsultedDatabases(t *testing.T) {
 	}
 }
 
+func TestExecRowsHonorTheResultTextBudget(t *testing.T) {
+	long := strings.Repeat("0123456789", 90)
+	got := axi.Exec(service.ExecResult{
+		SQL:      "SELECT content FROM memories",
+		Columns:  []string{"content"},
+		Rows:     []map[string]any{{"content": long}},
+		RowCount: 1,
+		MaxChars: 900,
+	})
+	if !strings.Contains(got, long) {
+		t.Fatalf("exec TOON renderer clipped below max_chars:\n%s", got)
+	}
+
+	short := axi.Exec(service.ExecResult{
+		SQL:      "SELECT content FROM memories",
+		Columns:  []string{"content"},
+		Rows:     []map[string]any{{"content": long}},
+		RowCount: 1,
+		MaxChars: 100,
+	})
+	if strings.Contains(short, strings.Repeat("0123456789", 10)+"0") || !strings.Contains(short, "…") {
+		t.Fatalf("exec TOON renderer did not honor max_chars=100:\n%s", short)
+	}
+}
+
+func TestRowBudgetPreservesNumericAndBooleanScalars(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		value any
+		want  string
+	}{
+		{"integer", int64(1908), "1908"},
+		{"unsigned", uint64(1908), "1908"},
+		{"float", 1908.5, "1908.5"},
+		{"true", true, "true"},
+		{"false", false, "false"},
+		{"string", "1908", "19…"},
+		{"bytes", []byte("1908"), "19…"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := axi.RowOutputWithBudget([]string{"value"}, []map[string]any{{"value": test.value}}, 3)
+			if got != test.want {
+				t.Fatalf("scalar = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestRowOutputKeepsLegacyBudgetAndExecDefaultsTo500(t *testing.T) {
+	rows := []map[string]any{{"content": strings.Repeat("界", 600)}}
+	for _, columns := range [][]string{{"content"}, {"id", "content"}} {
+		if len(columns) > 1 {
+			rows[0]["id"] = 1
+		}
+		for _, test := range []struct {
+			name   string
+			output string
+			budget int
+		}{
+			{"legacy", axi.RowOutput(columns, rows), 160},
+			{"exec", axi.Exec(service.ExecResult{Columns: columns, Rows: rows, RowCount: 1}), 500},
+		} {
+			want := strings.Repeat("界", test.budget-1) + "…"
+			if !strings.Contains(test.output, want) || strings.Contains(test.output, strings.Repeat("界", test.budget)) {
+				t.Fatalf("%s with columns %v did not honor budget %d: %q", test.name, columns, test.budget, test.output)
+			}
+		}
+	}
+}
+
+func TestSearchBudgetClipsSnippetsWithoutClippingCitations(t *testing.T) {
+	for _, render := range []struct {
+		name string
+		fn   func(service.SearchResult) string
+	}{
+		{"CLI", axi.Search},
+		{"MCP", axi.MCPSearch},
+	} {
+		t.Run(render.name, func(t *testing.T) {
+			for _, budget := range []int{20, 900, 0} {
+				source := "roca_ops.memories.1152921504606846976"
+				snippetBudget := budget
+				if snippetBudget == 0 {
+					snippetBudget = 500
+				}
+				got := render.fn(service.SearchResult{
+					Engines: []string{"fts"}, MaxChars: budget,
+					Hits: []service.SearchHit{{Rank: 1, Source: source, Legs: []string{"fts"}, Snippet: strings.Repeat("x", 1000)}},
+				})
+				want := "\n  1," + source + ",fts," + strings.Repeat("x", snippetBudget-1) + "…"
+				if !strings.HasSuffix(got, want) {
+					t.Fatalf("search budget %d lost citation or snippet budget: %q", budget, got)
+				}
+			}
+		})
+	}
+}
+
+func TestQueryExploreAndSearchRowsHonorTheResultTextBudget(t *testing.T) {
+	long := strings.Repeat("abcdefghij", 90)
+	query := service.QueryResult{
+		Question: "wide row", Path: service.PathLLM, Match: service.MatchFound,
+		Columns: []string{"text"}, Rows: []map[string]any{{"text": long}},
+		RowCount: 1, MaxChars: 900,
+	}
+	for name, got := range map[string]string{
+		"query":   axi.Query(query, ""),
+		"explore": axi.Explore(query),
+		"search": axi.Search(service.SearchResult{
+			Question: "wide row", Engines: []string{"fts"}, Terms: []string{"wide"},
+			Hits: []service.SearchHit{{
+				Rank: 1, Source: "memory:1", Legs: []string{"fts"}, Snippet: long,
+			}},
+			RowCount: 1, Top: 10, MaxChars: 900,
+		}),
+	} {
+		if !strings.Contains(got, long) {
+			t.Fatalf("%s TOON renderer clipped below max_chars:\n%s", name, got)
+		}
+	}
+}
+
 func TestQueryDeclaresEveryModelSQLRepair(t *testing.T) {
 	got := axi.Query(service.QueryResult{
 		Question: "synthetic query", Path: service.PathLLM, Engine: "codex", Model: "test",
