@@ -199,6 +199,7 @@ not json
 }
 
 func TestCodexHistoryRefreshExactPayloadAliasDoesNotAbort(t *testing.T) {
+	// Issue 265's offender and history envelope, with fixture-only prompt text.
 	const offender = "019aba72-aa57-7d93-a12c-b6e65c0dca6b"
 	const alias = offender + "-history-envelope-alias"
 	home := t.TempDir()
