@@ -81,7 +81,9 @@ func HandoffLab(lab service.HandoffLab) string {
 			"head":         row.Head,
 		})
 	}
-	return toonRows("lab", []string{"project", "last_handoff", "head"}, rows, fullToonValue) + "\n"
+	return toonRows("lab", []string{"project", "last_handoff", "head"}, rows, func(_ string, value any) string {
+		return fullToonValue(value)
+	}) + "\n"
 }
 
 func memoryColumns() []string {
