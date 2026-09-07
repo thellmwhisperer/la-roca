@@ -7,6 +7,7 @@ require (
 	github.com/charmbracelet/glamour v1.0.0
 	github.com/creack/pty v1.1.24
 	github.com/cucumber/godog v0.16.0
+	github.com/google/jsonschema-go v0.4.3
 	github.com/mattn/go-runewidth v0.0.17
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/rqlite/sql v0.0.0-20260224021119-1b2524a41372
@@ -33,7 +34,6 @@ require (
 	github.com/cucumber/messages/go/v34 v34.2.0 // indirect
 	github.com/dlclark/regexp2 v1.11.5 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
-	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/css v1.0.1 // indirect
 	github.com/hashicorp/go-immutable-radix v1.3.1 // indirect
