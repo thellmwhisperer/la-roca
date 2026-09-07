@@ -27,12 +27,14 @@ over its standard input and output, and it dies when that pipe closes. There is
 no daemon, no port, no supervisor and no unit file, and that is the whole
 lifecycle.
 
-When semantic search is enabled, the server also owns one vector companion over
-private pipes for the lifetime of that session. It prepares the embedding model
-in the background as the session starts, so the first semantic query does not
-pay the startup cost. The companion has no port or pid file and stops with the
-MCP server; one-shot CLI queries load the model for that invocation only. Its
-preparation status goes to standard error, leaving protocol output untouched.
+When semantic search is enabled, the server connects to one shared embedding
+resident for the machine. The socket lives under `~/.roca`. If none is
+listening, `mcp serve` starts one; later sessions reuse it. The resident
+prepares the embedding model so the first semantic query does not pay the
+startup cost, and it exits after an idle period with no clients attached. A
+stale socket from a killed resident is replaced on the next start. One-shot CLI
+queries still load the model for that invocation only. Preparation status goes
+to standard error, leaving protocol output untouched.
 
 The same session parent raises every installed plugin that declares a
 `companion` in `plugin.json`. Each child is exec'd from the plugin directory
@@ -65,7 +67,7 @@ as the CLI, including session-writer, required-field, and supersession checks.
 
 With semantic search enabled and its companion available, the same server also
 exposes `roca_vector_query`. It searches selected local indexes by meaning and
-uses the session-resident, pre-prepared model described above. The six core
+uses the shared resident, pre-prepared model described above. The six core
 tools remain available whether or not semantic search is enabled.
 
 `roca_query`, `roca_explore`, and `roca_sql` reject empty questions and share

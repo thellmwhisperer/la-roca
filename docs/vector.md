@@ -122,7 +122,9 @@ On Windows, keep `roca-vector.exe` beside `roca.exe` in the directory on `PATH`.
 
 On macOS and Linux, semantic search downloads one embedding model (~1 GB) into
 the selected Roca data directory. That is the only extra download. There is no
-second runtime, no daemon, and no extra command after you consent. The download
+second runtime and no extra command after you consent. MCP sessions share one
+embedding resident over a socket under `~/.roca`; it starts on demand and exits
+after idle. CLI queries still load the model for that invocation only. The download
 is size- and checksum-verified before it becomes active, then reused by later
 indexing and queries. The pinned bytes are served from La Roca's `models-v1`
 GitHub release, whose release lane verifies the upstream source before

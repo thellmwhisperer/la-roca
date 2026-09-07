@@ -65,7 +65,7 @@ type Options struct {
 	// resident roca-ops plugin. Its zero value preserves the core-only product.
 	RocaOpsEnabled bool
 	// VectorEnabled is the single consent gate for semantic retrieval. The MCP
-	// surface uses it to decide whether the session-owned vector child exists.
+	// surface uses it to decide whether to connect to the shared vector resident.
 	VectorEnabled bool
 	// CorpusEnabled routes perennial ingest into the bundled corpus database and
 	// attaches that archive to every query. The CLI always enables it; the zero
