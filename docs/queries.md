@@ -180,8 +180,9 @@ also reads the rows. The longer model, repair, and routing contracts live in
 ## Session context
 
 The session-context reads (`roca pill`, `roca pill show`, and `roca handoff
-latest`) default `--project` to the basename of the working directory.
-They always read the existing `roca-ops` database; if
+latest`) default `--project` to the basename of the working directory;
+`handoff latest --all-projects` instead reads across projects. They
+always read the existing `roca-ops` database; if
 `features.roca_ops` is disabled or that database is missing, they refuse rather
 than reading core or creating an empty ops database.
 
@@ -192,12 +193,26 @@ Default AXI/TOON output includes complete content, `--json` returns the script
 envelope, and there is no budget flag.
 
 `roca handoff latest [--project <project>] [--limit N]` loads active handoffs
-that no other memory supersedes. With no limit it keeps the historical behavior:
-every current handoff is printed with complete content. It chooses project
+that no other memory supersedes. With no limit (or `--limit 0`) it keeps the
+historical behavior: every current handoff is printed with complete content.
+A positive limit keeps only the first N handoffs in newest-first order, without
+clipping their content; negative limits are rejected. It chooses project
 handoffs after that filtering and falls back to unsuperseded global handoffs
-only when no project handoff remains; it never treats newest-by-clock as current.
-`roca handoff latest --all-projects [--since 30d]` prints the newest current
-handoff head for each project as `lab[n]{project,last_handoff,head}`. The CLI
+only when no project handoff remains. A later row alone does not supersede an
+earlier handoff: a short worker receipt must name its predecessor to replace it.
+
+`roca handoff latest --all-projects [--since 30d] [--limit N]` prints one row per
+project with a current handoff, newest first, as
+`lab[n]{project,last_handoff,head}`. Global handoffs are excluded, and combining
+`--all-projects` with `--project` is rejected. `last_handoff` is the selected
+handoff's creation timestamp; `head` is at most 3,000 Unicode characters,
+including a trailing `...` when clipped. This is a per-head character cap,
+not a total output byte budget. `--limit` caps the number of project rows.
+`--since` filters only this cross-project view and accepts a nonnegative whole
+day count followed by `d`, such as `30d`, measured back from the current UTC
+time in 24-hour days. With that filter, rows with missing or invalid timestamps
+are excluded. Omitting it imposes no age cutoff. `--json` returns the script
+envelope, retaining the selected rows and their head caps. The CLI
 implementation is owned by
 [`internal/distribution/cli/session.go`](../internal/distribution/cli/session.go).
 
