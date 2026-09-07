@@ -15,13 +15,13 @@ Feature: Honest queries without a model
   Scenario: Only SELECT ever reaches the database; the gate blocks everything else
     When I submit these statements to the SQL gate:
       | statement                         |
-      | SELECT COUNT(*) FROM plugin_roca_ops.memories |
+      | SELECT COUNT(*) FROM main.memories |
       | DELETE FROM memories              |
     Then one statement is accepted and one is blocked
     And the database still contains 1 memory
 
   Scenario: A SELECT without LIMIT comes back with one
-    When I submit the SQL "SELECT id FROM plugin_roca_ops.memories"
+    When I submit the SQL "SELECT id FROM main.memories"
     Then the command exits with code 0
     And the returned SQL contains "LIMIT 1000"
 
