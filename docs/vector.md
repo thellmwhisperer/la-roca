@@ -122,8 +122,10 @@ On Windows, keep `roca-vector.exe` beside `roca.exe` in the directory on `PATH`.
 
 On macOS and Linux, semantic search downloads one embedding model (~1 GB) into
 the selected Roca data directory. That is the only extra download. There is no
-second runtime, no daemon, and no extra command after you consent. The download
-is size- and checksum-verified before it becomes active, then reused by later
+second runtime and no extra command after you consent. See the
+[MCP lifecycle](mcp.md#1-roca-mcp-serve-the-mcp-over-stdio) for model sharing
+and process lifetime. The download is size- and checksum-verified before it
+becomes active, then reused by later
 indexing and queries. The pinned bytes are served from La Roca's `models-v1`
 GitHub release, whose release lane verifies the upstream source before
 publication.
@@ -266,6 +268,8 @@ roca vector --db-path /path/to/roca.db ingest --delta
 ```
 
 `ROCA_READ_ONLY` refuses `install`, `ingest --delta`, and `compact`.
+The companion always sets `ROCA_READ_ONLY=1` on its core CLI subprocesses for
+database scope and source reads, so those lookups cannot trigger core writes.
 
 ## Disk and maintenance
 

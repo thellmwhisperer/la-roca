@@ -12,16 +12,18 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
+	"github.com/thellmwhisperer/la-roca/internal/securefile"
 )
 
 var vectorQueryTool = &mcp.Tool{
 	Name: "roca_vector_query",
 	Description: "Search local memory by meaning. Same job as `roca vector query`: " +
 		"pass a short first-person phrase or a bare word, and how many hits (default 10, max 100). " +
-		"The session prepares the embedding model in the background so the first call does not wait on startup.",
+		"The machine keeps one shared embedding process so every MCP session reuses it.",
 }
 
 type vectorQueryArgs struct {
@@ -43,7 +45,7 @@ type residentEnvelope struct {
 
 type residentVector struct {
 	stdin     io.WriteCloser
-	cmd       *exec.Cmd
+	conn      io.Closer
 	encoder   *json.Encoder
 	status    io.Writer
 	closeOnce sync.Once
@@ -52,7 +54,6 @@ type residentVector struct {
 	pendingMu sync.Mutex
 	ready     chan struct{}
 	failed    chan struct{}
-	done      chan error
 	readyErr  error
 	failure   error
 	prewarmMS int64
@@ -66,41 +67,149 @@ func startResidentVector(ctx context.Context, svc *service.Service) (*residentVe
 	if binary == "" {
 		return nil, nil
 	}
-	args := []string{"_resident"}
-	if path := svc.DB().Path(); path != "" {
-		args = append([]string{"--db-path", path}, args...)
-	}
-	command := exec.CommandContext(ctx, binary, args...)
-	command.Env = append(os.Environ(),
-		"ROCA_VECTOR_PLUGIN_ROOT="+svc.PluginDir(),
-	)
-	if dataDir := svc.DataDir(); dataDir != "" {
-		command.Env = append(command.Env,
-			"ROCA_VECTOR_STATE_DIR="+filepath.Join(dataDir, "plugins", "roca-vector", "state"),
-		)
-	}
-	stdin, err := command.StdinPipe()
+	socket, lockPath := residentSocketPaths(svc)
+	conn, err := dialOrSpawnResident(ctx, svc, binary, socket, lockPath)
 	if err != nil {
-		return nil, fmt.Errorf("open semantic search input: %w", err)
+		return nil, err
 	}
-	stdout, err := command.StdoutPipe()
-	if err != nil {
-		stdin.Close()
-		return nil, fmt.Errorf("open semantic search output: %w", err)
-	}
-	command.Stderr = os.Stderr
 	resident := &residentVector{
-		stdin: stdin, cmd: command, encoder: json.NewEncoder(stdin),
+		stdin: conn, conn: conn, encoder: json.NewEncoder(conn),
 		status: os.Stderr, ready: make(chan struct{}), failed: make(chan struct{}),
-		done: make(chan error, 1), pending: make(map[int64]chan residentEnvelope),
+		pending: make(map[int64]chan residentEnvelope),
 	}
-	if err := command.Start(); err != nil {
-		stdin.Close()
-		return nil, fmt.Errorf("start semantic search: %w", err)
-	}
-	go resident.decode(stdout)
-	go func() { resident.done <- command.Wait() }()
+	go resident.decode(conn)
 	return resident, nil
+}
+
+func residentSocketPaths(svc *service.Service) (socket, lock string) {
+	dir := ""
+	if svc != nil {
+		dir = svc.DataDir()
+	}
+	if dir == "" {
+		home, _ := os.UserHomeDir()
+		dir = filepath.Join(home, ".roca")
+	}
+	dir = filepath.Join(dir, "vector-resident")
+	lock = filepath.Join(dir, "resident.lock")
+	if override := strings.TrimSpace(os.Getenv("ROCA_VECTOR_RESIDENT_SOCKET")); override != "" {
+		return override, override + ".lock"
+	}
+	return filepath.Join(dir, "resident.sock"), lock
+}
+
+func dialOrSpawnResident(ctx context.Context, svc *service.Service, binary, socket, lockPath string) (io.ReadWriteCloser, error) {
+	if runtime.GOOS != "windows" && len(socket) >= 100 {
+		return nil, fmt.Errorf("semantic search resident socket path is too long: %s", socket)
+	}
+	if err := os.MkdirAll(filepath.Dir(socket), 0o700); err != nil {
+		return nil, fmt.Errorf("create semantic search resident directory: %w", err)
+	}
+	if err := validateResidentDirectory(filepath.Dir(socket)); err != nil {
+		return nil, err
+	}
+	if err := validateResidentDirectory(filepath.Dir(lockPath)); err != nil {
+		return nil, err
+	}
+	if conn, err := dialResidentSocket(socket); err == nil {
+		return conn, nil
+	}
+
+	release, err := securefile.Lock(lockPath)
+	if err != nil {
+		return nil, fmt.Errorf("lock semantic search resident: %w", err)
+	}
+	defer func() { _ = release() }()
+	if conn, err := dialResidentSocket(socket); err == nil {
+		return conn, nil
+	}
+	if err := spawnResidentVector(svc, binary, socket); err != nil {
+		return nil, err
+	}
+	return waitResidentSocket(ctx, socket)
+}
+
+func dialResidentSocket(socket string) (io.ReadWriteCloser, error) {
+	return dialUnixTimeout(socket, 200*time.Millisecond)
+}
+
+func waitResidentSocket(ctx context.Context, socket string) (io.ReadWriteCloser, error) {
+	deadline := time.Now().Add(10 * time.Second)
+	var last error
+	for time.Now().Before(deadline) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		conn, err := dialResidentSocket(socket)
+		if err == nil {
+			return conn, nil
+		}
+		last = err
+		time.Sleep(20 * time.Millisecond)
+	}
+	if last == nil {
+		last = fmt.Errorf("timed out")
+	}
+	return nil, fmt.Errorf("wait for semantic search resident: %w", last)
+}
+
+func spawnResidentVector(svc *service.Service, binary, socket string) error {
+	args := []string{"_resident", "--listen", socket}
+	if svc != nil {
+		if path := svc.DB().Path(); path != "" {
+			args = append([]string{"--db-path", path}, args...)
+		}
+	}
+	command := exec.Command(binary, args...)
+	command.Env = append(os.Environ(), residentSpawnEnv(svc)...)
+	command.SysProcAttr = detachedResidentAttr()
+	devNull, err := os.Open(os.DevNull)
+	if err != nil {
+		return fmt.Errorf("open semantic search input: %w", err)
+	}
+	defer devNull.Close()
+	logFile, err := residentLogFile(svc, socket)
+	if err != nil {
+		return err
+	}
+	defer logFile.Close()
+	command.Stdin, command.Stdout, command.Stderr = devNull, logFile, logFile
+	if err := command.Start(); err != nil {
+		return fmt.Errorf("start semantic search: %w", err)
+	}
+	if command.Process != nil {
+		_ = command.Process.Release()
+	}
+	return nil
+}
+
+func residentSpawnEnv(svc *service.Service) []string {
+	env := []string{}
+	if svc == nil {
+		return env
+	}
+	if root := svc.PluginDir(); root != "" {
+		env = append(env, "ROCA_VECTOR_PLUGIN_ROOT="+root)
+	}
+	if dataDir := svc.DataDir(); dataDir != "" {
+		env = append(env, "ROCA_VECTOR_STATE_DIR="+filepath.Join(dataDir, "plugins", "roca-vector", "state"))
+	}
+	return env
+}
+
+func residentLogFile(svc *service.Service, socket string) (*os.File, error) {
+	dir := filepath.Dir(socket)
+	if svc != nil && svc.DataDir() != "" {
+		dir = filepath.Join(svc.DataDir(), "logs")
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, fmt.Errorf("create semantic search log directory: %w", err)
+	}
+	file, err := os.OpenFile(filepath.Join(dir, "vector-resident.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("open semantic search log: %w", err)
+	}
+	return file, nil
 }
 
 func vectorPayloadPath() string {
@@ -283,11 +392,11 @@ func (r *residentVector) Close() error {
 	r.closing = true
 	r.stateMu.Unlock()
 	r.closeOnce.Do(func() {
-		_ = r.stdin.Close()
-		if r.cmd != nil && r.cmd.Process != nil {
-			_ = r.cmd.Process.Kill()
+		if r.stdin != nil {
+			_ = r.stdin.Close()
+		} else if r.conn != nil {
+			_ = r.conn.Close()
 		}
-		<-r.done
 	})
 	return nil
 }
