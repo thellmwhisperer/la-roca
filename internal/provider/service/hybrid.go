@@ -51,7 +51,7 @@ type SearchResult struct {
 	Top         int         `json:"top"`
 	Hits        []SearchHit `json:"hits"`
 	RowCount    int         `json:"row_count"`
-	MaxChars    int         `json:"max_chars"`
+	MaxChars    int         `json:"-"`
 	LatencyMS   int64       `json:"latency_ms"`
 	Version     string      `json:"version"`
 	SourceSHA   string      `json:"source_sha"`

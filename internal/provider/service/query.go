@@ -86,7 +86,7 @@ func progress(req QueryRequest, phase QueryPhase) {
 type QueryResult struct {
 	Question string `json:"question"`
 	Path     string `json:"path"`
-	MaxChars int    `json:"max_chars"`
+	MaxChars int    `json:"-"`
 	// Mode is set only by Explore. An ordinary query omits it, preserving the
 	// query envelope while every investigation declares plain or deep mode.
 	Mode     string             `json:"mode,omitempty"`
@@ -402,7 +402,7 @@ type ExecResult struct {
 	Columns          []string         `json:"columns,omitempty"`
 	Rows             []map[string]any `json:"rows,omitempty"`
 	RowCount         int              `json:"row_count"`
-	MaxChars         int              `json:"max_chars"`
+	MaxChars         int              `json:"-"`
 	Databases        []string         `json:"databases,omitempty"`
 	OmittedDatabases []string         `json:"omitted_databases,omitempty"`
 	LatencyMS        int64            `json:"latency_ms"`

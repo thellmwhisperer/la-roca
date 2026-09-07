@@ -66,8 +66,8 @@ uses the deterministic hybrid path described above.
 `roca playground`, and `roca explore`, and per snippet for `roca query`. The
 default is 500; zero or a negative value also selects that default. The same
 budget applies to CLI TOON output, CLI `--json`, and MCP's `max_chars` argument.
-TOON does not impose a smaller preview limit. JSON result envelopes include
-the effective budget as `max_chars`; selecting JSON does not expand the text.
+TOON does not impose a smaller preview limit; selecting JSON does not expand
+the text.
 
 Characters are counted as Unicode code points, including truncation ellipses;
 TOON quoting and escaping are outside that budget. Numbers and booleans are
