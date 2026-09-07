@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -26,6 +27,14 @@ type PillList struct {
 	Project   string         `json:"project"`
 	Pills     []MemoryRecord `json:"pills"`
 	Unslugged []int64        `json:"unslugged,omitempty"`
+}
+
+// PillDeleteResult reports the one destructive operation La Roca exposes:
+// retiring every stored version of a pill slug.
+type PillDeleteResult struct {
+	Slug    string   `json:"slug"`
+	Deleted int64    `json:"deleted"`
+	Known   []string `json:"known,omitempty"`
 }
 
 // HandoffList is the active, unsuperseded handoffs for a project.
@@ -102,6 +111,51 @@ func (s *Service) ShowPill(ctx context.Context, project, slug string) (MemoryRec
 		}
 	}
 	return MemoryRecord{}, fmt.Errorf("no active pill with slug %q for project %q", slug, project)
+}
+
+// DeletePill removes every ops-store version of a pill slug. It is intentionally
+// not project-scoped: a pill slug names the artifact being retired.
+func (s *Service) DeletePill(ctx context.Context, slug string) (PillDeleteResult, error) {
+	if s.opts.ReadOnly {
+		return PillDeleteResult{}, refuseReadOnly("delete pill")
+	}
+	slug = strings.TrimSpace(slug)
+	if slug == "" {
+		return PillDeleteResult{}, fmt.Errorf("a pill slug is required")
+	}
+	if !s.opts.RocaOpsEnabled {
+		return PillDeleteResult{}, fmt.Errorf("pill delete requires features.roca_ops and the %s database", rocaOpsPluginName)
+	}
+	if _, err := s.ensureSchema(ctx); err != nil {
+		return PillDeleteResult{}, err
+	}
+	target, err := s.memoryOwner()
+	if err != nil {
+		return PillDeleteResult{}, err
+	}
+	known, err := s.allPillSlugs(ctx)
+	if err != nil {
+		return PillDeleteResult{}, err
+	}
+	if !slices.Contains(known, slug) {
+		return PillDeleteResult{Slug: slug, Known: known}, fmt.Errorf("no pill with slug %q", slug)
+	}
+	result := PillDeleteResult{Slug: slug, Known: known}
+	err = target.Write(ctx, func(tx *sql.Tx) error {
+		outcome, err := tx.ExecContext(ctx, `
+			DELETE FROM memories
+			WHERE layer = 'pill'
+			  AND json_extract(IFNULL(metadata, '{}'), '$.pill_slug') = ?`, slug)
+		if err != nil {
+			return fmt.Errorf("delete pill %q: %w", slug, err)
+		}
+		result.Deleted, err = outcome.RowsAffected()
+		return err
+	})
+	if err != nil {
+		return PillDeleteResult{}, err
+	}
+	return result, nil
 }
 
 // LatestHandoffs loads active handoffs for the project that no other memory has
@@ -204,6 +258,41 @@ func (s *Service) loadCurrentHandoffs(ctx context.Context, project string) ([]lo
 		return rows[i].ID > rows[j].ID
 	})
 	return rows, nil
+}
+
+func (s *Service) allPillSlugs(ctx context.Context) ([]string, error) {
+	reader, closeReader, err := s.sessionContextReader(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer closeReader()
+
+	rs, err := reader.QueryContext(ctx, `
+		SELECT DISTINCT json_extract(IFNULL(metadata, '{}'), '$.pill_slug')
+		FROM memories
+		WHERE layer = 'pill'
+		  AND json_extract(IFNULL(metadata, '{}'), '$.pill_slug') IS NOT NULL`)
+	if err != nil {
+		return nil, fmt.Errorf("list pill slugs: %w", err)
+	}
+	defer rs.Close()
+
+	var slugs []string
+	for rs.Next() {
+		var slug string
+		if err := rs.Scan(&slug); err != nil {
+			return nil, fmt.Errorf("read a pill slug: %w", err)
+		}
+		slug = strings.TrimSpace(slug)
+		if slug != "" {
+			slugs = append(slugs, slug)
+		}
+	}
+	if err := rs.Err(); err != nil {
+		return nil, err
+	}
+	sort.Strings(slugs)
+	return slugs, nil
 }
 
 func scanLoadedMemories(rs *sql.Rows, layer string) ([]loadedMemory, error) {

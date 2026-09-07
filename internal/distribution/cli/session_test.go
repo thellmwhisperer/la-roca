@@ -55,6 +55,42 @@ func TestPillShowReturnsOneCompletePill(t *testing.T) {
 	}
 }
 
+func TestPillDeleteRemovesSlugVersionsAndReportsRows(t *testing.T) {
+	home := sessionHome(t)
+	insertOpsMemory(t, home, opsMemory{
+		layer: "pill", project: "demo", createdAt: "2026-06-01 00:00:00",
+		content: "temporary pill", metadata: map[string]any{"pill_slug": "tmp-x"},
+	})
+	if out := runRoot(t, contractBuild(), "pill", "--project", "demo"); !strings.Contains(out, "tmp-x") {
+		t.Fatalf("tmp-x was not listed before delete:\n%s", out)
+	}
+	out := runRoot(t, contractBuild(), "pill", "delete", "tmp-x")
+	if out != "deleted: 1" {
+		t.Fatalf("delete output = %q, want deleted: 1", out)
+	}
+	if out := runRoot(t, contractBuild(), "pill", "--project", "demo"); strings.Contains(out, "tmp-x") {
+		t.Fatalf("tmp-x was still listed after delete:\n%s", out)
+	}
+	assertOpsPillSlugCount(t, home, "tmp-x", 0)
+}
+
+func TestPillDeleteRefusesUnknownSlugWithKnownSlugs(t *testing.T) {
+	home := sessionHome(t)
+	insertOpsMemory(t, home, opsMemory{
+		layer: "pill", project: "demo", createdAt: "2026-06-01 00:00:00",
+		content: "build pill", metadata: map[string]any{"pill_slug": "build"},
+	})
+
+	out, err := runRootErr(t, contractBuild(), nil, "pill", "delete", "nope")
+	if err == nil || !strings.Contains(err.Error(), `no pill with slug "nope"`) {
+		t.Fatalf("delete unknown error = %v", err)
+	}
+	if !strings.Contains(out, "help[1]:") || !strings.Contains(out, "build") {
+		t.Fatalf("known slug help missing:\n%s", out)
+	}
+	assertOpsPillSlugCount(t, home, "build", 1)
+}
+
 func TestHandoffLatestSkipsSupersededAndKeepsUnsuperseded(t *testing.T) {
 	home := sessionHome(t)
 	first := insertOpsMemory(t, home, opsMemory{
@@ -114,6 +150,7 @@ func TestSessionContextCommandsRequireEnabledExistingRocaOps(t *testing.T) {
 		for _, args := range [][]string{
 			{"pill", "--project", "demo"},
 			{"pill", "show", "build", "--project", "demo"},
+			{"pill", "delete", "build"},
 			{"handoff", "latest", "--project", "demo"},
 		} {
 			_, err = runRootErr(t, contractBuild(), nil, args...)
@@ -209,4 +246,22 @@ func insertOpsMemory(t *testing.T, home string, seed opsMemory) int64 {
 		t.Fatal(err)
 	}
 	return id
+}
+
+func assertOpsPillSlugCount(t *testing.T, home, slug string, want int) {
+	t.Helper()
+	path := filepath.Join(home, ".roca", "plugins", "roca-ops", "roca-ops.db")
+	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var count int
+	if err := db.QueryRow(
+		`SELECT count(*) FROM memories WHERE json_extract(metadata,'$.pill_slug') = ?`, slug).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != want {
+		t.Fatalf("pill slug %q count = %d, want %d", slug, count, want)
+	}
 }
