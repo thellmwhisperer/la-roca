@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/axi"
+	"github.com/thellmwhisperer/la-roca/internal/jsonid"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
@@ -16,7 +17,7 @@ func TestPillsRendersFullContentWithoutTheTableClip(t *testing.T) {
 			ID: 7, Slug: "build", Project: "demo", CreatedAt: "2026-06-01 00:00:00",
 			Content: body,
 		}},
-		Unslugged: []int64{9},
+		Unslugged: jsonid.Ints{9},
 	})
 	if !strings.Contains(got, body) {
 		t.Fatalf("pill content was truncated:\n%s", got)

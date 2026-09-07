@@ -397,7 +397,7 @@ func TestRemoteCrossScatterGathersOnlyInMemory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"rows[2]{origin,id,content", "local,909,Local WAL marker", "studio,909,Remote marker", "help["} {
+	for _, want := range []string{"rows[2]{origin,id,content", "local,\"909\",Local WAL marker", "studio,\"909\",Remote marker", "help["} {
 		if !strings.Contains(output, want) {
 			t.Errorf("cross output lacks %q:\n%s", want, output)
 		}

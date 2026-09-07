@@ -9,7 +9,7 @@ a vector index exists, fuses the two lists with RRF, and labels which legs
 found each hit. Without a vector index the same command runs full-text alone.
 `--top N` (default 10) controls the fused result count, `--require-both` keeps
 only dual-confirmed hits, and `--databases` narrows the default (every attached
-plugin database, including ops). `--json` returns the complete machine envelope.
+plugin database, including ops). `--json` returns the complete machine envelope. Memory identifiers in that envelope, and in every other JSON result, are decimal strings so JavaScript clients keep every digit; `roca store --supersedes` still accepts the numeric form.
 Questions must contain text and have a generous 1000-character cap on both CLI
 and MCP query surfaces.
 
