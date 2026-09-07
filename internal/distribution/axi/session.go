@@ -50,6 +50,42 @@ func Handoffs(list service.HandoffList) string {
 	return b.String()
 }
 
+// HandoffHeads renders handoffs with content capped for session-start hooks.
+func HandoffHeads(list service.HandoffList, headChars int) string {
+	for {
+		clipped := list
+		clipped.Project = service.TextHead(list.Project, headChars)
+		clipped.Handoffs = make([]service.MemoryRecord, 0, len(list.Handoffs))
+		for _, record := range list.Handoffs {
+			record.Content = service.TextHead(record.Content, headChars)
+			record.Project = service.TextHead(record.Project, headChars)
+			record.Slug = service.TextHead(record.Slug, headChars)
+			record.CreatedAt = service.TextHead(record.CreatedAt, headChars)
+			clipped.Handoffs = append(clipped.Handoffs, record)
+		}
+		output := Handoffs(clipped)
+		if len(output) < 4000 || headChars == 1 {
+			return output
+		}
+		headChars = max(1, headChars/2)
+	}
+}
+
+// HandoffLab renders the cross-project handoff heads contract.
+func HandoffLab(lab service.HandoffLab) string {
+	rows := make([]map[string]any, 0, len(lab.Rows))
+	for _, row := range lab.Rows {
+		rows = append(rows, map[string]any{
+			"project":      row.Project,
+			"last_handoff": row.LastHandoff,
+			"head":         row.Head,
+		})
+	}
+	return toonRows("lab", []string{"project", "last_handoff", "head"}, rows, func(_ string, value any) string {
+		return fullToonValue(value)
+	}) + "\n"
+}
+
 func memoryColumns() []string {
 	return []string{"slug", "id", "project", "created_at", "content"}
 }

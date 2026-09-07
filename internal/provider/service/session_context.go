@@ -46,6 +46,19 @@ type HandoffList struct {
 	Handoffs       []MemoryRecord `json:"handoffs"`
 }
 
+// HandoffLabRow is the newest current handoff for one project.
+type HandoffLabRow struct {
+	Project     string `json:"project"`
+	LastHandoff string `json:"last_handoff"`
+	Head        string `json:"head"`
+}
+
+// HandoffLab is the cross-project handoff roster for operator seats.
+type HandoffLab struct {
+	Since string          `json:"since,omitempty"`
+	Rows  []HandoffLabRow `json:"rows"`
+}
+
 type loadedMemory struct {
 	MemoryRecord
 	Metadata       string
@@ -212,6 +225,56 @@ func (s *Service) LatestHandoffs(ctx context.Context, project string) (HandoffLi
 	return result, nil
 }
 
+// LatestHandoffsByProject loads the newest active, unsuperseded handoff for
+// every project. Global handoffs are intentionally excluded: this view answers
+// "which project has what current handoff?" for floating operator seats.
+func (s *Service) LatestHandoffsByProject(ctx context.Context, since time.Time, headChars int) (HandoffLab, error) {
+	rows, err := s.loadCurrentProjectHandoffs(ctx)
+	if err != nil {
+		return HandoffLab{}, err
+	}
+	result := HandoffLab{}
+	if !since.IsZero() {
+		result.Since = since.UTC().Format(time.RFC3339)
+	}
+	selected := map[string]loadedMemory{}
+	for _, row := range rows {
+		if row.Project == "" {
+			continue
+		}
+		if !since.IsZero() {
+			if !row.createdAtValid || row.createdAt.Before(since) {
+				continue
+			}
+		}
+		previous, seen := selected[row.Project]
+		if !seen || compareCreatedAt(row, previous) > 0 ||
+			(compareCreatedAt(row, previous) == 0 && row.ID > previous.ID) {
+			selected[row.Project] = row
+		}
+	}
+	projects := make([]string, 0, len(selected))
+	for project := range selected {
+		projects = append(projects, project)
+	}
+	sort.Slice(projects, func(i, j int) bool {
+		left, right := selected[projects[i]], selected[projects[j]]
+		if compared := compareCreatedAt(left, right); compared != 0 {
+			return compared > 0
+		}
+		return projects[i] < projects[j]
+	})
+	for _, project := range projects {
+		row := selected[project]
+		result.Rows = append(result.Rows, HandoffLabRow{
+			Project:     project,
+			LastHandoff: row.CreatedAt,
+			Head:        TextHead(row.Content, headChars),
+		})
+	}
+	return result, nil
+}
+
 func (s *Service) sessionContextReader(ctx context.Context) (*sql.DB, func(), error) {
 	if !s.opts.RocaOpsEnabled {
 		return nil, func() {}, fmt.Errorf("session context requires features.roca_ops and the %s database", rocaOpsPluginName)
@@ -252,27 +315,39 @@ func (s *Service) loadLayer(ctx context.Context, layer, project string, includeG
 }
 
 func (s *Service) loadCurrentHandoffs(ctx context.Context, project string) ([]loadedMemory, error) {
+	return s.loadCurrentHandoffsWhere(ctx, "load current handoff memories",
+		"AND ((? <> '' AND candidate.project = ?) OR candidate.project IS NULL)", project, project)
+}
+
+func (s *Service) loadCurrentProjectHandoffs(ctx context.Context) ([]loadedMemory, error) {
+	return s.loadCurrentHandoffsWhere(ctx, "load current project handoff memories",
+		"AND candidate.project IS NOT NULL AND candidate.project <> ''")
+}
+
+func (s *Service) loadCurrentHandoffsWhere(ctx context.Context, failure, scopePredicate string,
+	args ...any) ([]loadedMemory, error) {
 	reader, closeReader, err := s.sessionContextReader(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer closeReader()
 
-	rs, err := reader.QueryContext(ctx, `
+	query := `
 		SELECT candidate.id, candidate.layer, candidate.content,
 		       IFNULL(candidate.metadata, '{}'), IFNULL(candidate.project, ''),
 		       candidate.status, IFNULL(candidate.created_at, '')
 		FROM memories AS candidate
 		WHERE candidate.layer = 'handoff'
 		  AND candidate.status = 'active'
-		  AND ((? <> '' AND candidate.project = ?) OR candidate.project IS NULL)
+		  ` + scopePredicate + `
 		  AND NOT EXISTS (
 		      SELECT 1 FROM memories AS replacement
 		      WHERE replacement.supersedes = candidate.id
 		  )
-		ORDER BY candidate.created_at DESC, candidate.id DESC`, project, project)
+		ORDER BY candidate.created_at DESC, candidate.id DESC`
+	rs, err := reader.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("load current handoff memories: %w", err)
+		return nil, fmt.Errorf("%s: %w", failure, err)
 	}
 	defer rs.Close()
 
@@ -332,6 +407,21 @@ func normalizeCreatedAt(value string) (time.Time, bool) {
 		return time.Time{}, false
 	}
 	return parsed, true
+}
+
+// TextHead returns a rune-bounded prefix for session context previews.
+func TextHead(value string, maxRunes int) string {
+	if maxRunes <= 0 {
+		return value
+	}
+	runes := []rune(value)
+	if len(runes) <= maxRunes {
+		return value
+	}
+	if maxRunes <= 3 {
+		return string(runes[:maxRunes])
+	}
+	return string(runes[:maxRunes-3]) + "..."
 }
 
 func pillSlug(metadata string) string {
