@@ -23,13 +23,14 @@ func pillCommand(env *cliEnv) *cobra.Command {
 			return runPillList(cmd.Context(), env, project)
 		},
 	}
-	cmd.PersistentFlags().StringVar(&project, "project", "", "project scope (default: basename of the working directory)")
+	cmd.Flags().StringVar(&project, "project", "", "project scope (default: basename of the working directory)")
 	cmd.AddCommand(pillShowCommand(env, &project))
+	cmd.AddCommand(pillDeleteCommand(env))
 	return cmd
 }
 
 func pillShowCommand(env *cliEnv, project *string) *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "show <slug>",
 		Short: "Load one complete pill by slug",
 		Args:  cobra.ExactArgs(1),
@@ -51,6 +52,32 @@ func pillShowCommand(env *cliEnv, project *string) *cobra.Command {
 				return env.printJSON(record)
 			}
 			env.print("%s", axi.Pill(record))
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(project, "project", "", "project scope (default: basename of the working directory)")
+	return cmd
+}
+
+func pillDeleteCommand(env *cliEnv) *cobra.Command {
+	return &cobra.Command{
+		Use:   "delete <slug>",
+		Short: "Delete every stored version of a pill slug",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, _, err := env.openPillDeleteService()
+			if err != nil {
+				return err
+			}
+			defer svc.Close()
+			result, err := svc.DeletePill(cmd.Context(), args[0])
+			if err != nil {
+				if len(result.Known) > 0 {
+					env.print("%s\n", axi.RenderHelp(result.Known...))
+				}
+				return err
+			}
+			env.print("deleted: %d\n", result.Deleted)
 			return nil
 		},
 	}
@@ -114,6 +141,14 @@ func runSessionContext[T any](ctx context.Context, env *cliEnv, project string,
 }
 
 func (env *cliEnv) openSessionContextService() (*service.Service, config.Paths, error) {
+	return env.openSessionContextServiceReadOnly(true)
+}
+
+func (env *cliEnv) openPillDeleteService() (*service.Service, config.Paths, error) {
+	return env.openSessionContextServiceReadOnly(false)
+}
+
+func (env *cliEnv) openSessionContextServiceReadOnly(readOnly bool) (*service.Service, config.Paths, error) {
 	paths, err := env.resolvePaths()
 	if err != nil {
 		return nil, paths, err
@@ -135,7 +170,9 @@ func (env *cliEnv) openSessionContextService() (*service.Service, config.Paths, 
 	}
 	scoped := *env
 	scoped.omitCorpus = true
-	scoped.forceReadOnly = true
+	if readOnly {
+		scoped.forceReadOnly = true
+	}
 	return scoped.openService()
 }
 
