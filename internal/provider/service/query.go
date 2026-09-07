@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
+	"github.com/thellmwhisperer/la-roca/internal/jsonid"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 	"github.com/thellmwhisperer/la-roca/internal/provider/query"
@@ -519,8 +520,11 @@ func ScanRows(rows *sql.Rows, maxChars int, term string) ([]string, []map[string
 			case []byte:
 				row[column] = truncate(string(text), maxChars, term)
 			case string:
-				row[column] = truncate(text, maxChars, term)
+				if !jsonid.IdentityName(column) {
+					row[column] = truncate(text, maxChars, term)
+				}
 			}
+			row[column] = jsonid.Cell(column, row[column])
 		}
 		result = append(result, row)
 	}

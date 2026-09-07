@@ -9,7 +9,9 @@ a vector index exists, fuses the two lists with RRF, and labels which legs
 found each hit. Without a vector index the same command runs full-text alone.
 `--top N` (default 10) controls the fused result count, `--require-both` keeps
 only dual-confirmed hits, and `--databases` narrows the default (every attached
-plugin database, including ops). `--json` returns the complete machine envelope.
+plugin database, including ops). `--json` returns the complete machine envelope;
+see [Memory identifiers for clients](#memory-identifiers-for-clients) for its
+identifier encoding.
 Questions must contain text and have a generous 1000-character cap on both CLI
 and MCP query surfaces.
 
@@ -60,9 +62,10 @@ TOON does not impose a smaller preview limit; selecting JSON does not expand
 the text.
 
 Characters are counted as Unicode code points, including truncation ellipses;
-TOON quoting and escaping are outside that budget. Numbers and booleans are
-not clipped, and a query's snippet budget does not shorten its source citation.
-For example, this returns up to 900 characters of the selected content:
+TOON quoting and escaping are outside that budget. Numbers, booleans, and
+memory identifiers are not clipped, and a query's snippet budget does not
+shorten its source citation. For example, this returns up to 900 characters of
+the selected content:
 
 ```sh
 roca exec "SELECT content FROM plugin_roca_ops.memories WHERE layer='handoff' LIMIT 1" --max-chars 900
@@ -96,6 +99,28 @@ not establish that the statement passes the authored-SQL check.
 
 For a common authored query, see the README's
 [exact SQL example](../README.md#drop-to-exact-sql-whenever-you-want).
+
+## Memory identifiers for clients
+
+Memory identifiers in SQL JSON results, memory-operation envelopes, and MCP
+tool metadata are decimal strings, including small core IDs. SQL TOON output
+quotes IDs outside JavaScript's safe integer range; safe numeric IDs can appear
+unquoted. Keep returned ID strings intact in JavaScript: converting them to
+`Number` can round an ops ID and point a later write at the wrong row.
+
+SQL result conversion recognizes identity column names and stringifies integers
+outside JavaScript's safe range even under other aliases. Safe non-identity
+integers remain numbers, and SQL NULL remains null. Metadata objects are
+normalized recursively when stored; JSON objects and arrays in a result's
+metadata column receive the same conversion if they survive the text budget
+as valid JSON, while remaining JSON text. The conversion
+rules are owned by [`internal/jsonid`](../internal/jsonid/jsonid.go).
+
+Pass the returned ID directly to CLI `roca store --supersedes "$id"` or as a
+decimal string in the MCP `roca_store` `supersedes` field. MCP still accepts
+integer JSON input for compatibility, but cannot recover digits a client
+already rounded. The CLI accepts decimal argument text as before. This changes
+client encoding, not SQLite identifier storage or SQL comparisons.
 
 ## Read-only queries across machines
 

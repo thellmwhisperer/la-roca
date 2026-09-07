@@ -94,7 +94,7 @@ func memoryRows(records []service.MemoryRecord) []map[string]any {
 	rows := make([]map[string]any, 0, len(records))
 	for _, record := range records {
 		row := map[string]any{
-			"id": record.ID, "created_at": record.CreatedAt, "content": record.Content,
+			"id": strconv.FormatInt(record.ID, 10), "created_at": record.CreatedAt, "content": record.Content,
 		}
 		if record.Slug != "" {
 			row["slug"] = record.Slug

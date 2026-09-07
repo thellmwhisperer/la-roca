@@ -109,6 +109,8 @@ prints: cheap for a model to read, with the route narration above the data.
 The server never returns row envelopes in `StructuredContent`; that contract
 is pinned by `internal/distribution/mcpplug/toon_contract_test.go`.
 The `max_chars` argument follows the shared [text-budget contract](queries.md#text-budgets).
+See [Memory identifiers for clients](queries.md#memory-identifiers-for-clients)
+for identifier encoding and `roca_store` input compatibility.
 
 ### The law of this surface
 

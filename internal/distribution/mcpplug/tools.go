@@ -3,7 +3,9 @@ package mcpplug
 import (
 	"strings"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/thellmwhisperer/la-roca/internal/jsonid"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
@@ -137,7 +139,7 @@ type storeArgs struct {
 
 	Project    string         `json:"project,omitempty" jsonschema:"project scope; omit for global"`
 	Status     string         `json:"status,omitempty" jsonschema:"active, pending or resolved,default=active"`
-	Supersedes int64          `json:"supersedes,omitempty" jsonschema:"id of the memory this one replaces"`
+	Supersedes jsonid.Decimal `json:"supersedes,omitempty" jsonschema:"id of the memory this one replaces, as a decimal string; a JSON number is still accepted"`
 	Metadata   map[string]any `json:"metadata,omitempty" jsonschema:"structured tags; agent, model and surface belong to the identity card and are refused here"`
 }
 
@@ -149,7 +151,7 @@ func (a storeArgs) request(authorship service.Authorship) service.StoreRequest {
 		Authorship: authorship,
 		Project:    a.Project,
 		Status:     a.Status,
-		Supersedes: a.Supersedes,
+		Supersedes: a.Supersedes.Int64(),
 		Metadata:   a.Metadata,
 	}
 }
@@ -175,4 +177,16 @@ type healthArgs struct {
 
 func (a healthArgs) request() service.HealthRequest {
 	return service.HealthRequest{MaxRows: a.MaxRows}
+}
+
+func init() {
+	schema, err := jsonschema.For[storeArgs](nil)
+	if err != nil {
+		panic("roca_store input schema: " + err.Error())
+	}
+	if prop := schema.Properties["supersedes"]; prop != nil {
+		prop.Type = ""
+		prop.Types = []string{"string", "integer"}
+	}
+	storeTool.InputSchema = schema
 }
