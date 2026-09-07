@@ -240,6 +240,12 @@ exclusion instead of a malformed record. Malformed records are discarded
 independently, and both groups are collapsed under stable history reasons in the
 ingest summary.
 
+History fallback refreshes fill missing session fields. If that refresh would
+duplicate another session's exact payload, the session retains its partial
+envelope and reconciliation continues for its history exchanges. The
+exact-payload uniqueness guard remains enforced; this collision alone does not
+make the history file fail. Other refresh errors still fail the write.
+
 When Codex's state database names a model or provider for the legacy session,
 that provenance is retained on its recovered exchanges. The history format does
 not record answers or per-exchange usage. Its session-wide `tokens_used` value

@@ -3,8 +3,12 @@ package ingest
 import (
 	"context"
 	"database/sql"
+	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/thellmwhisperer/la-roca/internal/store/exactdedup"
 )
 
 // A corpus synced by a build that could not read a fossil's own prompt records
@@ -191,5 +195,58 @@ not json
 	}
 	if fifth.FilesRead != 0 || fifth.Delta != (Tables{}) {
 		t.Errorf("idempotent ingest read or wrote records: files=%d delta=%+v", fifth.FilesRead, fifth.Delta)
+	}
+}
+
+func TestCodexHistoryRefreshExactPayloadAliasDoesNotAbort(t *testing.T) {
+	const offender = "019aba72-aa57-7d93-a12c-b6e65c0dca6b"
+	const alias = offender + "-history-envelope-alias"
+	home := t.TempDir()
+	roots := ResolveRoots(Environment{GOOS: "darwin", Home: home}, Settings{})
+	if err := os.MkdirAll(roots.CodexRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	history := fmt.Sprintf(`
+{"session_id":%q,"ts":1764064672,"text":"inspect the copied history alias"}
+{"session_id":%q,"ts":1764087532,"text":"verify the copied history alias"}
+`, offender, offender)
+	if err := os.WriteFile(filepath.Join(roots.CodexRoot, "history.jsonl"), []byte(history), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	db := rocaDatabase(t)
+	ctx := context.Background()
+	if err := exactdedup.EnsureGuards(ctx, db.SQL()); err != nil {
+		t.Fatal(err)
+	}
+	exec(t, db.SQL(), `INSERT INTO sessions
+		(session_id, source_agent, source_surface, started_at, ended_at,
+		 duration_minutes, title, project, metadata)
+		VALUES
+		(?, 'codex', 'Codex CLI',
+		 '2025-11-25T09:57:52Z', '2025-11-25T16:18:52Z', 381, NULL, '.codex', '{}'),
+		(?, 'codex', NULL,
+		 NULL, NULL, NULL, NULL, NULL, '{}')`, alias, offender)
+
+	result, err := Run(ctx, db, registry(t), Options{Roots: roots})
+	if err != nil {
+		t.Fatalf("history exact-payload alias ingest: %v", err)
+	}
+	if result.Errors != 0 || result.WriteFailed != 0 {
+		t.Fatalf("history exact-payload alias reported errors: errors=%d write_failed=%d details=%+v",
+			result.Errors, result.WriteFailed, result.ErrorDetails)
+	}
+	if got := countRows(t, db.SQL(), "exchanges WHERE session_id = '"+offender+"'"); got != 2 {
+		t.Fatalf("history exchanges = %d, want the source prompts reconciled", got)
+	}
+	var ended sql.NullString
+	var duration sql.NullInt64
+	if err := db.SQL().QueryRow(`SELECT ended_at, duration_minutes
+		FROM sessions WHERE session_id = ?`, offender).Scan(&ended, &duration); err != nil {
+		t.Fatal(err)
+	}
+	if ended.Valid || duration.Valid {
+		t.Fatalf("history envelope was forced through the exact guard: ended=%q duration=%v",
+			ended.String, duration)
 	}
 }
