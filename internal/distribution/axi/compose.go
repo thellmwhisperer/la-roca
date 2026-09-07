@@ -78,7 +78,7 @@ func QueryPreamble(res service.QueryResult) string {
 // query answered with rows. Both the default shell mode and MCP reach it.
 func queryTail(res service.QueryResult, help func(service.QueryResult) string) string {
 	var b strings.Builder
-	appendLine(&b, RowOutput(res.Columns, res.Rows, res.Question))
+	appendLine(&b, RowOutputWithBudget(res.Columns, res.Rows, res.MaxChars, res.Question))
 	if !(res.RowCount == 1 && len(res.Columns) == 1) {
 		appendLine(&b, help(res))
 	}
@@ -136,7 +136,7 @@ func Explore(res service.QueryResult) string {
 		appendLine(&b, res.Message)
 		return b.String()
 	}
-	appendLine(&b, RowOutput(res.Columns, res.Rows, res.Question))
+	appendLine(&b, RowOutputWithBudget(res.Columns, res.Rows, res.MaxChars, res.Question))
 	return b.String()
 }
 
@@ -242,9 +242,9 @@ func searchText(res service.SearchResult, help []string) string {
 		}
 		rows = append(rows, row)
 	}
-	appendLine(&b, RowOutput([]string{
+	appendLine(&b, RowOutputWithBudget([]string{
 		"rank", "source", "legs", "consensus", "vector_score", "vector_rank", "fts_rank", "snippet",
-	}, rows, res.Terms...))
+	}, rows, res.MaxChars, res.Terms...))
 	if len(res.Hits) == 0 {
 		appendLine(&b, "no matches in memory for that search")
 	}
@@ -280,7 +280,7 @@ func exec(res service.ExecResult, help []string, alwaysHelp bool) string {
 	if len(res.Databases) > 0 {
 		appendLine(&b, "databases: "+strings.Join(res.Databases, ", "))
 	}
-	appendLine(&b, RowOutput(res.Columns, res.Rows))
+	appendLine(&b, RowOutputWithBudget(res.Columns, res.Rows, res.MaxChars))
 	appendLine(&b, fmt.Sprintf("%s · %s",
 		Quantity(int64(res.RowCount), "row"), Duration(res.LatencyMS)))
 	if len(help) > 0 && (alwaysHelp || res.RowCount > 0 && !(res.RowCount == 1 && len(res.Columns) == 1)) {

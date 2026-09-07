@@ -70,6 +70,55 @@ func TestQueryAndExecDeclareConsultedDatabases(t *testing.T) {
 	}
 }
 
+func TestExecRowsHonorTheResultTextBudget(t *testing.T) {
+	long := strings.Repeat("0123456789", 90)
+	got := axi.Exec(service.ExecResult{
+		SQL:      "SELECT content FROM memories",
+		Columns:  []string{"content"},
+		Rows:     []map[string]any{{"content": long}},
+		RowCount: 1,
+		MaxChars: 900,
+	})
+	if !strings.Contains(got, long) {
+		t.Fatalf("exec TOON renderer clipped below max_chars:\n%s", got)
+	}
+
+	short := axi.Exec(service.ExecResult{
+		SQL:      "SELECT content FROM memories",
+		Columns:  []string{"content"},
+		Rows:     []map[string]any{{"content": long}},
+		RowCount: 1,
+		MaxChars: 100,
+	})
+	if strings.Contains(short, strings.Repeat("0123456789", 10)+"0") || !strings.Contains(short, "…") {
+		t.Fatalf("exec TOON renderer did not honor max_chars=100:\n%s", short)
+	}
+}
+
+func TestQueryExploreAndSearchRowsHonorTheResultTextBudget(t *testing.T) {
+	long := strings.Repeat("abcdefghij", 90)
+	query := service.QueryResult{
+		Question: "wide row", Path: service.PathLLM, Match: service.MatchFound,
+		Columns: []string{"text"}, Rows: []map[string]any{{"text": long}},
+		RowCount: 1, MaxChars: 900,
+	}
+	for name, got := range map[string]string{
+		"query":   axi.Query(query, ""),
+		"explore": axi.Explore(query),
+		"search": axi.Search(service.SearchResult{
+			Question: "wide row", Engines: []string{"fts"}, Terms: []string{"wide"},
+			Hits: []service.SearchHit{{
+				Rank: 1, Source: "memory:1", Legs: []string{"fts"}, Snippet: long,
+			}},
+			RowCount: 1, Top: 10, MaxChars: 900,
+		}),
+	} {
+		if !strings.Contains(got, long) {
+			t.Fatalf("%s TOON renderer clipped below max_chars:\n%s", name, got)
+		}
+	}
+}
+
 func TestQueryDeclaresEveryModelSQLRepair(t *testing.T) {
 	got := axi.Query(service.QueryResult{
 		Question: "synthetic query", Path: service.PathLLM, Engine: "codex", Model: "test",

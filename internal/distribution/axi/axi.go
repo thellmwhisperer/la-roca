@@ -30,11 +30,9 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
-// FieldWidth preserves the terminal budget for every text cell: a field is
-// clipped to this many runes so a single wide row never drowns the table. It is
-// the same value the shell has always used, kept here so the two surfaces
-// cannot drift.
-const FieldWidth = 160
+// FieldWidth preserves the default terminal budget for every text cell. Paths
+// that accept --max-chars pass their caller budget through RowOutputWithBudget.
+const FieldWidth = service.DefaultMaxChars
 
 // RowOutput paints uniform rows as the tabular form emitted by AXI tools. The
 // declared count and fixed width make truncation or malformed output visible.
@@ -42,19 +40,26 @@ const FieldWidth = 160
 // A single row with a single column is printed bare: the answer to "how many
 // memories are there" is the number, and a table around it is ceremony.
 func RowOutput(columns []string, rows []map[string]any, terms ...string) string {
+	return RowOutputWithBudget(columns, rows, service.DefaultMaxChars, terms...)
+}
+
+func RowOutputWithBudget(columns []string, rows []map[string]any, budget int, terms ...string) string {
+	if budget <= 0 {
+		budget = service.DefaultMaxChars
+	}
 	if len(rows) == 0 {
 		return ""
 	}
 	if len(rows) == 1 && len(columns) == 1 && len(rows[0]) == 1 {
 		if value, ok := rows[0][columns[0]]; ok && value != nil {
-			return trim(asText(value), FieldWidth)
+			return trim(asText(value), budget)
 		}
 	}
 
 	order := columnOrder(columns, rows)
 	term := strings.Join(terms, "+")
 	return toonRows("rows", order, rows, func(value any) string {
-		return toonValue(value, term)
+		return toonValue(value, term, budget)
 	})
 }
 
@@ -113,22 +118,22 @@ func columnOrder(columns []string, rows []map[string]any) []string {
 	return append(order, extras...)
 }
 
-func toonValue(value any, term string) string {
+func toonValue(value any, term string, budget int) string {
 	if value == nil {
 		return "null"
 	}
 	switch v := value.(type) {
 	case string:
-		return toonString(excerpt(v, term, FieldWidth))
+		return toonString(excerpt(v, term, budget))
 	case []byte:
-		return toonString(excerpt(string(v), term, FieldWidth))
+		return toonString(excerpt(string(v), term, budget))
 	case bool:
 		return strconv.FormatBool(v)
 	case int, int8, int16, int32, int64,
 		uint, uint8, uint16, uint32, uint64, float32, float64:
 		return asText(v)
 	default:
-		return toonString(excerpt(asText(v), term, FieldWidth))
+		return toonString(excerpt(asText(v), term, budget))
 	}
 }
 
