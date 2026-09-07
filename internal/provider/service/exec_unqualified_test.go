@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
@@ -36,6 +37,19 @@ func TestExecRefusesAnUnqualifiedTableSharedByAttachedPlugins(t *testing.T) {
 		!strings.Contains(got, "plugin_roca_ops.memories") ||
 		!strings.Contains(got, "plugin_roca_corpus.memories") {
 		t.Fatalf("exec error = %q", got)
+	}
+
+	for _, query := range []string{
+		`SELECT content FROM (WITH hits AS (SELECT content FROM memories) SELECT content FROM hits)`,
+		`SELECT content FROM plugin_roca_ops.memories o ORDER BY (SELECT MAX(created_at) FROM memories WHERE content = o.content)`,
+		`WITH hits AS (WITH memories AS (SELECT 'x' AS content) SELECT content FROM memories) SELECT m.content FROM hits h JOIN memories m ON m.content = h.content`,
+		`SELECT COUNT(*) FROM memories m CROSS JOIN plugin_roca_corpus.exchanges e`,
+		`SELECT session_id FROM sessions`,
+	} {
+		_, err := svc.Exec(t.Context(), service.ExecRequest{SQL: query, Timeout: time.Nanosecond, TimeoutSet: true})
+		if err == nil || logfile.ErrorType(err) != service.DegradedInvalidSQL || !strings.Contains(err.Error(), "unqualified table") || !strings.Contains(err.Error(), "plugin_roca_corpus.") {
+			t.Fatalf("qualification must precede execution for %q: %v", query, err)
+		}
 	}
 
 	result, err := svc.Exec(t.Context(), service.ExecRequest{

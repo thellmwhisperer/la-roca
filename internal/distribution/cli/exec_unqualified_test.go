@@ -1,9 +1,6 @@
 package cli
 
 import (
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -36,27 +33,4 @@ func TestExecRefusesUnqualifiedMemoriesAndKeepsQualifiedReads(t *testing.T) {
 		t.Fatalf("expression SELECT = %v", err)
 	}
 
-	if published := publishedRoca(t); published != "" {
-		cmd := exec.Command(published, "exec", unqualified)
-		cmd.Env = append(os.Environ(), "HOME="+os.Getenv("HOME"))
-		out, publishedErr := cmd.CombinedOutput()
-		t.Logf("published binary %s: exit_err=%v output=%s", published, publishedErr, out)
-	}
-}
-
-func publishedRoca(t *testing.T) string {
-	t.Helper()
-	if override := strings.TrimSpace(os.Getenv("ROCA_PUBLISHED_BINARY")); override != "" {
-		return override
-	}
-	path, err := exec.LookPath("roca")
-	if err != nil {
-		return ""
-	}
-	resolved, err := filepath.EvalSymlinks(path)
-	if err != nil {
-		resolved = path
-	}
-	t.Logf("published candidate: %s", resolved)
-	return resolved
 }
