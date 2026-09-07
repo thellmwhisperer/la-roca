@@ -210,12 +210,7 @@ func TestShadowReadsTheStableLayerRegistry(t *testing.T) {
 	shadow := openHubService(t, fixture, LayoutShadowEqual, func(options *Options) {
 		options.RollbackLayout = func(reason error) error { rollback = reason; return nil }
 	})
-	read, err := shadow.Exec(t.Context(), ExecRequest{
-		SQL: "SELECT name FROM layers WHERE name = 'knowledge'",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	read := executeHubSQL(t, shadow, "SELECT name FROM layers WHERE name = 'knowledge'")
 	if read.RowCount != 1 || read.Rows[0]["name"] != "knowledge" || rollback != nil {
 		t.Fatalf("shadow layer registry read = %+v, rollback = %v", read, rollback)
 	}

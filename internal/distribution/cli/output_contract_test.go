@@ -234,7 +234,7 @@ func TestQueryPaintsTOONRowsAndARouteLine(t *testing.T) {
 	// A SELECT under the gate renders the same TOON rows a model answer does,
 	// without needing a model in the hermetic fixture.
 	human := runRoot(t, contractBuild(), "exec",
-		"SELECT 'memory' AS source, id, content AS text, created_at FROM memories LIMIT 1")
+		"SELECT 'memory' AS source, id, content AS text, created_at FROM main.memories LIMIT 1")
 	if !strings.Contains(human, "rows[1]{source,id,created_at,text,database}") ||
 		!strings.Contains(human, "databases: core, plugin:roca-corpus") {
 		t.Errorf("the TOON row header changed shape:\n%s", human)

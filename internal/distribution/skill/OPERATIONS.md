@@ -245,14 +245,14 @@ Worked loop, names:
 
 ```bash
 roca vector query "my boss is named" 100
-roca exec "SELECT substr(COALESCE(e.human_timestamp, e.agent_timestamp), 1, 7) AS month, COUNT(DISTINCT e.id) AS exchanges, COUNT(DISTINCT e.session_id) AS sessions FROM (SELECT rowid AS source_id FROM exchanges_fts WHERE exchanges_fts MATCH 'ana') hits JOIN exchanges e ON e.id = hits.source_id GROUP BY month ORDER BY month"
+roca exec "SELECT substr(COALESCE(e.human_timestamp, e.agent_timestamp), 1, 7) AS month, COUNT(DISTINCT e.id) AS exchanges, COUNT(DISTINCT e.session_id) AS sessions FROM (SELECT rowid AS source_id FROM plugin_roca_corpus.exchanges_fts WHERE exchanges_fts MATCH 'ana') hits JOIN plugin_roca_corpus.exchanges e ON e.id = hits.source_id GROUP BY month ORDER BY month"
 ```
 
 Worked loop, concept:
 
 ```bash
 roca vector query "exhaustion" 100
-roca exec "SELECT COUNT(DISTINCT e.id) AS exchanges, COUNT(DISTINCT e.session_id) AS sessions, MIN(COALESCE(e.human_timestamp, e.agent_timestamp)) AS first_seen, MAX(COALESCE(e.human_timestamp, e.agent_timestamp)) AS last_seen FROM (SELECT rowid AS source_id FROM exchanges_fts WHERE exchanges_fts MATCH 'exhaustion') hits JOIN exchanges e ON e.id = hits.source_id"
+roca exec "SELECT COUNT(DISTINCT e.id) AS exchanges, COUNT(DISTINCT e.session_id) AS sessions, MIN(COALESCE(e.human_timestamp, e.agent_timestamp)) AS first_seen, MAX(COALESCE(e.human_timestamp, e.agent_timestamp)) AS last_seen FROM (SELECT rowid AS source_id FROM plugin_roca_corpus.exchanges_fts WHERE exchanges_fts MATCH 'exhaustion') hits JOIN plugin_roca_corpus.exchanges e ON e.id = hits.source_id"
 ```
 
 Stop before the last reading if you only needed the map. `roca playground --sql-only`
@@ -281,7 +281,7 @@ Caveats measured on real use:
 FTS MATCH plus a join (word-boundary; never `LIKE '%term%'`):
 
 ```bash
-roca exec "SELECT substr(COALESCE(e.human_timestamp, e.agent_timestamp), 1, 7) AS month, COUNT(DISTINCT e.id) AS exchanges, COUNT(DISTINCT e.session_id) AS sessions FROM (SELECT rowid AS source_id FROM exchanges_fts WHERE exchanges_fts MATCH 'ana') hits JOIN exchanges e ON e.id = hits.source_id GROUP BY month ORDER BY month"
+roca exec "SELECT substr(COALESCE(e.human_timestamp, e.agent_timestamp), 1, 7) AS month, COUNT(DISTINCT e.id) AS exchanges, COUNT(DISTINCT e.session_id) AS sessions FROM (SELECT rowid AS source_id FROM plugin_roca_corpus.exchanges_fts WHERE exchanges_fts MATCH 'ana') hits JOIN plugin_roca_corpus.exchanges e ON e.id = hits.source_id GROUP BY month ORDER BY month"
 ```
 
 Counts by month, same shape, swap the MATCH term.
