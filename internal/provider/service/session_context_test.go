@@ -153,14 +153,12 @@ func TestShowPillReturnsOneCompletePill(t *testing.T) {
 
 func TestDeletePillRemovesEveryVersionOfTheSlug(t *testing.T) {
 	svc := sessionContextService(t)
-	insertPill(t, svc, pillSeed{
-		slug: "build", content: "April", createdAt: "2026-04-01 00:00:00",
-		project: "demo",
-	})
-	insertPill(t, svc, pillSeed{
-		slug: "build", content: "June", createdAt: "2026-06-01 00:00:00",
-		project: "other",
-	})
+	for _, seed := range []pillSeed{
+		{slug: "build", content: "April", createdAt: "2026-04-01 00:00:00", project: "demo"},
+		{slug: "build", content: "June", createdAt: "2026-06-01 00:00:00", project: "other"},
+	} {
+		insertPill(t, svc, seed)
+	}
 	keep := insertPill(t, svc, pillSeed{
 		slug: "keep", content: "still here", createdAt: "2026-07-01 00:00:00",
 		project: "demo",
