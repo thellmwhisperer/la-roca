@@ -86,6 +86,7 @@ func progress(req QueryRequest, phase QueryPhase) {
 type QueryResult struct {
 	Question string `json:"question"`
 	Path     string `json:"path"`
+	MaxChars int    `json:"-"`
 	// Mode is set only by Explore. An ordinary query omits it, preserving the
 	// query envelope while every investigation declares plain or deep mode.
 	Mode     string             `json:"mode,omitempty"`
@@ -281,11 +282,13 @@ func (r *QueryResult) unresolved(andAlso string) {
 // never takes down a query.
 func (s *Service) Query(ctx context.Context, req QueryRequest) (res QueryResult, err error) {
 	start := time.Now()
+	req.MaxChars = textBudget(req.MaxChars)
 	if err := query.ValidateQuestion(req.Question, !s.opts.DisableStrictInput); err != nil {
 		return res, err
 	}
 	res = QueryResult{
 		Question:  req.Question,
+		MaxChars:  req.MaxChars,
 		Version:   s.opts.Version,
 		SourceSHA: s.opts.Commit,
 		// What the configuration said that this build did not understand travels
@@ -344,6 +347,7 @@ func (s *Service) Query(ctx context.Context, req QueryRequest) (res QueryResult,
 func beginWidenedPass(first QueryResult, route pluginRoute) QueryResult {
 	return QueryResult{
 		Question:                  first.Question,
+		MaxChars:                  first.MaxChars,
 		Databases:                 route.consulted(),
 		OmittedDatabases:          route.omittedSources(),
 		Widened:                   true,
@@ -398,6 +402,7 @@ type ExecResult struct {
 	Columns          []string         `json:"columns,omitempty"`
 	Rows             []map[string]any `json:"rows,omitempty"`
 	RowCount         int              `json:"row_count"`
+	MaxChars         int              `json:"-"`
 	Databases        []string         `json:"databases,omitempty"`
 	OmittedDatabases []string         `json:"omitted_databases,omitempty"`
 	LatencyMS        int64            `json:"latency_ms"`
@@ -410,6 +415,7 @@ type ExecResult struct {
 // itself rejects any write.
 func (s *Service) Exec(ctx context.Context, req ExecRequest) (ExecResult, error) {
 	start := time.Now()
+	maxChars := textBudget(req.MaxChars)
 	if _, err := s.ensureSchema(ctx); err != nil {
 		return ExecResult{}, err
 	}
@@ -432,7 +438,7 @@ func (s *Service) Exec(ctx context.Context, req ExecRequest) (ExecResult, error)
 	if err != nil {
 		return ExecResult{}, logfile.Typed(err, DegradedInvalidSQL)
 	}
-	columns, rows, err := s.executeWithPluginsBudget(ctx, validated, "", req.MaxChars, route.databases,
+	columns, rows, err := s.executeWithPluginsBudget(ctx, validated, "", maxChars, route.databases,
 		execBudget{timeout: req.Timeout, set: req.TimeoutSet})
 	if err != nil {
 		degraded := DegradedExecution
@@ -446,6 +452,7 @@ func (s *Service) Exec(ctx context.Context, req ExecRequest) (ExecResult, error)
 		Columns:   columns,
 		Rows:      rows,
 		RowCount:  len(rows),
+		MaxChars:  maxChars,
 		LatencyMS: time.Since(start).Milliseconds(),
 		Version:   s.opts.Version,
 		SourceSHA: s.opts.Commit,

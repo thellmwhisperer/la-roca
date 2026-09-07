@@ -293,13 +293,9 @@ roca pill
 roca handoff latest
 ```
 
-`roca pill` loads active pills for the current project (basename of the working
-directory, or `--project`), including globals, then keeps one row per
-`metadata.pill_slug`: the newest. Rows without a slug are listed by id and not
-loaded. `roca pill show <slug>` returns one complete pill. Output is AXI/TOON
-with the full content; `--json` is the script envelope. There is no budget flag.
-Both session-context verbs require `features.roca_ops` and the existing ops
-database; they refuse rather than reading core or creating an empty ops store.
+The [session-context contract](https://github.com/thellmwhisperer/la-roca/blob/main/docs/queries.md#session-context)
+owns pill loading, `roca pill delete <slug>`, project scope, prerequisites,
+and output formats.
 
 `roca handoff latest` loads active handoffs for the project that no other memory
 has superseded. A later row that does not name a predecessor does not hide it.
