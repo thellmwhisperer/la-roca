@@ -55,7 +55,9 @@ func RowOutputWithBudget(columns []string, rows []map[string]any, budget int, te
 			if jsonid.IdentityName(columns[0]) {
 				return toonIdentifier(value)
 			}
-			switch value.(type) {
+			switch v := value.(type) {
+			case jsonid.Decimal:
+				return toonString(string(v))
 			case bool, int, int8, int16, int32, int64,
 				uint, uint8, uint16, uint32, uint64, float32, float64:
 				return asText(value)
@@ -134,6 +136,8 @@ func toonValue(value any, term string, budget int) string {
 		return "null"
 	}
 	switch v := value.(type) {
+	case jsonid.Decimal:
+		return toonString(string(v))
 	case string:
 		return toonString(excerpt(v, term, budget))
 	case []byte:
@@ -161,6 +165,9 @@ func toonInteger(n int64) string {
 }
 
 func toonIdentifier(value any) string {
+	if value == nil {
+		return "null"
+	}
 	if n, ok := jsonid.Int(value); ok {
 		return toonInteger(n)
 	}

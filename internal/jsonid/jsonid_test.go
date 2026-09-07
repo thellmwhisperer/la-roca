@@ -144,6 +144,15 @@ func TestRewriteMapStringifiesNestedIds(t *testing.T) {
 	}
 }
 
+func TestConvertedCellRemainsReadableAsAnIdentifier(t *testing.T) {
+	for _, column := range []string{"id", "ref"} {
+		value := Cell(column, opsID)
+		if got, ok := Int(value); !ok || got != opsID {
+			t.Fatalf("Int(Cell(%q)) = %d, %v, want %d", column, got, ok, opsID)
+		}
+	}
+}
+
 func TestIntVarParsesTheNumericFormAndTheExactDigits(t *testing.T) {
 	var value IntVar
 	if err := value.Set("1152921504606853875"); err != nil {

@@ -116,6 +116,9 @@ func Int(value any) (int64, bool) {
 	case json.Number:
 		n, err := ParseText(string(v))
 		return n, err == nil
+	case Decimal:
+		n, err := ParseText(string(v))
+		return n, err == nil
 	case string:
 		if strings.TrimSpace(v) == "" {
 			return 0, false
@@ -166,6 +169,13 @@ func ParseJSON(data []byte) (int64, error) {
 func Cell(column string, value any) any {
 	identity := IdentityName(column)
 	rewritten := rewrite(value, identity)
+	switch value.(type) {
+	case string, []byte:
+	default:
+		if text, ok := rewritten.(string); ok {
+			return Decimal(text)
+		}
+	}
 	if identity || strings.EqualFold(strings.TrimSpace(column), "metadata") {
 		return rewriteJSONText(rewritten)
 	}
