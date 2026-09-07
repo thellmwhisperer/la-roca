@@ -78,7 +78,7 @@ func TestStoreMetadataKeepsAnUnsafeIdInsideTheBlob(t *testing.T) {
 	const unsafe = "1152921504606853875"
 	stored := mustJSON(t, runRoot(t, contractBuild(), "store", "--layer", "discovery",
 		"--content", "metadata identifier fixture", "--origin", "agent",
-		"--metadata", `{"supersedes": `+unsafe+`}`, "--json"))
+		"--metadata", `{"supersedes": `+unsafe+`} `+"\n\t", "--json"))
 	if stored["id"] == nil {
 		t.Fatalf("store --json lost its id: %v", stored)
 	}
@@ -98,5 +98,29 @@ func TestStoreMetadataKeepsAnUnsafeIdInsideTheBlob(t *testing.T) {
 	}
 	if parsed["supersedes"] != unsafe {
 		t.Fatalf("metadata supersedes = %#v, want %q", parsed["supersedes"], unsafe)
+	}
+}
+
+func TestStoreMetadataRejectsTrailingInput(t *testing.T) {
+	fixtureInstallation(t)
+	for _, metadata := range []string{
+		`{"tag":"a"} {"tag":"b"}`,
+		`{"tag":"a"} null`,
+		`{"tag":"a"} garbage`,
+	} {
+		t.Run(metadata, func(t *testing.T) {
+			err := failingRoot(t, "store", "--layer", "discovery",
+				"--content", "invalid metadata fixture", "--origin", "agent",
+				"--metadata", metadata)
+			if err == nil || !strings.Contains(err.Error(), "--metadata is not a JSON object") {
+				t.Fatalf("store accepted trailing metadata input or returned an unrelated error: %v", err)
+			}
+		})
+	}
+	doc := mustJSON(t, runRoot(t, contractBuild(), "exec",
+		"SELECT id FROM plugin_roca_ops.memories WHERE content = 'invalid metadata fixture'", "--json"))
+	rows, _ := doc["rows"].([]any)
+	if len(rows) != 0 {
+		t.Fatalf("store persisted invalid metadata: %v", rows)
 	}
 }

@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -43,9 +42,7 @@ func storeCommand(env *cliEnv) *cobra.Command {
 			defer svc.Close()
 
 			if metadata != "" {
-				decoder := json.NewDecoder(strings.NewReader(metadata))
-				decoder.UseNumber()
-				if err := decoder.Decode(&req.Metadata); err != nil {
+				if err := decodeJSON(metadata, &req.Metadata); err != nil {
 					return fmt.Errorf("--metadata is not a JSON object: %w", err)
 				}
 				// `null` decodes without error and leaves no map behind, so the
