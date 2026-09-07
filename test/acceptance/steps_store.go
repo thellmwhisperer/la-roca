@@ -284,11 +284,15 @@ func (m *world) storeSupersedingPrevious(layer, content string) error {
 	if err != nil {
 		return err
 	}
-	id, ok := previous["id"].(float64)
+	id, ok := previous["id"].(string)
 	if !ok {
-		return fmt.Errorf("the previous store named no memory id: %v", previous)
+		return fmt.Errorf("the previous store named no string memory id: %v", previous)
 	}
-	return m.storeMemory(layer, content, "", "", int64(id))
+	supersedes, err := strconv.ParseInt(id, 10, 64)
+	if err != nil {
+		return fmt.Errorf("parse the previous store memory id: %w", err)
+	}
+	return m.storeMemory(layer, content, "", "", supersedes)
 }
 
 func (m *world) storeSupersedingID(layer string, id int, content string) error {
@@ -573,9 +577,9 @@ func (m *world) storedMemoryHas(layer, origin, project string) error {
 	if err != nil {
 		return err
 	}
-	id, ok := document["id"].(float64)
+	id, ok := document["id"].(string)
 	if !ok {
-		return fmt.Errorf("the store named no memory id: %v", document)
+		return fmt.Errorf("the store named no string memory id: %v", document)
 	}
 	db, err := m.openDB()
 	if err != nil {
@@ -584,7 +588,7 @@ func (m *world) storedMemoryHas(layer, origin, project string) error {
 	defer db.Close()
 	var gotLayer, gotOrigin string
 	var gotProject sql.NullString
-	if err := db.QueryRow("SELECT layer, origin, project FROM memories WHERE id = ?", int64(id)).
+	if err := db.QueryRow("SELECT layer, origin, project FROM memories WHERE id = ?", id).
 		Scan(&gotLayer, &gotOrigin, &gotProject); err != nil {
 		return fmt.Errorf("the stored memory is not there: %w", err)
 	}
