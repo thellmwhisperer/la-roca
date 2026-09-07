@@ -55,6 +55,63 @@ func TestPillShowReturnsOneCompletePill(t *testing.T) {
 	}
 }
 
+func TestPillDeleteRemovesSlugVersionsAndReportsRows(t *testing.T) {
+	for _, mode := range []struct {
+		name  string
+		flags []string
+	}{{name: "plain"}, {name: "json", flags: []string{"--json"}}} {
+		t.Run(mode.name, func(t *testing.T) {
+			home := sessionHome(t)
+			insertOpsMemory(t, home, opsMemory{
+				layer: "pill", project: "demo", createdAt: "2026-06-01 00:00:00",
+				content: "temporary pill", metadata: map[string]any{"pill_slug": "tmp-x"},
+			})
+			if out := runRoot(t, contractBuild(), "pill", "--project", "demo"); !strings.Contains(out, "tmp-x") {
+				t.Fatalf("tmp-x was not listed before delete:\n%s", out)
+			}
+			out, err := runRootErr(t, contractBuild(), nil, append([]string{"pill", "delete", "nope"}, mode.flags...)...)
+			if err == nil || !strings.Contains(err.Error(), `no pill with slug "nope"`) {
+				t.Fatalf("delete unknown error = %v", err)
+			}
+			if !strings.Contains(out, "help[1]:") || !strings.Contains(out, "tmp-x") {
+				t.Fatalf("known slug help missing:\n%s", out)
+			}
+			assertOpsPillSlugCount(t, home, "tmp-x", 1)
+
+			out = runRoot(t, contractBuild(), append([]string{"pill", "delete", "tmp-x"}, mode.flags...)...)
+			if out != "deleted: 1" {
+				t.Fatalf("delete output = %q, want deleted: 1", out)
+			}
+			if out := runRoot(t, contractBuild(), "pill", "--project", "demo"); strings.Contains(out, "tmp-x") {
+				t.Fatalf("tmp-x was still listed after delete:\n%s", out)
+			}
+			assertOpsPillSlugCount(t, home, "tmp-x", 0)
+		})
+	}
+}
+
+func TestPillDeleteRejectsProjectScopeWithoutDeleting(t *testing.T) {
+	for _, args := range [][]string{
+		{"pill", "delete", "build", "--project", "alpha"},
+		{"pill", "--project", "alpha", "delete", "build"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			home := sessionHome(t)
+			for _, project := range []string{"alpha", "beta"} {
+				insertOpsMemory(t, home, opsMemory{
+					layer: "pill", project: project, createdAt: "2026-06-01 00:00:00",
+					content: "Build", metadata: map[string]any{"pill_slug": "build"},
+				})
+			}
+			_, err := runRootErr(t, contractBuild(), nil, args...)
+			if err == nil || !strings.Contains(err.Error(), "unknown flag: --project") {
+				t.Fatalf("delete with project error = %v", err)
+			}
+			assertOpsPillSlugCount(t, home, "build", 2)
+		})
+	}
+}
+
 func TestHandoffLatestSkipsSupersededAndKeepsUnsuperseded(t *testing.T) {
 	home := sessionHome(t)
 	first := insertOpsMemory(t, home, opsMemory{
@@ -114,6 +171,7 @@ func TestSessionContextCommandsRequireEnabledExistingRocaOps(t *testing.T) {
 		for _, args := range [][]string{
 			{"pill", "--project", "demo"},
 			{"pill", "show", "build", "--project", "demo"},
+			{"pill", "delete", "build"},
 			{"handoff", "latest", "--project", "demo"},
 		} {
 			_, err = runRootErr(t, contractBuild(), nil, args...)
@@ -183,11 +241,7 @@ func insertOpsMemory(t *testing.T, home string, seed opsMemory) int64 {
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(home, ".roca", "plugins", "roca-ops", "roca-ops.db")
-	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(5000)")
-	if err != nil {
-		t.Fatal(err)
-	}
+	db := openSessionOps(t, home)
 	defer db.Close()
 	var projectArg any
 	if seed.project != "" {
@@ -209,4 +263,28 @@ func insertOpsMemory(t *testing.T, home string, seed opsMemory) int64 {
 		t.Fatal(err)
 	}
 	return id
+}
+
+func assertOpsPillSlugCount(t *testing.T, home, slug string, want int) {
+	t.Helper()
+	db := openSessionOps(t, home)
+	defer db.Close()
+	var count int
+	if err := db.QueryRow(
+		`SELECT count(*) FROM memories WHERE json_extract(metadata,'$.pill_slug') = ?`, slug).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != want {
+		t.Fatalf("pill slug %q count = %d, want %d", slug, count, want)
+	}
+}
+
+func openSessionOps(t *testing.T, home string) *sql.DB {
+	t.Helper()
+	path := filepath.Join(home, ".roca", "plugins", "roca-ops", "roca-ops.db")
+	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return db
 }
