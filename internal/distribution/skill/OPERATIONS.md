@@ -297,11 +297,8 @@ The [session-context contract](https://github.com/thellmwhisperer/la-roca/blob/m
 owns pill loading, `roca pill delete <slug>`, project scope, prerequisites,
 and output formats.
 
-`roca handoff latest` loads active handoffs for the project that no other memory
-has superseded. A later row that does not name a predecessor does not hide it.
-When the project has none, it falls back to global handoffs (`project IS NULL`).
-Newest-by-clock is the wrong question: a short worker receipt can bury a real
-session close.
+For handoff selection, limits, and the cross-project view, see the
+[session-context contract](https://github.com/thellmwhisperer/la-roca/blob/main/docs/queries.md#session-context).
 
 Handoffs live on ops. The qualified table is `plugin_roca_ops.memories`.
 ZCode can inject those handoffs at SessionStart as JSON `additionalContext`;
