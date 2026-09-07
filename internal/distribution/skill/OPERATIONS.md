@@ -65,7 +65,7 @@ roca ingest
 roca doctor
 ```
 
-Humans who want a model to write SQL use `roca playground "what happened with Y"`. Add `--full` for prose. Compile without running with `roca playground "ffmpeg patterns" --sql-only`, then `roca exec`.
+Humans who want a model to write SQL use `roca playground "what happened with Y"`. Add `--full` for prose. Compile without running with `roca playground "ffmpeg patterns" --sql-only`, then follow the [authored-SQL table-name contract](https://github.com/thellmwhisperer/la-roca/blob/main/docs/queries.md#table-names-in-authored-sql) before `roca exec`.
 
 To verify that the configured provider session answers without changing any
 configuration, run `roca model check [provider]`. To change the answering model,
@@ -122,8 +122,8 @@ Six tools, same service as the CLI: `roca_query`, `roca_explore`, `roca_sql`,
 plain mode and `deep: true` both return the prose investigation and generated
 SQL, with the deep mission mapping the complete terrain and proposing probes.
 `roca_sql` is the shell-less form of
-`playground --sql-only` (the SQL without running it); `roca_exec` runs that SQL under
-the gate. The `roca_query`, `roca_explore`, and `roca_sql` tools accept the same
+`playground --sql-only` (the SQL without running it); `roca_exec` follows the
+authored-SQL contract linked above. The `roca_query`, `roca_explore`, and `roca_sql` tools accept the same
 comma list or `all` in their `databases` argument. Install them with
 `roca mcp install <runtime>`.
 

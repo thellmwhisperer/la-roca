@@ -89,6 +89,11 @@ and their keyword rescue retain their existing core-name compatibility.
 The regression contract lives in
 [`unqualified_test.go`](../internal/provider/query/sqlgate/unqualified_test.go).
 
+SQL returned by `roca playground --sql-only` or MCP `roca_sql` can therefore
+still contain bare table names. Before submitting it to `exec`, inspect those
+references and qualify them for the intended database; compilation alone does
+not establish that the statement passes the authored-SQL check.
+
 For a common authored query, see the README's
 [exact SQL example](../README.md#drop-to-exact-sql-whenever-you-want).
 
