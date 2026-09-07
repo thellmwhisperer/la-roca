@@ -242,9 +242,22 @@ func searchText(res service.SearchResult, help []string) string {
 		}
 		rows = append(rows, row)
 	}
-	appendLine(&b, RowOutputWithBudget([]string{
-		"rank", "source", "legs", "consensus", "vector_score", "vector_rank", "fts_rank", "snippet",
-	}, rows, res.MaxChars, res.Terms...))
+	if len(rows) > 0 {
+		columns := []string{
+			"rank", "source", "legs", "consensus", "vector_score", "vector_rank", "fts_rank", "snippet",
+		}
+		term := strings.Join(res.Terms, "+")
+		appendLine(&b, toonRows("rows", columnOrder(columns, rows), rows, func(column string, value any) string {
+			budget := FieldWidth
+			if column == "snippet" {
+				budget = res.MaxChars
+				if budget <= 0 {
+					budget = service.DefaultMaxChars
+				}
+			}
+			return toonValue(value, term, budget)
+		}))
+	}
 	if len(res.Hits) == 0 {
 		appendLine(&b, "no matches in memory for that search")
 	}

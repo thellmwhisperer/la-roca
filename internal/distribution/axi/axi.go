@@ -32,7 +32,7 @@ import (
 
 // FieldWidth preserves the default terminal budget for every text cell. Paths
 // that accept --max-chars pass their caller budget through RowOutputWithBudget.
-const FieldWidth = service.DefaultMaxChars
+const FieldWidth = 160
 
 // RowOutput paints uniform rows as the tabular form emitted by AXI tools. The
 // declared count and fixed width make truncation or malformed output visible.
@@ -40,7 +40,7 @@ const FieldWidth = service.DefaultMaxChars
 // A single row with a single column is printed bare: the answer to "how many
 // memories are there" is the number, and a table around it is ceremony.
 func RowOutput(columns []string, rows []map[string]any, terms ...string) string {
-	return RowOutputWithBudget(columns, rows, service.DefaultMaxChars, terms...)
+	return RowOutputWithBudget(columns, rows, FieldWidth, terms...)
 }
 
 func RowOutputWithBudget(columns []string, rows []map[string]any, budget int, terms ...string) string {
@@ -52,18 +52,23 @@ func RowOutputWithBudget(columns []string, rows []map[string]any, budget int, te
 	}
 	if len(rows) == 1 && len(columns) == 1 && len(rows[0]) == 1 {
 		if value, ok := rows[0][columns[0]]; ok && value != nil {
+			switch value.(type) {
+			case bool, int, int8, int16, int32, int64,
+				uint, uint8, uint16, uint32, uint64, float32, float64:
+				return asText(value)
+			}
 			return trim(asText(value), budget)
 		}
 	}
 
 	order := columnOrder(columns, rows)
 	term := strings.Join(terms, "+")
-	return toonRows("rows", order, rows, func(value any) string {
+	return toonRows("rows", order, rows, func(_ string, value any) string {
 		return toonValue(value, term, budget)
 	})
 }
 
-func toonRows(name string, order []string, rows []map[string]any, format func(any) string) string {
+func toonRows(name string, order []string, rows []map[string]any, format func(string, any) string) string {
 	var out strings.Builder
 	fmt.Fprintf(&out, "%s[%d]{", name, len(rows))
 	for i, column := range order {
@@ -79,7 +84,7 @@ func toonRows(name string, order []string, rows []map[string]any, format func(an
 			if i > 0 {
 				out.WriteByte(',')
 			}
-			out.WriteString(format(row[column]))
+			out.WriteString(format(column, row[column]))
 		}
 	}
 	return out.String()
