@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	_ "modernc.org/sqlite"
 )
@@ -164,31 +165,34 @@ func TestHandoffLatestLimitKeepsBareCommandCompatible(t *testing.T) {
 
 func TestHandoffLatestAllProjectsPrintsOneCappedHeadPerProject(t *testing.T) {
 	home := sessionHome(t)
+	now := time.Now().UTC()
+	alphaDate := now.Add(-2 * 24 * time.Hour).Format(time.RFC3339)
+	betaDate := now.Add(-24 * time.Hour).Format(time.RFC3339)
 	oldAlpha := insertOpsMemory(t, home, opsMemory{
-		layer: "handoff", project: "alpha", createdAt: "2026-08-01 00:00:00",
+		layer: "handoff", project: "alpha", createdAt: now.Add(-3 * 24 * time.Hour).Format(time.RFC3339),
 		content: "obsolete alpha",
 	})
 	insertOpsMemory(t, home, opsMemory{
-		layer: "handoff", project: "alpha", createdAt: "2026-08-03 00:00:00",
+		layer: "handoff", project: "alpha", createdAt: alphaDate,
 		content: strings.Repeat("alpha", 800), supersedes: oldAlpha,
 	})
 	insertOpsMemory(t, home, opsMemory{
-		layer: "handoff", project: "beta", createdAt: "2026-08-04 00:00:00",
+		layer: "handoff", project: "beta", createdAt: betaDate,
 		content: "newer beta",
 	})
 	insertOpsMemory(t, home, opsMemory{
-		layer: "handoff", project: "gamma", createdAt: "2026-07-01 00:00:00",
+		layer: "handoff", project: "gamma", createdAt: now.Add(-31 * 24 * time.Hour).Format(time.RFC3339),
 		content: "too old",
 	})
 
-	out := runRoot(t, contractBuild(), "handoff", "latest", "--all-projects", "--since", "2026-08-02T00:00:00Z")
+	out := runRoot(t, contractBuild(), "handoff", "latest", "--all-projects", "--since", "30d")
 	if !strings.Contains(out, "lab[2]{project,last_handoff,head}:") {
 		t.Fatalf("all-projects did not use the lab contract:\n%s", out)
 	}
-	if !strings.Contains(out, "beta,\"2026-08-04 00:00:00\",newer beta") {
+	if !strings.Contains(out, `beta,"`+betaDate+`",newer beta`) {
 		t.Fatalf("newest beta row missing:\n%s", out)
 	}
-	if !strings.Contains(out, "alpha,\"2026-08-03 00:00:00\",") || strings.Contains(out, strings.Repeat("alpha", 800)) {
+	if !strings.Contains(out, `alpha,"`+alphaDate+`",`) || strings.Contains(out, strings.Repeat("alpha", 800)) {
 		t.Fatalf("alpha row missing or not capped:\n%s", out)
 	}
 	if strings.Contains(out, "obsolete alpha") || strings.Contains(out, "gamma") {
@@ -197,14 +201,28 @@ func TestHandoffLatestAllProjectsPrintsOneCappedHeadPerProject(t *testing.T) {
 }
 
 func TestParseSinceAcceptsDayDurations(t *testing.T) {
-	before := time.Now().UTC().Add(-30 * 24 * time.Hour)
-	got, err := parseSince("30d")
-	after := time.Now().UTC().Add(-30 * 24 * time.Hour)
-	if err != nil {
-		t.Fatal(err)
+	for _, days := range []int{0, 30} {
+		value := strconv.Itoa(days) + "d"
+		before := time.Now().UTC().Add(-time.Duration(days) * 24 * time.Hour)
+		got, err := parseSince(value)
+		after := time.Now().UTC().Add(-time.Duration(days) * 24 * time.Hour)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Before(before) || got.After(after) {
+			t.Fatalf("%s parsed to %s, want between %s and %s", value, got, before, after)
+		}
 	}
-	if got.Before(before.Add(-time.Second)) || got.After(after.Add(time.Second)) {
-		t.Fatalf("30d parsed to %s, want about 30 days ago", got)
+}
+
+func TestHandoffLatestRejectsUnsupportedSince(t *testing.T) {
+	for _, value := range []string{"24h", "2026-08-02T00:00:00Z", "2026-08-02", "-1d", "1.5d", "30", "d", "106752d", "18446744073709551616d"} {
+		t.Run(value, func(t *testing.T) {
+			_, err := runRootErr(t, contractBuild(), nil, "handoff", "latest", "--all-projects", "--since", value)
+			if err == nil || !strings.Contains(err.Error(), "--since must be a nonnegative day count") {
+				t.Fatalf("--since %q: expected day-count error, got %v", value, err)
+			}
+		})
 	}
 }
 
@@ -297,6 +315,42 @@ func TestClaudeSessionHookRunnersLoadSessionContext(t *testing.T) {
 	}
 	if len(out) >= 4000 || strings.Contains(out, strings.Repeat("x", 5000)) {
 		t.Fatalf("hook output was not capped: len=%d\n%s", len(out), out)
+	}
+}
+
+func TestClaudeHandoffHookByteBudget(t *testing.T) {
+	home := sessionHome(t)
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var previous int64
+	for _, tc := range []struct {
+		name, content string
+	}{
+		{"cjk", strings.Repeat("界", 2000)},
+		{"emoji", strings.Repeat("😀", 2000)},
+		{"quotes", strings.Repeat("\"", 3000)},
+		{"backslashes", strings.Repeat("\\", 3000)},
+		{"newlines", strings.Repeat("\n", 3000)},
+		{"controls", strings.Repeat("\x01", 2000)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			previous = insertOpsMemory(t, home, opsMemory{
+				layer: "handoff", project: filepath.Base(cwd), createdAt: "2026-08-02 00:00:00",
+				content: "budget head " + tc.content, supersedes: previous,
+			})
+			out, err := runRootErr(t, contractBuild(), nil, "hooks", "run", "claude-handoff")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(out) >= 4000 || !utf8.ValidString(out) {
+				t.Fatalf("hook must emit valid UTF-8 under 4000 bytes: len=%d", len(out))
+			}
+			if !strings.Contains(out, "handoffs[1]{") || !strings.Contains(out, "budget head ") || !strings.HasSuffix(out, "\n") {
+				t.Fatalf("hook lost its handoff envelope or content prefix: %q", out)
+			}
+		})
 	}
 }
 

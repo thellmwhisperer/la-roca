@@ -119,7 +119,7 @@ func handoffLatestCommand(env *cliEnv) *cobra.Command {
 	cmd.Flags().StringVar(&project, "project", "", "project scope (default: basename of the working directory)")
 	cmd.Flags().IntVar(&limit, "limit", 0, "maximum handoffs to print (default: unlimited)")
 	cmd.Flags().BoolVar(&allProjects, "all-projects", false, "print the newest handoff head for every project")
-	cmd.Flags().StringVar(&since, "since", "", "only include --all-projects handoffs newer than this age or timestamp, e.g. 30d")
+	cmd.Flags().StringVar(&since, "since", "", "only include --all-projects handoffs newer than this nonnegative day count, e.g. 30d")
 	return cmd
 }
 
@@ -222,26 +222,11 @@ func parseSince(value string) (time.Time, error) {
 	if value == "" {
 		return time.Time{}, nil
 	}
-	if strings.HasSuffix(value, "d") {
-		days, err := strconv.Atoi(strings.TrimSuffix(value, "d"))
-		if err != nil || days < 0 {
-			return time.Time{}, fmt.Errorf("--since must be a duration like 30d or an RFC3339 timestamp")
-		}
-		return time.Now().UTC().Add(-time.Duration(days) * 24 * time.Hour), nil
+	days, err := strconv.ParseUint(strings.TrimSuffix(value, "d"), 10, 64)
+	if !strings.HasSuffix(value, "d") || err != nil || days > uint64((1<<63-1)/(24*time.Hour)) {
+		return time.Time{}, fmt.Errorf("--since must be a nonnegative day count like 30d")
 	}
-	if duration, err := time.ParseDuration(value); err == nil {
-		if duration < 0 {
-			return time.Time{}, fmt.Errorf("--since must not be negative")
-		}
-		return time.Now().UTC().Add(-duration), nil
-	}
-	if parsed, err := time.Parse(time.RFC3339, value); err == nil {
-		return parsed.UTC(), nil
-	}
-	if parsed, err := time.ParseInLocation("2006-01-02", value, time.UTC); err == nil {
-		return parsed, nil
-	}
-	return time.Time{}, fmt.Errorf("--since must be a duration like 30d or an RFC3339 timestamp")
+	return time.Now().UTC().Add(-time.Duration(days) * 24 * time.Hour), nil
 }
 
 func (env *cliEnv) openSessionContextService() (*service.Service, config.Paths, error) {
