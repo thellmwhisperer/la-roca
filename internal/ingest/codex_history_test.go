@@ -3,6 +3,7 @@ package ingest
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -198,15 +199,18 @@ not json
 }
 
 func TestCodexHistoryRefreshExactPayloadAliasDoesNotAbort(t *testing.T) {
+	const offender = "019aba72-aa57-7d93-a12c-b6e65c0dca6b"
+	const alias = offender + "-history-envelope-alias"
 	home := t.TempDir()
 	roots := ResolveRoots(Environment{GOOS: "darwin", Home: home}, Settings{})
 	if err := os.MkdirAll(roots.CodexRoot, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(roots.CodexRoot, "history.jsonl"), []byte(`
-{"session_id":"history-collision","ts":1763372540,"text":"inspect the synthetic alias"}
-{"session_id":"history-collision","ts":1763372660,"text":"verify the synthetic alias"}
-`), 0o600); err != nil {
+	history := fmt.Sprintf(`
+{"session_id":%q,"ts":1764064672,"text":"inspect the copied history alias"}
+{"session_id":%q,"ts":1764087532,"text":"verify the copied history alias"}
+`, offender, offender)
+	if err := os.WriteFile(filepath.Join(roots.CodexRoot, "history.jsonl"), []byte(history), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -219,10 +223,10 @@ func TestCodexHistoryRefreshExactPayloadAliasDoesNotAbort(t *testing.T) {
 		(session_id, source_agent, source_surface, started_at, ended_at,
 		 duration_minutes, title, project, metadata)
 		VALUES
-		('already-observed-envelope', 'codex', 'Codex CLI',
-		 '2025-11-17T09:42:20Z', '2025-11-17T09:44:20Z', 2, '', '', '{}'),
-		('history-collision', 'codex', 'Codex CLI',
-		 '2025-11-17T09:42:20Z', NULL, NULL, '', '', '{}')`)
+		(?, 'codex', 'Codex CLI',
+		 '2025-11-25T09:57:52Z', '2025-11-25T16:18:52Z', 381, NULL, '.codex', '{}'),
+		(?, 'codex', NULL,
+		 NULL, NULL, NULL, NULL, NULL, '{}')`, alias, offender)
 
 	result, err := Run(ctx, db, registry(t), Options{Roots: roots})
 	if err != nil {
@@ -232,13 +236,13 @@ func TestCodexHistoryRefreshExactPayloadAliasDoesNotAbort(t *testing.T) {
 		t.Fatalf("history exact-payload alias reported errors: errors=%d write_failed=%d details=%+v",
 			result.Errors, result.WriteFailed, result.ErrorDetails)
 	}
-	if got := countRows(t, db.SQL(), "exchanges WHERE session_id = 'history-collision'"); got != 2 {
+	if got := countRows(t, db.SQL(), "exchanges WHERE session_id = '"+offender+"'"); got != 2 {
 		t.Fatalf("history exchanges = %d, want the source prompts reconciled", got)
 	}
 	var ended sql.NullString
 	var duration sql.NullInt64
 	if err := db.SQL().QueryRow(`SELECT ended_at, duration_minutes
-		FROM sessions WHERE session_id = 'history-collision'`).Scan(&ended, &duration); err != nil {
+		FROM sessions WHERE session_id = ?`, offender).Scan(&ended, &duration); err != nil {
 		t.Fatal(err)
 	}
 	if ended.Valid || duration.Valid {
