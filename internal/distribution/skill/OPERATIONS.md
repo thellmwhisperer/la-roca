@@ -54,7 +54,7 @@ vector neighbors, fused with RRF). Humans who want a model to write SQL and
 explain the rows use `roca playground`. Agents never pass `--full`.
 
 ```bash
-roca exec "SELECT COUNT(*) AS memories FROM memories"
+roca exec "SELECT COUNT(*) AS memories FROM plugin_roca_ops.memories"
 roca query "who is Ana"
 roca explore --deep "format"
 roca explore "rows"
@@ -427,7 +427,7 @@ data.
 ## Good
 
 ```bash
-roca exec "SELECT COUNT(*) AS memories FROM memories"
+roca exec "SELECT COUNT(*) AS memories FROM plugin_roca_ops.memories"
 roca pill
 roca handoff latest
 # After an explicit operator request:

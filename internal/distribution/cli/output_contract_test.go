@@ -346,17 +346,17 @@ func TestLayerRepairCommandsRestoreHealth(t *testing.T) {
 func TestExecHumanJSONAndError(t *testing.T) {
 	fixtureInstallation(t)
 
-	human := runRoot(t, contractBuild(), "exec", "SELECT COUNT(*) AS n FROM memories")
-	if !strings.Contains(human, "SELECT COUNT(*) AS n FROM memories") {
+	human := runRoot(t, contractBuild(), "exec", "SELECT 1 AS n")
+	if !strings.Contains(human, "SELECT 1 AS n") {
 		t.Errorf("exec narration lost the SQL it ran:\n%s", human)
 	}
-	// A COUNT(*) returns exactly one row, and one row is counted in the singular.
+	// A single scalar returns exactly one row, and one row is counted in the singular.
 	if !strings.Contains(human, "1 row ·") {
 		t.Errorf("exec narration lost its row count and latency:\n%s", human)
 	}
 
 	doc := mustJSON(t, runRoot(t, contractBuild(), "exec",
-		"SELECT COUNT(*) AS n FROM memories", "--json"))
+		"SELECT 1 AS n", "--json"))
 	if doc["row_count"] == nil || doc["sql"] == nil {
 		t.Errorf("exec --json lost its sql and row_count: %v", doc)
 	}

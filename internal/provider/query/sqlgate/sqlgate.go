@@ -106,7 +106,8 @@ func unqualify(name string) string {
 
 // Gate keeps open the in-memory database statements are prepared against.
 type Gate struct {
-	engine *engine
+	engine  *engine
+	schemas []Schema
 }
 
 // Schema is one attached database as the validation engine sees it. Only the
@@ -184,7 +185,7 @@ func openGate(includeCore bool, schemas []Schema) (*Gate, error) {
 		eng.close()
 		return nil, err
 	}
-	return &Gate{engine: eng}, nil
+	return &Gate{engine: eng, schemas: schemas}, nil
 }
 
 func addUnqualifiedShadows(eng *engine, schemas []Schema) error {

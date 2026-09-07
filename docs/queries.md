@@ -90,7 +90,7 @@ listener, daemon, sync protocol, or additional port.
 ```sh
 roca remote add studio --ssh dev@studio.example
 roca remote list
-roca remote exec studio "SELECT layer, COUNT(*) AS n FROM memories GROUP BY layer"
+roca remote exec studio "SELECT layer, COUNT(*) AS n FROM plugin_roca_ops.memories GROUP BY layer"
 roca remote vector query studio "the deployment decision" 20
 ```
 

@@ -509,11 +509,22 @@ func seedLegacyMemories(t *testing.T, fixture hubFixture, memories []hubMemory) 
 
 func executeHubSQL(t *testing.T, svc *Service, statement string) ExecResult {
 	t.Helper()
-	result, err := svc.Exec(t.Context(), ExecRequest{SQL: statement})
+	route := svc.pluginsForSQL(t.Context(), statement)
+	defer route.closeOnDemand()
+	gate, closeGate, err := svc.gateFor(route.includeCore, route.databases)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return result
+	defer closeGate()
+	validated, err := gate.Validate(statement)
+	if err != nil {
+		t.Fatal(err)
+	}
+	columns, rows, err := svc.executeWithPluginsBudget(t.Context(), validated, "", DefaultMaxChars, route.databases, execBudget{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ExecResult{SQL: validated, Columns: columns, Rows: rows, RowCount: len(rows)}
 }
 
 func seedHubCoreMemory(t *testing.T, plugins string, legacyID int64, content string) {

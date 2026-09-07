@@ -447,6 +447,9 @@ func (s *Service) Exec(ctx context.Context, req ExecRequest) (ExecResult, error)
 		}
 		return ExecResult{}, logfile.Typed(err, degraded)
 	}
+	if err := gate.RejectUnqualified(validated); err != nil {
+		return ExecResult{}, logfile.Typed(err, DegradedInvalidSQL)
+	}
 	result := ExecResult{
 		SQL:       validated,
 		Columns:   columns,

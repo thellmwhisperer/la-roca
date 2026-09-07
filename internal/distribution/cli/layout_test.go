@@ -69,9 +69,9 @@ func TestShadowCLIOrchestratesCustodyBeforeComparingTheHub(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := svc.Exec(t.Context(), service.ExecRequest{SQL: "SELECT id, content FROM memories LIMIT 5"})
-	if err != nil || result.RowCount != 1 {
-		t.Fatalf("shadow result = %+v, err = %v", result, err)
+	_, err = svc.Exec(t.Context(), service.ExecRequest{SQL: "SELECT id, content FROM memories LIMIT 5"})
+	if err == nil || !strings.Contains(err.Error(), `unqualified table "memories"`) {
+		t.Fatalf("unqualified memories stayed silent: %v", err)
 	}
 
 	opsPath := filepath.Join(home, ".roca", "plugins", rocaops.Name, rocaops.DatabaseFilename)
@@ -89,9 +89,9 @@ func TestShadowCLIOrchestratesCustodyBeforeComparingTheHub(t *testing.T) {
 			WHERE source_database = 'core' AND id = 29)`); err != nil {
 		t.Fatal(err)
 	}
-	result, err = svc.Exec(t.Context(), service.ExecRequest{SQL: "SELECT id, content FROM memories LIMIT 5"})
-	if err != nil || result.Rows[0]["content"] != "Synthetic shadow custody marker" {
-		t.Fatalf("legacy rollback answer = %+v, err = %v", result, err)
+	_, err = svc.Exec(t.Context(), service.ExecRequest{SQL: "SELECT id, content FROM memories LIMIT 5"})
+	if err == nil || !strings.Contains(err.Error(), `unqualified table "memories"`) {
+		t.Fatalf("unqualified memories after divergence: %v", err)
 	}
 	if err := ops.Close(); err != nil {
 		t.Fatal(err)
