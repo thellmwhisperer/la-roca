@@ -4,6 +4,9 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -13,6 +16,10 @@ import (
 	"github.com/thellmwhisperer/la-roca-vector/internal/vector"
 )
 
+const defaultResidentIdle = 5 * time.Minute
+
+var errResidentUnusable = errors.New("semantic search resident is unusable")
+
 type residentRequest struct {
 	ID        int64  `json:"id"`
 	Op        string `json:"op"`
@@ -21,79 +28,139 @@ type residentRequest struct {
 	Databases string `json:"databases,omitempty"`
 }
 
+type residentSession struct {
+	waitReady func(context.Context) error
+	query     func(context.Context, residentRequest) (any, error)
+	extra     map[string]any
+}
+
 func residentCommand(env *environment) *cobra.Command {
-	return &cobra.Command{
+	listen := ""
+	idle := defaultResidentIdle
+	command := &cobra.Command{
 		Use:    "_resident",
 		Hidden: true,
 		Args:   cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			if err := env.startBackgroundSetup(); err != nil {
-				return err
-			}
-			embedder, events := env.queryEmbedder()
-			encoder := json.NewEncoder(os.Stdout)
-			started := time.Now()
-			if err := encoder.Encode(engine.Progress("prewarm", "semantic search: preparing", 0, 1, 0)); err != nil {
-				return err
-			}
-			if err := prewarmEmbedder(command.Context(), embedder); err != nil {
-				if encodeErr := encoder.Encode(engine.Error("prewarm", productError(err))); encodeErr != nil {
-					return encodeErr
-				}
-				if terminalErr := residentTerminalError(embedder); terminalErr != nil {
-					return terminalErr
-				}
-			} else {
-				event := engine.Result("prewarm", "semantic search: ready")
-				event.Extra = map[string]any{"prewarm_ms": time.Since(started).Milliseconds()}
-				if reporter, ok := embedder.(interface{ Accelerated() bool }); ok {
-					event.Extra["accelerated"] = reporter.Accelerated()
-				}
-				if err := encoder.Encode(event); err != nil {
-					return err
+			if !command.Flags().Changed("idle") {
+				if parsed, err := parseResidentIdle(os.Getenv("ROCA_VECTOR_RESIDENT_IDLE")); err == nil && parsed > 0 {
+					idle = parsed
 				}
 			}
-			federation, err := env.federationWithEmbedder("", embedder, events)
+			if socket := strings.TrimSpace(listen); socket != "" {
+				return runSharedResident(command.Context(), env, socket, idle)
+			}
+			session, err := newResidentSession(command.Context(), env)
 			if err != nil {
 				return err
 			}
-			scanner := bufio.NewScanner(os.Stdin)
-			scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-			for scanner.Scan() {
-				line := strings.TrimSpace(scanner.Text())
-				if line == "" {
-					continue
-				}
-				var request residentRequest
-				if err := json.Unmarshal([]byte(line), &request); err != nil {
-					_ = encoder.Encode(engine.Error("query", err.Error()))
-					continue
-				}
-				if request.K == 0 {
-					request.K = 10
-				}
-				queryStarted := time.Now()
-				result, queryErr := federation.Query(command.Context(), request.Query, request.K, request.Databases)
-				response := map[string]any{
-					"kind": engine.KindResult, "stage": "query", "id": request.ID,
-					"elapsed_ms": queryStarted.Sub(queryStarted).Milliseconds(), "result": result,
-				}
-				response["elapsed_ms"] = time.Since(queryStarted).Milliseconds()
-				if queryErr != nil {
-					response["kind"] = engine.KindError
-					response["error"] = productError(queryErr)
-					response["message"] = productError(queryErr)
-				}
-				if err := encoder.Encode(response); err != nil {
-					return err
-				}
-				if terminalErr := residentTerminalError(embedder); terminalErr != nil {
-					return terminalErr
-				}
-			}
-			return scanner.Err()
+			return serveResidentSession(command.Context(), struct {
+				io.Reader
+				io.Writer
+			}{os.Stdin, os.Stdout}, session)
 		},
 	}
+	command.Flags().StringVar(&listen, "listen", "", "unix socket for the shared embedding resident")
+	command.Flags().DurationVar(&idle, "idle", defaultResidentIdle, "exit after this idle with no clients")
+	_ = command.Flags().MarkHidden("listen")
+	_ = command.Flags().MarkHidden("idle")
+	return command
+}
+
+func parseResidentIdle(value string) (time.Duration, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, io.EOF
+	}
+	return time.ParseDuration(value)
+}
+
+func newResidentSession(ctx context.Context, env *environment) (residentSession, error) {
+	if err := env.startBackgroundSetup(); err != nil {
+		return residentSession{}, err
+	}
+	embedder, events := env.queryEmbedder()
+	return residentSessionWithEmbedder(ctx, env, embedder, events)
+}
+
+func residentSessionWithEmbedder(ctx context.Context, env *environment, embedder vector.Embedder, events engine.Sink) (residentSession, error) {
+	started := time.Now()
+	if err := prewarmEmbedder(ctx, embedder); err != nil {
+		return residentSession{}, err
+	}
+	extra := map[string]any{"prewarm_ms": time.Since(started).Milliseconds()}
+	if reporter, ok := embedder.(interface{ Accelerated() bool }); ok {
+		extra["accelerated"] = reporter.Accelerated()
+	}
+	return residentSession{
+		waitReady: func(context.Context) error { return nil },
+		extra:     extra,
+		query: func(ctx context.Context, request residentRequest) (any, error) {
+			federation, err := env.federationWithEmbedder("", embedder, events)
+			if err != nil {
+				return nil, err
+			}
+			result, queryErr := federation.Query(ctx, request.Query, request.K, request.Databases)
+			if terminalErr := residentTerminalError(embedder); terminalErr != nil {
+				return result, fmt.Errorf("%w: %w", errResidentUnusable, terminalErr)
+			}
+			return result, queryErr
+		},
+	}, nil
+}
+
+func serveResidentSession(ctx context.Context, rw io.ReadWriter, session residentSession) error {
+	encoder := json.NewEncoder(rw)
+	if err := encoder.Encode(engine.Progress("prewarm", "semantic search: preparing", 0, 1, 0)); err != nil {
+		return err
+	}
+	if err := session.waitReady(ctx); err != nil {
+		if encodeErr := encoder.Encode(engine.Error("prewarm", productError(err))); encodeErr != nil {
+			return encodeErr
+		}
+		return fmt.Errorf("%w: %w", errResidentUnusable, err)
+	} else {
+		event := engine.Result("prewarm", "semantic search: ready")
+		event.Extra = session.extra
+		if err := encoder.Encode(event); err != nil {
+			return err
+		}
+	}
+	scanner := bufio.NewScanner(rw)
+	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var request residentRequest
+		if err := json.Unmarshal([]byte(line), &request); err != nil {
+			_ = encoder.Encode(engine.Error("query", err.Error()))
+			continue
+		}
+		if request.K == 0 {
+			request.K = 10
+		}
+		queryStarted := time.Now()
+		result, queryErr := session.query(ctx, request)
+		response := map[string]any{
+			"kind": engine.KindResult, "stage": "query", "id": request.ID,
+			"elapsed_ms": time.Since(queryStarted).Milliseconds(), "result": result,
+		}
+		if queryErr != nil {
+			response["kind"] = engine.KindError
+			response["error"] = productError(queryErr)
+			response["message"] = productError(queryErr)
+		}
+		encodeErr := encoder.Encode(response)
+		if errors.Is(queryErr, errResidentUnusable) {
+			return queryErr
+		}
+		if encodeErr != nil {
+			return encodeErr
+		}
+	}
+	return scanner.Err()
 }
 
 func residentTerminalError(embedder vector.Embedder) error {

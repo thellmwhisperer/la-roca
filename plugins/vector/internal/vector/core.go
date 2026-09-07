@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -644,6 +645,7 @@ func runCommand(ctx context.Context, executable string, args ...string) ([]byte,
 	}
 	defer finished()
 	command := exec.CommandContext(ctx, executable, args...)
+	command.Env = append(os.Environ(), "ROCA_READ_ONLY=1")
 	configureCommandCancellation(command)
 	raw, err := command.Output()
 	if err == nil {

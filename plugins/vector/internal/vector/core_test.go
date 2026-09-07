@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -429,5 +431,31 @@ func TestLargeCoreIdentifiersRemainExactAcrossJSON(t *testing.T) {
 	}
 	if next != joinCursor("2026-08-14", fmt.Sprint(identifier)) {
 		t.Fatalf("large id cursor = %s, want %s", next, joinCursor("2026-08-14", fmt.Sprint(identifier)))
+	}
+}
+
+func TestCoreCLIEnforcesReadOnlySubprocesses(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell subprocess fixture")
+	}
+	t.Setenv("ROCA_READ_ONLY", "0")
+	script := filepath.Join(t.TempDir(), "roca")
+	body := `#!/bin/sh
+[ "$ROCA_READ_ONLY" = 1 ] || exit 42
+case "$2" in
+_database-scope) printf '%s' '{"databases":["corpus"],"selected":[]}' ;;
+exec) printf '%s' '{"rows":[{"answer":42}]}' ;;
+*) exit 43 ;;
+esac
+`
+	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	core := CoreCLI{Executable: script}
+	if scope, err := core.ResolveDatabaseScope(context.Background(), ""); err != nil || len(scope.Databases) != 1 {
+		t.Fatalf("read-only scope = %+v, %v", scope, err)
+	}
+	if rows, err := core.query(context.Background(), "SELECT 42 AS answer"); err != nil || len(rows) != 1 {
+		t.Fatalf("read-only query = %+v, %v", rows, err)
 	}
 }
