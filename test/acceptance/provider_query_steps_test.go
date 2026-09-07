@@ -211,7 +211,7 @@ func (w *providerAcceptanceWorld) oneAcceptedOneBlocked() error {
 
 func (w *providerAcceptanceWorld) databaseContainsMemories(want int) error {
 	before := w.last
-	if err := w.run("exec", "SELECT COUNT(*) AS total FROM memories", "--json"); err != nil {
+	if err := w.run("exec", "SELECT COUNT(*) AS total FROM main.memories", "--json"); err != nil {
 		return err
 	}
 	doc, err := w.lastJSON()

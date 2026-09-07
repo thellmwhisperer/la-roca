@@ -106,7 +106,8 @@ func unqualify(name string) string {
 
 // Gate keeps open the in-memory database statements are prepared against.
 type Gate struct {
-	engine *engine
+	engine  *engine
+	schemas []Schema
 }
 
 // Schema is one attached database as the validation engine sees it. Only the
@@ -130,17 +131,17 @@ func Open() (*Gate, error) {
 // OpenWithSchemas creates the core validation database and the qualified
 // schemas selected by the plugin semantic router.
 func OpenWithSchemas(schemas []Schema) (*Gate, error) {
-	return openGate(true, schemas)
+	return openGate(true, schemas, false)
 }
 
 // OpenAttached creates a validation database that contains only the named
 // attached schemas. Core tables are absent, so a scoped query cannot slip
 // through to main.
 func OpenAttached(schemas []Schema) (*Gate, error) {
-	return openGate(false, schemas)
+	return openGate(false, schemas, false)
 }
 
-func openGate(includeCore bool, schemas []Schema) (*Gate, error) {
+func openGate(includeCore bool, schemas []Schema, requireQualified bool) (*Gate, error) {
 	eng, err := openEngine()
 	if err != nil {
 		return nil, err
@@ -174,8 +175,13 @@ func openGate(includeCore bool, schemas []Schema) (*Gate, error) {
 			return nil, err
 		}
 	}
-	if !includeCore {
-		if err := addUnqualifiedShadows(eng, schemas); err != nil {
+	if requireQualified || !includeCore {
+		shadowSchema := "main"
+		if requireQualified {
+			shadowSchema = "temp"
+			eng.unqualifiedTables = make(map[string]string)
+		}
+		if err := addUnqualifiedShadows(eng, schemas, shadowSchema); err != nil {
 			eng.close()
 			return nil, err
 		}
@@ -184,10 +190,10 @@ func openGate(includeCore bool, schemas []Schema) (*Gate, error) {
 		eng.close()
 		return nil, err
 	}
-	return &Gate{engine: eng}, nil
+	return &Gate{engine: eng, schemas: schemas}, nil
 }
 
-func addUnqualifiedShadows(eng *engine, schemas []Schema) error {
+func addUnqualifiedShadows(eng *engine, schemas []Schema, shadowSchema string) error {
 	type shadowTable struct {
 		name    string
 		columns []string
@@ -222,11 +228,27 @@ func addUnqualifiedShadows(eng *engine, schemas []Schema) error {
 		for index, column := range shadow.columns {
 			columns[index] = quoteIdentifier(column) + " BLOB"
 		}
-		if err := eng.exec("CREATE TABLE main." + quoteIdentifier(shadow.name) +
+		tableName := shadow.name
+		if shadowSchema == "temp" {
+			tableName = "_" + key
+			for shadows[tableName] != nil || eng.unqualifiedTables[tableName] != "" {
+				tableName = "_" + tableName
+			}
+		}
+		if err := eng.exec("CREATE TABLE " + shadowSchema + "." + quoteIdentifier(tableName) +
 			" (" + strings.Join(columns, ", ") + ")"); err != nil {
 			return fmt.Errorf("reserve unqualified table name %q: %w", shadow.name, err)
 		}
-		eng.hideTable("main", shadow.name)
+		if shadowSchema == "temp" {
+			if err := eng.exec("CREATE VIEW temp." + quoteIdentifier(shadow.name) +
+				" AS SELECT * FROM temp." + quoteIdentifier(tableName)); err != nil {
+				return fmt.Errorf("reserve unqualified table name %q: %w", shadow.name, err)
+			}
+			eng.unqualifiedTables[tableName] = fmt.Sprintf("unqualified table %q; candidates: %s",
+				shadow.name, strings.Join(qualifiedCandidates(shadow.name, schemas), ", "))
+		} else {
+			eng.hideTable(shadowSchema, shadow.name)
+		}
 	}
 	return nil
 }

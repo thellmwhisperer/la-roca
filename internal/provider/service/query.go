@@ -434,6 +434,9 @@ func (s *Service) Exec(ctx context.Context, req ExecRequest) (ExecResult, error)
 	// The stage that failed is only knowable here, and it is the same
 	// distinction the degraded answers already declare: what the gate refused
 	// and what the engine could not run are two different fixes.
+	if err := gate.RejectUnqualified(req.SQL); err != nil {
+		return ExecResult{}, logfile.Typed(err, DegradedInvalidSQL)
+	}
 	validated, err := gate.Validate(req.SQL)
 	if err != nil {
 		return ExecResult{}, logfile.Typed(err, DegradedInvalidSQL)

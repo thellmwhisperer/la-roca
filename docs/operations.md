@@ -108,9 +108,10 @@ with `expires_at`.
 `roca store --layer <name>` accepts only a name in the live layer registry and
 lists the registered layers when it refuses a write. This validation is shared
 by the CLI and MCP store paths.
-The supported catalogue surface is the unqualified `layers` compatibility view
-and the `roca layers` registry commands; explicitly qualified physical
-references such as `main.layers` intentionally expose physical storage.
+Use the `roca layers` registry commands for the supported catalogue surface.
+For direct SQL, follow the [authored-SQL table-name contract](queries.md#table-names-in-authored-sql);
+explicitly qualified physical references such as `main.layers` intentionally
+expose physical storage.
 
 Register a deliberate custom layer with `roca layers add <name>`. To repair
 existing rows that used the wrong layer, run
