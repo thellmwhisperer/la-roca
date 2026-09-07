@@ -1707,7 +1707,8 @@ func gatherCross(ctx context.Context, build Build, sets []crossResult) (service.
 		return service.ExecResult{}, err
 	}
 	return service.ExecResult{SQL: outer, Columns: columns, Rows: resultRows,
-		RowCount: len(resultRows), Version: build.Version, SourceSHA: build.Commit}, nil
+		RowCount: len(resultRows), MaxChars: service.DefaultMaxChars,
+		Version: build.Version, SourceSHA: build.Commit}, nil
 }
 
 func crossUnionColumns(sets []crossResult) []string {
@@ -2074,6 +2075,14 @@ func decodeRemoteExecEnvelope(raw string) (service.ExecResult, error) {
 	if err != nil || rowCount < 0 {
 		return service.ExecResult{}, fmt.Errorf("row_count must be a non-negative integer")
 	}
+	maxChars := int64(service.DefaultMaxChars)
+	if value, found := document["max_chars"]; found {
+		var ok bool
+		maxChars, ok = integerValue(value)
+		if !ok || maxChars < 0 {
+			return service.ExecResult{}, fmt.Errorf("max_chars must be a non-negative integer")
+		}
+	}
 	latency, err := requiredInteger(document, "latency_ms")
 	if err != nil || latency < 0 {
 		return service.ExecResult{}, fmt.Errorf("latency_ms must be a non-negative integer")
@@ -2124,7 +2133,7 @@ func decodeRemoteExecEnvelope(raw string) (service.ExecResult, error) {
 	}
 	return service.ExecResult{
 		SQL: sqlText, Columns: columns, Rows: rows, RowCount: int(rowCount),
-		Databases: databases, OmittedDatabases: omitted, LatencyMS: latency,
+		MaxChars: int(maxChars), Databases: databases, OmittedDatabases: omitted, LatencyMS: latency,
 		Version: version, SourceSHA: sourceSHA,
 	}, nil
 }

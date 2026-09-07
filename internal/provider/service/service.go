@@ -28,6 +28,13 @@ import (
 // A zero request means this default, never an unbounded response.
 const DefaultMaxChars = 500
 
+func textBudget(maxChars int) int {
+	if maxChars <= 0 {
+		return DefaultMaxChars
+	}
+	return maxChars
+}
+
 const wordProofFieldBudget = 64 << 20
 
 // Options are the service's opening options.

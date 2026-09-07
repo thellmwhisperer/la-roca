@@ -2,7 +2,6 @@ package mcpplug_test
 
 import (
 	"context"
-	"encoding/json"
 	"strconv"
 	"strings"
 	"testing"
@@ -128,8 +127,8 @@ func TestHealthThroughThePlugRendersTheStatusAndCheckTable(t *testing.T) {
 	assertNoStructuredEnvelope(t, result)
 }
 
-// The TOON answer inherits the service budget, and the former JSON envelope is
-// used only inside the test to pin the size reduction it bought.
+// The TOON answer inherits the service budget instead of applying its own
+// smaller renderer cap.
 func TestAWideResultBudgetsTOONAndShipsNoRowsEnvelope(t *testing.T) {
 	svc := seededService(t)
 	wide := strings.Repeat("abcdefghij", 250) // ~2500 chars per memory
@@ -161,24 +160,13 @@ func TestAWideResultBudgetsTOONAndShipsNoRowsEnvelope(t *testing.T) {
 	assertNoStructuredEnvelope(t, result)
 
 	statement := "SELECT 'memory' AS source, id, content AS text FROM memories"
-	former, err := svc.Exec(context.Background(), service.ExecRequest{SQL: statement, MaxChars: 3000})
-	if err != nil {
-		t.Fatalf("build the former JSON response: %v", err)
-	}
-	formerEnvelope, err := json.Marshal(former)
-	if err != nil {
-		t.Fatalf("marshal the former JSON response: %v", err)
-	}
 	wideResult := callTool(t, session, "roca_exec", map[string]any{
 		"sql":       statement,
 		"max_chars": 3000,
 	})
 	wideText := renderedText(wideResult)
-	t.Logf("wide exec over %d memories: TOON readable %d bytes vs former JSON response %d bytes",
-		42, len(wideText), len(formerEnvelope))
-	if len(wideText)*10 >= len(formerEnvelope) {
-		t.Errorf("TOON response (%d bytes) is not an order of magnitude under the former JSON response (%d bytes)",
-			len(wideText), len(formerEnvelope))
+	if !strings.Contains(wideText, strings.Repeat("abcdefghij", 90)) {
+		t.Errorf("max_chars=3000 did not expand the TOON cells:\n%s", wideText)
 	}
 	assertNoStructuredEnvelope(t, wideResult)
 }

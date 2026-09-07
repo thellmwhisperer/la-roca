@@ -51,6 +51,7 @@ type SearchResult struct {
 	Top         int         `json:"top"`
 	Hits        []SearchHit `json:"hits"`
 	RowCount    int         `json:"row_count"`
+	MaxChars    int         `json:"-"`
 	LatencyMS   int64       `json:"latency_ms"`
 	Version     string      `json:"version"`
 	SourceSHA   string      `json:"source_sha"`
@@ -99,15 +100,13 @@ func (s *Service) Search(ctx context.Context, req SearchRequest) (SearchResult, 
 	if top <= 0 {
 		top = search.DefaultTop
 	}
-	maxChars := req.MaxChars
-	if maxChars <= 0 {
-		maxChars = DefaultMaxChars
-	}
+	maxChars := textBudget(req.MaxChars)
 	result := SearchResult{
 		Question:    req.Question,
 		Hits:        []SearchHit{},
 		Top:         top,
 		RequireBoth: req.RequireBoth,
+		MaxChars:    maxChars,
 		Version:     s.opts.Version,
 		SourceSHA:   s.opts.Commit,
 	}

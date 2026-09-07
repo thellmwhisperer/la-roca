@@ -2,6 +2,7 @@ package cli
 
 import (
 	"io"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -112,6 +113,36 @@ func TestALongTextIsFlattenedAndClipped(t *testing.T) {
 	}
 	if !strings.Contains(output, "first line second line") {
 		t.Errorf("the clipping ate the beginning:\n%s", output)
+	}
+}
+
+func TestExecMaxCharsControlsTOONTextFields(t *testing.T) {
+	home := hermeticHome(t)
+	dbPath := filepath.Join(home, ".roca", "roca.db")
+	long := strings.Repeat("0123456789", 90)
+
+	initMustSucceed(t, "--db-path", dbPath, "init")
+	initMustSucceed(t, "--db-path", dbPath, "store", "--layer", "discovery", "--content", long)
+
+	wide := initMustSucceed(t, "--db-path", dbPath, "exec",
+		"SELECT content FROM plugin_roca_ops.memories WHERE layer='discovery' LIMIT 1", "--max-chars", "900").output
+	if !strings.Contains(wide, long) {
+		t.Fatalf("--max-chars 900 did not expand the TOON field:\n%s", wide)
+	}
+
+	short := initMustSucceed(t, "--db-path", dbPath, "exec",
+		"SELECT content FROM plugin_roca_ops.memories WHERE layer='discovery' LIMIT 1", "--max-chars", "100").output
+	if strings.Contains(short, strings.Repeat("0123456789", 10)+"0") || !strings.Contains(short, "…") {
+		t.Fatalf("--max-chars 100 did not clip the TOON field to the requested budget:\n%s", short)
+	}
+
+	medium := initMustSucceed(t, "--db-path", dbPath, "exec",
+		"SELECT content FROM plugin_roca_ops.memories WHERE layer='discovery' LIMIT 1").output
+	if strings.Contains(medium, strings.Repeat("0123456789", 50)+"0") || !strings.Contains(medium, "…") {
+		t.Fatalf("default max-chars did not stay at 500:\n%s", medium)
+	}
+	if !strings.Contains(medium, strings.Repeat("0123456789", 49)) {
+		t.Fatalf("default max-chars clipped below 500:\n%s", medium)
 	}
 }
 

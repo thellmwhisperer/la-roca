@@ -75,7 +75,9 @@ func fullRecords(name string, columns []string, rows []map[string]any) string {
 	if len(rows) == 0 {
 		return fmt.Sprintf("%s[0]:", name)
 	}
-	return toonRows(name, presentColumns(columns, rows), rows, fullToonValue)
+	return toonRows(name, presentColumns(columns, rows), rows, func(_ string, value any) string {
+		return fullToonValue(value)
+	})
 }
 
 func presentColumns(columns []string, rows []map[string]any) []string {
