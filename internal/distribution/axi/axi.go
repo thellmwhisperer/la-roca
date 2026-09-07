@@ -10,9 +10,9 @@ and the two surfaces compose it for their result types instead of each keeping
 a second copy (the duplication gate ships at zero, and a second renderer would
 be the first clone).
 
-RowOutput is the renderer: it turns a set of uniform rows into the tabular form
-every AXI tool emits, generic over columns so a count, a grouping and a search
-all paint honestly. RenderHelp and QueryHelp carry the deterministic next steps.
+RowOutput supplies the fallback field budget; RowOutputWithBudget carries a
+caller's budget into the same tabular renderer. RenderHelp and QueryHelp carry
+the deterministic next steps.
 The composers in compose.go build the full text for a query, an exec, a health
 report and a store, and that is what the MCP plug puts in the readable half of a
 tool result.
@@ -30,10 +30,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
-// FieldWidth preserves the terminal budget for every text cell: a field is
-// clipped to this many runes so a single wide row never drowns the table. It is
-// the same value the shell has always used, kept here so the two surfaces
-// cannot drift.
+// FieldWidth is the fallback width for cells without a caller-controlled budget.
 const FieldWidth = 160
 
 // RowOutput paints uniform rows as the tabular form emitted by AXI tools. The
@@ -42,23 +39,35 @@ const FieldWidth = 160
 // A single row with a single column is printed bare: the answer to "how many
 // memories are there" is the number, and a table around it is ceremony.
 func RowOutput(columns []string, rows []map[string]any, terms ...string) string {
+	return RowOutputWithBudget(columns, rows, FieldWidth, terms...)
+}
+
+func RowOutputWithBudget(columns []string, rows []map[string]any, budget int, terms ...string) string {
+	if budget <= 0 {
+		budget = service.DefaultMaxChars
+	}
 	if len(rows) == 0 {
 		return ""
 	}
 	if len(rows) == 1 && len(columns) == 1 && len(rows[0]) == 1 {
 		if value, ok := rows[0][columns[0]]; ok && value != nil {
-			return trim(asText(value), FieldWidth)
+			switch value.(type) {
+			case bool, int, int8, int16, int32, int64,
+				uint, uint8, uint16, uint32, uint64, float32, float64:
+				return asText(value)
+			}
+			return trim(asText(value), budget)
 		}
 	}
 
 	order := columnOrder(columns, rows)
 	term := strings.Join(terms, "+")
-	return toonRows("rows", order, rows, func(value any) string {
-		return toonValue(value, term)
+	return toonRows("rows", order, rows, func(_ string, value any) string {
+		return toonValue(value, term, budget)
 	})
 }
 
-func toonRows(name string, order []string, rows []map[string]any, format func(any) string) string {
+func toonRows(name string, order []string, rows []map[string]any, format func(string, any) string) string {
 	var out strings.Builder
 	fmt.Fprintf(&out, "%s[%d]{", name, len(rows))
 	for i, column := range order {
@@ -74,7 +83,7 @@ func toonRows(name string, order []string, rows []map[string]any, format func(an
 			if i > 0 {
 				out.WriteByte(',')
 			}
-			out.WriteString(format(row[column]))
+			out.WriteString(format(column, row[column]))
 		}
 	}
 	return out.String()
@@ -113,22 +122,22 @@ func columnOrder(columns []string, rows []map[string]any) []string {
 	return append(order, extras...)
 }
 
-func toonValue(value any, term string) string {
+func toonValue(value any, term string, budget int) string {
 	if value == nil {
 		return "null"
 	}
 	switch v := value.(type) {
 	case string:
-		return toonString(excerpt(v, term, FieldWidth))
+		return toonString(excerpt(v, term, budget))
 	case []byte:
-		return toonString(excerpt(string(v), term, FieldWidth))
+		return toonString(excerpt(string(v), term, budget))
 	case bool:
 		return strconv.FormatBool(v)
 	case int, int8, int16, int32, int64,
 		uint, uint8, uint16, uint32, uint64, float32, float64:
 		return asText(v)
 	default:
-		return toonString(excerpt(asText(v), term, FieldWidth))
+		return toonString(excerpt(asText(v), term, budget))
 	}
 }
 
@@ -268,8 +277,8 @@ func singleLine(text string) string {
 
 // excerpt clips a human field to the width of a cell, keeping its leading
 // subject as well as its longest visible search term under the same policy the
-// stored row is clipped with. It never changes the row itself, so the
-// structured envelope continues to carry the complete text.
+// stored row is clipped with. It never changes the row itself; the structured
+// envelope retains the service's already-budgeted text.
 func excerpt(text, terms string, width int) string {
 	text = singleLine(text)
 	position, matched := matchPosition(text, terms)

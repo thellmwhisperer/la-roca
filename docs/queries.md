@@ -60,6 +60,26 @@ retrieval stays exact and auditable. No usable provider, or SQL that cannot run,
 falls back to literal search and says so in the result. `roca query` instead
 uses the deterministic hybrid path described above.
 
+## Text budgets
+
+`--max-chars N` sets the character budget per returned text field for `roca exec`,
+`roca playground`, and `roca explore`, and per snippet for `roca query`. The
+default is 500; zero or a negative value also selects that default. The same
+budget applies to CLI TOON output, CLI `--json`, and MCP's `max_chars` argument.
+TOON does not impose a smaller preview limit; selecting JSON does not expand
+the text.
+
+Characters are counted as Unicode code points, including truncation ellipses;
+TOON quoting and escaping are outside that budget. Numbers and booleans are
+not clipped, and a query's snippet budget does not shorten its source citation.
+For example, this returns up to 900 characters of the selected content:
+
+```sh
+roca exec "SELECT content FROM plugin_roca_ops.memories WHERE layer='handoff' LIMIT 1" --max-chars 900
+```
+
+Use `--max-chars 100` for a shorter excerpt or a larger value to expand it.
+
 ## Read-only queries across machines
 
 `roca remote` connects already-installed Roca instances through ordinary SSH.
