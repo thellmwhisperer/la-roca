@@ -3,6 +3,7 @@ package axi_test
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/axi"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
@@ -42,5 +43,26 @@ func TestHandoffsRendersFullContentWithoutTheTableClip(t *testing.T) {
 	}
 	if strings.Contains(got, "rows[") {
 		t.Fatal("handoffs used the clipped table renderer")
+	}
+}
+
+func TestHandoffHeadsBoundsSerializedMetadata(t *testing.T) {
+	list := service.HandoffList{
+		Project: strings.Repeat("界", 2000), GlobalFallback: true,
+		Handoffs: []service.MemoryRecord{{
+			ID: 3, Slug: strings.Repeat("\"", 3000), Project: strings.Repeat("😀", 2000),
+			CreatedAt: strings.Repeat("\x01", 2000), Content: "head " + strings.Repeat("界", 2000),
+		}},
+	}
+	full := axi.Handoffs(list)
+	got := axi.HandoffHeads(list, 3000)
+	if len(got) >= 4000 || !utf8.ValidString(got) {
+		t.Fatalf("hook envelope must fit in 4000 bytes as valid UTF-8: len=%d", len(got))
+	}
+	if !strings.Contains(got, "handoffs[1]{") || !strings.Contains(got, "head ") || !strings.Contains(got, "fallback: global") {
+		t.Fatalf("hook lost its handoff envelope: %q", got)
+	}
+	if axi.Handoffs(list) != full {
+		t.Fatal("preview mutated the full handoff")
 	}
 }

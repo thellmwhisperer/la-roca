@@ -568,7 +568,9 @@ func hooksRunCommand(env *cliEnv) *cobra.Command {
 			case "claude-pills":
 				return runPillList(cmd.Context(), env, "")
 			case "claude-handoff":
-				return runLatestHandoffs(cmd.Context(), env, "")
+				return runLatestHandoffs(cmd.Context(), env, latestHandoffOptions{
+					limit: 1, headChars: claudeHandoffHeadChars,
+				})
 			case agentcfg.RuntimeZcode:
 				return runZcodeHandoffHook(cmd.Context(), env)
 			default:
