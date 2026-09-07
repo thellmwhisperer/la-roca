@@ -542,9 +542,8 @@ func scrubDataDir(text, dataDir string) string {
 }
 
 // Serve runs the server over stdio in the foreground until the client closes
-// the pipe. This process is the session. Semantic search, when enabled, connects
-// to one machine-wide embedding resident and only starts that resident when
-// none is listening.
+// the pipe. Closing this session must only disconnect its vector client;
+// the shared resident's lifecycle is documented in docs/mcp.md.
 func Serve(ctx context.Context, svc *service.Service, build Build) error {
 	resident, err := consentedResident(ctx, svc)
 	if err != nil {

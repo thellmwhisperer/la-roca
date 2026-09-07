@@ -471,8 +471,7 @@ An optional `companion` object asks `roca mcp serve` to raise one child
 process for the lifetime of that session: stdin and stdout belong to the
 parent, the child dies when stdin closes, and there is no port, pid file, or
 daemon. Plugins without the field keep today's behavior. The vector embedding
-resident is not this seam; MCP sessions share one of those per machine
-([MCP](mcp.md)).
+resident has a separate [MCP lifecycle](mcp.md#1-roca-mcp-serve-the-mcp-over-stdio).
 
 ```json
 "companion": {

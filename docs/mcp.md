@@ -23,18 +23,34 @@ provider secrets.
 ## 1. `roca mcp serve`: the MCP over stdio
 
 One command, in the foreground, on demand. The agent launches it, it answers
-over its standard input and output, and it dies when that pipe closes. There is
-no daemon, no port, no supervisor and no unit file, and that is the whole
-lifecycle.
+over its standard input and output, and it dies when that pipe closes. The MCP
+server needs no network port, supervisor or unit file.
 
-When semantic search is enabled, the server connects to one shared embedding
-resident for the machine. The socket lives under `~/.roca`. If none is
-listening, `mcp serve` starts one; later sessions reuse it. The resident
-prepares the embedding model so the first semantic query does not pay the
-startup cost, and it exits after an idle period with no clients attached. A
-stale socket from a killed resident is replaced on the next start. One-shot CLI
-queries still load the model for that invocation only. Preparation status goes
-to standard error, leaving protocol output untouched.
+When semantic search is enabled, the server connects to a shared embedding
+resident. Sessions using the same Roca data directory reuse it; different data
+directories have separate residents. The default socket is
+`<data-directory>/vector-resident/resident.sock`, normally under `~/.roca`.
+If none is listening, `mcp serve` starts one. The resident prepares the model
+once; a query arriving before preparation finishes waits for readiness.
+Closing an MCP session disconnects only that client. The resident exits after
+five minutes with no clients attached by default, and a stale socket from a
+killed resident is replaced on the next start. One-shot CLI queries still load
+the model for that invocation only.
+
+`ROCA_VECTOR_RESIDENT_SOCKET` overrides the socket path and places its startup
+lock alongside it. Use a separate socket for each data context: the resident
+retains the database and plugin configuration of the session that started it.
+On Unix, the socket directory must be owned by the current user and private,
+and the socket path must be shorter than 100 bytes. A positive Go duration in
+`ROCA_VECTOR_RESIDENT_IDLE` overrides the idle period when a resident starts;
+the internal `_resident --idle` flag takes precedence.
+
+Preparation progress received by an MCP session goes to its standard error,
+leaving protocol output untouched. The detached resident appends its own
+stdout and stderr to `<data-directory>/logs/vector-resident.log`. If connecting
+or starting the resident fails, serve emits a notice on stderr and keeps the core
+tools available without `roca_vector_query`. A lost connection fails that
+session's vector calls; a new MCP session can start or connect to a resident.
 
 The same session parent raises every installed plugin that declares a
 `companion` in `plugin.json`. Each child is exec'd from the plugin directory

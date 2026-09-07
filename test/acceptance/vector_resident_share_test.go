@@ -1,9 +1,18 @@
 //go:build acceptance
 
+// @overview Exercise shared residency through real MCP server processes.
+// READING GUIDE: TestVectorResidentProcessCountEvidence -> threeServeResidentPS
+// -> writeResidentEvidence; the remaining helpers isolate and clean up fixtures.
+// MAIN FLOW: initialize home -> connect three servers -> query -> close -> idle exit.
+// PUBLIC API: TestVectorResidentProcessCountEvidence runs the acceptance contract.
+// INTERNALS: residentEvidence, process observation, fake payload and evidence helpers.
+// @exports TestVectorResidentProcessCountEvidence
+// @deps MCP client SDK, operating-system process and socket interfaces
 package acceptance
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -17,6 +26,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+// -- 1 CORE · TestVectorResidentProcessCountEvidence <- START HERE --
 func TestVectorResidentProcessCountEvidence(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shared residency is proven on unix sockets")
@@ -36,25 +46,47 @@ func TestVectorResidentProcessCountEvidence(t *testing.T) {
 			t.Fatal(err)
 		}
 		evidence := threeServeResidentPS(t, binary, fake, time.Second)
-		writeResidentEvidence(t, "branch", evidence)
 		if evidence.count != 1 {
 			t.Fatalf("branch residents = %d, want 1\n%s", evidence.count, evidence.ps)
 		}
-		for i, session := range evidence.sessions {
-			result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+		var transcript strings.Builder
+		fmt.Fprintf(&transcript, "Three real roca mcp serve processes; deterministic resident protocol substitute (no model RSS measurement).\nMCP server PIDs: %v\n", evidence.serverPIDs)
+		query := func(i int, session *mcp.ClientSession) {
+			t.Helper()
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			result, err := session.CallTool(ctx, &mcp.CallToolParams{
 				Name: "roca_vector_query", Arguments: map[string]any{"query": "harbor lantern", "k": 3},
 			})
 			if err != nil {
 				t.Fatalf("session %d vector query: %v", i, err)
 			}
-			if result == nil {
-				t.Fatalf("session %d vector query returned nothing", i)
+			if result == nil || result.IsError {
+				t.Fatalf("session %d vector query failed or returned nothing: %#v", i, result)
 			}
 			got := renderedText(result) + fmt.Sprint(result.Content)
 			if !strings.Contains(got, "harbor lantern") {
 				t.Fatalf("session %d vector query missed: %#v", i, result)
 			}
+			raw, err := json.Marshal(result)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fmt.Fprintf(&transcript, "session %d tools/call roca_vector_query(query=harbor lantern,k=3): %s\n", i, raw)
 		}
+		for i, session := range evidence.sessions {
+			query(i, session)
+		}
+		if err := evidence.sessions[0].Close(); err != nil {
+			t.Fatal(err)
+		}
+		fmt.Fprintln(&transcript, "Closed session 0; querying session 1 again:")
+		query(1, evidence.sessions[1])
+		afterClose := residentPS(t, evidence.hint)
+		if afterClose != evidence.ps {
+			t.Fatalf("closing one MCP session changed the resident process:\nbefore: %s\nafter: %s", evidence.ps, afterClose)
+		}
+		fmt.Fprintf(&transcript, "Same resident after closing session 0:\n%s\n", afterClose)
 		for _, session := range evidence.sessions {
 			_ = session.Close()
 		}
@@ -62,7 +94,9 @@ func TestVectorResidentProcessCountEvidence(t *testing.T) {
 		for {
 			psOutput := residentPS(t, evidence.hint)
 			if countResidentLines(psOutput) == 0 {
-				t.Logf("branch resident gone after idle:\n%s", psOutput)
+				fmt.Fprintln(&transcript, "Closed all sessions; ps reports 0 matching resident processes after idle.")
+				evidence.transcript = transcript.String()
+				writeResidentEvidence(t, "branch", evidence)
 				return
 			}
 			if time.Now().After(deadline) {
@@ -73,11 +107,16 @@ func TestVectorResidentProcessCountEvidence(t *testing.T) {
 	})
 }
 
+// -/ 1
+
+// -- 2 HELPER · Isolated servers and payload --
 type residentEvidence struct {
-	ps       string
-	count    int
-	hint     string
-	sessions []*mcp.ClientSession
+	ps         string
+	count      int
+	hint       string
+	sessions   []*mcp.ClientSession
+	serverPIDs []int
+	transcript string
 }
 
 func threeServeResidentPS(t *testing.T, binary, fake string, idle time.Duration) residentEvidence {
@@ -110,6 +149,7 @@ func threeServeResidentPS(t *testing.T, binary, fake string, idle time.Duration)
 		"ROCA_VECTOR_RESIDENT_IDLE="+idle.String(),
 	)
 	sessions := make([]*mcp.ClientSession, 3)
+	serverPIDs := make([]int, 3)
 	for i := 0; i < 3; i++ {
 		command := exec.Command(binary, "mcp", "serve")
 		command.Env = env
@@ -121,6 +161,7 @@ func threeServeResidentPS(t *testing.T, binary, fake string, idle time.Duration)
 		}
 		t.Cleanup(func() { _ = session.Close() })
 		sessions[i] = session
+		serverPIDs[i] = command.Process.Pid
 	}
 	time.Sleep(300 * time.Millisecond)
 	hint := m.home
@@ -129,7 +170,7 @@ func threeServeResidentPS(t *testing.T, binary, fake string, idle time.Duration)
 		psOutput = residentPS(t, socket)
 		hint = socket
 	}
-	return residentEvidence{ps: psOutput, count: countResidentLines(psOutput), hint: hint, sessions: sessions}
+	return residentEvidence{ps: psOutput, count: countResidentLines(psOutput), hint: hint, sessions: sessions, serverPIDs: serverPIDs}
 }
 
 func publishedRoca(t *testing.T) string {
@@ -177,22 +218,24 @@ func enableVectorFeature(home string) error {
 	return os.WriteFile(path, []byte(body), 0o600)
 }
 
+// -/ 2
+
+// -- 3 HELPER · Evidence and process cleanup --
 func writeResidentEvidence(t *testing.T, name string, evidence residentEvidence) {
 	t.Helper()
-	root, err := acceptanceRoot()
-	if err != nil {
-		t.Fatal(err)
+	body := fmt.Sprintf("point: %s\ncount: %d\nps:\n%s\n%s", name, evidence.count, evidence.ps, evidence.transcript)
+	t.Logf("issue 315 %s evidence:\n%s", name, body)
+	dir := os.Getenv("ROCA_RESIDENT_EVIDENCE_DIR")
+	if dir == "" {
+		return
 	}
-	dir := filepath.Join(root, ".tmp", "issue-315")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	body := fmt.Sprintf("point: %s\ncount: %d\nps:\n%s\n", name, evidence.count, evidence.ps)
 	path := filepath.Join(dir, name+"-ps.txt")
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("issue 315 %s evidence (%s):\n%s", name, path, body)
 }
 
 func residentPS(t *testing.T, hint string) string {
@@ -245,3 +288,5 @@ func killResidents(hint string) {
 		}
 	}
 }
+
+// -/ 3
