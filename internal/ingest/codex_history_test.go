@@ -3,8 +3,11 @@ package ingest
 import (
 	"context"
 	"database/sql"
+	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/thellmwhisperer/la-roca/internal/store/exactdedup"
 )
 
 // A corpus synced by a build that could not read a fossil's own prompt records
@@ -191,5 +194,55 @@ not json
 	}
 	if fifth.FilesRead != 0 || fifth.Delta != (Tables{}) {
 		t.Errorf("idempotent ingest read or wrote records: files=%d delta=%+v", fifth.FilesRead, fifth.Delta)
+	}
+}
+
+func TestCodexHistoryRefreshExactPayloadAliasDoesNotAbort(t *testing.T) {
+	home := t.TempDir()
+	roots := ResolveRoots(Environment{GOOS: "darwin", Home: home}, Settings{})
+	if err := os.MkdirAll(roots.CodexRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(roots.CodexRoot, "history.jsonl"), []byte(`
+{"session_id":"history-collision","ts":1763372540,"text":"inspect the synthetic alias"}
+{"session_id":"history-collision","ts":1763372660,"text":"verify the synthetic alias"}
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	db := rocaDatabase(t)
+	ctx := context.Background()
+	if err := exactdedup.EnsureGuards(ctx, db.SQL()); err != nil {
+		t.Fatal(err)
+	}
+	exec(t, db.SQL(), `INSERT INTO sessions
+		(session_id, source_agent, source_surface, started_at, ended_at,
+		 duration_minutes, title, project, metadata)
+		VALUES
+		('already-observed-envelope', 'codex', 'Codex CLI',
+		 '2025-11-17T09:42:20Z', '2025-11-17T09:44:20Z', 2, '', '', '{}'),
+		('history-collision', 'codex', 'Codex CLI',
+		 '2025-11-17T09:42:20Z', NULL, NULL, '', '', '{}')`)
+
+	result, err := Run(ctx, db, registry(t), Options{Roots: roots})
+	if err != nil {
+		t.Fatalf("history exact-payload alias ingest: %v", err)
+	}
+	if result.Errors != 0 || result.WriteFailed != 0 {
+		t.Fatalf("history exact-payload alias reported errors: errors=%d write_failed=%d details=%+v",
+			result.Errors, result.WriteFailed, result.ErrorDetails)
+	}
+	if got := countRows(t, db.SQL(), "exchanges WHERE session_id = 'history-collision'"); got != 2 {
+		t.Fatalf("history exchanges = %d, want the source prompts reconciled", got)
+	}
+	var ended sql.NullString
+	var duration sql.NullInt64
+	if err := db.SQL().QueryRow(`SELECT ended_at, duration_minutes
+		FROM sessions WHERE session_id = 'history-collision'`).Scan(&ended, &duration); err != nil {
+		t.Fatal(err)
+	}
+	if ended.Valid || duration.Valid {
+		t.Fatalf("history envelope was forced through the exact guard: ended=%q duration=%v",
+			ended.String, duration)
 	}
 }
