@@ -7,7 +7,7 @@
 // PUBLIC API: TestVectorResidentProcessCountEvidence runs the acceptance contract.
 // INTERNALS: residentEvidence, process observation, fake payload and evidence helpers.
 // @exports TestVectorResidentProcessCountEvidence
-// @deps MCP client SDK, operating-system process and socket interfaces
+// @deps MCP client SDK, testfixture process helpers, operating-system interfaces
 package acceptance
 
 import (
@@ -18,12 +18,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/thellmwhisperer/la-roca/test/testfixture"
 )
 
 // -- 1 CORE · TestVectorResidentProcessCountEvidence <- START HERE --
@@ -82,7 +82,7 @@ func TestVectorResidentProcessCountEvidence(t *testing.T) {
 		}
 		fmt.Fprintln(&transcript, "Closed session 0; querying session 1 again:")
 		query(1, evidence.sessions[1])
-		afterClose := residentPS(t, evidence.hint)
+		afterClose := testfixture.ResidentPS(t, evidence.hint)
 		if afterClose != evidence.ps {
 			t.Fatalf("closing one MCP session changed the resident process:\nbefore: %s\nafter: %s", evidence.ps, afterClose)
 		}
@@ -92,8 +92,8 @@ func TestVectorResidentProcessCountEvidence(t *testing.T) {
 		}
 		deadline := time.Now().Add(3 * time.Second)
 		for {
-			psOutput := residentPS(t, evidence.hint)
-			if countResidentLines(psOutput) == 0 {
+			psOutput := testfixture.ResidentPS(t, evidence.hint)
+			if testfixture.CountResidentLines(psOutput) == 0 {
 				fmt.Fprintln(&transcript, "Closed all sessions; ps reports 0 matching resident processes after idle.")
 				evidence.transcript = transcript.String()
 				writeResidentEvidence(t, "branch", evidence)
@@ -139,7 +139,7 @@ func threeServeResidentPS(t *testing.T, binary, fake string, idle time.Duration)
 	t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
 	socket := filepath.Join(socketDir, "resident.sock")
 	t.Cleanup(func() {
-		killResidents(socket)
+		testfixture.KillResidents(socket)
 		_ = os.Remove(socket)
 		_ = os.Remove(socket + ".lock")
 	})
@@ -165,12 +165,12 @@ func threeServeResidentPS(t *testing.T, binary, fake string, idle time.Duration)
 	}
 	time.Sleep(300 * time.Millisecond)
 	hint := m.home
-	psOutput := residentPS(t, hint)
-	if countResidentLines(psOutput) == 0 {
-		psOutput = residentPS(t, socket)
+	psOutput := testfixture.ResidentPS(t, hint)
+	if testfixture.CountResidentLines(psOutput) == 0 {
+		psOutput = testfixture.ResidentPS(t, socket)
 		hint = socket
 	}
-	return residentEvidence{ps: psOutput, count: countResidentLines(psOutput), hint: hint, sessions: sessions, serverPIDs: serverPIDs}
+	return residentEvidence{ps: psOutput, count: testfixture.CountResidentLines(psOutput), hint: hint, sessions: sessions, serverPIDs: serverPIDs}
 }
 
 func publishedRoca(t *testing.T) string {
@@ -220,7 +220,7 @@ func enableVectorFeature(home string) error {
 
 // -/ 2
 
-// -- 3 HELPER · Evidence and process cleanup --
+// -- 3 HELPER · Evidence output --
 func writeResidentEvidence(t *testing.T, name string, evidence residentEvidence) {
 	t.Helper()
 	body := fmt.Sprintf("point: %s\ncount: %d\nps:\n%s\n%s", name, evidence.count, evidence.ps, evidence.transcript)
@@ -235,57 +235,6 @@ func writeResidentEvidence(t *testing.T, name string, evidence residentEvidence)
 	path := filepath.Join(dir, name+"-ps.txt")
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func residentPS(t *testing.T, hint string) string {
-	t.Helper()
-	output, err := exec.Command("ps", "-ax", "-o", "pid=,args=").Output()
-	if err != nil {
-		t.Fatalf("ps: %v", err)
-	}
-	var lines []string
-	for _, line := range strings.Split(string(output), "\n") {
-		if strings.Contains(line, "_resident") && strings.Contains(line, hint) {
-			lines = append(lines, strings.TrimSpace(line))
-		}
-	}
-	return strings.Join(lines, "\n")
-}
-
-func countResidentLines(psOutput string) int {
-	if strings.TrimSpace(psOutput) == "" {
-		return 0
-	}
-	count := 0
-	for _, line := range strings.Split(psOutput, "\n") {
-		if strings.TrimSpace(line) != "" {
-			count++
-		}
-	}
-	return count
-}
-
-func killResidents(hint string) {
-	output, err := exec.Command("ps", "-ax", "-o", "pid=,args=").Output()
-	if err != nil {
-		return
-	}
-	for _, line := range strings.Split(string(output), "\n") {
-		if !strings.Contains(line, "_resident") || !strings.Contains(line, hint) {
-			continue
-		}
-		fields := strings.Fields(strings.TrimSpace(line))
-		if len(fields) == 0 {
-			continue
-		}
-		pid, err := strconv.Atoi(fields[0])
-		if err != nil || pid <= 0 {
-			continue
-		}
-		if proc, err := os.FindProcess(pid); err == nil {
-			_ = proc.Kill()
-		}
 	}
 }
 

@@ -1,17 +1,22 @@
+// @overview Verify shared resident connections, lifetime and socket ownership.
+// READING GUIDE: TestThreeSessionsShareOneResident -> sharedResidentLab -> socket tests.
+// MAIN FLOW: create isolated service -> start fake resident sessions -> assert sharing.
+// PUBLIC API: TestMain dispatches fake resident invocations and the test suite.
+// INTERNALS: sharedResidentLab, closeSharedResidentSession, labHint,
+// privateResidentTestSocket, and isFakeResidentInvocation support the test cases.
+// @exports TestMain, TestThreeSessionsShareOneResident,
+// TestStaleResidentSocketDoesNotWedgeSpawn, TestResidentCloseDoesNotKillSharedProcess,
+// TestSharedResidentExitsAfterIdleOnceClientsLeave, TestResidentRejectsPublicSocketDirectory,
+// TestResidentRejectsSymlinkedSocket, TestResidentRejectsLongSocketPath
+// @deps MCP SDK, provider service, testfixture, Go context/network/process APIs
 package mcpplug
 
 import (
-	"bufio"
 	"context"
-	"encoding/json"
-	"fmt"
-	"io"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -19,11 +24,13 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
+	"github.com/thellmwhisperer/la-roca/test/testfixture"
 )
 
+// -- 1 HELPER · Fake resident dispatch --
 func TestMain(m *testing.M) {
 	if isFakeResidentInvocation() {
-		os.Exit(runFakeResident())
+		os.Exit(testfixture.RunFakeResident())
 	}
 	os.Exit(m.Run())
 }
@@ -37,143 +44,9 @@ func isFakeResidentInvocation() bool {
 	return false
 }
 
-func runFakeResident() int {
-	listen := ""
-	idle := 2 * time.Second
-	args := os.Args[1:]
-	for i := 0; i < len(args); i++ {
-		switch args[i] {
-		case "--listen":
-			i++
-			if i < len(args) {
-				listen = args[i]
-			}
-		case "--idle":
-			i++
-			if i < len(args) {
-				if parsed, err := time.ParseDuration(args[i]); err == nil && parsed > 0 {
-					idle = parsed
-				}
-			}
-		case "--db-path", "--state-dir":
-			i++
-		}
-	}
-	if envIdle := strings.TrimSpace(os.Getenv("ROCA_VECTOR_RESIDENT_IDLE")); envIdle != "" {
-		if parsed, err := time.ParseDuration(envIdle); err == nil && parsed > 0 {
-			idle = parsed
-		}
-	}
-	if listen == "" {
-		return runFakeStdioResident()
-	}
-	return runFakeListenResident(listen, idle)
-}
+// -/ 1
 
-func runFakeStdioResident() int {
-	serveFakeResidentSession(os.Stdin, os.Stdout)
-	return 0
-}
-
-func runFakeListenResident(socket string, idle time.Duration) int {
-	if conn, err := net.DialTimeout("unix", socket, 200*time.Millisecond); err == nil {
-		_ = conn.Close()
-		return 0
-	}
-	_ = os.Remove(socket)
-	listener, err := net.Listen("unix", socket)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
-	}
-	defer listener.Close()
-	if err := os.Chmod(socket, 0o600); err != nil {
-		return 1
-	}
-	var (
-		clients int
-		mu      sync.Mutex
-		timer   *time.Timer
-		done    = make(chan struct{})
-		once    sync.Once
-	)
-	stop := func() { once.Do(func() { close(done); listener.Close() }) }
-	arm := func() {
-		if timer != nil {
-			timer.Stop()
-		}
-		timer = time.AfterFunc(idle, func() {
-			mu.Lock()
-			defer mu.Unlock()
-			if clients == 0 {
-				stop()
-			}
-		})
-	}
-	arm()
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			select {
-			case <-done:
-				return 0
-			default:
-				return 1
-			}
-		}
-		mu.Lock()
-		clients++
-		if timer != nil {
-			timer.Stop()
-			timer = nil
-		}
-		mu.Unlock()
-		go func() {
-			defer func() {
-				_ = conn.Close()
-				mu.Lock()
-				clients--
-				if clients == 0 {
-					arm()
-				}
-				mu.Unlock()
-			}()
-			serveFakeResidentSession(conn, conn)
-		}()
-	}
-}
-
-func serveFakeResidentSession(in io.Reader, out io.Writer) {
-	encoder := json.NewEncoder(out)
-	_ = encoder.Encode(map[string]any{
-		"kind": "progress", "stage": "prewarm", "message": "semantic search: preparing",
-	})
-	_ = encoder.Encode(map[string]any{
-		"kind": "result", "stage": "prewarm", "message": "semantic search: ready",
-		"extra": map[string]any{"prewarm_ms": 1},
-	})
-	scanner := bufio.NewScanner(in)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-		var request struct {
-			ID    int64  `json:"id"`
-			Query string `json:"query"`
-			K     int    `json:"k"`
-		}
-		if err := json.Unmarshal([]byte(line), &request); err != nil {
-			_ = encoder.Encode(map[string]any{"kind": "error", "stage": "query", "error": err.Error()})
-			continue
-		}
-		_ = encoder.Encode(map[string]any{
-			"kind": "result", "stage": "query", "id": request.ID,
-			"result": map[string]any{"hit": request.Query, "k": request.K},
-		})
-	}
-}
-
+// -- 2 CORE · Sharing and lifetime tests <- START HERE --
 func TestThreeSessionsShareOneResident(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shared residency is proven on unix sockets")
@@ -202,9 +75,9 @@ func TestThreeSessionsShareOneResident(t *testing.T) {
 			t.Fatalf("session %d: %v", i, err)
 		}
 	}
-	psOutput := residentPS(t, labHint(svc))
+	psOutput := testfixture.ResidentPS(t, labHint(svc))
 	t.Logf("shared resident ps:\n%s", psOutput)
-	if count := countResidentLines(psOutput); count != 1 {
+	if count := testfixture.CountResidentLines(psOutput); count != 1 {
 		t.Fatalf("resident processes = %d, want 1\n%s", count, psOutput)
 	}
 	for i, resident := range residents {
@@ -249,16 +122,7 @@ func TestResidentCloseDoesNotKillSharedProcess(t *testing.T) {
 		t.Skip("shared residency is proven on unix sockets")
 	}
 	svc := sharedResidentLab(t)
-	first, err := startResidentVector(context.Background(), svc)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := first.waitReady(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if err := first.Close(); err != nil {
-		t.Fatal(err)
-	}
+	closeSharedResidentSession(t, svc)
 	second, err := startResidentVector(context.Background(), svc)
 	if err != nil {
 		t.Fatal(err)
@@ -271,9 +135,9 @@ func TestResidentCloseDoesNotKillSharedProcess(t *testing.T) {
 	if result == nil {
 		t.Fatal("query after first session closed returned nothing")
 	}
-	psOutput := residentPS(t, labHint(svc))
+	psOutput := testfixture.ResidentPS(t, labHint(svc))
 	t.Logf("resident after first close:\n%s", psOutput)
-	if count := countResidentLines(psOutput); count != 1 {
+	if count := testfixture.CountResidentLines(psOutput); count != 1 {
 		t.Fatalf("resident processes = %d, want 1\n%s", count, psOutput)
 	}
 }
@@ -284,6 +148,26 @@ func TestSharedResidentExitsAfterIdleOnceClientsLeave(t *testing.T) {
 	}
 	svc := sharedResidentLab(t)
 	t.Setenv("ROCA_VECTOR_RESIDENT_IDLE", "200ms")
+	closeSharedResidentSession(t, svc)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		psOutput := testfixture.ResidentPS(t, labHint(svc))
+		if testfixture.CountResidentLines(psOutput) == 0 {
+			t.Logf("resident gone after idle:\n%s", psOutput)
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("resident still alive after idle\n%s", psOutput)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// -/ 2
+
+// -- 3 HELPER · Service and socket fixtures --
+func closeSharedResidentSession(t *testing.T, svc *service.Service) {
+	t.Helper()
 	first, err := startResidentVector(context.Background(), svc)
 	if err != nil {
 		t.Fatal(err)
@@ -293,18 +177,6 @@ func TestSharedResidentExitsAfterIdleOnceClientsLeave(t *testing.T) {
 	}
 	if err := first.Close(); err != nil {
 		t.Fatal(err)
-	}
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		psOutput := residentPS(t, labHint(svc))
-		if countResidentLines(psOutput) == 0 {
-			t.Logf("resident gone after idle:\n%s", psOutput)
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("resident still alive after idle\n%s", psOutput)
-		}
-		time.Sleep(50 * time.Millisecond)
 	}
 }
 
@@ -336,7 +208,7 @@ func sharedResidentLab(t *testing.T) *service.Service {
 	}
 	t.Cleanup(func() {
 		svc.Close()
-		killResidents(socket)
+		testfixture.KillResidents(socket)
 		_ = os.Remove(socket)
 		_ = os.Remove(socket + ".lock")
 	})
@@ -346,58 +218,6 @@ func sharedResidentLab(t *testing.T) *service.Service {
 func labHint(svc *service.Service) string {
 	socket, _ := residentSocketPaths(svc)
 	return socket
-}
-
-func residentPS(t *testing.T, hint string) string {
-	t.Helper()
-	output, err := exec.Command("ps", "-ax", "-o", "pid=,args=").Output()
-	if err != nil {
-		t.Fatalf("ps: %v", err)
-	}
-	var lines []string
-	for _, line := range strings.Split(string(output), "\n") {
-		if strings.Contains(line, "_resident") && strings.Contains(line, hint) {
-			lines = append(lines, strings.TrimSpace(line))
-		}
-	}
-	return strings.Join(lines, "\n")
-}
-
-func countResidentLines(psOutput string) int {
-	if strings.TrimSpace(psOutput) == "" {
-		return 0
-	}
-	count := 0
-	for _, line := range strings.Split(psOutput, "\n") {
-		if strings.TrimSpace(line) != "" {
-			count++
-		}
-	}
-	return count
-}
-
-func killResidents(hint string) {
-	output, err := exec.Command("ps", "-ax", "-o", "pid=,args=").Output()
-	if err != nil {
-		return
-	}
-	for _, line := range strings.Split(string(output), "\n") {
-		if !strings.Contains(line, "_resident") || !strings.Contains(line, hint) {
-			continue
-		}
-		fields := strings.Fields(strings.TrimSpace(line))
-		if len(fields) == 0 {
-			continue
-		}
-		pid, err := strconv.Atoi(fields[0])
-		if err != nil || pid <= 0 {
-			continue
-		}
-		proc, err := os.FindProcess(pid)
-		if err == nil {
-			_ = proc.Kill()
-		}
-	}
 }
 
 func privateResidentTestSocket(t *testing.T) string {
@@ -410,6 +230,9 @@ func privateResidentTestSocket(t *testing.T) string {
 	return filepath.Join(dir, "resident.sock")
 }
 
+// -/ 3
+
+// -- 4 CORE · Socket ownership tests --
 func TestResidentRejectsPublicSocketDirectory(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("unix socket ownership")
@@ -473,3 +296,5 @@ func TestResidentRejectsLongSocketPath(t *testing.T) {
 		t.Fatalf("long socket path error = %v", err)
 	}
 }
+
+// -/ 4
