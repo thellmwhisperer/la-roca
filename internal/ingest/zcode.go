@@ -47,9 +47,11 @@ type zCodeMessage struct {
 
 type zCodeRow = durableMessageRow[zCodeMessage]
 
-// ReadZCode projects the durable store used by ZCode Desktop 3.10.2 onto corpus
-// records. The source stays live while it is read, so every query uses the same
-// query-only foreign-database boundary as the other desktop SQLite harnesses.
+// ReadZCode projects the durable store used by ZCode 3.10.2 onto corpus
+// records. The macOS app (build 3.10.2.6414) and its embedded CLI share
+// ~/.zcode/cli/db/db.sqlite. The source stays live while it is read, so every
+// query uses the same query-only foreign-database boundary as the other
+// SQLite harnesses.
 func ReadZCode(ctx context.Context, path string) (parsers.Records, []string, error) {
 	db, err := openForeignSource(ctx, "ZCode", path, zCodeSchema)
 	if err != nil {
