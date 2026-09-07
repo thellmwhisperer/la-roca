@@ -468,10 +468,10 @@ or undeclared vector coverage on the database's existing FTS/SQL path.
 ### Session companions
 
 An optional `companion` object asks `roca mcp serve` to raise one child
-process for the lifetime of that session, the same way the server already owns
-its vector companion: stdin and stdout belong to the parent, the child dies
-when stdin closes, and there is no port, pid file, or daemon. Plugins without
-the field keep today's behavior.
+process for the lifetime of that session: stdin and stdout belong to the
+parent, the child dies when stdin closes, and there is no port, pid file, or
+daemon. Plugins without the field keep today's behavior. The vector embedding
+resident has a separate [MCP lifecycle](mcp.md#1-roca-mcp-serve-the-mcp-over-stdio).
 
 ```json
 "companion": {

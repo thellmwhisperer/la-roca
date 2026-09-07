@@ -159,8 +159,8 @@ func (env *cliEnv) uninstall(cmd *cobra.Command, in io.Reader, purge bool) error
 		kept := withoutDBKept(report.Kept, paths.DB)
 		return env.printJSON(map[string]any{
 			"purged": purge && report.Purged,
-			// With no daemon there is no process to stop: every command opens the
-			// database, works and exits.
+			// Legacy status field; this path does not stop shared vector residents.
+			// Their connection and idle lifecycle is documented in docs/mcp.md.
 			"stopped":    true,
 			"deleted":    withoutDBPaths(report.Deleted, paths.DB),
 			"kept":       kept,

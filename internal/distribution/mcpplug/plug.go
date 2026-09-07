@@ -542,7 +542,8 @@ func scrubDataDir(text, dataDir string) string {
 }
 
 // Serve runs the server over stdio in the foreground until the client closes
-// the pipe. There is no daemon: this process is the session.
+// the pipe. Closing this session must only disconnect its vector client;
+// the shared resident's lifecycle is documented in docs/mcp.md.
 func Serve(ctx context.Context, svc *service.Service, build Build) error {
 	resident, err := consentedResident(ctx, svc)
 	if err != nil {
