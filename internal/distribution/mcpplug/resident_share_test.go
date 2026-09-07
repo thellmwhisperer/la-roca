@@ -87,7 +87,9 @@ func runFakeListenResident(socket string, idle time.Duration) int {
 		return 1
 	}
 	defer listener.Close()
-	defer os.Remove(socket)
+	if err := os.Chmod(socket, 0o600); err != nil {
+		return 1
+	}
 	var (
 		clients int
 		mu      sync.Mutex
@@ -102,9 +104,8 @@ func runFakeListenResident(socket string, idle time.Duration) int {
 		}
 		timer = time.AfterFunc(idle, func() {
 			mu.Lock()
-			n := clients
-			mu.Unlock()
-			if n == 0 {
+			defer mu.Unlock()
+			if clients == 0 {
 				stop()
 			}
 		})
@@ -132,11 +133,10 @@ func runFakeListenResident(socket string, idle time.Duration) int {
 				_ = conn.Close()
 				mu.Lock()
 				clients--
-				n := clients
-				mu.Unlock()
-				if n == 0 {
+				if clients == 0 {
 					arm()
 				}
+				mu.Unlock()
 			}()
 			serveFakeResidentSession(conn, conn)
 		}()
@@ -325,7 +325,7 @@ func sharedResidentLab(t *testing.T) *service.Service {
 		t.Fatal(err)
 	}
 	t.Setenv("ROCA_VECTOR_RESIDENT_BINARY", exe)
-	socket := filepath.Join("/tmp", fmt.Sprintf("rv-%d.sock", time.Now().UnixNano()))
+	socket := privateResidentTestSocket(t)
 	t.Setenv("ROCA_VECTOR_RESIDENT_SOCKET", socket)
 	t.Setenv("ROCA_VECTOR_RESIDENT_IDLE", "2s")
 	svc, err := service.Open(service.Options{
@@ -397,5 +397,79 @@ func killResidents(hint string) {
 		if err == nil {
 			_ = proc.Kill()
 		}
+	}
+}
+
+func privateResidentTestSocket(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "rv-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return filepath.Join(dir, "resident.sock")
+}
+
+func TestResidentRejectsPublicSocketDirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix socket ownership")
+	}
+	socket := privateResidentTestSocket(t)
+	if err := os.Chmod(filepath.Dir(socket), 0o777); err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	conn, err := dialOrSpawnResident(context.Background(), nil, "unused", socket, socket+".lock")
+	if conn != nil {
+		conn.Close()
+	}
+	if err == nil {
+		t.Fatal("connected to a socket in a public directory")
+	}
+}
+
+func TestResidentRejectsSymlinkedSocket(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix socket ownership")
+	}
+	socket := privateResidentTestSocket(t)
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	if err := os.Chmod(socket, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	alias := socket + ".alias"
+	if err := os.Symlink(socket, alias); err != nil {
+		t.Fatal(err)
+	}
+	conn, err := dialResidentSocket(alias)
+	if conn != nil {
+		conn.Close()
+	}
+	if err == nil {
+		t.Fatal("connected through a symlinked endpoint")
+	}
+}
+
+func TestResidentRejectsLongSocketPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix socket path limits")
+	}
+	socket := filepath.Join(t.TempDir(), strings.Repeat("x", 100), "resident.sock")
+	t.Setenv("ROCA_VECTOR_RESIDENT_SOCKET", socket)
+	selected, lock := residentSocketPaths(nil)
+	conn, err := dialOrSpawnResident(context.Background(), nil, "unused", selected, lock)
+	if conn != nil {
+		conn.Close()
+	}
+	if err == nil || !strings.Contains(err.Error(), "too long") {
+		t.Fatalf("long socket path error = %v", err)
 	}
 }

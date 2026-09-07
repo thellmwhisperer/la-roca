@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -23,10 +22,7 @@ func runSharedResident(ctx context.Context, env *environment, socket string, idl
 		}
 		return err
 	}
-	defer func() {
-		_ = listener.Close()
-		_ = os.Remove(socket)
-	}()
+	defer listener.Close()
 	session, err := newResidentSession(ctx, env)
 	if err != nil {
 		return err
@@ -58,7 +54,6 @@ func listenResidentSocket(path string) (net.Listener, error) {
 	if runtime.GOOS != "windows" {
 		if err := os.Chmod(path, 0o600); err != nil {
 			_ = listener.Close()
-			_ = os.Remove(path)
 			return nil, err
 		}
 	}
@@ -66,32 +61,54 @@ func listenResidentSocket(path string) (net.Listener, error) {
 }
 
 func serveListeningResident(ctx context.Context, listener net.Listener, idle time.Duration, session residentSession) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	var (
-		clients atomic.Int64
-		gen     atomic.Uint64
-		once    sync.Once
-		done    = make(chan struct{})
+		mu       sync.Mutex
+		clients  = make(map[net.Conn]struct{})
+		gen      uint64
+		stopping bool
+		done     = make(chan struct{})
 	)
-	stop := func() {
-		once.Do(func() {
-			close(done)
-			_ = listener.Close()
-		})
+	stopLocked := func() {
+		if stopping {
+			return
+		}
+		stopping = true
+		close(done)
+		cancel()
+		_ = listener.Close()
+		for conn := range clients {
+			_ = conn.Close()
+		}
 	}
-	arm := func() {
-		id := gen.Add(1)
+	stop := func() {
+		mu.Lock()
+		defer mu.Unlock()
+		stopLocked()
+	}
+	armLocked := func() {
+		gen++
+		id := gen
 		time.AfterFunc(idle, func() {
-			if gen.Load() == id && clients.Load() == 0 {
-				stop()
+			mu.Lock()
+			defer mu.Unlock()
+			if gen == id && len(clients) == 0 {
+				stopLocked()
 			}
 		})
 	}
 	defer stop()
 	go func() {
-		<-ctx.Done()
-		stop()
+		select {
+		case <-ctx.Done():
+			stop()
+		case <-done:
+		}
 	}()
-	arm()
+	mu.Lock()
+	armLocked()
+	mu.Unlock()
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -105,16 +122,28 @@ func serveListeningResident(ctx context.Context, listener net.Listener, idle tim
 				return err
 			}
 		}
-		clients.Add(1)
-		gen.Add(1)
+		mu.Lock()
+		if stopping {
+			mu.Unlock()
+			_ = conn.Close()
+			return nil
+		}
+		clients[conn] = struct{}{}
+		gen++
+		mu.Unlock()
 		go func() {
 			defer func() {
-				if clients.Add(-1) == 0 {
-					arm()
-				}
 				_ = conn.Close()
+				mu.Lock()
+				defer mu.Unlock()
+				delete(clients, conn)
+				if len(clients) == 0 && !stopping {
+					armLocked()
+				}
 			}()
-			_ = serveResidentSession(ctx, conn, session)
+			if err := serveResidentSession(ctx, conn, session); errors.Is(err, errResidentUnusable) {
+				stop()
+			}
 		}()
 	}
 }

@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -15,6 +17,8 @@ import (
 )
 
 const defaultResidentIdle = 5 * time.Minute
+
+var errResidentUnusable = errors.New("semantic search resident is unusable")
 
 type residentRequest struct {
 	ID        int64  `json:"id"`
@@ -76,15 +80,12 @@ func newResidentSession(ctx context.Context, env *environment) (residentSession,
 		return residentSession{}, err
 	}
 	embedder, events := env.queryEmbedder()
+	return residentSessionWithEmbedder(ctx, env, embedder, events)
+}
+
+func residentSessionWithEmbedder(ctx context.Context, env *environment, embedder vector.Embedder, events engine.Sink) (residentSession, error) {
 	started := time.Now()
-	readyErr := prewarmEmbedder(ctx, embedder)
-	if readyErr != nil {
-		if terminalErr := residentTerminalError(embedder); terminalErr != nil {
-			return residentSession{}, terminalErr
-		}
-	}
-	federation, err := env.federationWithEmbedder("", embedder, events)
-	if err != nil && readyErr == nil {
+	if err := prewarmEmbedder(ctx, embedder); err != nil {
 		return residentSession{}, err
 	}
 	extra := map[string]any{"prewarm_ms": time.Since(started).Milliseconds()}
@@ -92,17 +93,16 @@ func newResidentSession(ctx context.Context, env *environment) (residentSession,
 		extra["accelerated"] = reporter.Accelerated()
 	}
 	return residentSession{
-		waitReady: func(context.Context) error { return readyErr },
+		waitReady: func(context.Context) error { return nil },
 		extra:     extra,
 		query: func(ctx context.Context, request residentRequest) (any, error) {
-			if readyErr != nil {
-				return nil, readyErr
+			federation, err := env.federationWithEmbedder("", embedder, events)
+			if err != nil {
+				return nil, err
 			}
 			result, queryErr := federation.Query(ctx, request.Query, request.K, request.Databases)
 			if terminalErr := residentTerminalError(embedder); terminalErr != nil {
-				if queryErr == nil {
-					queryErr = terminalErr
-				}
+				return result, fmt.Errorf("%w: %w", errResidentUnusable, terminalErr)
 			}
 			return result, queryErr
 		},
@@ -118,6 +118,7 @@ func serveResidentSession(ctx context.Context, rw io.ReadWriter, session residen
 		if encodeErr := encoder.Encode(engine.Error("prewarm", productError(err))); encodeErr != nil {
 			return encodeErr
 		}
+		return fmt.Errorf("%w: %w", errResidentUnusable, err)
 	} else {
 		event := engine.Result("prewarm", "semantic search: ready")
 		event.Extra = session.extra
@@ -151,8 +152,12 @@ func serveResidentSession(ctx context.Context, rw io.ReadWriter, session residen
 			response["error"] = productError(queryErr)
 			response["message"] = productError(queryErr)
 		}
-		if err := encoder.Encode(response); err != nil {
-			return err
+		encodeErr := encoder.Encode(response)
+		if errors.Is(queryErr, errResidentUnusable) {
+			return queryErr
+		}
+		if encodeErr != nil {
+			return encodeErr
 		}
 	}
 	return scanner.Err()

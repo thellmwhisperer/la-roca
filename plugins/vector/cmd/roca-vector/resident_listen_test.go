@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -156,9 +155,12 @@ func boundResident(t *testing.T) net.Listener {
 
 func shortSocket(t *testing.T) string {
 	t.Helper()
-	path := filepath.Join("/tmp", "rv-"+strings.ReplaceAll(t.Name(), "/", "-")+".sock")
-	t.Cleanup(func() { os.Remove(path) })
-	return path
+	dir, err := os.MkdirTemp("/tmp", "rv-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return filepath.Join(dir, "resident.sock")
 }
 
 func immediateResidentSession() residentSession {
@@ -206,4 +208,72 @@ func awaitReady(t *testing.T, conn net.Conn) {
 		t.Fatal(err)
 	}
 	t.Fatal("resident never became ready")
+}
+
+func TestListeningResidentRetiresAfterTerminalQueryFailure(t *testing.T) {
+	listener := boundResident(t)
+	session := immediateResidentSession()
+	session.query = func(context.Context, residentRequest) (any, error) {
+		return nil, errResidentUnusable
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- serveListeningResident(context.Background(), listener, time.Hour, session)
+	}()
+	peer := dialResident(t, listener.Addr().String())
+	defer peer.Close()
+	awaitReady(t, peer)
+	conn := dialResident(t, listener.Addr().String())
+	defer conn.Close()
+	decoder := json.NewDecoder(conn)
+	var event map[string]any
+	for i := 0; i < 2; i++ {
+		if err := decoder.Decode(&event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := json.NewEncoder(conn).Encode(residentRequest{ID: 1, Query: "harbor"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := decoder.Decode(&event); err != nil || event["kind"] != "error" {
+		t.Fatalf("terminal response = %v, %v", event, err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("unusable resident stayed alive with clients attached")
+	}
+	_ = peer.SetReadDeadline(time.Now().Add(time.Second))
+	if _, err := peer.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
+		t.Fatalf("peer was not disconnected: %v", err)
+	}
+	replacement, err := listenResidentSocket(listener.Addr().String())
+	if err != nil {
+		t.Fatalf("replacement resident could not start: %v", err)
+	}
+	defer replacement.Close()
+}
+
+func TestListeningResidentRetiresAfterPrewarmFailure(t *testing.T) {
+	listener := boundResident(t)
+	session := immediateResidentSession()
+	session.waitReady = func(context.Context) error { return errors.New("model absent") }
+	done := make(chan error, 1)
+	go func() {
+		done <- serveListeningResident(context.Background(), listener, time.Hour, session)
+	}()
+	conn := dialResident(t, listener.Addr().String())
+	defer conn.Close()
+	awaitReady(t, conn)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("prewarm failure kept the resident alive")
+	}
 }

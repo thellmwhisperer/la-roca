@@ -58,7 +58,9 @@ func listenAndServe(socket string, idle time.Duration) int {
 		return 1
 	}
 	defer listener.Close()
-	defer os.Remove(socket)
+	if err := os.Chmod(socket, 0o600); err != nil {
+		return 1
+	}
 	var (
 		clients int
 		mu      sync.Mutex
@@ -73,9 +75,8 @@ func listenAndServe(socket string, idle time.Duration) int {
 		}
 		timer = time.AfterFunc(idle, func() {
 			mu.Lock()
-			n := clients
-			mu.Unlock()
-			if n == 0 {
+			defer mu.Unlock()
+			if clients == 0 {
 				stop()
 			}
 		})
@@ -103,11 +104,10 @@ func listenAndServe(socket string, idle time.Duration) int {
 				_ = conn.Close()
 				mu.Lock()
 				clients--
-				n := clients
-				mu.Unlock()
-				if n == 0 {
+				if clients == 0 {
 					arm()
 				}
+				mu.Unlock()
 			}()
 			serve(conn, conn)
 		}()

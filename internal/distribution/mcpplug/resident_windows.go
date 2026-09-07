@@ -18,3 +18,7 @@ func detachedResidentAttr() *syscall.SysProcAttr {
 func dialUnixTimeout(socket string, timeout time.Duration) (io.ReadWriteCloser, error) {
 	return net.DialTimeout("unix", socket, timeout)
 }
+
+func validateResidentDirectory(path string) error {
+	return nil
+}

@@ -93,7 +93,12 @@ func threeServeResidentPS(t *testing.T, binary, fake string, idle time.Duration)
 	if err := enableVectorFeature(m.home); err != nil {
 		t.Fatal(err)
 	}
-	socket := filepath.Join("/tmp", fmt.Sprintf("rv-acc-%d.sock", time.Now().UnixNano()))
+	socketDir, err := os.MkdirTemp("/tmp", "rv-acc-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
+	socket := filepath.Join(socketDir, "resident.sock")
 	t.Cleanup(func() {
 		killResidents(socket)
 		_ = os.Remove(socket)
@@ -132,23 +137,8 @@ func publishedRoca(t *testing.T) string {
 	if path := strings.TrimSpace(os.Getenv("ROCA_PUBLISHED_BIN")); path != "" {
 		return path
 	}
-	path, err := exec.LookPath("roca")
-	if err != nil {
-		t.Skip("no published roca on PATH; set ROCA_PUBLISHED_BIN")
-	}
-	branch, err := rocaBinary()
-	if err == nil {
-		if resolved, err := filepath.EvalSymlinks(path); err == nil {
-			path = resolved
-		}
-		if resolved, err := filepath.EvalSymlinks(branch); err == nil {
-			branch = resolved
-		}
-		if path == branch {
-			t.Skip("PATH roca is this branch binary; set ROCA_PUBLISHED_BIN")
-		}
-	}
-	return path
+	t.Skip("set ROCA_PUBLISHED_BIN to an explicit pre-fix binary for the historical comparison")
+	return ""
 }
 
 func buildFakeVectorResident(t *testing.T) string {

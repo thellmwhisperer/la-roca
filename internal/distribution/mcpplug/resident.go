@@ -3,8 +3,6 @@ package mcpplug
 import (
 	"bufio"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -92,28 +90,31 @@ func residentSocketPaths(svc *service.Service) (socket, lock string) {
 		home, _ := os.UserHomeDir()
 		dir = filepath.Join(home, ".roca")
 	}
-	lock = filepath.Join(dir, "vector-resident.lock")
+	dir = filepath.Join(dir, "vector-resident")
+	lock = filepath.Join(dir, "resident.lock")
 	if override := strings.TrimSpace(os.Getenv("ROCA_VECTOR_RESIDENT_SOCKET")); override != "" {
-		return clampUnixSocketPath(override), override + ".lock"
+		return override, override + ".lock"
 	}
-	return clampUnixSocketPath(filepath.Join(dir, "vector-resident.sock")), lock
-}
-
-func clampUnixSocketPath(path string) string {
-	if runtime.GOOS == "windows" || len(path) < 100 {
-		return path
-	}
-	sum := sha256.Sum256([]byte(path))
-	return filepath.Join("/tmp", "roca-vr-"+hex.EncodeToString(sum[:8])+".sock")
+	return filepath.Join(dir, "resident.sock"), lock
 }
 
 func dialOrSpawnResident(ctx context.Context, svc *service.Service, binary, socket, lockPath string) (io.ReadWriteCloser, error) {
+	if runtime.GOOS != "windows" && len(socket) >= 100 {
+		return nil, fmt.Errorf("semantic search resident socket path is too long: %s", socket)
+	}
+	if err := os.MkdirAll(filepath.Dir(socket), 0o700); err != nil {
+		return nil, fmt.Errorf("create semantic search resident directory: %w", err)
+	}
+	if err := validateResidentDirectory(filepath.Dir(socket)); err != nil {
+		return nil, err
+	}
+	if err := validateResidentDirectory(filepath.Dir(lockPath)); err != nil {
+		return nil, err
+	}
 	if conn, err := dialResidentSocket(socket); err == nil {
 		return conn, nil
 	}
-	if err := os.MkdirAll(filepath.Dir(lockPath), 0o700); err != nil {
-		return nil, fmt.Errorf("create semantic search resident directory: %w", err)
-	}
+
 	release, err := securefile.Lock(lockPath)
 	if err != nil {
 		return nil, fmt.Errorf("lock semantic search resident: %w", err)
