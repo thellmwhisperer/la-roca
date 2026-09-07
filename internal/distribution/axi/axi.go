@@ -10,9 +10,9 @@ and the two surfaces compose it for their result types instead of each keeping
 a second copy (the duplication gate ships at zero, and a second renderer would
 be the first clone).
 
-RowOutput is the renderer: it turns a set of uniform rows into the tabular form
-every AXI tool emits, generic over columns so a count, a grouping and a search
-all paint honestly. RenderHelp and QueryHelp carry the deterministic next steps.
+RowOutput supplies the fallback field budget; RowOutputWithBudget carries a
+caller's budget into the same tabular renderer. RenderHelp and QueryHelp carry
+the deterministic next steps.
 The composers in compose.go build the full text for a query, an exec, a health
 report and a store, and that is what the MCP plug puts in the readable half of a
 tool result.
@@ -30,8 +30,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
-// FieldWidth preserves the default terminal budget for every text cell. Paths
-// that accept --max-chars pass their caller budget through RowOutputWithBudget.
+// FieldWidth is the fallback width for cells without a caller-controlled budget.
 const FieldWidth = 160
 
 // RowOutput paints uniform rows as the tabular form emitted by AXI tools. The
@@ -278,8 +277,8 @@ func singleLine(text string) string {
 
 // excerpt clips a human field to the width of a cell, keeping its leading
 // subject as well as its longest visible search term under the same policy the
-// stored row is clipped with. It never changes the row itself, so the
-// structured envelope continues to carry the complete text.
+// stored row is clipped with. It never changes the row itself; the structured
+// envelope retains the service's already-budgeted text.
 func excerpt(text, terms string, width int) string {
 	text = singleLine(text)
 	position, matched := matchPosition(text, terms)
