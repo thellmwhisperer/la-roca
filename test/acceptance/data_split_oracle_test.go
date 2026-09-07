@@ -269,7 +269,7 @@ func fileSize(info os.FileInfo) any {
 	return info.Size()
 }
 
-const oracleFTSSQL = "SELECT 'memory' AS source, m.id, m.layer, m.content AS text, f.rank FROM (SELECT rowid AS fila, bm25(memories_fts) AS rank FROM memories_fts WHERE memories_fts MATCH '\"quartz\"') AS f JOIN memories AS m ON m.id = f.fila ORDER BY f.rank, m.id LIMIT 10"
+const oracleFTSSQL = "SELECT 'memory' AS source, m.id, m.layer, m.content AS text, f.rank FROM (SELECT rowid AS fila, bm25(memories_fts) AS rank FROM main.memories_fts WHERE memories_fts MATCH '\"quartz\"') AS f JOIN main.memories AS m ON m.id = f.fila ORDER BY f.rank, m.id LIMIT 10"
 
 const (
 	oracleRefusedCLIWrite = "Synthetic refused write."
@@ -277,7 +277,7 @@ const (
 )
 
 func oracleCountSQL(content string) string {
-	return "SELECT COUNT(*) AS copies FROM memories WHERE content = '" +
+	return "SELECT COUNT(*) AS copies FROM main.memories WHERE content = '" +
 		strings.ReplaceAll(content, "'", "''") + "'"
 }
 
