@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/axi"
@@ -12,6 +15,8 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
+
+const claudeHandoffHeadChars = 3000
 
 func pillCommand(env *cliEnv) *cobra.Command {
 	var project string
@@ -98,15 +103,23 @@ func handoffCommand(env *cliEnv) *cobra.Command {
 
 func handoffLatestCommand(env *cliEnv) *cobra.Command {
 	var project string
+	var limit int
+	var allProjects bool
+	var since string
 	cmd := &cobra.Command{
 		Use:   "latest",
 		Short: "Load active handoffs the project has not superseded",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runLatestHandoffs(cmd.Context(), env, project)
+			return runLatestHandoffs(cmd.Context(), env, latestHandoffOptions{
+				project: project, limit: limit, allProjects: allProjects, since: since,
+			})
 		},
 	}
 	cmd.Flags().StringVar(&project, "project", "", "project scope (default: basename of the working directory)")
+	cmd.Flags().IntVar(&limit, "limit", 0, "maximum handoffs to print (default: unlimited)")
+	cmd.Flags().BoolVar(&allProjects, "all-projects", false, "print the newest handoff head for every project")
+	cmd.Flags().StringVar(&since, "since", "", "only include --all-projects handoffs newer than this age or timestamp, e.g. 30d")
 	return cmd
 }
 
@@ -114,8 +127,36 @@ func runPillList(ctx context.Context, env *cliEnv, project string) error {
 	return runSessionContext(ctx, env, project, (*service.Service).ListPills, axi.Pills)
 }
 
-func runLatestHandoffs(ctx context.Context, env *cliEnv, project string) error {
-	return runSessionContext(ctx, env, project, (*service.Service).LatestHandoffs, axi.Handoffs)
+type latestHandoffOptions struct {
+	project     string
+	limit       int
+	allProjects bool
+	since       string
+	headChars   int
+}
+
+func runLatestHandoffs(ctx context.Context, env *cliEnv, opts latestHandoffOptions) error {
+	if opts.limit < 0 {
+		return fmt.Errorf("--limit must be zero or greater")
+	}
+	if opts.allProjects {
+		return runLatestHandoffsAllProjects(ctx, env, opts)
+	}
+	return runSessionContext(ctx, env, opts.project,
+		func(svc *service.Service, ctx context.Context, project string) (service.HandoffList, error) {
+			list, err := svc.LatestHandoffs(ctx, project)
+			if err != nil {
+				return service.HandoffList{}, err
+			}
+			list.Handoffs = limitSlice(list.Handoffs, opts.limit)
+			return list, nil
+		},
+		func(list service.HandoffList) string {
+			if opts.headChars > 0 {
+				return axi.HandoffHeads(list, opts.headChars)
+			}
+			return axi.Handoffs(list)
+		})
 }
 
 func runSessionContext[T any](ctx context.Context, env *cliEnv, project string,
@@ -138,6 +179,69 @@ func runSessionContext[T any](ctx context.Context, env *cliEnv, project string,
 	}
 	env.print("%s", render(result))
 	return nil
+}
+
+func runLatestHandoffsAllProjects(ctx context.Context, env *cliEnv, opts latestHandoffOptions) error {
+	if opts.project != "" {
+		return fmt.Errorf("--project cannot be combined with --all-projects")
+	}
+	since, err := parseSince(opts.since)
+	if err != nil {
+		return err
+	}
+	headChars := opts.headChars
+	if headChars == 0 {
+		headChars = claudeHandoffHeadChars
+	}
+	svc, _, err := env.openSessionContextService()
+	if err != nil {
+		return err
+	}
+	defer svc.Close()
+	result, err := svc.LatestHandoffsByProject(ctx, since, headChars)
+	if err != nil {
+		return err
+	}
+	result.Rows = limitSlice(result.Rows, opts.limit)
+	if env.json {
+		return env.printJSON(result)
+	}
+	env.print("%s", axi.HandoffLab(result))
+	return nil
+}
+
+func limitSlice[T any](items []T, limit int) []T {
+	if limit <= 0 || len(items) <= limit {
+		return items
+	}
+	return items[:limit]
+}
+
+func parseSince(value string) (time.Time, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, nil
+	}
+	if strings.HasSuffix(value, "d") {
+		days, err := strconv.Atoi(strings.TrimSuffix(value, "d"))
+		if err != nil || days < 0 {
+			return time.Time{}, fmt.Errorf("--since must be a duration like 30d or an RFC3339 timestamp")
+		}
+		return time.Now().UTC().Add(-time.Duration(days) * 24 * time.Hour), nil
+	}
+	if duration, err := time.ParseDuration(value); err == nil {
+		if duration < 0 {
+			return time.Time{}, fmt.Errorf("--since must not be negative")
+		}
+		return time.Now().UTC().Add(-duration), nil
+	}
+	if parsed, err := time.Parse(time.RFC3339, value); err == nil {
+		return parsed.UTC(), nil
+	}
+	if parsed, err := time.ParseInLocation("2006-01-02", value, time.UTC); err == nil {
+		return parsed, nil
+	}
+	return time.Time{}, fmt.Errorf("--since must be a duration like 30d or an RFC3339 timestamp")
 }
 
 func (env *cliEnv) openSessionContextService() (*service.Service, config.Paths, error) {

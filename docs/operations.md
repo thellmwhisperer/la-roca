@@ -42,12 +42,14 @@ shell that does not read an interactive `PATH`. Reinstalling repoints an entry
 whose binary moved instead of adding a second one.
 
 `roca hooks install claude --pills` and `--handoff` are opt-in SessionStart
-entries that run `roca pill` and `roca handoff latest`. A flagged install edits
-only the requested SessionStart entries; the signing hook remains a separate,
-bare `hooks install claude` operation. Init and update install no SessionStart
-entries. Each flag has its own uninstall marker: `roca hooks uninstall claude
---pills` and `--handoff` withdraw those entries and leave the signing hook in
-place. The implementation is owned by
+entries that run `roca pill` and the capped handoff hook runner. The handoff
+hook loads only the newest handoff and caps its content head so SessionStart
+does not paste every unsuperseded handoff into the agent prompt. A flagged
+install edits only the requested SessionStart entries; the signing hook remains
+a separate, bare `hooks install claude` operation. Init and update install no
+SessionStart entries. Each flag has its own uninstall marker:
+`roca hooks uninstall claude --pills` and `--handoff` withdraw those entries and
+leave the signing hook in place. The implementation is owned by
 [`internal/distribution/cli/hooks_session.go`](../internal/distribution/cli/hooks_session.go).
 
 That exact command hook inside `PreToolUse` is the artifact's SYSTEM fragment;

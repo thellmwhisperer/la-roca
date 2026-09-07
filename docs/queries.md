@@ -191,15 +191,21 @@ row IDs without loading them. `roca pill show <slug>` returns the selected pill.
 Default AXI/TOON output includes complete content, `--json` returns the script
 envelope, and there is no budget flag.
 
-`roca handoff latest [--project <project>]` loads every active handoff that no
-other memory supersedes. It chooses project handoffs after that filtering and
-falls back to unsuperseded global handoffs only when no project handoff remains;
-it never treats newest-by-clock as current. The CLI implementation is owned by
+`roca handoff latest [--project <project>] [--limit N]` loads active handoffs
+that no other memory supersedes. With no limit it keeps the historical behavior:
+every current handoff is printed with complete content. It chooses project
+handoffs after that filtering and falls back to unsuperseded global handoffs
+only when no project handoff remains; it never treats newest-by-clock as current.
+`roca handoff latest --all-projects [--since 30d]` prints the newest current
+handoff head for each project as `lab[n]{project,last_handoff,head}`. The CLI
+implementation is owned by
 [`internal/distribution/cli/session.go`](../internal/distribution/cli/session.go).
 
 ```sh
 roca pill --project '<project>'
 roca handoff latest --project '<project>'
+roca handoff latest --project '<project>' --limit 1
+roca handoff latest --all-projects --since 30d
 ```
 
 A handoff is written only on explicit operator instruction. The

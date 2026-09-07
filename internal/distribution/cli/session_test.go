@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -140,6 +141,73 @@ func TestHandoffLatestSkipsSupersededAndKeepsUnsuperseded(t *testing.T) {
 	}
 }
 
+func TestHandoffLatestLimitKeepsBareCommandCompatible(t *testing.T) {
+	home := sessionHome(t)
+	insertOpsMemory(t, home, opsMemory{
+		layer: "handoff", project: "demo", createdAt: "2026-08-01 00:00:00",
+		content: "older session close",
+	})
+	insertOpsMemory(t, home, opsMemory{
+		layer: "handoff", project: "demo", createdAt: "2026-08-02 00:00:00",
+		content: "newer session close",
+	})
+
+	out := runRoot(t, contractBuild(), "handoff", "latest", "--project", "demo")
+	if !strings.Contains(out, "older session close") || !strings.Contains(out, "newer session close") {
+		t.Fatalf("bare command no longer returns all active handoffs:\n%s", out)
+	}
+	limited := runRoot(t, contractBuild(), "handoff", "latest", "--project", "demo", "--limit", "1")
+	if strings.Contains(limited, "older session close") || !strings.Contains(limited, "newer session close") {
+		t.Fatalf("--limit 1 did not keep only the newest handoff:\n%s", limited)
+	}
+}
+
+func TestHandoffLatestAllProjectsPrintsOneCappedHeadPerProject(t *testing.T) {
+	home := sessionHome(t)
+	oldAlpha := insertOpsMemory(t, home, opsMemory{
+		layer: "handoff", project: "alpha", createdAt: "2026-08-01 00:00:00",
+		content: "obsolete alpha",
+	})
+	insertOpsMemory(t, home, opsMemory{
+		layer: "handoff", project: "alpha", createdAt: "2026-08-03 00:00:00",
+		content: strings.Repeat("alpha", 800), supersedes: oldAlpha,
+	})
+	insertOpsMemory(t, home, opsMemory{
+		layer: "handoff", project: "beta", createdAt: "2026-08-04 00:00:00",
+		content: "newer beta",
+	})
+	insertOpsMemory(t, home, opsMemory{
+		layer: "handoff", project: "gamma", createdAt: "2026-07-01 00:00:00",
+		content: "too old",
+	})
+
+	out := runRoot(t, contractBuild(), "handoff", "latest", "--all-projects", "--since", "2026-08-02T00:00:00Z")
+	if !strings.Contains(out, "lab[2]{project,last_handoff,head}:") {
+		t.Fatalf("all-projects did not use the lab contract:\n%s", out)
+	}
+	if !strings.Contains(out, "beta,\"2026-08-04 00:00:00\",newer beta") {
+		t.Fatalf("newest beta row missing:\n%s", out)
+	}
+	if !strings.Contains(out, "alpha,\"2026-08-03 00:00:00\",") || strings.Contains(out, strings.Repeat("alpha", 800)) {
+		t.Fatalf("alpha row missing or not capped:\n%s", out)
+	}
+	if strings.Contains(out, "obsolete alpha") || strings.Contains(out, "gamma") {
+		t.Fatalf("all-projects included superseded or out-of-window rows:\n%s", out)
+	}
+}
+
+func TestParseSinceAcceptsDayDurations(t *testing.T) {
+	before := time.Now().UTC().Add(-30 * 24 * time.Hour)
+	got, err := parseSince("30d")
+	after := time.Now().UTC().Add(-30 * 24 * time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Before(before.Add(-time.Second)) || got.After(after.Add(time.Second)) {
+		t.Fatalf("30d parsed to %s, want about 30 days ago", got)
+	}
+}
+
 func TestHandoffLatestFallsBackToGlobal(t *testing.T) {
 	home := sessionHome(t)
 	insertOpsMemory(t, home, opsMemory{
@@ -210,14 +278,25 @@ func TestClaudeSessionHookRunnersLoadSessionContext(t *testing.T) {
 	})
 	insertOpsMemory(t, home, opsMemory{
 		layer: "handoff", project: project, createdAt: "2026-08-01 00:00:00",
-		content: "hook handoff",
+		content: "older hook handoff",
+	})
+	insertOpsMemory(t, home, opsMemory{
+		layer: "handoff", project: project, createdAt: "2026-08-02 00:00:00",
+		content: "hook handoff " + strings.Repeat("x", 5000),
 	})
 
 	if out := runRoot(t, contractBuild(), "hooks", "run", "claude-pills"); !strings.Contains(out, "hook pill") {
 		t.Fatalf("pills hook did not execute the pill loader:\n%s", out)
 	}
-	if out := runRoot(t, contractBuild(), "hooks", "run", "claude-handoff"); !strings.Contains(out, "hook handoff") {
+	out := runRoot(t, contractBuild(), "hooks", "run", "claude-handoff")
+	if !strings.Contains(out, "hook handoff") {
 		t.Fatalf("handoff hook did not execute the handoff loader:\n%s", out)
+	}
+	if strings.Contains(out, "older hook handoff") {
+		t.Fatalf("hook did not limit to the newest handoff:\n%s", out)
+	}
+	if len(out) >= 4000 || strings.Contains(out, strings.Repeat("x", 5000)) {
+		t.Fatalf("hook output was not capped: len=%d\n%s", len(out), out)
 	}
 }
 
