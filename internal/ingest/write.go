@@ -1165,6 +1165,13 @@ func (w *writer) refreshSession(ctx context.Context, session parsers.Session, cu
 		nullIfEmpty(agent), surface, project, nullIfEmpty(session.StartedAt),
 		nullIfEmpty(session.EndedAt), nullInt(session.DurationMinutes),
 		nullIfEmpty(session.Title), nullIfEmpty(session.Title), session.ID)
+	if session.HistoryFallback && isSessionExactPayloadConflict(err) {
+		// A fill-only refresh can prove that another session row already owns
+		// the fully observed envelope. The exact-payload guard is the arbiter:
+		// leave this envelope partial and continue reconciling the source's
+		// exchanges instead of aborting the whole file.
+		return nil
+	}
 	if err != nil {
 		return fmt.Errorf("refresh the session %s: %w", session.ID, err)
 	}
