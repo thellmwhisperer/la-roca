@@ -43,16 +43,6 @@ verdict before using the literal rescue. `retry_type` distinguishes
 `gate_rejection` from `execution_error`; the JSON envelope retains both attempts
 and attributes the retry latency separately.
 
-Because it is a real database, not a search box:
-
-```sh
-roca exec "SELECT source_agent, COUNT(*) AS sessions
-           FROM sessions
-           WHERE started_at LIKE '2026-07%'
-           GROUP BY source_agent
-           ORDER BY sessions DESC"
-```
-
 `roca playground` recovers with SQL plus a local FTS5 index with diacritic
 folding; a plain `LIKE` fallback works before the index exists. Its configured
 model supplies semantic interpretation at question time, while the checked SQL
@@ -79,6 +69,28 @@ roca exec "SELECT content FROM plugin_roca_ops.memories WHERE layer='handoff' LI
 ```
 
 Use `--max-chars 100` for a shorter excerpt or a larger value to expand it.
+
+## Table names in authored SQL
+
+`roca exec` refuses an unqualified table reference when an attached database
+exposes that name, even if only one attached database has it. The error lists
+the available qualified candidates; for example, `FROM memories` can report
+`unqualified table "memories"; candidates: plugin_roca_ops.memories, plugin_roca_corpus.memories`.
+Choose the intended database and use its qualified name. This prevents a bare
+name from silently reading an empty core table. Candidates come from the
+attached schemas, so the list depends on the installed databases.
+
+Qualified references keep their existing behavior, including explicit `main`
+references to core. A core-only installation without attached schemas keeps
+its existing name resolution. CTE names and expressions such as `SELECT 1`
+do not require a database qualifier. This check applies to authored SQL through
+`roca exec`, MCP `roca_exec`, and remote exec/cross calls; model-backed queries
+and their keyword rescue retain their existing core-name compatibility.
+The regression contract lives in
+[`unqualified_test.go`](../internal/provider/query/sqlgate/unqualified_test.go).
+
+For a common authored query, see the README's
+[exact SQL example](../README.md#drop-to-exact-sql-whenever-you-want).
 
 ## Read-only queries across machines
 
@@ -109,12 +121,11 @@ vector index keeps the ordinary command-failure exit 1 and message.
 Cross-machine comparison scatters one inner `SELECT` to the local installation
 and every named remote, loads those JSON result sets into a temporary SQLite
 database as `r_local`, `r_<name>` and so on, adds an `origin` column, and runs a
-generated `UNION ALL` outer `SELECT` there:
+generated `UNION ALL` outer `SELECT` there.
 
-```sh
-roca remote cross "SELECT source_agent, COUNT(*) AS sessions FROM sessions GROUP BY source_agent" \
-  --on studio,laptop
-```
+See the README's [cross-machine example](../README.md#compare-rocks-across-machines).
+Pass comma-separated names to `--on`, such as `--on studio,laptop`, to compare
+several remotes in one call.
 
 The temporary database is exactly `:memory:`. Cross disables reconciliation
 and call-history writes for the run and opens the local stores read-only, so it
