@@ -2,10 +2,10 @@
   "schema": "la-roca.data-split-oracle-manifest/v1",
   "fixture": {
     "path": "fixture.json",
-    "sha256": "4f4a3042b532668881156d5515b03c1fdb1c5f8b95dcb5b7e2bc685c9ea0560c"
+    "sha256": "5ada8f56668a6e86d4930ead66d9d281c4bfeb5bde8d8b3849078c7f25316073"
   },
   "golden": {
     "path": "golden.json",
-    "sha256": "117ca700f41e703beaa120bd5ac14533dd7b8e958eceb8fba432cd23cf94fd0e"
+    "sha256": "3e7409f5c91046561f06c7d6fe94b378cdff4408a9df8bc709c9ceef74c61e41"
   }
 }

@@ -107,20 +107,20 @@ JSONL
   assert_json "$work/ingest.json" '"errors": 0' "$version ingest"
 
   run_roca "$home" exec \
-    "SELECT (SELECT COUNT(*) FROM sessions WHERE session_id = '11111111-2222-3333-4444-555555555555') AS core_sessions, (SELECT COUNT(*) FROM plugin_roca_corpus.sessions WHERE session_id = '11111111-2222-3333-4444-555555555555') AS corpus_sessions" \
+    "SELECT (SELECT COUNT(*) FROM main.sessions WHERE session_id = '11111111-2222-3333-4444-555555555555') AS core_sessions, (SELECT COUNT(*) FROM plugin_roca_corpus.sessions WHERE session_id = '11111111-2222-3333-4444-555555555555') AS corpus_sessions" \
     > "$work/old-session.json"
   assert_json "$work/old-session.json" "\"core_sessions\": $frozen_in_core" "$version historical session in core"
   assert_json "$work/old-session.json" "\"corpus_sessions\": $frozen_in_corpus" "$version historical session in corpus"
 
   run_roca "$home" exec \
-    "SELECT (SELECT COUNT(*) FROM exchanges WHERE human_text = 'remember the frozen amber compass' AND agent_text = 'the frozen amber compass is recorded') AS core_exchanges, (SELECT COUNT(*) FROM plugin_roca_corpus.exchanges WHERE human_text = 'remember the frozen amber compass' AND agent_text = 'the frozen amber compass is recorded') AS corpus_exchanges" \
+    "SELECT (SELECT COUNT(*) FROM main.exchanges WHERE human_text = 'remember the frozen amber compass' AND agent_text = 'the frozen amber compass is recorded') AS core_exchanges, (SELECT COUNT(*) FROM plugin_roca_corpus.exchanges WHERE human_text = 'remember the frozen amber compass' AND agent_text = 'the frozen amber compass is recorded') AS corpus_exchanges" \
     > "$work/old-exchange.json"
   assert_json "$work/old-exchange.json" "\"core_exchanges\": $frozen_in_core" "$version historical exchange in core"
   assert_json "$work/old-exchange.json" "\"corpus_exchanges\": $frozen_in_corpus" "$version historical exchange in corpus"
 
   run_roca "$home" exec \
     "SELECT SUM(found) AS attributed_sessions FROM (
-       SELECT COUNT(*) AS found FROM sessions
+       SELECT COUNT(*) AS found FROM main.sessions
        WHERE session_id = '11111111-2222-3333-4444-555555555555'
          AND source_surface = 'Claude Code'
        UNION ALL
@@ -147,7 +147,7 @@ JSONL
   # value has to hold whatever the frozen home stored: an aggregate over an
   # unadopted database cannot name `source_model` at all.
   run_roca "$home" exec \
-    "SELECT COUNT(source_model) >= 0 AS migrated_memory_column FROM memories" \
+    "SELECT COUNT(source_model) >= 0 AS migrated_memory_column FROM main.memories" \
     > "$work/current-schema.json"
   assert_json "$work/current-schema.json" '"migrated_memory_column": 1' "$version current schema"
 
