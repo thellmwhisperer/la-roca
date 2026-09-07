@@ -71,7 +71,7 @@ session, which is why every diagnostic in this path writes to standard error.
 
 | Tool | What it does | The caller that defends it |
 |---|---|---|
-| `roca_exec` | Runs a SELECT under the same gate as `roca exec` | Agents that received SQL from `roca_sql` and have no shell |
+| `roca_exec` | Runs a SELECT under the same gate and [table-name contract](queries.md#table-names-in-authored-sql) as `roca exec` | Agents that received SQL from `roca_sql` and have no shell |
 | `roca_explore` | Runs plain or deep investigation with prose, terrain, next probes, and generated SQL | Agents following evidence without a shell |
 | `roca_query` | Returns labeled hybrid FTS/vector evidence; `top`, `require_both`, and `databases` match the CLI | An agent searching memory without a shell |
 | `roca_store` | Writes one memory back | The other half of the same job |

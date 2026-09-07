@@ -382,22 +382,17 @@ func TestRemoteCrossScatterGathersOnlyInMemory(t *testing.T) {
 		(name, description, schema_file) VALUES ('remote-cross-marker', 'marker', 'marker')`); err != nil {
 		t.Fatal(err)
 	}
-	core, err := store.Open(filepath.Join(fixture.home, ".roca", "roca.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer core.Close()
-	if _, err := core.SQL().Exec(`PRAGMA wal_autocheckpoint=0; INSERT INTO memories
+	if _, err := ops.SQL().Exec(`PRAGMA wal_autocheckpoint=0; INSERT INTO memories
 		(id, layer, content, origin) VALUES (909, 'project', 'Local WAL marker', 'agent')`); err != nil {
 		t.Fatal(err)
 	}
 	before := treeSnapshot(t, fixture.home)
 	runner := &scriptedSSHRunner{replies: []sshReply{
 		remoteVersionReply("v-test"),
-		{stdout: `{"sql":"SELECT id, content FROM memories WHERE id = 909","columns":["id","content"],"rows":[{"id":909,"content":"Remote marker"}],"row_count":1,"latency_ms":1,"version":"v-test","source_sha":"remote-sha"}`},
+		{stdout: `{"sql":"SELECT id, content FROM plugin_roca_ops.memories WHERE id = 909","columns":["id","content"],"rows":[{"id":909,"content":"Remote marker"}],"row_count":1,"latency_ms":1,"version":"v-test","source_sha":"remote-sha"}`},
 	}}
 	env := &cliEnv{sshRunner: runner}
-	statement := "SELECT id, content FROM memories WHERE id = 909"
+	statement := "SELECT id, content FROM plugin_roca_ops.memories WHERE id = 909"
 	output, err := runRemoteRoot(t, env, "remote", "cross", statement, "--on", "studio")
 	if err != nil {
 		t.Fatal(err)

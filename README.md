@@ -116,7 +116,7 @@ final answer. [Skills and distillation.](docs/lifecycle.md#skills)
 Because it is a real database, not a search box:
 
 ```sh
-roca exec "SELECT source_agent, COUNT(*) FROM sessions
+roca exec "SELECT source_agent, COUNT(*) FROM plugin_roca_corpus.sessions
            WHERE started_at LIKE '2026-07%' GROUP BY 1 ORDER BY 2 DESC"
 ```
 
@@ -132,8 +132,8 @@ one `SELECT` across local and remote rocks into a temporary in-memory SQLite:
 
 ```sh
 roca remote add studio --ssh dev@studio.example
-roca remote exec studio "SELECT COUNT(*) AS sessions FROM sessions"
-roca remote cross "SELECT source_agent, COUNT(*) AS sessions FROM sessions GROUP BY 1" --on studio
+roca remote exec studio "SELECT COUNT(*) AS sessions FROM plugin_roca_corpus.sessions"
+roca remote cross "SELECT source_agent, COUNT(*) AS sessions FROM plugin_roca_corpus.sessions GROUP BY 1" --on studio
 ```
 
 SSH configuration owns authentication. La Roca opens no port and adds no sync

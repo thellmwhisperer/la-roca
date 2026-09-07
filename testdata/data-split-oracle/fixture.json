@@ -43,7 +43,7 @@
     }
   ],
   "model_question": "Which synthetic Alder memories mention the quartz orchard?",
-  "model_sql": "SELECT 'memory' AS source, id, layer, content AS text, project, created_at FROM memories WHERE project = 'synthetic-alder' ORDER BY id LIMIT 10",
+  "model_sql": "SELECT 'memory' AS source, id, layer, content AS text, project, created_at FROM main.memories WHERE project = 'synthetic-alder' ORDER BY id LIMIT 10",
   "literal_question": "quartz orchard",
   "missing_question": "ultraviolet platypus absent",
   "store_content": "Synthetic idempotence beacon for DATA SPLIT.",

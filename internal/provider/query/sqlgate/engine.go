@@ -22,13 +22,14 @@ func cFuncPointer[T any](f T) uintptr {
 // modernc.org/sqlite/lib so an authorization callback can be attached here
 // without touching the application's query connection.
 type engine struct {
-	tls          *libc.TLS
-	db           uintptr
-	mu           sync.Mutex
-	denial       string
-	hiddenTables map[tableIdentity]bool
-	ftsTables    map[tableIdentity]bool
-	matchPending bool
+	tls               *libc.TLS
+	db                uintptr
+	mu                sync.Mutex
+	denial            string
+	hiddenTables      map[tableIdentity]bool
+	unqualifiedTables map[string]string
+	ftsTables         map[tableIdentity]bool
+	matchPending      bool
 }
 
 type tableIdentity struct {
@@ -154,6 +155,10 @@ func (e *engine) authorize(action int32, arg1, arg2, schema string) int32 {
 		return sqlite3.SQLITE_OK
 	case sqlite3.SQLITE_READ:
 		identity := tableIdentity{schema: strings.ToLower(schema), table: strings.ToLower(arg1)}
+		if denial := e.unqualifiedTables[identity.table]; identity.schema == "temp" && denial != "" {
+			e.note(denial)
+			return sqlite3.SQLITE_DENY
+		}
 		if e.matchPending {
 			e.matchPending = false
 			if !e.ftsTables[identity] || !strings.EqualFold(arg1, arg2) {
