@@ -26,6 +26,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocavector"
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
+	"github.com/thellmwhisperer/la-roca/internal/jsonid"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
@@ -1780,6 +1781,8 @@ func sqliteValue(value any) any {
 	switch typed := value.(type) {
 	case nil, string, []byte, int64, float64, bool:
 		return typed
+	case jsonid.Decimal:
+		return string(typed)
 	case json.Number:
 		if integer, err := typed.Int64(); err == nil {
 			return integer

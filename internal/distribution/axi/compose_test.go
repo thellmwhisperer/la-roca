@@ -1,12 +1,14 @@
 package axi_test
 
 import (
+	"database/sql"
 	"encoding/json"
 	"strings"
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/axi"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
+	_ "modernc.org/sqlite"
 )
 
 // The composers are the one owner of each result type's text. These tests pin
@@ -113,6 +115,74 @@ func TestRowBudgetPreservesNumericAndBooleanScalars(t *testing.T) {
 			got := axi.RowOutputWithBudget([]string{"value"}, []map[string]any{{"value": test.value}}, 3)
 			if got != test.want {
 				t.Fatalf("scalar = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestRowBudgetPreservesMemoryIdentifiers(t *testing.T) {
+	const id = "1152921504606853875"
+	got := axi.RowOutputWithBudget([]string{"id"}, []map[string]any{{"id": id}}, 5)
+	if got != `"1152921504606853875"` {
+		t.Fatalf("identity scalar = %q, want the exact quoted id", got)
+	}
+	table := axi.RowOutputWithBudget(
+		[]string{"id", "content"},
+		[]map[string]any{{"id": id, "content": "abcdefghij"}},
+		5,
+	)
+	if !strings.Contains(table, `"1152921504606853875"`) {
+		t.Fatalf("identity cell was clipped:\n%s", table)
+	}
+	if !strings.Contains(table, "abcd…") {
+		t.Fatalf("content cell did not honor the budget:\n%s", table)
+	}
+}
+
+func TestScannedIdentifiersPreserveAliasesAndNullsUnderBudget(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, test := range []struct {
+		name string
+		sql  string
+		want string
+	}{
+		{"alias scalar", "SELECT 1152921504606853875 AS ref", `"1152921504606853875"`},
+		{"alias table", "SELECT 1152921504606853875 AS ref, 'abcdefghij' AS content", "rows[1]{ref,content}:\n  \"1152921504606853875\",abcd…"},
+		{"null predecessor", "SELECT 1152921504606853875 AS id, NULL AS supersedes", "rows[1]{id,supersedes}:\n  \"1152921504606853875\",null"},
+		{"null scalar", "SELECT NULL AS supersedes", "rows[1]{supersedes}:\n  null"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			rows, err := db.QueryContext(t.Context(), test.sql)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer rows.Close()
+			columns, scanned, err := service.ScanRows(rows, 5, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := axi.RowOutputWithBudget(columns, scanned, 5); got != test.want {
+				t.Fatalf("rendered SQL rows = %q, want %q", got, test.want)
+			}
+			encoded, err := json.Marshal(scanned)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var decoded []map[string]any
+			if err := json.Unmarshal(encoded, &decoded); err != nil {
+				t.Fatal(err)
+			}
+			for _, key := range []string{"id", "ref"} {
+				if value, ok := decoded[0][key]; ok && value != "1152921504606853875" {
+					t.Fatalf("JSON %s = %#v, want the exact string", key, value)
+				}
+			}
+			if value, ok := decoded[0]["supersedes"]; ok && value != nil {
+				t.Fatalf("JSON supersedes = %#v, want null", value)
 			}
 		})
 	}

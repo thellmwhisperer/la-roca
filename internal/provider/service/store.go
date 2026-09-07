@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/thellmwhisperer/la-roca/internal/jsonid"
 )
 
 // The two surfaces that write. They travel in the memory row's canonical
@@ -65,7 +67,7 @@ type StoreRequest struct {
 // StoreResult is the identity of the memory that is now there, whether this
 // call created it or found it already written.
 type StoreResult struct {
-	ID    int64  `json:"id"`
+	ID    int64  `json:"id,string"`
 	Layer string `json:"layer"`
 	// Skipped says the content was already stored in this scope. It is not an
 	// error: retrying the same write must not create a duplicate memory.
@@ -354,7 +356,7 @@ func encodeMetadata(metadata map[string]any) (string, error) {
 	if metadata == nil {
 		metadata = map[string]any{}
 	}
-	encoded, err := json.Marshal(metadata)
+	encoded, err := json.Marshal(jsonid.RewriteMap(metadata))
 	if err != nil {
 		return "", fmt.Errorf("the metadata is not serializable: %w", err)
 	}
