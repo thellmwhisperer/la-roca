@@ -10,9 +10,10 @@ a vector index exists, fuses the two lists with RRF, and labels which legs
 found each hit. Without a vector index the same command runs full-text alone.
 `--top N` (default 10) controls the fused result count, `--require-both` keeps
 only dual-confirmed hits, and `--databases` narrows the default (every attached
-plugin database, including ops). `--json` returns the complete machine envelope;
-see [Memory identifiers for clients](#memory-identifiers-for-clients) for its
-identifier encoding.
+plugin database, including ops). Vector coverage follows the
+[sidecar selection rules](vector.md#first-query). `--json` returns the complete
+machine envelope; see [Memory identifiers for clients](#memory-identifiers-for-clients)
+for its identifier encoding.
 Questions must contain text and have a generous 1000-character cap on both CLI
 and MCP query surfaces.
 
