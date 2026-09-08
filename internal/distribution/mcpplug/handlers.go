@@ -6,9 +6,6 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// The handlers. Each one is a single call into the service and nothing
-// else, and passthrough_test.go fails when that stops being true.
-//
 // The wrappers return any(nil) as the typed output so the SDK does not attach a
 // structured JSON envelope beside the TOON text. Service errors are packed as
 // tool errors carrying the words the service wrote. That is why the read-only

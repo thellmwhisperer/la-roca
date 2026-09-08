@@ -14,7 +14,7 @@ import (
 
 // OpenForPlugin resolves the same installation and read-only engine as core.
 func OpenForPlugin(build Build, dbPath string, readOnly bool, out, errOut io.Writer) (*service.Service, config.Paths, error) {
-	env := &cliEnv{build: build, dbPath: dbPath, forceReadOnly: readOnly, out: out, errOut: errOut}
+	env := &cliEnv{build: build, dbPath: dbPath, forceReadOnly: readOnly, skipBundledLifecycle: true, out: out, errOut: errOut}
 	env.loadCommandFeatures()
 	return env.openService()
 }
@@ -56,13 +56,17 @@ func playgroundPluginCommand(env *cliEnv, verb string) *cobra.Command {
 		}}
 }
 
-func providerProbe(paths config.Paths) func(context.Context, *service.DoctorReport) error {
+func providerProbe(paths config.Paths, readOnly bool) func(context.Context, *service.DoctorReport) error {
 	if _, err := playground.Executable(); err != nil {
 		return nil
 	}
 	return func(ctx context.Context, report *service.DoctorReport) error {
 		var probe service.DoctorReport
-		if err := playground.JSON(ctx, []string{"probe", "--db-path", paths.DB}, &probe); err != nil {
+		args := []string{"probe", "--db-path", paths.DB}
+		if readOnly {
+			args = append(args, "--read-only")
+		}
+		if err := playground.JSON(ctx, args, &probe); err != nil {
 			report.Warnings = append(report.Warnings, "playground provider probe: "+err.Error())
 			return nil
 		}

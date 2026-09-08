@@ -5,10 +5,6 @@
 // the same service object the CLI drives. There is no
 // state between calls: the process is born when the agent launches it and dies
 // when the agent closes the pipe, matching the stateless protocol.
-//
-// The law of this package is pinned by passthrough_test.go and not by this
-// comment: a handler with logic of its own is a capability no other surface
-// can reach.
 package mcpplug
 
 import (

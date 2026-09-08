@@ -30,5 +30,6 @@ func (p *plug) playground(ctx context.Context, verb, question, layer, databases 
 	}
 	var result service.QueryResult
 	err := playground.JSON(ctx, args, &result)
+	result.MaxChars = service.TextBudget(maxChars)
 	return result, err
 }

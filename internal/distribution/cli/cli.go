@@ -72,6 +72,7 @@ type cliEnv struct {
 	features             config.FeaturesConfig
 	featuresLoaded       bool
 	omitCorpus           bool
+	skipBundledLifecycle bool
 	forceReadOnly        bool
 	sshRunner            sshCommandRunner
 	bundledVectorPayload []byte
@@ -784,7 +785,7 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 	// leaves it exactly as it found it. The ops package is always present for
 	// durable call history; features.roca_ops still controls only its agent-memory
 	// write and query routes during the staged split.
-	if !readOnly {
+	if !readOnly && !env.skipBundledLifecycle {
 		if pluginDir == "" {
 			return nil, fmt.Errorf("the bundled ops plugin needs a HOME for its database")
 		}
@@ -818,7 +819,7 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 		opsDatabase = filepath.Join(pluginDir, rocaops.Name, rocaops.DatabaseFilename)
 		corpusDatabase = filepath.Join(pluginDir, rocacorpus.Name, rocacorpus.DatabaseFilename)
 	}
-	if !readOnly && readLayout != service.LayoutLegacyServing && fileExists(paths.DB) {
+	if !readOnly && !env.skipBundledLifecycle && readLayout != service.LayoutLegacyServing && fileExists(paths.DB) {
 		if _, err := rocacron.Ensure(pluginDir, pluginExecutableDir(paths), env.build.Version); err != nil {
 			return nil, fmt.Errorf("install bundled cron plugin for DATA SPLIT: %w", err)
 		}
@@ -868,7 +869,7 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 	}
 	svc, err := service.Open(service.Options{
 		DBPath:                    paths.DB,
-		ProviderProbe:             providerProbe(paths),
+		ProviderProbe:             providerProbe(paths, readOnly),
 		BackupDir:                 paths.Backups,
 		DataDir:                   filepath.Dir(paths.DB),
 		Version:                   env.build.Version,
