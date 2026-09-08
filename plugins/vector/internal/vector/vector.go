@@ -37,6 +37,7 @@ const (
 )
 
 const sourceFingerprintFunction = "roca_vector_source_fingerprint"
+const declaredChunkCountFunction = "roca_vector_declared_chunks"
 const sourceProgressVersion = "source-v1"
 
 var sourceFingerprintRegistrationErr = sqlite.RegisterDeterministicScalarFunction(
@@ -49,6 +50,43 @@ var sourceFingerprintRegistrationErr = sqlite.RegisterDeterministicScalarFunctio
 		}
 		return incrementality.ContentFingerprint(fields...), nil
 	})
+
+var declaredChunkCountRegistrationErr = sqlite.RegisterDeterministicScalarFunction(
+	declaredChunkCountFunction, 3, func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
+		text := strings.TrimSpace(driverText(args[0]))
+		maxChars := driverInt(args[1])
+		overlap := driverInt(args[2])
+		if maxChars > 0 {
+			return int64(len(chunks(text, maxChars, overlap))), nil
+		}
+		return int64(len(tokenChunks(text, defaultChunkTokens, defaultOverlapTokens))), nil
+	})
+
+func driverText(value driver.Value) string {
+	switch typed := value.(type) {
+	case nil:
+		return ""
+	case string:
+		return typed
+	case []byte:
+		return string(typed)
+	default:
+		return fmt.Sprint(typed)
+	}
+}
+
+func driverInt(value driver.Value) int {
+	switch typed := value.(type) {
+	case int64:
+		return int(typed)
+	case int:
+		return typed
+	case float64:
+		return int(typed)
+	default:
+		return 0
+	}
+}
 
 type Index struct {
 	Corpus      Corpus
@@ -545,7 +583,7 @@ func (i Index) queryTexts(ctx context.Context, texts []string, k int,
 		return nil, fmt.Errorf("open vector database: %w", err)
 	}
 	defer store.Close()
-	_, model, dimensions, err := readIndexState(store, nil)
+	model, dimensions, err := readIndexMeta(store)
 	if err != nil {
 		return nil, fmt.Errorf("read vector index: %w; run `roca vector install`", err)
 	}
@@ -854,8 +892,8 @@ func chunkKey(kind, sourceID, column string, index int) string {
 }
 
 func openSQLite(path string, readOnly bool) (*sql.DB, error) {
-	if sourceFingerprintRegistrationErr != nil {
-		return nil, sourceFingerprintRegistrationErr
+	if err := sqliteFunctionRegistrationError(); err != nil {
+		return nil, err
 	}
 	absolute, err := filepath.Abs(path)
 	if err != nil {
@@ -985,6 +1023,15 @@ func tableColumns(db *sql.DB, table string) (map[string]bool, error) {
 	return columns, rows.Err()
 }
 
+func readIndexMeta(db *sql.DB) (string, int, error) {
+	var model string
+	_ = db.QueryRow(`SELECT value FROM meta WHERE key='model'`).Scan(&model)
+	var dimensionText string
+	_ = db.QueryRow(`SELECT value FROM meta WHERE key='dimensions'`).Scan(&dimensionText)
+	dimensions, _ := strconv.Atoi(dimensionText)
+	return model, dimensions, nil
+}
+
 func readIndexState(db *sql.DB, liveness workLiveness) (map[string]storedChunk, string, int, error) {
 	state := map[string]storedChunk{}
 	columns, err := tableColumns(db, "chunks")
@@ -1015,12 +1062,18 @@ func readIndexState(db *sql.DB, liveness workLiveness) (map[string]storedChunk, 
 	if err := rows.Close(); err != nil {
 		return nil, "", 0, err
 	}
-	var model string
-	_ = db.QueryRow(`SELECT value FROM meta WHERE key='model'`).Scan(&model)
-	var dimensionText string
-	_ = db.QueryRow(`SELECT value FROM meta WHERE key='dimensions'`).Scan(&dimensionText)
-	dimensions, _ := strconv.Atoi(dimensionText)
+	model, dimensions, err := readIndexMeta(db)
+	if err != nil {
+		return nil, "", 0, err
+	}
 	return state, model, dimensions, nil
+}
+
+func sqliteFunctionRegistrationError() error {
+	if sourceFingerprintRegistrationErr != nil {
+		return sourceFingerprintRegistrationErr
+	}
+	return declaredChunkCountRegistrationErr
 }
 
 func resetIndex(db *sql.DB) error {
