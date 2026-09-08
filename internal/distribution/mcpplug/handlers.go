@@ -6,9 +6,6 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// The handlers. Each one is a single call into the service and nothing
-// else, and passthrough_test.go fails when that stops being true.
-//
 // The wrappers return any(nil) as the typed output so the SDK does not attach a
 // structured JSON envelope beside the TOON text. Service errors are packed as
 // tool errors carrying the words the service wrote. That is why the read-only
@@ -27,7 +24,7 @@ func (p *plug) exec(ctx context.Context, _ *mcp.CallToolRequest,
 
 func (p *plug) explore(ctx context.Context, _ *mcp.CallToolRequest,
 	in exploreArgs) (*mcp.CallToolResult, any, error) {
-	return exploreText(p.svc.Explore(ctx, in.request()))
+	return exploreText(p.playground(ctx, "explore", in.Query, in.Layer, in.Databases, in.MaxChars, in.Deep))
 }
 
 func (p *plug) query(ctx context.Context, _ *mcp.CallToolRequest,
@@ -37,7 +34,7 @@ func (p *plug) query(ctx context.Context, _ *mcp.CallToolRequest,
 
 func (p *plug) sql(ctx context.Context, _ *mcp.CallToolRequest,
 	in sqlArgs) (*mcp.CallToolResult, any, error) {
-	return queryText(p.svc.Query(ctx, in.request()))
+	return queryText(p.playground(ctx, "sql", in.Query, in.Layer, in.Databases, 0, false))
 }
 
 func (p *plug) store(ctx context.Context, req *mcp.CallToolRequest,

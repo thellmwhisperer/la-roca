@@ -102,6 +102,9 @@ func TestSkillTeachesOnlyCommandsTheCLIHas(t *testing.T) {
 // teaches. They are not cobra children of the core tree; features.vector
 // unhides them at runtime.
 func taughtPluginDispatch(tokens []string) bool {
+	if len(tokens) > 0 && (tokens[0] == "playground" || tokens[0] == "explore") {
+		return true
+	}
 	if len(tokens) == 0 || tokens[0] != "vector" {
 		return false
 	}

@@ -48,39 +48,39 @@ func selfGated(name string) bool {
 	return name == rocaOpsPluginName
 }
 
-type pluginRoute struct {
-	includeCore bool
-	databases   []plugin.Database
-	omitted     []plugin.Descriptor
-	warnings    []string
+type PluginRoute struct {
+	IncludeCore bool
+	Databases   []plugin.Database
+	Omitted     []plugin.Descriptor
+	Warnings    []string
 }
 
-func (r pluginRoute) closeOnDemand() {
-	for _, database := range r.databases {
+func (r PluginRoute) CloseOnDemand() {
+	for _, database := range r.Databases {
 		if database.Semantic.Attachment == plugin.AttachmentOnDemand {
 			_ = database.Close()
 		}
 	}
 }
 
-func (s *Service) pluginsForQuestion(ctx context.Context, _ string) pluginRoute {
-	inventory := s.inventoryRoute(ctx)
-	defer inventory.closeOnDemand()
-	route, err := questionRoute(nil, inventory)
+func (s *Service) pluginsForQuestion(ctx context.Context, _ string) PluginRoute {
+	inventory := s.InventoryRoute(ctx)
+	defer inventory.CloseOnDemand()
+	route, err := QuestionRoute(nil, inventory)
 	if err != nil {
-		return pluginRoute{warnings: []string{err.Error()}}
+		return PluginRoute{Warnings: []string{err.Error()}}
 	}
 	return route
 }
 
-func (s *Service) pluginsForSQL(ctx context.Context, statement string) pluginRoute {
+func (s *Service) pluginsForSQL(ctx context.Context, statement string) PluginRoute {
 	return s.pluginsFor(ctx, statement, plugin.Referenced)
 }
 
 func (s *Service) pluginsFor(ctx context.Context, input string,
-	selectPlugins func(string, []plugin.Descriptor) []plugin.Descriptor) pluginRoute {
-	if !s.pluginsActive() {
-		return pluginRoute{includeCore: true}
+	selectPlugins func(string, []plugin.Descriptor) []plugin.Descriptor) PluginRoute {
+	if !s.PluginsActive() {
+		return PluginRoute{IncludeCore: true}
 	}
 	candidates, warnings := plugin.Discover(s.opts.PluginDir)
 	candidates = s.onDemand(candidates)
@@ -90,16 +90,16 @@ func (s *Service) pluginsFor(ctx context.Context, input string,
 }
 
 func validatePluginRoute(ctx context.Context, candidates []plugin.Descriptor,
-	warnings []string) pluginRoute {
+	warnings []string) PluginRoute {
 	return validatePluginRouteLimit(ctx, candidates, warnings, plugin.MaxAttached, false)
 }
 
 func validatePluginRouteLimit(ctx context.Context, candidates []plugin.Descriptor,
-	warnings []string, limit int, physicalReadOnly bool) pluginRoute {
-	route := pluginRoute{warnings: slices.Clone(warnings)}
+	warnings []string, limit int, physicalReadOnly bool) PluginRoute {
+	route := PluginRoute{Warnings: slices.Clone(warnings)}
 	for _, candidate := range candidates {
-		if len(route.databases) == limit {
-			route.omitted = append(route.omitted, candidate)
+		if len(route.Databases) == limit {
+			route.Omitted = append(route.Omitted, candidate)
 			continue
 		}
 		var database plugin.Database
@@ -110,22 +110,22 @@ func validatePluginRouteLimit(ctx context.Context, candidates []plugin.Descripto
 			database, err = plugin.Validate(ctx, candidate)
 		}
 		if err != nil {
-			route.warnings = append(route.warnings, fmt.Sprintf(
+			route.Warnings = append(route.Warnings, fmt.Sprintf(
 				"plugin %s semantic layer does not match its database: %v; plugin skipped",
 				candidate.Name, err))
 			continue
 		}
-		route.databases = append(route.databases, database)
+		route.Databases = append(route.Databases, database)
 	}
-	if len(route.omitted) > 0 {
-		route.warnings = append(route.warnings, fmt.Sprintf(
+	if len(route.Omitted) > 0 {
+		route.Warnings = append(route.Warnings, fmt.Sprintf(
 			"SQLite attachment limit is %d; omitted relevant databases: %s",
-			plugin.MaxAttached, strings.Join(route.omittedSources(), ", ")))
+			plugin.MaxAttached, strings.Join(route.OmittedSources(), ", ")))
 	}
 	return route
 }
 
-func (s *Service) pluginsActive() bool {
+func (s *Service) PluginsActive() bool {
 	return s.opts.PluginsEnabled || s.opts.RocaOpsEnabled || s.opts.CorpusEnabled
 }
 
@@ -143,22 +143,22 @@ func (s *Service) onDemand(candidates []plugin.Descriptor) []plugin.Descriptor {
 	return selected
 }
 
-func (s *Service) withResidents(route pluginRoute) pluginRoute {
+func (s *Service) withResidents(route PluginRoute) PluginRoute {
 	// A resident half that could not be opened has no database and still owes the
 	// answer its warning, so the count of databases alone does not decide this.
 	if len(s.resident) == 0 && len(s.residentOmitted) == 0 && len(s.residentWarnings) == 0 {
-		route.includeCore = true
+		route.IncludeCore = true
 		return route
 	}
-	route.includeCore = true
-	route.databases = append(slices.Clone(s.resident), route.databases...)
-	route.omitted = append(slices.Clone(s.residentOmitted), route.omitted...)
-	route.warnings = append(slices.Clone(s.residentWarnings), route.warnings...)
+	route.IncludeCore = true
+	route.Databases = append(slices.Clone(s.resident), route.Databases...)
+	route.Omitted = append(slices.Clone(s.residentOmitted), route.Omitted...)
+	route.Warnings = append(slices.Clone(s.residentWarnings), route.Warnings...)
 	return route
 }
 
 func (s *Service) openResidents(ctx context.Context) error {
-	if !s.pluginsActive() && s.opts.PluginDir == "" {
+	if !s.PluginsActive() && s.opts.PluginDir == "" {
 		return nil
 	}
 	descriptors, warnings := plugin.Discover(s.opts.PluginDir)
@@ -203,13 +203,13 @@ func (s *Service) openResidents(ctx context.Context) error {
 		limit--
 	}
 	route := validatePluginRouteLimit(ctx, candidates, nil, limit, s.opts.ReadOnly)
-	s.resident, s.residentOmitted, s.residentWarnings = route.databases, route.omitted, route.warnings
+	s.resident, s.residentOmitted, s.residentWarnings = route.Databases, route.Omitted, route.Warnings
 
 	var opsDatabase *plugin.Database
 	if s.opts.RocaOpsEnabled {
 		opsDatabase = databaseForVerb(s.resident, StoreVerb, rocaOpsPluginName)
 		if opsDatabase == nil {
-			reason := strings.Join(append(slices.Clone(warnings), route.warnings...), "; ")
+			reason := strings.Join(append(slices.Clone(warnings), route.Warnings...), "; ")
 			if reason == "" {
 				reason = "the bundled plugin is not installed or is not declared resident"
 			}
@@ -243,7 +243,7 @@ func (s *Service) openResidents(ctx context.Context) error {
 	if s.opts.CorpusEnabled {
 		corpusDatabase := databaseForVerb(s.resident, IngestVerb, rocaCorpusPluginName)
 		if corpusDatabase == nil {
-			reason := strings.Join(append(slices.Clone(warnings), route.warnings...), "; ")
+			reason := strings.Join(append(slices.Clone(warnings), route.Warnings...), "; ")
 			if reason == "" {
 				reason = "the bundled plugin is not installed or is not declared resident"
 			}
@@ -416,28 +416,28 @@ func hideLayerRegistry(connection *sql.Conn) {
 	_, _ = connection.ExecContext(ctx, "PRAGMA query_only = ON")
 }
 
-func (r pluginRoute) consulted() []string {
-	consulted := make([]string, 0, len(r.databases)+1)
-	if r.includeCore {
-		consulted = append(consulted, "core")
+func (r PluginRoute) Consulted() []string {
+	Consulted := make([]string, 0, len(r.Databases)+1)
+	if r.IncludeCore {
+		Consulted = append(Consulted, "core")
 	}
-	for _, database := range r.databases {
-		consulted = append(consulted, database.Source())
+	for _, database := range r.Databases {
+		Consulted = append(Consulted, database.Source())
 	}
-	return consulted
+	return Consulted
 }
 
-func (r pluginRoute) omittedSources() []string {
-	omitted := make([]string, 0, len(r.omitted))
-	for _, descriptor := range r.omitted {
+func (r PluginRoute) OmittedSources() []string {
+	omitted := make([]string, 0, len(r.Omitted))
+	for _, descriptor := range r.Omitted {
 		omitted = append(omitted, descriptor.Source())
 	}
 	return omitted
 }
 
-func (s *Service) gateFor(includeCore bool, databases []plugin.Database) (*sqlgate.Gate, func(), error) {
+func (s *Service) GateFor(includeCore bool, databases []plugin.Database) (*sqlgate.Gate, func(), error) {
 	if len(databases) == 0 && includeCore {
-		gate, err := s.theGate()
+		gate, err := s.TheGate()
 		return gate, func() {}, err
 	}
 	schemas := make([]sqlgate.Schema, 0, len(databases))
@@ -461,7 +461,7 @@ func (s *Service) gateFor(includeCore bool, databases []plugin.Database) (*sqlga
 	return gate, func() { _ = gate.Close() }, nil
 }
 
-func schemaWithPlugins(includeCore bool, databases []plugin.Database) query.Schema {
+func SchemaWithPlugins(includeCore bool, databases []plugin.Database) query.Schema {
 	if !includeCore {
 		return plugin.Compose(query.Schema{}, databases)
 	}
@@ -484,7 +484,7 @@ type execBudget struct {
 	set     bool
 }
 
-func (s *Service) executeWithPlugins(ctx context.Context, statement, term string,
+func (s *Service) ExecuteWithPlugins(ctx context.Context, statement, term string,
 	maxChars int, databases []plugin.Database) ([]string, []map[string]any, error) {
 	return s.executeWithPluginsBudget(ctx, statement, term, maxChars, databases, execBudget{})
 }
@@ -549,12 +549,12 @@ func (s *Service) executeWithDatabase(ctx context.Context, statement, term strin
 		return nil, nil, executionError(ctx, queryCtx, timeout, closeErr)
 	}
 	if len(databases) > 0 {
-		columns, result = ensureDatabaseColumn(columns, result, fallbackDatabase(statement, databases))
+		columns, result = EnsureDatabaseColumn(columns, result, fallbackDatabase(statement, databases))
 	}
 	return columns, result, nil
 }
 
-func ensureDatabaseColumn(columns []string, rows []map[string]any,
+func EnsureDatabaseColumn(columns []string, rows []map[string]any,
 	database string) ([]string, []map[string]any) {
 	present := slices.Contains(columns, plugin.ProvenanceColumn)
 	if !present {

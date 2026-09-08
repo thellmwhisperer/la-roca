@@ -100,7 +100,7 @@ func (s *Service) Search(ctx context.Context, req SearchRequest) (SearchResult, 
 	if top <= 0 {
 		top = search.DefaultTop
 	}
-	maxChars := textBudget(req.MaxChars)
+	maxChars := TextBudget(req.MaxChars)
 	result := SearchResult{
 		Question:    req.Question,
 		Hits:        []SearchHit{},
@@ -110,21 +110,21 @@ func (s *Service) Search(ctx context.Context, req SearchRequest) (SearchResult, 
 		Version:     s.opts.Version,
 		SourceSHA:   s.opts.Commit,
 	}
-	if _, err := s.ensureSchema(ctx); err != nil {
+	if _, err := s.EnsureSchema(ctx); err != nil {
 		return result, err
 	}
-	inventory := s.inventoryRoute(ctx)
-	defer inventory.closeOnDemand()
-	route, err := questionRoute(req.Databases, inventory)
+	inventory := s.InventoryRoute(ctx)
+	defer inventory.CloseOnDemand()
+	route, err := QuestionRoute(req.Databases, inventory)
 	if err != nil {
 		return result, err
 	}
-	if s.pluginsActive() {
-		result.Databases = attachedNames(route.includeCore, route.databases)
-	} else if route.includeCore {
+	if s.PluginsActive() {
+		result.Databases = attachedNames(route.IncludeCore, route.Databases)
+	} else if route.IncludeCore {
 		result.Databases = []string{ScopeCore}
 	}
-	result.Notices = append(result.Notices, route.warnings...)
+	result.Notices = append(result.Notices, route.Warnings...)
 
 	surfaces := collectSurfaces(route)
 	tokens := uniqueTokens(search.Tokenize(req.Question))
@@ -193,7 +193,7 @@ func (s *Service) Search(ctx context.Context, req SearchRequest) (SearchResult, 
 			Legs:      doc.Legs,
 			Consensus: doc.Consensus,
 			RRF:       doc.Score,
-			Snippet:   truncate(doc.Snippet, maxChars, req.Question),
+			Snippet:   Truncate(doc.Snippet, maxChars, req.Question),
 		}
 		if doc.HasVector {
 			score, rank := doc.VectorScore, doc.VectorRank
@@ -243,12 +243,12 @@ func vectorRanked(hits []VectorHit) []search.RankedDoc {
 	return search.ApplyVectorFloor(docs, search.MinVectorScore)
 }
 
-func collectSurfaces(route pluginRoute) []searchSurface {
+func collectSurfaces(route PluginRoute) []searchSurface {
 	var surfaces []searchSurface
-	if route.includeCore {
+	if route.IncludeCore {
 		surfaces = append(surfaces, surfacesFromTables(ScopeCore, "", coreSearchTables(), nil)...)
 	}
-	for _, database := range route.databases {
+	for _, database := range route.Databases {
 		name := scopeName(database)
 		surfaces = append(surfaces, surfacesFromTables(name, database.Schema, database.Tables, database.VectorTables)...)
 	}
@@ -394,7 +394,7 @@ func inferIDColumn(columns []string) string {
 	return "rowid"
 }
 
-func (s *Service) selectTerms(ctx context.Context, route pluginRoute, surfaces []searchSurface,
+func (s *Service) selectTerms(ctx context.Context, route PluginRoute, surfaces []searchSurface,
 	tokens []string, maxChars int) ([]string, error) {
 	if len(tokens) == 0 || len(surfaces) == 0 {
 		return nil, nil
@@ -443,7 +443,7 @@ func (s *Service) selectTerms(ctx context.Context, route pluginRoute, surfaces [
 	return search.SelectRareTerms(stats, corpusDocs, search.MaxDFRatio, search.MaxRareTerms), nil
 }
 
-func (s *Service) searchFTS(ctx context.Context, route pluginRoute, surfaces []searchSurface,
+func (s *Service) searchFTS(ctx context.Context, route PluginRoute, surfaces []searchSurface,
 	terms []string, maxChars int) ([]search.RankedDoc, error) {
 	if len(terms) == 0 || len(surfaces) == 0 {
 		return nil, nil
@@ -540,9 +540,9 @@ func scalarInt(raw any) int {
 	}
 }
 
-func (s *Service) runSearchSQL(ctx context.Context, route pluginRoute, statement string,
+func (s *Service) runSearchSQL(ctx context.Context, route PluginRoute, statement string,
 	maxChars int) ([]map[string]any, error) {
-	gate, closeGate, err := s.gateFor(route.includeCore, route.databases)
+	gate, closeGate, err := s.GateFor(route.IncludeCore, route.Databases)
 	if err != nil {
 		return nil, err
 	}
@@ -551,7 +551,7 @@ func (s *Service) runSearchSQL(ctx context.Context, route pluginRoute, statement
 	if err != nil {
 		return nil, err
 	}
-	_, rows, err := s.executeWithPlugins(ctx, validated, "", maxChars, route.databases)
+	_, rows, err := s.ExecuteWithPlugins(ctx, validated, "", maxChars, route.Databases)
 	return rows, err
 }
 

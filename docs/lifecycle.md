@@ -90,28 +90,12 @@ cron = true
 vector = false
 ```
 
-In a terminal, that new configuration flows directly into a model-first
-chooser:
-
-1. Init lists the default model for every detected supported agent CLI and the
-   models returned by Ollama's local catalogue, then asks which model should
-   answer. A CLI without an enumerable catalogue contributes its shipped
-   default and accepts a free-text model ID. Plain Enter keeps the provider and
-   model the existing selection rules would use.
-2. Init resolves the harnesses that can serve that model. One candidate is
-   selected and named automatically; several candidates produce one short
-   harness question.
-3. Init confirms the provider/model pair, probes a changed choice, and writes
-   the provider entry, model, and order into the new configuration.
-
-If a config existed beside the resolved database when init began, init
-preserves it byte-for-byte, skips the chooser, and uses its current model
-selection; use `roca model set` for an intentional later change.
-
-A normal fresh init asks for the database, model, confirmation, and one semantic
-search decision after full-text indexing is ready. An ambiguous harness adds one
-question; adoption separately asks for its source path. It uses the agent CLI's
-existing session and does not add a login step.
+Init prepares search without selecting or probing an answering model and does
+not add model settings. If a configuration already exists beside the resolved
+database, init preserves it; the optional vector-consent update is described
+below. A normal fresh terminal init asks for the database and, after full-text
+indexing is ready, one semantic-search decision. Adoption separately asks for
+its source path.
 
 ### Word search before init returns
 
@@ -147,27 +131,16 @@ install integrations without a separate command.
 
 A successful human-readable init reports the corpus floor: the oldest ingested
 moment, the bedrock your memory reaches back to. An empty database says so
-plainly instead of printing a zero date. It ends with an `answering:` line that
-names the active provider/model, the exact configuration path, and the setting
-that changes it. `roca doctor` reports the same floor as part of installation
-health, and `--json` carries the machine fields in both commands.
+plainly instead of printing a zero date. It ends with a `search: ready` line
+and a pointer to [optional human answering](plugins.md#optional-human-answering).
+`roca doctor` reports the same floor as part of installation health, and
+`--json` carries the machine fields in both commands.
 `roca doctor --report` is the pasteable, privacy-safe support snapshot;
 [Operations](operations.md#support-report) owns that contract.
 
-Before asking for any provider setup, init detects supported agent CLIs already
-on `PATH` and uses their existing signed-in sessions. Its summary names the
-selected factory-default provider and points at `roca model check <provider>` to
-confirm the model-backed playground and explore seats. `roca query "<question>"`
-is available independently as zero-answering-model hybrid search. Ollama and
-then literal search remain the honest playground fallbacks when no detected CLI
-can serve. Models authenticate through their own CLIs; La Roca stores no
-secrets.
-
-With `--db-path` on non-terminal input, init keeps that zero-login factory
-selection without opening the chooser or adding model settings. A missing
-config still receives the new-install feature block above. Human output emits one
-`answering:` notice with the chosen provider/model and configuration path;
-scripts receive no prompts. `--json` remains one JSON document.
+With `--db-path` on non-terminal input, scripts receive no prompts. A missing
+configuration receives the new-install feature block above; `--json` remains
+one JSON document.
 
 [Local vector search](vector.md) owns model, index, progress, and platform
 details for this optional setup.
@@ -285,8 +258,8 @@ the next writable command, and completed upgrades are not rebuilt again.
 After the swap, update reports how many new capability proposals are open. On
 the first eligible command run with each new version, La Roca offers every open
 proposal once for that version. Init reserves its short question budget for the
-database and model chooser, so proposals wait for the next command. In a
-terminal La Roca asks before each proposal change; an accepted change edits only
+database and semantic-search decision, so proposals wait for the next command.
+In a terminal La Roca asks before each proposal change; an accepted change edits only
 the declared TOML values, preserves unrelated content, and creates the same
 named recovery backup as other configuration edits. A rejection changes no
 configuration. Without a terminal, each proposal is one plain alert: La Roca
@@ -295,7 +268,8 @@ does not prompt or edit the configuration.
 `roca doctor` always lists proposals that remain open, even after they were
 already offered for the current version. An interactive doctor run offers them
 again; `--json` reports them under `capability_proposals` without prompting.
-The current proposals are:
+Provider proposals come from the optional playground plugin; without it this
+registry is empty. Its current proposals are:
 
 - When an explicit provider order excludes a detected Claude Code binary,
   offer the shipped local-CLI preset at the front of that configured order;
