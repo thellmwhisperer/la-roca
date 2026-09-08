@@ -71,6 +71,8 @@ orphan_scopes:
       - "internal/distribution/skill/agents.md"
     ignore:
       - "**/*_test.go"
+      # Internal doctor helpers; models.go owns the command registration.
+      - "internal/distribution/cli/doctor_vector.go"
       - "internal/distribution/cli/execution_log.go"
       - "internal/distribution/cli/ingest_progress.go"
       - "internal/distribution/cli/reconcile.go"
@@ -90,6 +92,7 @@ claims:
       files: ["internal/distribution/cli/*.go"]
       ignore:
         - "**/*_test.go"
+        - "internal/distribution/cli/doctor_vector.go"
         - "internal/distribution/cli/execution_log.go"
         - "internal/distribution/cli/ingest_progress.go"
         - "internal/distribution/cli/reconcile.go"

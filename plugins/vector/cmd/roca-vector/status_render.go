@@ -30,32 +30,63 @@ func (env *environment) vectorizationStatus(ctx context.Context) (vector.Vectori
 func statusHelp(report vector.Vectorization) []string {
 	lines := []string{"Run `roca vector status --json` for the complete result envelope"}
 	needsInstall := false
+	var compact []string
+	var stale []string
+	var live []string
 	for _, row := range report.Databases {
 		switch row.State {
 		case vector.StateEmpty, vector.StateOutdated, vector.StateBuilding:
 			needsInstall = true
 		}
+		name := row.Plugin
+		if row.Database != "" {
+			name += "/" + row.Database
+		}
+		if row.CompactRecommended {
+			compact = append(compact, name)
+		}
+		switch row.IndexLock {
+		case vector.IndexLockStale:
+			stale = append(stale, name)
+		case vector.IndexLockLive:
+			live = append(live, name)
+		}
 	}
 	if !report.Worker.Running && needsInstall {
 		lines = append(lines, "Run `roca vector install` to start or resume embedding")
+	}
+	if len(compact) > 0 {
+		lines = append(lines, "Run `roca vector compact` to reclaim empty embedding pages on "+strings.Join(compact, ", "))
+	}
+	if len(live) > 0 {
+		lines = append(lines, "index.lock is held on "+strings.Join(live, ", "))
+	}
+	if len(stale) > 0 {
+		lines = append(lines, "index.lock is stale on "+strings.Join(stale, ", ")+"; ingest and compact can take it")
 	}
 	return lines
 }
 
 func renderVectorization(report vector.Vectorization, help []string) string {
 	columns := []string{"plugin", "database", "tables", "embedded_chunks", "candidate_chunks",
-		"sidecar_bytes", "last_write", "state"}
+		"sidecar_bytes", "last_write", "state", "index_lock", "compact_recommended"}
 	rows := make([]map[string]any, 0, len(report.Databases))
 	for _, row := range report.Databases {
+		lock := row.IndexLock
+		if lock == "" {
+			lock = "unknown"
+		}
 		rows = append(rows, map[string]any{
-			"plugin":           row.Plugin,
-			"database":         row.Database,
-			"tables":           strings.Join(row.Tables, " "),
-			"embedded_chunks":  nullableInt(row.EmbeddedChunks),
-			"candidate_chunks": nullableInt(row.CandidateChunks),
-			"sidecar_bytes":    nullableInt(row.SidecarBytes),
-			"last_write":       nullableString(row.LastWrite),
-			"state":            row.State,
+			"plugin":              row.Plugin,
+			"database":            row.Database,
+			"tables":              strings.Join(row.Tables, " "),
+			"embedded_chunks":     nullableInt(row.EmbeddedChunks),
+			"candidate_chunks":    nullableInt(row.CandidateChunks),
+			"sidecar_bytes":       nullableInt(row.SidecarBytes),
+			"last_write":          nullableString(row.LastWrite),
+			"state":               row.State,
+			"index_lock":          lock,
+			"compact_recommended": row.CompactRecommended,
 		})
 	}
 	var out strings.Builder

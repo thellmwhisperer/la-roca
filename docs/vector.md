@@ -34,18 +34,35 @@ nobody answered has not consented to a download.
 
 `roca vector status` reports one row per database declared in
 `vector-registry.json`: plugin, database, declared tables, embedded chunks,
-candidate chunks, sidecar size, last write, and state. Embedded and candidate
-counts are exact under the declared chunking policy or unknown (`null`), never
-estimates or invented zeroes. Sidecar size and last write include its SQLite
-WAL and shared-memory files when present.
+candidate chunks, sidecar size, last write, state, lock status, and a
+`compact_recommended` flag. Embedded counts report live indexed chunks;
+candidate counts follow the declared chunking policy. Either count can be
+unknown (`null`), never an estimate or invented zero. Sidecar size and last
+write include its SQLite WAL and shared-memory files when present.
+
+Lock status is `live` when held, `stale` when the file exists but is unheld,
+or `absent`. A lock that cannot be inspected renders as `unknown` and is
+omitted from JSON. Ingest and compact can acquire a stale lock without manual
+file deletion. The compaction flag recommends reclaiming sparse embedding
+pages based on page and live chunk counts, not file size alone. A false flag
+does not prove there is no reclaimable space, including when page counts are
+unavailable. JSON also includes `embedding_pages` when readable. See
+[Disk and maintenance](#disk-and-maintenance) for sizing and reclamation.
+
+`roca doctor` includes sidecar diagnostics and the same remedies when the
+installed companion returns database rows within its bounded status call;
+otherwise it omits this section. `roca doctor --json` exposes these under
+`vector`. For the separate `roca doctor --report` snapshot, see
+[Support report](operations.md#support-report).
 
 The states are `building`, `complete`, `empty`, `outdated`, and `unknown`.
-`complete` requires a sealed source fingerprint, the current declaration, and
-a matching cheap source-file marker; status does not hash the corpus to prove
-that. A changed declaration or marker is `outdated`. A missing sidecar, or a
-readable unsealed sidecar with exactly zero chunks, is `empty`. An unsealed
-sidecar is `building` only while the live worker identifies that database.
-Missing or unreadable evidence is `unknown`.
+`complete` requires a sealed source fingerprint and the current declaration.
+A cheap source-file marker, when stored, detects drift without hashing the
+corpus; a legacy seal that has the fingerprint but no marker is still
+`complete`. A changed declaration or stored marker is `outdated`. A missing
+sidecar, or a readable unsealed sidecar with exactly zero chunks, is `empty`.
+An unsealed sidecar is `building` only while the live worker identifies that
+database. Missing or unreadable evidence is `unknown`.
 
 One worker line says whether a pass is running, its pid, backend (`cpu` or
 `metal`), and current database. Backend and database are unknown unless they
@@ -302,6 +319,9 @@ Same-model scores merge into one top-N. If selected sidecars use different
 models, results stay grouped per database with a notice because their scores
 are not comparable. Every hit carries database, table, and source id. `k` is
 optional (default 10) and capped at 100.
+
+Query setup reads model and dimension metadata without loading every stored
+chunk's bookkeeping. Search and reranking still depend on the index size.
 
 A missing sidecar or unavailable embedding model emits a notice and leaves that
 database on its deterministic FTS/SQL route. A pending model download never
