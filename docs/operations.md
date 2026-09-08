@@ -385,7 +385,7 @@ cleanup.
 
 ## Explicit DATA SPLIT migration
 
-`roca migrate` resumes DATA-2 memory custody, DATA-3 corpus custody and DATA-4
+[`roca migrate`](../internal/distribution/cli/migrate.go) resumes DATA-2 memory custody, DATA-3 corpus custody and DATA-4
 legacy custody, then reports `migration: verified` (`{"verified":true}` with
 `--json`). It prepares bundled ops, corpus, and cron databases and creates
 snapshots when DATA-2 is unfinished; committed batch receipts let an interrupted

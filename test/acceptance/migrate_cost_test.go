@@ -48,6 +48,7 @@ func TestCostMigrate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer db.Close()
 	if err := store.ApplySchema(t.Context(), db); err != nil {
 		t.Fatal(err)
 	}
@@ -55,16 +56,11 @@ func TestCostMigrate(t *testing.T) {
  INSERT INTO sessions(session_id,source_agent,title) VALUES('synthetic-session','fixture','migration cost')`); err != nil {
 		t.Fatal(err)
 	}
-	tx, err := db.SQL().Begin()
-	if err != nil {
-		t.Fatal(err)
-	}
-	for i := 0; i < 128; i++ {
-		if _, err := tx.Exec(`INSERT INTO exchanges(session_id,exchange_number,agent_text) VALUES('synthetic-session',?,?)`, i, strings.Repeat("synthetic migration cost ", 3000)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := tx.Commit(); err != nil {
+	if _, err := db.SQL().Exec(`WITH RECURSIVE turns(n) AS (
+ SELECT 0 UNION ALL SELECT n + 1 FROM turns WHERE n < 127
+)
+ INSERT INTO exchanges(session_id,exchange_number,agent_text)
+ SELECT 'synthetic-session', n, ? FROM turns`, strings.Repeat("synthetic migration cost ", 3000)); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Close(); err != nil {
