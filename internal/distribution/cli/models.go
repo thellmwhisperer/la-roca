@@ -31,6 +31,7 @@ const (
 type doctorReport struct {
 	service.DoctorReport
 	QueryFailures logfile.QueryFailureSummary `json:"query_failures"`
+	Vector        *vectorDoctorReport         `json:"vector,omitempty"`
 }
 
 func doctorCommand(env *cliEnv) *cobra.Command {
@@ -72,11 +73,13 @@ func doctorCommand(env *cliEnv) *cobra.Command {
 					report.Warnings = append(report.Warnings,
 						"query failure log could not be read: "+logErr.Error())
 				}
-				answer := doctorReport{DoctorReport: report, QueryFailures: failures}
+				answer := doctorReport{DoctorReport: report, QueryFailures: failures,
+					Vector: env.collectVectorDoctor(cmd.Context())}
 				if env.json {
 					return env.printJSON(answer)
 				}
 				renderDoctor(env, report)
+				renderVectorDoctor(env, answer.Vector)
 				renderQueryFailures(env, failures)
 				if terminalInput(cmd.InOrStdin()) && !env.skipReconciliation {
 					_, err = env.reconcileCapabilities(cmd, true, true)

@@ -115,7 +115,8 @@ func TestStatusCommandReportsAXIRowsWithoutWaitingForTheModel(t *testing.T) {
 	text := stdout.String()
 	for _, needle := range []string{
 		"worker:", "databases[5]{", "plugin", "embedded_chunks", "candidate_chunks",
-		"sidecar_bytes", "last_write", "state", "help[", "roca vector status --json",
+		"sidecar_bytes", "last_write", "state", "index_lock", "compact_recommended",
+		"help[", "roca vector status --json",
 		"claude-code-parser", "roca-corpus", "roca-notes", "roca-galactic", "roca-ops",
 	} {
 		if !strings.Contains(text, needle) {

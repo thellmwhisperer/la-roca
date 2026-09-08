@@ -34,18 +34,23 @@ nobody answered has not consented to a download.
 
 `roca vector status` reports one row per database declared in
 `vector-registry.json`: plugin, database, declared tables, embedded chunks,
-candidate chunks, sidecar size, last write, and state. Embedded and candidate
-counts are exact under the declared chunking policy or unknown (`null`), never
-estimates or invented zeroes. Sidecar size and last write include its SQLite
-WAL and shared-memory files when present.
+candidate chunks, sidecar size, last write, state, whether `index.lock` is
+`live`, `stale`, or `absent`, and whether `roca vector compact` would reclaim
+empty embedding pages. Embedded and candidate counts are exact under the
+declared chunking policy or unknown (`null`), never estimates or invented
+zeroes. Sidecar size and last write include its SQLite WAL and shared-memory
+files when present. A large sidecar with a matching live chunk count is not
+automatically a compaction candidate: density around 4 KB per 768-dimension
+chunk is healthy. `roca doctor` repeats the compact and lock remedies.
 
 The states are `building`, `complete`, `empty`, `outdated`, and `unknown`.
-`complete` requires a sealed source fingerprint, the current declaration, and
-a matching cheap source-file marker; status does not hash the corpus to prove
-that. A changed declaration or marker is `outdated`. A missing sidecar, or a
-readable unsealed sidecar with exactly zero chunks, is `empty`. An unsealed
-sidecar is `building` only while the live worker identifies that database.
-Missing or unreadable evidence is `unknown`.
+`complete` requires a sealed source fingerprint and the current declaration.
+A cheap source-file marker, when stored, detects drift without hashing the
+corpus; a legacy seal that has the fingerprint but no marker is still
+`complete`. A changed declaration or stored marker is `outdated`. A missing
+sidecar, or a readable unsealed sidecar with exactly zero chunks, is `empty`.
+An unsealed sidecar is `building` only while the live worker identifies that
+database. Missing or unreadable evidence is `unknown`.
 
 One worker line says whether a pass is running, its pid, backend (`cpu` or
 `metal`), and current database. Backend and database are unknown unless they
