@@ -84,16 +84,6 @@ type exploreArgs struct {
 	Databases string `json:"databases,omitempty" jsonschema:"comma list of attached database names (corpus,ops), or all"`
 }
 
-func (a exploreArgs) request() service.ExploreRequest {
-	return service.ExploreRequest{
-		QueryRequest: service.QueryRequest{
-			Question: a.Query, Layer: a.Layer, MaxChars: a.MaxChars,
-			Databases: mustParseDatabases(a.Databases),
-		},
-		Deep: a.Deep,
-	}
-}
-
 func (a queryArgs) request() service.SearchRequest {
 	return service.SearchRequest{
 		Question:    a.Query,

@@ -141,7 +141,7 @@ func (s *Service) DeletePill(ctx context.Context, slug string) (PillDeleteResult
 	if !s.opts.RocaOpsEnabled {
 		return PillDeleteResult{}, fmt.Errorf("pill delete requires features.roca_ops and the %s database", rocaOpsPluginName)
 	}
-	if _, err := s.ensureSchema(ctx); err != nil {
+	if _, err := s.EnsureSchema(ctx); err != nil {
 		return PillDeleteResult{}, err
 	}
 	target, err := s.memoryOwner()

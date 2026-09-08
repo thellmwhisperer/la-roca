@@ -1,13 +1,13 @@
 # Operations: memory layers, audit logs, redaction, retention
 
-First-time path: [install, detect an already signed-in agent CLI, and query
-without a La Roca login](lifecycle.md#install).
+First-time path: [install and initialize search](lifecycle.md#install).
 
 ## Privacy
 
 Static local executables, local SQLite stores under `~/.roca`, zero network in
-the ingest path. Providers are called only to answer the questions you ask, and
-the SQL phase never sees your rows. With `--full` or `explore`, the prose phase
+the ingest path. The optional playground plugin calls providers only to answer
+the questions you ask, and the SQL phase never sees your rows. With `--full` or
+`explore`, the prose phase
 receives at most ten result rows with each field truncated to 240 characters;
 the database, the full result set, and the search index never leave the machine.
 Explore reads the whole result set locally to compute its terrain, and only the

@@ -34,12 +34,12 @@ claims:
       item: "Store writes one memory with layer, origin and project"
   internal/distribution/cli/models.go:
     contract:
-      file: features/provider/selection.feature
-      item: "Doctor names which model is going to answer, and why"
-  internal/distribution/cli/model_validation.go:
+      file: features/distribution/cli.feature
+      item: "Doctor report is a privacy-safe pasteable snapshot"
+  internal/distribution/cli/playground.go:
     contract:
-      file: features/provider/model-adapters.feature
-      item: "Model set verifies a CLI and persists its answering model without storing authentication"
+      file: features/distribution/cli.feature
+      item: "Playground without its optional plugin prints the install hint"
   internal/distribution/cli/serve.go:
     contract:
       file: features/distribution/mcp-contract.feature

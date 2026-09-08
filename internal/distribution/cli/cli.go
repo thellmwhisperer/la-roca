@@ -23,7 +23,6 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacron"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
-	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
@@ -66,8 +65,6 @@ type cliEnv struct {
 	liveIngest           *ingestRows
 	wantIngestProgress   bool
 	ingestStarted        time.Time
-	modelBackend         modelValidationBackend
-	modelPicker          modelPicker
 	skipReconciliation   bool
 	skipInitChooser      bool
 	initPromptWait       time.Duration
@@ -75,6 +72,7 @@ type cliEnv struct {
 	features             config.FeaturesConfig
 	featuresLoaded       bool
 	omitCorpus           bool
+	skipBundledLifecycle bool
 	forceReadOnly        bool
 	sshRunner            sshCommandRunner
 	bundledVectorPayload []byte
@@ -195,7 +193,7 @@ func rootCommand(env *cliEnv) *cobra.Command {
 			"It reads what Claude, Codex, OpenCode and the rest write to disk, normalizes\n" +
 			"that into one local SQLite database, and answers natural-language questions\n" +
 			"about it. The database and search index stay on this machine. Natural-language\n" +
-			"questions, and up to ten result rows for --full, go to the selected model provider.",
+			"questions use zero-inference FTS and vector search. Optional human answering belongs to roca-playground.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		// `roca --version` is the health check `install.sh` and `roca update` run
@@ -214,13 +212,13 @@ func rootCommand(env *cliEnv) *cobra.Command {
 	root.PersistentFlags().BoolVar(&env.forceReadOnly, "read-only", false,
 		"refuse database, audit, and reconciliation writes")
 	commands := []*cobra.Command{
-		versionCommand(env), initCommand(env), exploreCommand(env), schemaCommand(env),
+		versionCommand(env), initCommand(env), playgroundPluginCommand(env, "explore"), schemaCommand(env),
 		indexCommand(env), doctorCommand(env), dedupCommand(env), compactCommand(env), memoryCommand(env), layersCommand(env),
 		healthCommand(env), databaseScopeCommand(env),
 		mcpCommand(env), skillCommand(env), hooksCommand(env),
-		loginCommand(env), modelCommand(env),
+		playgroundPluginCommand(env, "login"), playgroundPluginCommand(env, "model"),
 		updateCommand(env), uninstallCommand(env),
-		modelsCommand(env), pluginCommand(env), pluginsCommand(env),
+		playgroundPluginCommand(env, "models"), pluginCommand(env), pluginsCommand(env),
 		remoteCommand(env),
 		installBundledPluginsCommand(env),
 		capabilitiesCommand(env), artifactsCommand(env),
@@ -230,7 +228,7 @@ func rootCommand(env *cliEnv) *cobra.Command {
 		panic(fmt.Sprintf("invalid bundled ops manifest: %v", err))
 	}
 	if opsManifest.HasVerb(service.QueryVerb) {
-		commands = append(commands, queryCommand(env), playgroundCommand(env))
+		commands = append(commands, queryCommand(env), playgroundPluginCommand(env, "playground"))
 	}
 	if opsManifest.HasVerb(service.ExecVerb) {
 		commands = append(commands, execCommand(env))
@@ -787,7 +785,7 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 	// leaves it exactly as it found it. The ops package is always present for
 	// durable call history; features.roca_ops still controls only its agent-memory
 	// write and query routes during the staged split.
-	if !readOnly {
+	if !readOnly && !env.skipBundledLifecycle {
 		if pluginDir == "" {
 			return nil, fmt.Errorf("the bundled ops plugin needs a HOME for its database")
 		}
@@ -815,14 +813,13 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 		env.liveIngest = newIngestRows(env.errOut, true)
 		ingestProgress = env.liveIngest.update
 	}
-	providers, interpreters, explorers := buildProviders(file, paths)
 	readLayout := service.ReadLayout(file.Layout.Serving)
 	opsDatabase, corpusDatabase := "", ""
 	if pluginDir != "" {
 		opsDatabase = filepath.Join(pluginDir, rocaops.Name, rocaops.DatabaseFilename)
 		corpusDatabase = filepath.Join(pluginDir, rocacorpus.Name, rocacorpus.DatabaseFilename)
 	}
-	if !readOnly && readLayout != service.LayoutLegacyServing && fileExists(paths.DB) {
+	if !readOnly && !env.skipBundledLifecycle && readLayout != service.LayoutLegacyServing && fileExists(paths.DB) {
 		if _, err := rocacron.Ensure(pluginDir, pluginExecutableDir(paths), env.build.Version); err != nil {
 			return nil, fmt.Errorf("install bundled cron plugin for DATA SPLIT: %w", err)
 		}
@@ -872,6 +869,7 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 	}
 	svc, err := service.Open(service.Options{
 		DBPath:                    paths.DB,
+		ProviderProbe:             providerProbe(paths, readOnly),
 		BackupDir:                 paths.Backups,
 		DataDir:                   filepath.Dir(paths.DB),
 		Version:                   env.build.Version,
@@ -888,14 +886,12 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 		ReadLayout:                readLayout,
 		RollbackLayout:            rollbackLayout,
 		RecordShadowMismatch:      recordShadowMismatch,
-		Providers:                 providers,
-		Interpreters:              interpreters,
-		Explorers:                 explorers,
-		ConfigPath:                paths.Config,
-		ConfigExists:              file.Exists,
-		Sources:                   ingestSources(file, home, paths.Runner),
-		ReadOnly:                  readOnly,
-		VectorSearch:              vectorSearch,
+
+		ConfigPath:   paths.Config,
+		ConfigExists: file.Exists,
+		Sources:      ingestSources(file, home, paths.Runner),
+		ReadOnly:     readOnly,
+		VectorSearch: vectorSearch,
 		Progress: func(line string) {
 			if !env.json && strings.HasPrefix(line, "index: rebuilding") {
 				env.initSay("%s", line)
@@ -995,48 +991,6 @@ func runtimeStatus[R any](
 		env.print("%s", renderHelp(help...))
 	}
 	return nil
-}
-
-// buildProviders turns the configuration into the main, interpretation, and
-// deep-exploration cascades.
-//
-// Whatever it has to say travels as data inside the cascade and comes out
-// through the answer and through `roca doctor`, which is where an operator
-// reads it. It is not also printed to the error stream: a copy on every single
-// command is noise, and noise on stderr is what makes an operator stop reading
-// it.
-func buildProviders(file config.File, paths config.Paths) (provider.Cascade, provider.Cascade, provider.Cascade) {
-	settings := provider.Settings{
-		File: file, RunnerDir: paths.Runner, Env: os.Getenv,
-	}
-	cascade, err := provider.BuildCascade(settings)
-	if err != nil {
-		// No providers, but not "turned off": the operator did not turn the
-		// model off, they wrote an order this build cannot resolve, and doctor
-		// has to say which of the two it is looking at.
-		return provider.Cascade{Warnings: []string{err.Error()}}, provider.Cascade{}, provider.Cascade{}
-	}
-	interpreters, err := provider.BuildInterpretCascade(settings)
-	if err != nil {
-		// An interpretation order this build cannot resolve leaves the two
-		// inferences together and says why. It never takes the query down.
-		cascade.Warnings = append(cascade.Warnings, err.Error())
-		interpreters = provider.Cascade{}
-	}
-	explorers, err := provider.BuildExploreCascade(settings)
-	if err != nil {
-		// A deep order this build cannot resolve leaves deep investigation on
-		// the interpretation/main fallback and says why.
-		cascade.Warnings = append(cascade.Warnings, err.Error())
-		explorers = provider.Cascade{}
-	}
-	// What resolving that order had to say is about the same file, so it reaches
-	// the operator in the same place as the rest of the configuration.
-	cascade.Warnings = append(cascade.Warnings, interpreters.Warnings...)
-	cascade.Warnings = append(cascade.Warnings, explorers.Warnings...)
-	interpreters.Warnings = nil
-	explorers.Warnings = nil
-	return cascade, interpreters, explorers
 }
 
 func (env *cliEnv) printJSON(value any) error {

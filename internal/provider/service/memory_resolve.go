@@ -36,11 +36,11 @@ func (s *Service) ResolveMemory(ctx context.Context, requested int64) (MemoryRes
 		sources = append(sources, source{name: "plugin:roca-corpus", db: s.corpus.SQL()})
 	}
 	for _, source := range sources {
-		resolved, found, err := resolveMemoryIn(ctx, source.db, source.name, requested)
+		resolved, Found, err := resolveMemoryIn(ctx, source.db, source.name, requested)
 		if err != nil {
 			return MemoryResolution{}, err
 		}
-		if found {
+		if Found {
 			return resolved, nil
 		}
 	}
@@ -64,8 +64,8 @@ func resolveMemoryIn(ctx context.Context, db *sql.DB, database string,
 			return MemoryResolution{}, false, err
 		}
 	}
-	if result, found, err := read(requested, false); found || err != nil {
-		return result, found, err
+	if result, Found, err := read(requested, false); Found || err != nil {
+		return result, Found, err
 	}
 	var canonical int64
 	err := db.QueryRowContext(ctx, `SELECT canonical_id FROM memory_id_remaps WHERE old_id = ?`, requested).
@@ -76,11 +76,11 @@ func resolveMemoryIn(ctx context.Context, db *sql.DB, database string,
 	if err != nil {
 		return MemoryResolution{}, false, fmt.Errorf("resolve memory alias %d in %s: %w", requested, database, err)
 	}
-	result, found, err := read(canonical, true)
+	result, Found, err := read(canonical, true)
 	if err != nil {
 		return MemoryResolution{}, false, err
 	}
-	if !found {
+	if !Found {
 		return MemoryResolution{}, false, fmt.Errorf("memory alias %d points to missing canonical id %d", requested, canonical)
 	}
 	return result, true, nil

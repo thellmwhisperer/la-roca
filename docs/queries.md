@@ -1,7 +1,8 @@
 # Queries, explore, and the read-only gate
 
-First-time path: [install, detect an already signed-in agent CLI, and query
-without a La Roca login](lifecycle.md#install).
+For human answering, see [optional playground installation](plugins.md#optional-human-answering).
+
+First-time path: [install and initialize search](lifecycle.md#install).
 
 `roca query` is hybrid search with no answering-model inference: it selects
 rare full-text terms, embeds the question plus static question templates when

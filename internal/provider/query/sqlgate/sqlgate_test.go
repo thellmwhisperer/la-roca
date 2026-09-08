@@ -313,7 +313,7 @@ func TestTheGateRejectsWhatIsNotEvenAQuery(t *testing.T) {
 // the default validation schema does not have, so they may fail as no such
 // table, never as a mid-statement EOF.
 func TestTheGatePreparesTheLiveUnionShapes(t *testing.T) {
-	entries, err := os.ReadDir(filepath.Join("..", "sqlrepair", "testdata", "union_coalesce"))
+	entries, err := os.ReadDir(filepath.Join("testdata", "union_coalesce"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -323,7 +323,7 @@ func TestTheGatePreparesTheLiveUnionShapes(t *testing.T) {
 	g := gate(t)
 	for _, entry := range entries {
 		t.Run(entry.Name(), func(t *testing.T) {
-			raw, err := os.ReadFile(filepath.Join("..", "sqlrepair", "testdata", "union_coalesce", entry.Name()))
+			raw, err := os.ReadFile(filepath.Join("testdata", "union_coalesce", entry.Name()))
 			if err != nil {
 				t.Fatal(err)
 			}

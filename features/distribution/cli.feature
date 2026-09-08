@@ -19,7 +19,6 @@ Feature: Distribution command line
       | query     |
       | store     |
       | ingest    |
-      | model     |
       | doctor    |
       | remote    |
       | update    |
@@ -37,12 +36,16 @@ Feature: Distribution command line
 
   Scenario: Init closes with one ordered, fully timed summary
     When the operator exercises the "init" command in human and JSON form
-    Then init reports setup, ingest, index, model, and its total once in that order
+    Then init reports setup, ingest, index, and its total once in that order
 
-  Scenario: Non-interactive init names the answering model without opening the chooser
+  Scenario: Non-interactive init leaves answering to the optional plugin
     When the operator initializes non-interactively with a detected model CLI
-    Then init prints one answering notice and writes only the new-install features
+    Then init prints no answering notice and writes only the new-install features
 
   Scenario: Doctor report is a privacy-safe pasteable snapshot
     When the operator asks for a doctor support report
     Then the report is one fenced block with a federation mode and the JSON form is one document
+
+  Scenario: Playground without its optional plugin prints the install hint
+    When the operator asks playground without its plugin
+    Then the command names the playground installation command

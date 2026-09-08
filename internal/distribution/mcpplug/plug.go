@@ -1,14 +1,10 @@
 // Package mcpplug is La Roca's MCP surface: the plug, not the product.
 //
 // The CLI is the complete surface over the kernel. This package exists for the
-// agents that have no shell, and it carries six tools, each a single call into
-// the same service object the CLI drives. There is no
+// agents that have no shell. Core tools call the shared service; optional
+// answering tools dispatch to the playground executable. There is no
 // state between calls: the process is born when the agent launches it and dies
 // when the agent closes the pipe, matching the stateless protocol.
-//
-// The law of this package is pinned by passthrough_test.go and not by this
-// comment: a handler with logic of its own is a capability no other surface
-// can reach.
 package mcpplug
 
 import (
@@ -16,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/playground"
 	"io"
 	"os"
 	"path/filepath"
@@ -40,8 +37,8 @@ const ServerName = "roca"
 // `roca_sql` to answer a question `roca_query` answers whole.
 const instructions = "La Roca is local semantic memory for agent fleets: it answers " +
 	"natural-language questions about what the agents on this machine have left " +
-	"behind. Ask with roca_query; investigate with roca_explore. Use roca_sql only to compile SQL, then roca_exec " +
-	"to run it under the read-only gate. Write back what is worth remembering with roca_store."
+	"behind. Search with roca_query and use roca_exec " +
+	"for checked SQL. Write back what is worth remembering with roca_store. The optional playground plugin adds roca_sql and roca_explore."
 
 // Build is what the linker put inside the binary. The version the handshake
 // declares is the product's, never the SDK's: an agent that reports a library
@@ -93,14 +90,15 @@ func newServer(svc *service.Service, build Build, resident *residentVector) *mcp
 	if manifest.HasVerb(service.ExecVerb) {
 		mcp.AddTool(server, execTool, sanitizing(p.exec, dbPath, dataDir))
 	}
-	mcp.AddTool(server, exploreTool, sanitizing(p.explore, dbPath, dataDir))
+	if _, err := playground.Executable(); err == nil {
+		mcp.AddTool(server, exploreTool, sanitizing(p.explore, dbPath, dataDir))
+		mcp.AddTool(server, sqlTool, sanitizing(p.sql, dbPath, dataDir))
+	}
 	mcp.AddTool(server, healthTool, sanitizing(p.health, dbPath, dataDir))
 	if manifest.HasVerb(service.QueryVerb) {
 		mcp.AddTool(server, queryTool, sanitizing(p.query, dbPath, dataDir))
 	}
-	if manifest.HasVerb(service.SQLVerb) {
-		mcp.AddTool(server, sqlTool, sanitizing(p.sql, dbPath, dataDir))
-	}
+
 	if manifest.HasVerb(service.StoreVerb) {
 		mcp.AddTool(server, storeTool, sanitizing(p.store, dbPath, dataDir))
 	}
@@ -142,12 +140,15 @@ func auditCalls(audit *logfile.Writer, warnings io.Writer) mcp.Middleware {
 			started := time.Now()
 			tool, args := toolCall(req)
 			result, err := next(ctx, method, req)
+			if callResult, ok := result.(*mcp.CallToolResult); ok && callResult == nil {
+				result = nil
+			}
 			ok := err == nil
 			// What the client reads as an error is what needs an ID in it. A
 			// degraded answer this surface marks IsError is one of them, and it
 			// reaches the agent as an error like any other.
 			surfaced := err != nil
-			if callResult, isToolResult := result.(*mcp.CallToolResult); isToolResult && callResult.IsError {
+			if callResult, isToolResult := result.(*mcp.CallToolResult); isToolResult && callResult != nil && callResult.IsError {
 				ok, surfaced = false, true
 			}
 			degraded := resultDegraded(result)
@@ -317,6 +318,9 @@ func numberAsInt64(value any) int64 {
 func resultDegraded(value any) string {
 	switch result := value.(type) {
 	case *mcp.CallToolResult:
+		if result == nil {
+			return ""
+		}
 		return resultDegraded(result.Meta)
 	case service.QueryResult:
 		return result.Degraded

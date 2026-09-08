@@ -2,10 +2,10 @@
 
 Reading order, from operator to contributor:
 
-1. [Install, update, and uninstall](lifecycle.md): install the binary, let La
-   Roca detect an already signed-in agent CLI, and ask away with no La Roca
-   login; then follow the verified update and consent-based uninstall flows.
-2. [Model providers](models.md): automatic agent CLI detection, provider order,
+1. [Install, update, and uninstall](lifecycle.md): install the binary and
+   initialize search without an answering-model account; then follow the verified update and consent-based uninstall flows.
+2. [Model providers](models.md): the optional playground plugin's agent CLI
+   detection, provider order,
    the local floor, CLI-owned authentication, and how the playground and
    explore inferences choose their models.
 3. [Queries, session context, explore, and the read-only gate](queries.md):
@@ -22,9 +22,9 @@ Reading order, from operator to contributor:
 7. [Plugins](plugins.md): a copy-verbatim quickstart to your first installed
    plugin, then the manifest engine, isolated plugin-owned databases,
    executable capabilities, package lifecycle, and a build-your-own example.
-8. [The MCP plug](mcp.md): the stdio server, its six core tools and optional
-   semantic-search tool, the TOON answer contract, and the supported
-   integration targets.
+8. [The MCP plug](mcp.md): the stdio server, its core tools and optional
+   playground and semantic-search tools, the TOON answer contract, and the
+   supported integration targets.
 9. [Operations](operations.md): memory-layer validation and repair, the audit
    log contract for every CLI and MCP call, the query failures `roca doctor`
    reports, the privacy-safe `roca doctor --report` support snapshot,

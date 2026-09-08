@@ -1,7 +1,6 @@
 # Architecture
 
-First-time path: [install, detect an already signed-in agent CLI, and query
-without a La Roca login](lifecycle.md#install).
+First-time path: [install and initialize search](lifecycle.md#install).
 
 La Roca is a federating kernel surrounded by domain plugins. The kernel owns no
 domain database. Its durable state is configuration and plugin manifests, and
@@ -31,7 +30,7 @@ in place as the reversible legacy route until the separate retirement step.
                               v
   +-------------------------------------------------------+
   | kernel                                                |
-  | init | manifest engine | read-only gate | NL-to-SQL   |
+  | init | manifest engine | read-only gate | FTS search  |
   | config + manifests | in-memory SQLite attachment hub  |
   +---------------------------+---------------------------+
                               |
@@ -66,7 +65,7 @@ applies one domain's diet to another.
 ```text
 store        - SQLite primitives and lexical indexing
 ingest       - source scanning, parsers, and idempotent writes
-provider     - models, manifests, semantic catalog, vector registry, gate, and services
+provider     - manifests, semantic catalog, vector registry, gate, and services
 distribution - CLI, MCP, installers, lifecycle, and release plumbing
 ```
 
@@ -129,8 +128,9 @@ every hit carries its source and per-leg evidence. Snippet resolution uses each
 manifest's declared ID and text columns, so every vector-declared table follows
 the same path without a hardcoded source-family map.
 
-`roca playground`, `roca explore`, and `roca_sql` retain the model-written SQL
-path. Discovery validates semantic declarations against each real SQLite
+`roca playground`, `roca explore`, and `roca_sql` dispatch the model-written SQL
+path to the [optional playground executable](plugins.md#optional-human-answering).
+Discovery validates semantic declarations against each real SQLite
 schema, the selected fragments form the NL-to-SQL catalog, and every generated
 `SELECT` passes the same read-only gate as explicit SQL. The first inference
 sees schema, never result rows; optional interpretation sees only returned

@@ -136,12 +136,12 @@ func TestBundledCorpusIsAlwaysResidentWithoutTheGenericPluginFlag(t *testing.T) 
 			svc.resident, svc.residentWarnings)
 	}
 	route := svc.pluginsForQuestion(t.Context(), "which sessions and exchanges were harvested?")
-	if len(route.databases) != 1 || route.databases[0].Name != rocacorpus.Name {
-		t.Fatalf("routed databases = %+v, want corpus", route.databases)
+	if len(route.Databases) != 1 || route.Databases[0].Name != rocacorpus.Name {
+		t.Fatalf("routed databases = %+v, want corpus", route.Databases)
 	}
-	if consulted := route.consulted(); len(consulted) != 2 ||
-		consulted[0] != "core" || consulted[1] != "plugin:roca-corpus" {
-		t.Fatalf("consulted = %v, want core and corpus", consulted)
+	if Consulted := route.Consulted(); len(Consulted) != 2 ||
+		Consulted[0] != "core" || Consulted[1] != "plugin:roca-corpus" {
+		t.Fatalf("consulted = %v, want core and corpus", Consulted)
 	}
 }
 
@@ -206,9 +206,9 @@ func TestKeywordSearchReadsExchangesFromTheResidentCorpus(t *testing.T) {
 		        '2026-08-14T08:00:00Z', '2026-08-14T08:00:01Z')`); err != nil {
 		t.Fatal(err)
 	}
-	columns, rows, statement, _, warnings, err := svc.searchByTerm(t.Context(),
+	columns, rows, statement, _, warnings, err := svc.SearchByTerm(t.Context(),
 		query.Plan{Template: query.TemplateSearchByTerm, Term: "cobalt+atlas", Limit: 10},
-		search.MethodLike, 0, true, pluginRoute{databases: svc.resident})
+		search.MethodLike, 0, true, PluginRoute{Databases: svc.resident})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,9 +255,9 @@ func TestReadOnlyAnswersFromCoreWithoutTheBundledCorpus(t *testing.T) {
 		t.Fatalf("resident = %+v, warnings = %v", svc.resident, svc.residentWarnings)
 	}
 	route := svc.pluginsForQuestion(t.Context(), "which sessions were harvested?")
-	if len(route.databases) != 0 || len(route.warnings) != 1 {
+	if len(route.Databases) != 0 || len(route.Warnings) != 1 {
 		t.Fatalf("routed databases = %+v, warnings = %v; the omission must travel",
-			route.databases, route.warnings)
+			route.Databases, route.Warnings)
 	}
 }
 

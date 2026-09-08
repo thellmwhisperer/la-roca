@@ -164,7 +164,7 @@ func (s *Service) AddLayer(ctx context.Context, name string) (LayerAddResult, er
 	if name == "" {
 		return LayerAddResult{}, fmt.Errorf("a layer name is required")
 	}
-	if _, err := s.ensureSchema(ctx); err != nil {
+	if _, err := s.EnsureSchema(ctx); err != nil {
 		return LayerAddResult{}, err
 	}
 	owner, err := s.layerOwner()
@@ -198,7 +198,7 @@ func (s *Service) MigrateLayer(ctx context.Context, from, to string) (LayerMigra
 	if from == "" || to == "" {
 		return LayerMigrateResult{}, fmt.Errorf("both source and destination layers are required")
 	}
-	if _, err := s.ensureSchema(ctx); err != nil {
+	if _, err := s.EnsureSchema(ctx); err != nil {
 		return LayerMigrateResult{}, err
 	}
 	physical, err := s.resolveRegisteredLayer(ctx, to)

@@ -35,7 +35,7 @@ func (s *Service) Index(ctx context.Context) (search.Report, error) {
 	if s.opts.ReadOnly {
 		return search.Report{}, errReadOnly
 	}
-	prepared, err := s.ensureSchema(ctx)
+	prepared, err := s.EnsureSchema(ctx)
 	if err != nil {
 		return search.Report{}, err
 	}
@@ -94,7 +94,7 @@ func (r readOnlyIngest) Write(context.Context, func(*sql.Tx) error) error { retu
 //
 // The index is refreshed in the same command and not left to the operator. It is
 // incremental, so on a run that wrote nothing it costs nothing, and skipping it
-// would leave a memory that is in the database and cannot be found: the worst of
+// would leave a memory that is in the database and cannot be Found: the worst of
 // the two states, because it looks like data loss.
 func (s *Service) Ingest(ctx context.Context, req IngestRequest) (IngestResult, error) {
 	started := time.Now()
@@ -114,7 +114,7 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (IngestResult, 
 	var prepared search.Report
 	if !req.DryRun {
 		var err error
-		prepared, err = s.ensureSchema(ctx)
+		prepared, err = s.EnsureSchema(ctx)
 		if err != nil {
 			return IngestResult{}, err
 		}

@@ -65,7 +65,7 @@ type StoreRequest struct {
 }
 
 // StoreResult is the identity of the memory that is now there, whether this
-// call created it or found it already written.
+// call created it or Found it already written.
 type StoreResult struct {
 	ID    int64  `json:"id,string"`
 	Layer string `json:"layer"`
@@ -109,7 +109,7 @@ func (s *Service) Store(ctx context.Context, req StoreRequest) (StoreResult, err
 			status, strings.Join(validStatuses, ", "))
 	}
 
-	if _, err := s.ensureSchema(ctx); err != nil {
+	if _, err := s.EnsureSchema(ctx); err != nil {
 		return StoreResult{}, err
 	}
 	// The live registry is authoritative. An alias written by anybody lands in
@@ -167,9 +167,9 @@ func (s *Service) Store(ctx context.Context, req StoreRequest) (StoreResult, err
 			sourceSurface: authorship.Surface, project: orNull(req.Project), status: status,
 			supersedes: orNull(req.Supersedes), expiresAt: expiresAt,
 		}
-		if existing, found, err := identicalMemory(ctx, tx, payload, s.opts.RocaOpsEnabled); err != nil {
+		if existing, Found, err := identicalMemory(ctx, tx, payload, s.opts.RocaOpsEnabled); err != nil {
 			return err
-		} else if found {
+		} else if Found {
 			result.ID, result.Skipped = existing, true
 			result.DuplicateSource, result.DuplicateSurface = authorship.Agent, authorship.Surface
 			return nil

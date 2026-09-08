@@ -2,6 +2,7 @@ package cli
 
 import (
 	"database/sql"
+	"github.com/thellmwhisperer/la-roca/internal/provider/query"
 	"io"
 	"os"
 	"path/filepath"
@@ -71,10 +72,13 @@ func TestShadowCLIOrchestratesCustodyBeforeComparingTheHub(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Keyword rescue exercises internal compatibility reads without model inference.
-	request := service.QueryRequest{Question: "shadow custody marker", Databases: []string{"core"}}
-	result, err := svc.Query(t.Context(), request)
-	if err != nil || result.RowCount != 1 {
+	// Deterministic search exercises compatibility reads without model inference.
+	runSearch := func() ([]map[string]any, error) {
+		_, rows, _, _, _, err := svc.SearchByTerm(t.Context(), query.Plan{Template: query.TemplateSearchByTerm, Term: "shadow+custody+marker"}, "", service.DefaultMaxChars, true, service.PluginRoute{IncludeCore: true})
+		return rows, err
+	}
+	result, err := runSearch()
+	if err != nil || len(result) != 1 {
 		t.Fatalf("shadow result = %+v, err = %v", result, err)
 	}
 	initialMarker, err := os.ReadFile(filepath.Join(filepath.Dir(corePath), "config.toml"))
@@ -97,8 +101,8 @@ func TestShadowCLIOrchestratesCustodyBeforeComparingTheHub(t *testing.T) {
 			WHERE source_database = 'core' AND id = 29)`); err != nil {
 		t.Fatal(err)
 	}
-	result, err = svc.Query(t.Context(), request)
-	if err != nil || result.RowCount != 1 || result.Rows[0]["text"] != "Synthetic shadow custody marker" {
+	result, err = runSearch()
+	if err != nil || len(result) != 1 || result[0]["text"] != "Synthetic shadow custody marker" {
 		t.Fatalf("legacy rollback answer = %+v, err = %v", result, err)
 	}
 	if err := ops.Close(); err != nil {

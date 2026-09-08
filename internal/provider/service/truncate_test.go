@@ -19,7 +19,7 @@ func TestTruncateMarksEveryClippedEdgeWithoutDroppingTheExcerptStart(t *testing.
 			"internationalization", "Our internationaliz", "", false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := truncate(tc.text, 20, tc.term)
+			got := Truncate(tc.text, 20, tc.term)
 			if len([]rune(got)) != 20 {
 				t.Fatalf("truncate length = %d, want 20: %q", len([]rune(got)), got)
 			}
@@ -27,7 +27,7 @@ func TestTruncateMarksEveryClippedEdgeWithoutDroppingTheExcerptStart(t *testing.
 				t.Fatalf("truncate markers = %q", got)
 			}
 			if !strings.HasPrefix(got, tc.wantPrefix) || tc.wantInfix != "" && !strings.Contains(got, tc.wantInfix) {
-				t.Fatalf("truncate(%q) = %q; want prefix %q and infix %q", tc.text, got, tc.wantPrefix, tc.wantInfix)
+				t.Fatalf("Truncate(%q) = %q; want prefix %q and infix %q", tc.text, got, tc.wantPrefix, tc.wantInfix)
 			}
 		})
 	}
@@ -49,7 +49,7 @@ func TestMatchPositionTracksUnicodeCaseChanges(t *testing.T) {
 
 func TestTruncateKeepsTinyBudgetsBounded(t *testing.T) {
 	for budget := 1; budget <= 3; budget++ {
-		got := truncate("Alex met Morgan after the launch", budget, "Morgan")
+		got := Truncate("Alex met Morgan after the launch", budget, "Morgan")
 		if len([]rune(got)) != budget || !strings.HasSuffix(got, "…") {
 			t.Errorf("budget %d produced %q", budget, got)
 		}

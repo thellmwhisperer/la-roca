@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
-	"github.com/thellmwhisperer/la-roca/internal/provider"
+
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
@@ -76,8 +76,7 @@ func TestExecStopsAQueryThatExceedsTheCostBudget(t *testing.T) {
 }
 
 func TestExecNeverAppliesModelSQLRepairs(t *testing.T) {
-	model := answering("codex", "SELECT id FROM memories LIMIT 1")
-	svc := serviceWithModel(t, model)
+	svc := seededService(t)
 	for _, statement := range []string{
 		"```sql\nSELECT id FROM memories LIMIT 1\n```",
 		"Here is the query:\nSELECT id FROM memories LIMIT 1",
@@ -86,9 +85,6 @@ func TestExecNeverAppliesModelSQLRepairs(t *testing.T) {
 		if _, err := svc.Exec(t.Context(), service.ExecRequest{SQL: statement}); err == nil {
 			t.Errorf("Exec silently repaired user SQL %q", statement)
 		}
-	}
-	if model.requests != 0 {
-		t.Fatalf("Exec contacted the model %d times", model.requests)
 	}
 }
 
@@ -113,26 +109,6 @@ func TestInitCreatesTheDatabaseAndSyncsTheLayerRegistry(t *testing.T) {
 	}
 	if layers != 12 {
 		t.Errorf("layers synced = %d, want 12", layers)
-	}
-}
-
-func TestInitCarriesFactoryBinarySelectionMetadata(t *testing.T) {
-	paths := freshPaths(t)
-	local := answering("codex", "")
-	local.commandTransport = true
-	svc := serviceOn(t, paths, func(options *service.Options) {
-		options.Providers = provider.Cascade{
-			Providers: []provider.Provider{local}, DetectedBinaries: []string{"codex"}, FactoryDefault: true,
-		}
-	})
-	result, err := svc.Init(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Join(result.DetectedModelBinaries, ",") != "codex" ||
-		strings.Join(result.MissingModelBinaries, ",") != "claude" ||
-		!result.FactoryDefault || result.FactoryDefaultProvider != "codex" {
-		t.Fatalf("init model metadata = %+v", result)
 	}
 }
 
@@ -250,18 +226,6 @@ func seededService(t *testing.T) *service.Service {
 // seededServiceWith is the same seeded installation with a model cascade
 // plugged in. The model tests need it. A second cascade is the installation
 // that splits the two inferences: the rows go to it and nowhere else.
-func seededServiceWith(t *testing.T, providers provider.Cascade,
-	interpreters ...provider.Cascade) *service.Service {
-	t.Helper()
-	svc := initialized(t, freshPaths(t), func(options *service.Options) {
-		options.Providers = providers
-		if len(interpreters) > 0 {
-			options.Interpreters = interpreters[0]
-		}
-	})
-	seedTheUsualMemories(t, svc)
-	return svc
-}
 
 // initialized opens a toy installation and runs Init over it. Every constructor
 // in this suite goes through it and says what makes its own installation

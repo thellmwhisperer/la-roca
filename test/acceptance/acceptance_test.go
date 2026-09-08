@@ -11,13 +11,18 @@
 package acceptance
 
 import (
+	"os"
 	"testing"
 
 	"github.com/cucumber/godog"
 )
 
 func TestJourneyAcceptanceSuite(t *testing.T) {
-	features, err := loadCatalogFeatures("../../features")
+	featureRoot := "../../features"
+	if value := os.Getenv("ROCA_PLAYGROUND_FEATURES"); value != "" {
+		featureRoot = value
+	}
+	features, err := loadCatalogFeatures(featureRoot)
 	if err != nil {
 		t.Fatalf("prepare the features: %v", err)
 	}

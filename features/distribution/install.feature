@@ -28,9 +28,9 @@ Feature: The full installation cycle
   Scenario: Querying works without anything having been started
     Given La Roca is installed and initialized
     And the runtime is not started
-    When I run "roca playground 'how many memories are there' --json"
+    When I run "roca query 'memories' --json"
     Then the command exits with code 0
-    And the JSON output has "path" not empty
+    And the JSON output has "engines" not empty
     And no resident process has been started
 
   @fast @acceptance

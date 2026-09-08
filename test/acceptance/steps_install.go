@@ -175,6 +175,9 @@ const theRetiredProvider = "[models]\norder = [\"xai\"]\n\n[models.xai]\n" +
 	"model = \"grok-synthetic\"\n"
 
 func (m *world) aRetiredProviderIsStillConfigured() error {
+	if err := installPlaygroundForAcceptance(m.home); err != nil {
+		return err
+	}
 	return os.WriteFile(filepath.Join(m.home, ".roca", "config.toml"),
 		[]byte(theRetiredProvider), 0o600)
 }

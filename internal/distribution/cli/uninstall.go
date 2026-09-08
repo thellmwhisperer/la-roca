@@ -21,7 +21,6 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/plugininstall"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocavector"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/skill"
-	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
@@ -30,10 +29,10 @@ import (
 const legacyCredentialsDir = "credentials"
 
 var legacyProviderCredentialFiles = map[string]string{
-	provider.NameCodex: "codex.json",
-	"deepseek":         "deepseek.key",
-	"zai":              "zai.key",
-	"xai":              "xai.key",
+	"codex":    "codex.json",
+	"deepseek": "deepseek.key",
+	"zai":      "zai.key",
+	"xai":      "xai.key",
 }
 
 // uninstallCommand leaves the machine as it was.
@@ -531,7 +530,7 @@ func ownedPaths(paths config.Paths) []string {
 	}
 	cacheDir := filepath.Join(dataDir, "cache")
 	if realDirectory(cacheDir) {
-		owned = append(owned, filepath.Join(cacheDir, modelsDevCacheFile), cacheDir)
+		owned = append(owned, filepath.Join(cacheDir, "models.dev.json"), cacheDir)
 	}
 	credentialsDir := filepath.Join(dataDir, legacyCredentialsDir)
 	if realDirectory(credentialsDir) {
