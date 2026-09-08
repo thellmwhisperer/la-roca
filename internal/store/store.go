@@ -158,9 +158,8 @@ func (db *DB) SQL() *sql.DB { return db.sql }
 // here, where `query_only` is set and a statement that writes fails even if the
 // validator had been wrong.
 //
-// The file is opened read-write at the system level on purpose: a truly
-// read-only connection cannot touch WAL's shared index, and a WAL database with
-// a reader like that fails to read.
+// query_only guards SQL writes; it does not prohibit SQLite's WAL shared-index
+// bookkeeping. The live mode=ro handle from OpenReadOnly has the same guard.
 func (db *DB) ReadOnly() (*sql.DB, error) {
 	if db.transient || db.physicalReadOnly {
 		return db.sql, nil

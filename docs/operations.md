@@ -308,7 +308,8 @@ write, so a read-only run never places it: on an installation that does not have
 it yet, answers cover core only and carry that omission as a warning. The
 durable half of the call log is database I/O under the same rule: a read-only
 run writes and backfills no call history, and `roca doctor` reads its failure
-history from JSONL, so an audit leaves the machine exactly as it found it.
+history from JSONL. See [Read-only snapshot cleanup](#read-only-snapshot-cleanup)
+for SQLite reader traffic and operator-consented cleanup.
 
 ## Exact duplicate maintenance
 
@@ -371,5 +372,13 @@ SQLite reader traffic, not a copy of the store.
 
 Older binaries copied each database into `roca-read-only-snapshot-*` directories
 under the process temp root and left them behind when a run was killed.
-`roca doctor` reports the count and size of any leftovers it still finds, and an
-interactive run offers to delete them.
+`roca doctor` reports the count and size of matching directories under its
+current process temp root. It does not check whether an older binary still
+owns them: stop older `roca` processes and confirm the copies are abandoned
+before accepting cleanup.
+
+An interactive run offers deletion with a default of no; only `y` or `yes`
+consents. Nothing is deleted automatically. Non-interactive runs and
+`roca doctor --json` only report leftovers; `roca doctor --report` uses the
+separate support collector and neither scans for these directories nor offers
+cleanup.
