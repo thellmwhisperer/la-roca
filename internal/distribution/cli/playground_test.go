@@ -2,6 +2,8 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
@@ -18,14 +20,19 @@ func installPlaygroundFixture(t *testing.T, home, script string) {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+script), 0700); err != nil {
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+`audit='{"stderr":""}'
+if [ "$1" = "--transport" ]; then
+ shift
+ trap 'printf "%s\n" "$audit" >&2' EXIT
+fi
+`+script), 0700); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestPlaygroundIsOptionalAndForwardsArguments(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	fixtureInstallation(t)
+	home := os.Getenv("HOME")
 	var out strings.Builder
 	env := hermeticCLIEnv(&cliEnv{out: &out, errOut: &out})
 	_, err := executeWithEnv(env, []string{"playground", "a question"}, strings.NewReader(""))
@@ -43,7 +50,7 @@ func TestPlaygroundIsOptionalAndForwardsArguments(t *testing.T) {
 	}
 	out.Reset()
 	env = hermeticCLIEnv(&cliEnv{out: &out, errOut: &out})
-	selected := filepath.Join(home, "selected", "roca.db")
+	selected := filepath.Join(home, ".roca", "roca.db")
 	_, err = executeWithEnv(env, []string{"playground", "question", "--db-path", selected, "--json", "--read-only"}, strings.NewReader(""))
 	if err != nil || env.dbPath != selected || !env.json || !env.forceReadOnly {
 		t.Fatalf("inherited flags: %v db=%q json=%v readonly=%v", err, env.dbPath, env.json, env.forceReadOnly)
@@ -109,5 +116,65 @@ func TestOpenForPluginPreservesBundledPackageVersions(t *testing.T) {
 				t.Fatalf("%s version = %q after plugin %s, want core version test", name, manifest.Version, version)
 			}
 		}
+	}
+}
+
+func TestPlaygroundPreparesLegacyCorpusAndKeepsEndOfOptions(t *testing.T) {
+	fixtureInstallation(t)
+	home := os.Getenv("HOME")
+	root := filepath.Join(home, ".roca")
+	if err := os.RemoveAll(filepath.Join(root, "plugins", "roca-corpus")); err != nil {
+		t.Fatal(err)
+	}
+	installPlaygroundFixture(t, home, `test -f "$HOME/.roca/plugins/roca-corpus/plugin.json" || exit 9
+printf '%s\n' "$@"
+`)
+	var out strings.Builder
+	env := hermeticCLIEnv(&cliEnv{build: Build{Version: "test"}, out: &out, errOut: &out})
+	db := filepath.Join(root, "roca.db")
+	code, err := executeWithEnv(env, []string{"--db-path", db, "--json", "playground", "--", "who wrote this?"}, strings.NewReader(""))
+	want := "playground\n--db-path\n" + db + "\n--json\n--db-path\n" + db + "\n--json\n--\nwho wrote this?\n"
+	if code != 0 || err != nil || out.String() != want {
+		t.Fatalf("code=%d err=%v output=%q want=%q", code, err, out.String(), want)
+	}
+}
+
+func TestPlaygroundPreservesAuditWithoutDuplicateRecords(t *testing.T) {
+	fixtureInstallation(t)
+	home := os.Getenv("HOME")
+	installPlaygroundFixture(t, home, `audit='{"stderr":"","cleaned_sql":"SELECT 7","query":{"question":"fixture","path":"model","model_sql":"SELECT original","sql_provider":"fixture-provider","sql_model":"fixture-model","retried_sql":true,"retry_type":"gate_rejection","degraded":"model_query_error","provider_error":"fixture failure"}}'
+printf 'fixture output\n'
+exit 1
+`)
+	var out strings.Builder
+	env := hermeticCLIEnv(&cliEnv{build: Build{Version: "test"}, out: &out, errOut: &out})
+	code, err := executeWithEnv(env, []string{"playground", "fixture"}, strings.NewReader(""))
+	if code != 1 || err != nil || !strings.HasPrefix(out.String(), "fixture output\ncorrelation_id: ") {
+		t.Fatalf("code=%d err=%v output=%q", code, err, out.String())
+	}
+	files, err := filepath.Glob(filepath.Join(home, ".roca", logfile.DirName, "executions-*.jsonl"))
+	if err != nil || len(files) != 1 {
+		t.Fatalf("logs=%v err=%v", files, err)
+	}
+	raw, err := os.ReadFile(files[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		var record logfile.ExecutionRecord
+		if err := json.Unmarshal([]byte(line), &record); err != nil {
+			t.Fatal(err)
+		}
+		if record.Command != "playground" {
+			continue
+		}
+		count++
+		if record.SQL != "SELECT 7" || record.SQLProvider != "fixture-provider" || !record.RetriedSQL || record.ErrorType != "model_query_error" {
+			t.Fatalf("audit=%s", line)
+		}
+	}
+	if count != 1 {
+		t.Fatalf("playground audit records=%d", count)
 	}
 }

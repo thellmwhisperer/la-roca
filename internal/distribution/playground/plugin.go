@@ -2,9 +2,12 @@
 package playground
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 	"io"
 	"os"
 	"os/exec"
@@ -30,24 +33,61 @@ func Executable() (string, error) {
 	return path, nil
 }
 
-func Run(ctx context.Context, args []string, in io.Reader, out, stderr io.Writer) error {
+// Audit is the row-free metadata sent separately from the plugin's live stdout.
+type Audit struct {
+	Stderr     string               `json:"stderr"`
+	Query      *service.QueryResult `json:"query,omitempty"`
+	CleanedSQL string               `json:"cleaned_sql,omitempty"`
+}
+
+func Run(ctx context.Context, args []string, in io.Reader, out, stderr io.Writer) (*service.QueryResult, error) {
 	path, err := Executable()
 	if err != nil {
-		return err
+		return nil, err
 	}
-	cmd := exec.CommandContext(ctx, path, args...)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = in, out, stderr
-	return cmd.Run()
+	var wire bytes.Buffer
+	cmd := exec.CommandContext(ctx, path, append([]string{"--transport"}, args...)...)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = in, out, &wire
+	err = cmd.Run()
+	var audit Audit
+	if decodeErr := json.Unmarshal(wire.Bytes(), &audit); decodeErr != nil {
+		_, _ = stderr.Write(wire.Bytes())
+		if err == nil {
+			err = fmt.Errorf("playground audit transport: %w", decodeErr)
+		}
+		return nil, err
+	}
+	_, _ = io.WriteString(stderr, audit.Stderr)
+	if audit.Query != nil {
+		audit.Query.CleanedSQL = audit.CleanedSQL
+	}
+	return audit.Query, err
 }
 
 func JSON(ctx context.Context, args []string, result any) error {
-	path, err := Executable()
-	if err != nil {
+	var out []byte
+	var err error
+	var audit *service.QueryResult
+	if _, query := result.(*service.QueryResult); query {
+		var stdout, stderr bytes.Buffer
+		audit, err = Run(ctx, append([]string{"--json"}, args...), nil, &stdout, &stderr)
+		out = stdout.Bytes()
+	} else {
+		path, resolveErr := Executable()
+		if resolveErr != nil {
+			return resolveErr
+		}
+		out, err = exec.CommandContext(ctx, path, append(args, "--json")...).Output()
+	}
+	var exited *exec.ExitError
+	if err != nil && (len(out) == 0 || !errors.As(err, &exited)) {
 		return err
 	}
-	out, err := exec.CommandContext(ctx, path, append(args, "--json")...).Output()
-	if len(out) == 0 && err != nil {
+	if err := json.Unmarshal(out, result); err != nil {
 		return err
 	}
-	return json.Unmarshal(out, result)
+	if query, ok := result.(*service.QueryResult); ok && audit != nil {
+		query.CleanedSQL = audit.CleanedSQL
+	}
+	return nil
 }

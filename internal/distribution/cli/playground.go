@@ -36,7 +36,19 @@ func playgroundPluginCommand(env *cliEnv, verb string) *cobra.Command {
 			if parseErr != nil {
 				return parseErr
 			}
-			forwarded := append([]string{verb}, args...)
+			if _, err := playground.Executable(); err != nil {
+				return err
+			}
+			if (verb == "playground" || verb == "explore") && !slices.Contains(args, "--help") && !slices.Contains(args, "-h") {
+				svc, _, err := env.openService()
+				if err != nil {
+					return err
+				}
+				if err := svc.Close(); err != nil {
+					return err
+				}
+			}
+			forwarded := []string{verb}
 			if env.dbPath != "" {
 				forwarded = append(forwarded, "--db-path", env.dbPath)
 			}
@@ -46,7 +58,12 @@ func playgroundPluginCommand(env *cliEnv, verb string) *cobra.Command {
 			if env.forceReadOnly {
 				forwarded = append(forwarded, "--read-only")
 			}
-			err := playground.Run(cmd.Context(), forwarded, cmd.InOrStdin(), env.out, env.errOut)
+			forwarded = append(forwarded, args...)
+			audit, err := playground.Run(cmd.Context(), forwarded, cmd.InOrStdin(), env.out, env.errOut)
+			env.auditQuery = audit
+			if audit != nil {
+				env.capture(*audit)
+			}
 			var exited *exec.ExitError
 			if errors.As(err, &exited) {
 				env.code = exited.ExitCode()

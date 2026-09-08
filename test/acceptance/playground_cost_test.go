@@ -60,11 +60,24 @@ func TestCostPlayground(t *testing.T) {
 	if published := os.Getenv("ROCA_PUBLISHED_BIN"); published != "" {
 		m = aWorldIn(t, "published-playground-cost")
 		m.binary = published
+		version, code := m.runUnder(t, nil, "version")
+		if code != 0 || !strings.Contains(version, "v1.82.6") {
+			t.Fatalf("published baseline must be v1.82.6: %s", version)
+		}
 		if err := m.runInit(); err != nil || m.last.code != 0 {
 			t.Fatalf("published fixture init: %v %s", err, m.last.stderr)
 		}
-		before, _ := m.runUnder(t, nil, "playground", "synthetic question", "--json")
-		if strings.Contains(before, "roca plugin install thellmwhisperer/roca-playground") || !strings.Contains(before, `"path": "unresolved"`) {
+		settings := `[models]
+order = ["fixture"]
+[models.fixture]
+command = ["/bin/sh", "-c", "printf 'SELECT 7 AS value\\n'"]
+model = "fixture"
+`
+		if err := os.WriteFile(filepath.Join(m.home, ".roca", "config.toml"), []byte(settings), 0600); err != nil {
+			t.Fatal(err)
+		}
+		before, code := m.runUnder(t, []string{"ROCA_MODELS_ORDER=fixture"}, "playground", "synthetic question", "--json")
+		if code != 0 || !strings.Contains(before, `"path": "model"`) || !strings.Contains(before, `"value": 7`) {
 			t.Fatalf("published playground did not execute: %s", before)
 		}
 		writePlaygroundEvidence(t, root, "published", published, before, true)

@@ -134,7 +134,8 @@ help:
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  %-16s %s\n", $$1, $$2}'
 
 PLAYGROUND_DIR ?= .tmp/playground
-PLAYGROUND_REF ?= fm/extract-s1
+PLAYGROUND_REF ?= fm/s1-boundary-followup
+ROCA_PUBLISHED_BIN ?= $(shell command -v roca)
 .PHONY: playground-fixture playground-test
 playground-fixture:
 	@test -f "$(PLAYGROUND_DIR)/go.mod" || git clone --depth 1 --branch "$(PLAYGROUND_REF)" https://github.com/thellmwhisperer/roca-playground.git "$(PLAYGROUND_DIR)"
@@ -142,5 +143,5 @@ playground-fixture:
 
 playground-test: playground-fixture
 	$(MAKE) -C "$(PLAYGROUND_DIR)" check CORE_DIR="$(CURDIR)"
-	@command -v roca >/dev/null || { echo "published roca binary required for before/after evidence" >&2; exit 1; }
-	ROCA_BIN="$(CURDIR)/$(PLAYGROUND_DIR)/bin/roca" ROCA_PUBLISHED_BIN="$$(command -v roca)" go test -tags acceptance ./test/acceptance -run '^TestCostPlayground$$' -count=1 -v
+	@test -x "$(ROCA_PUBLISHED_BIN)" || { echo "set ROCA_PUBLISHED_BIN to the published v1.82.6 binary" >&2; exit 1; }
+	ROCA_BIN="$(CURDIR)/$(PLAYGROUND_DIR)/bin/roca" ROCA_PUBLISHED_BIN="$(ROCA_PUBLISHED_BIN)" go test -tags acceptance ./test/acceptance -run '^TestCostPlayground$$' -count=1 -v
