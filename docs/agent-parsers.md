@@ -24,8 +24,10 @@ its store read-only before inventing any test data. Record all of the following:
   only repeat primary data.
 
 Put those aggregate measurements in the pull request under a **Real-store
-measurement** heading. Never quote conversation text, identifiers, account data
-or literal local paths. A fixture that cannot be traced from its field names,
+measurement** heading, following the
+[public-text publication rules](../CONTRIBUTING.md#public-text). Never quote
+conversation text, identifiers, account data or literal local paths. A fixture
+that cannot be traced from its field names,
 nesting and record types back to this measured shape is invalid, even when the
 synthetic conformance test passes. If no populated real store is available, the
 parser is not ready to contribute: do not substitute documentation, guessed
