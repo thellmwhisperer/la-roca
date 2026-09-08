@@ -770,6 +770,31 @@ func (env *cliEnv) openStoreService() (*service.Service, config.Paths, error) {
 	return scoped.openService()
 }
 
+func (env *cliEnv) prepareHub(paths config.Paths, pluginDir string, readLayout service.ReadLayout) error {
+	if readLayout == service.LayoutLegacyServing || !fileExists(paths.DB) {
+		return nil
+	}
+	if _, err := rocacron.Ensure(pluginDir, pluginExecutableDir(paths), env.build.Version); err != nil {
+		return fmt.Errorf("install bundled cron plugin for DATA SPLIT: %w", err)
+	}
+	_, prepareErr := datasplit.PrepareHub(context.Background(), datasplit.HubOptions{
+		CoreDatabase: paths.DB, OpsDatabase: filepath.Join(pluginDir, rocaops.Name, rocaops.DatabaseFilename),
+		CorpusDatabase: filepath.Join(pluginDir, rocacorpus.Name, rocacorpus.DatabaseFilename),
+		CronDatabase:   filepath.Join(pluginDir, rocacron.Name, rocacron.DatabaseFilename),
+		SnapshotDir:    filepath.Join(paths.Backups, "data-split"),
+		LockPath:       logfile.New(filepath.Dir(paths.DB)).LockPath(),
+	})
+	if prepareErr != nil {
+		if rollbackErr := config.SetServingLayout(paths.Config, config.LayoutLegacyServing); rollbackErr != nil {
+			return errors.Join(prepareErr,
+				fmt.Errorf("roll back the DATA SPLIT serving marker: %w", rollbackErr))
+		}
+		return fmt.Errorf("prepare the federation hub; serving marker returned to legacy-serving: %w",
+			prepareErr)
+	}
+	return nil
+}
+
 // openServiceWith opens the service from already-resolved paths. Init calls it
 // after its own setup (adoption by copy, migration) so that the paths are
 // already known when the database is opened.
@@ -824,28 +849,13 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 		ingestProgress = env.liveIngest.update
 	}
 	readLayout := service.ReadLayout(file.Layout.Serving)
-	opsDatabase, corpusDatabase := "", ""
+	opsDatabase := ""
 	if pluginDir != "" {
 		opsDatabase = filepath.Join(pluginDir, rocaops.Name, rocaops.DatabaseFilename)
-		corpusDatabase = filepath.Join(pluginDir, rocacorpus.Name, rocacorpus.DatabaseFilename)
 	}
-	if !readOnly && !env.skipBundledLifecycle && readLayout != service.LayoutLegacyServing && fileExists(paths.DB) {
-		if _, err := rocacron.Ensure(pluginDir, pluginExecutableDir(paths), env.build.Version); err != nil {
-			return nil, fmt.Errorf("install bundled cron plugin for DATA SPLIT: %w", err)
-		}
-		_, prepareErr := datasplit.PrepareHub(context.Background(), datasplit.HubOptions{
-			CoreDatabase: paths.DB, OpsDatabase: opsDatabase, CorpusDatabase: corpusDatabase,
-			CronDatabase: filepath.Join(pluginDir, rocacron.Name, rocacron.DatabaseFilename),
-			SnapshotDir:  filepath.Join(paths.Backups, "data-split"),
-			LockPath:     logfile.New(filepath.Dir(paths.DB)).LockPath(),
-		})
-		if prepareErr != nil {
-			if rollbackErr := config.SetServingLayout(paths.Config, config.LayoutLegacyServing); rollbackErr != nil {
-				return nil, errors.Join(prepareErr,
-					fmt.Errorf("roll back the DATA SPLIT serving marker: %w", rollbackErr))
-			}
-			return nil, fmt.Errorf("prepare the federation hub; serving marker returned to legacy-serving: %w",
-				prepareErr)
+	if !readOnly && !env.skipBundledLifecycle {
+		if err := env.prepareHub(paths, pluginDir, readLayout); err != nil {
+			return nil, err
 		}
 	}
 	writerFenced := false

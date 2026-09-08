@@ -7,7 +7,9 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/playground"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
+	"github.com/thellmwhisperer/la-roca/internal/provider/query"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
+	"github.com/thellmwhisperer/la-roca/internal/store"
 	"io"
 	"os"
 	"path/filepath"
@@ -228,5 +230,74 @@ func TestPlaygroundDelegatesWithoutOpeningFederation(t *testing.T) {
 	code, err := executeWithEnv(env, []string{"--read-only", "playground", "--", "question"}, strings.NewReader(""))
 	if code != 0 || err != nil || out.String() != "playground\n--read-only\n--\nquestion\n" {
 		t.Fatalf("parent opened federation or duplicated argv: code=%d err=%v output=%q", code, err, out.String())
+	}
+}
+
+func TestPlaygroundPreparesCutoverCustodyBeforeDelegating(t *testing.T) {
+	for _, verb := range []string{"playground", "explore"} {
+		t.Run(verb, func(t *testing.T) {
+			home := t.TempDir()
+			isolateRuntimeDirs(t, home)
+			t.Setenv(config.EnvReadOnly, "")
+			writeConfig(t, home, "[layout]\nserving = \"cutover\"\n")
+			db := filepath.Join(home, ".roca", "roca.db")
+			core, err := store.Open(db)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.ApplySchema(t.Context(), core); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := core.SQL().Exec(`INSERT INTO memories
+				(id, layer, content, origin) VALUES (29, 'project', 'Synthetic playground custody marker', 'agent')`); err != nil {
+				t.Fatal(err)
+			}
+			if err := core.Close(); err != nil {
+				t.Fatal(err)
+			}
+			installPlaygroundFixture(t, home, "printf 'delegated\\n'\n")
+			var out strings.Builder
+			env := hermeticCLIEnv(&cliEnv{build: Build{Version: "test"}, out: &out, errOut: &out})
+			code, err := executeWithEnv(env, []string{verb, "fixture"}, strings.NewReader(""))
+			if code != 0 || err != nil || out.String() != "delegated\n" {
+				t.Fatalf("code=%d err=%v output=%q", code, err, out.String())
+			}
+			svc, _, err := OpenForPlugin(Build{Version: "fixture"}, db, false, io.Discard, io.Discard)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer svc.Close()
+			_, result, _, _, _, err := svc.SearchByTerm(t.Context(), query.Plan{Template: query.TemplateSearchByTerm, Term: "playground+custody+marker"}, "", service.DefaultMaxChars, true, service.PluginRoute{IncludeCore: true})
+			if err != nil || len(result) != 1 || result[0]["text"] != "Synthetic playground custody marker" {
+				t.Fatalf("cutover memories: result=%+v err=%v", result, err)
+			}
+		})
+	}
+}
+
+func TestPlaygroundDelegatesWhenVectorRegistryRefreshFails(t *testing.T) {
+	for _, verb := range []string{"playground", "explore"} {
+		t.Run(verb, func(t *testing.T) {
+			fixtureInstallation(t)
+			t.Setenv(config.EnvReadOnly, "")
+			home := os.Getenv("HOME")
+			registry := plugin.VectorRegistryPath(filepath.Join(home, ".roca", "plugins"))
+			if err := os.Remove(registry); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(registry, 0700); err != nil {
+				t.Fatal(err)
+			}
+			installPlaygroundFixture(t, home, "printf 'delegated\\n'\n")
+			var out, diagnostics strings.Builder
+			env := hermeticCLIEnv(&cliEnv{build: Build{Version: "test"}, out: &out, errOut: &diagnostics})
+			code, err := executeWithEnv(env, []string{verb, "fixture"}, strings.NewReader(""))
+			if code != 0 || err != nil || out.String() != "delegated\n" {
+				t.Fatalf("code=%d err=%v output=%q diagnostics=%q", code, err, out.String(), diagnostics.String())
+			}
+			if !strings.Contains(diagnostics.String(), "warning: the vector declaration registry was not refreshed:") {
+				t.Fatalf("missing registry warning: %q", diagnostics.String())
+			}
+		})
 	}
 }

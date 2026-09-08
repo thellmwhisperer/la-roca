@@ -88,7 +88,10 @@ func (env *cliEnv) preparePlayground(paths config.Paths) error {
 	if _, err := rocacorpus.Ensure(root, pluginExecutableDir(paths), env.build.Version); err != nil {
 		return err
 	}
-	return env.refreshVectorRegistry()
+	if err := env.refreshVectorRegistry(); err != nil {
+		env.warnVectorRegistryRefresh(err)
+	}
+	return env.prepareHub(paths, root, service.ReadLayout(file.Layout.Serving))
 }
 
 func providerProbe(paths config.Paths, readOnly bool) func(context.Context, *service.DoctorReport) error {
