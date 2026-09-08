@@ -95,7 +95,6 @@ func residentSessionWithEmbedder(ctx context.Context, env *environment, embedder
 	if reporter, ok := embedder.(interface{ Accelerated() bool }); ok {
 		extra["accelerated"] = reporter.Accelerated()
 	}
-	scopes := vector.NewScopeCache()
 	return residentSession{
 		waitReady: func(context.Context) error { return nil },
 		extra:     extra,
@@ -104,7 +103,6 @@ func residentSessionWithEmbedder(ctx context.Context, env *environment, embedder
 			if err != nil {
 				return nil, err
 			}
-			federation.Core.SetScopeCache(scopes)
 			var result vector.FederatedQuery
 			var queryErr error
 			if request.ExpandTemplates {

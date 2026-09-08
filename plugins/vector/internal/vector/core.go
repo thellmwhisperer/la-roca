@@ -10,7 +10,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -28,21 +27,6 @@ type CoreCLI struct {
 	Executable string
 	DBPath     string
 	Run        CommandRunner
-	scopes     *ScopeCache
-}
-
-// ScopeCache remembers _database-scope answers for the life of a resident.
-type ScopeCache struct {
-	mu      sync.Mutex
-	entries map[string]DatabaseScope
-}
-
-func NewScopeCache() *ScopeCache {
-	return &ScopeCache{entries: map[string]DatabaseScope{}}
-}
-
-func (c *CoreCLI) SetScopeCache(cache *ScopeCache) {
-	c.scopes = cache
 }
 
 type DatabaseScope struct {
@@ -197,15 +181,6 @@ func (c CoreCLI) CountChunks(ctx context.Context, sourceKind string) (int64, err
 }
 
 func (c CoreCLI) ResolveDatabaseScope(ctx context.Context, databases string) (DatabaseScope, error) {
-	key := strings.TrimSpace(databases)
-	if c.scopes != nil {
-		c.scopes.mu.Lock()
-		if scope, ok := c.scopes.entries[key]; ok {
-			c.scopes.mu.Unlock()
-			return scope, nil
-		}
-		c.scopes.mu.Unlock()
-	}
 	if strings.TrimSpace(c.Executable) == "" {
 		return DatabaseScope{}, fmt.Errorf("roca executable is required")
 	}
@@ -234,11 +209,6 @@ func (c CoreCLI) ResolveDatabaseScope(ctx context.Context, databases string) (Da
 	}
 	if result.Selected == nil {
 		result.Selected = []DatabaseSelection{}
-	}
-	if c.scopes != nil {
-		c.scopes.mu.Lock()
-		c.scopes.entries[key] = result
-		c.scopes.mu.Unlock()
 	}
 	return result, nil
 }

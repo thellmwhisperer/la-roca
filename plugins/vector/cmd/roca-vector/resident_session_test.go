@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -122,7 +123,9 @@ func TestResidentSessionRefreshesRegistryWithoutRewarming(t *testing.T) {
 	writeRegistry := func(names ...string) {
 		t.Helper()
 		databases := []map[string]any{}
+		selected := []vector.DatabaseSelection{}
 		for _, name := range names {
+			selected = append(selected, vector.DatabaseSelection{Source: "plugin:fixture/" + name, Database: name})
 			databases = append(databases, map[string]any{
 				"plugin": "fixture", "database": name, "path": name + ".db", "alias": "fixture_" + name,
 				"tables": []map[string]any{{"name": "records", "id_column": "id", "text_columns": []string{"body"}}},
@@ -135,11 +138,18 @@ func TestResidentSessionRefreshesRegistryWithoutRewarming(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(plugins, "vector-registry.json"), body, 0o600); err != nil {
 			t.Fatal(err)
 		}
+		scope, err := json.Marshal(vector.DatabaseScope{Databases: names, Selected: selected})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(plugins, "scope.json"), scope, 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	writeRegistry("old")
 	script := filepath.Join(root, "roca")
 	body := `#!/bin/sh
-printf '%s' '{"databases":["newdb"],"selected":[{"source":"plugin:fixture/newdb","database":"newdb"}]}'
+cat "$ROCA_VECTOR_PLUGIN_ROOT/scope.json"
 `
 	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
 		t.Fatal(err)
@@ -153,26 +163,26 @@ printf '%s' '{"databases":["newdb"],"selected":[{"source":"plugin:fixture/newdb"
 	}
 	query := func() vector.FederatedQuery {
 		t.Helper()
-		result, err := session.query(context.Background(), residentRequest{Query: "harbor", K: 3})
+		result, err := session.query(context.Background(), residentRequest{Query: "harbor", K: 3, Databases: "all"})
 		if err != nil {
 			t.Fatal(err)
 		}
 		return result.(vector.FederatedQuery)
 	}
 	before := query()
-	if !strings.Contains(strings.Join(before.Notices, " "), "no vector declaration") {
-		t.Fatalf("undeclared database result = %+v", before)
+	if !slices.Equal(before.Databases, []string{"old"}) || !strings.Contains(strings.Join(before.Notices, " "), "database old has no ready vector sidecar") {
+		t.Fatalf("initial database result = %+v", before)
 	}
 	writeRegistry("old", "newdb")
 	after := query()
-	if notices := strings.Join(after.Notices, " "); strings.Contains(notices, "no vector declaration") || !strings.Contains(notices, "no ready vector sidecar") {
+	if notices := strings.Join(after.Notices, " "); !slices.Equal(after.Databases, []string{"old", "newdb"}) || strings.Contains(notices, "no vector declaration") || !strings.Contains(notices, "database newdb has no ready vector sidecar") {
 		t.Fatalf("new database was not discovered: %+v", after)
 	}
 	if embedder.warms != 1 {
 		t.Fatalf("registry refresh reloaded the model %d times", embedder.warms)
 	}
 	embedder.terminalErr = errors.New("embedding runtime failed")
-	if _, err := session.query(context.Background(), residentRequest{Query: "harbor", K: 3}); !errors.Is(err, errResidentUnusable) {
+	if _, err := session.query(context.Background(), residentRequest{Query: "harbor", K: 3, Databases: "all"}); !errors.Is(err, errResidentUnusable) {
 		t.Fatalf("terminal embedding failure did not retire session: %v", err)
 	}
 }
