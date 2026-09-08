@@ -84,28 +84,33 @@ func (env *cliEnv) preparePlayground(paths config.Paths) error {
 		return nil
 	}
 	root := filepath.Join(paths.Home, config.DirOwn, "plugins")
-	if _, err := rocaops.Ensure(root, pluginExecutableDir(paths), env.build.Version); err != nil {
+	hub := datasplit.HubOptions{
+		CoreDatabase: paths.DB,
+		SnapshotDir:  filepath.Join(paths.Backups, "data-split"),
+		LockPath:     logfile.New(filepath.Dir(paths.DB)).LockPath(),
+	}
+	ops, err := rocaops.Ensure(root, pluginExecutableDir(paths), env.build.Version)
+	if err != nil {
 		return err
 	}
-	if _, err := rocacorpus.Ensure(root, pluginExecutableDir(paths), env.build.Version); err != nil {
+	hub.OpsDatabase = filepath.Join(ops.Directory, rocaops.DatabaseFilename)
+	corpus, err := rocacorpus.Ensure(root, pluginExecutableDir(paths), env.build.Version)
+	if err != nil {
 		return err
 	}
+	hub.CorpusDatabase = filepath.Join(corpus.Directory, rocacorpus.DatabaseFilename)
 	if err := env.refreshVectorRegistry(); err != nil {
 		env.warnVectorRegistryRefresh(err)
 	}
 	if file.Layout.Serving == config.LayoutLegacyServing || !fileExists(paths.DB) {
 		return nil
 	}
-	if _, err := rocacron.Ensure(root, pluginExecutableDir(paths), env.build.Version); err != nil {
+	cron, err := rocacron.Ensure(root, pluginExecutableDir(paths), env.build.Version)
+	if err != nil {
 		return fmt.Errorf("install bundled cron plugin for DATA SPLIT: %w", err)
 	}
-	_, prepareErr := datasplit.PrepareHub(context.Background(), datasplit.HubOptions{
-		CoreDatabase: paths.DB, OpsDatabase: filepath.Join(root, rocaops.Name, rocaops.DatabaseFilename),
-		CorpusDatabase: filepath.Join(root, rocacorpus.Name, rocacorpus.DatabaseFilename),
-		CronDatabase:   filepath.Join(root, rocacron.Name, rocacron.DatabaseFilename),
-		SnapshotDir:    filepath.Join(paths.Backups, "data-split"),
-		LockPath:       logfile.New(filepath.Dir(paths.DB)).LockPath(),
-	})
+	hub.CronDatabase = filepath.Join(cron.Directory, rocacron.DatabaseFilename)
+	_, prepareErr := datasplit.PrepareHub(context.Background(), hub)
 	if prepareErr != nil {
 		if rollbackErr := config.SetServingLayout(paths.Config, config.LayoutLegacyServing); rollbackErr != nil {
 			return errors.Join(prepareErr,

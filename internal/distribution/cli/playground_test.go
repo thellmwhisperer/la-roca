@@ -3,13 +3,13 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"github.com/thellmwhisperer/la-roca/data"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/playground"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 	"github.com/thellmwhisperer/la-roca/internal/provider/query"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
-	"github.com/thellmwhisperer/la-roca/internal/store"
 	"io"
 	"os"
 	"path/filepath"
@@ -241,14 +241,11 @@ func TestPlaygroundPreparesCutoverCustodyBeforeDelegating(t *testing.T) {
 			t.Setenv(config.EnvReadOnly, "")
 			writeConfig(t, home, "[layout]\nserving = \"cutover\"\n")
 			db := filepath.Join(home, ".roca", "roca.db")
-			core, err := store.Open(db)
-			if err != nil {
+			core := openLayoutDatabase(t, db)
+			if _, err := core.ExecContext(t.Context(), data.Schema); err != nil {
 				t.Fatal(err)
 			}
-			if err := store.ApplySchema(t.Context(), core); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := core.SQL().Exec(`INSERT INTO memories
+			if _, err := core.Exec(`INSERT INTO memories
 				(id, layer, content, origin) VALUES (29, 'project', 'Synthetic playground custody marker', 'agent')`); err != nil {
 				t.Fatal(err)
 			}
