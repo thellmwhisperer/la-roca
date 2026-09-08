@@ -2,6 +2,7 @@ package datasplit
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 	"time"
@@ -135,7 +136,7 @@ func inspectHubEligibility(ctx context.Context, options HubOptions,
 	if err != nil {
 		return eligibility, fmt.Errorf("inspect DATA-3 readiness: %w", err)
 	}
-	eligibility.legacy, err = legacyCutoverEligible(ctx, options, timeout...)
+	eligibility.legacy, err = LegacyCutoverEligible(ctx, options, timeout...)
 	if err != nil {
 		return eligibility, fmt.Errorf("inspect DATA-4 readiness: %w", err)
 	}
@@ -196,7 +197,7 @@ func (options HubOptions) validDatabases() error {
 	return nil
 }
 
-func legacyCutoverEligible(ctx context.Context, options HubOptions,
+func LegacyCutoverEligible(ctx context.Context, options HubOptions,
 	timeout ...time.Duration) (bool, error) {
 	source, err := bundledplugin.OpenDatabase(
 		options.CoreDatabase, true, timeout...)
@@ -214,13 +215,11 @@ func legacyCutoverEligible(ctx context.Context, options HubOptions,
 			return false, err
 		}
 	}
-	destinations, err := openDestinations(LegacyOptions{
-		SourceClone: options.CoreDatabase, CronDatabase: options.CronDatabase,
-		OpsDatabase: options.OpsDatabase, CorpusDatabase: options.CorpusDatabase,
-	}, true, timeout...)
-	if err != nil {
-		return false, err
+	destinationPaths := map[destination]string{
+		destinationCron: options.CronDatabase, destinationOps: options.OpsDatabase,
+		destinationCorpus: options.CorpusDatabase,
 	}
+	destinations := make(map[destination]*sql.DB)
 	defer closeDatabases(destinations)
 	for _, plan := range legacyPlans {
 		if !present[plan.sourceTable] {
@@ -233,7 +232,11 @@ func legacyCutoverEligible(ctx context.Context, options HubOptions,
 		var batches, rows, memberships int
 		db := destinations[plan.destination]
 		if db == nil {
-			return false, fmt.Errorf("DATA-4 destination %q is not open", plan.destination)
+			db, err = bundledplugin.OpenDatabase(destinationPaths[plan.destination], true, timeout...)
+			if err != nil {
+				return false, err
+			}
+			destinations[plan.destination] = db
 		}
 		if err := db.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(row_count), 0)
 			FROM migration_batches WHERE migration = ? AND source_database = 'core' AND source_table = ?`,

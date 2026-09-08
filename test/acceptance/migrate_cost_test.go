@@ -3,6 +3,7 @@
 package acceptance
 
 import (
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"os"
@@ -148,9 +149,14 @@ func measureMigrateExec(t *testing.T, m *world, root string) migrateCost {
 		t.Fatalf("missing process read counter: %v", err)
 	}
 	// Timing is a separate uninstrumented execution: tracing adds its own writes.
-	elapsed, err := runTimed(t, m, 10*time.Second, "exec", "SELECT 1")
-	if err != nil {
-		t.Fatal(err)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, m.binary, "exec", "SELECT 1")
+	command.Env = m.environment()
+	started := time.Now()
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("timed exec: %v: %s", err, output)
 	}
+	elapsed := time.Since(started)
 	return migrateCost{BytesRead: binary.LittleEndian.Uint64(raw), ElapsedNS: int64(elapsed)}
 }
