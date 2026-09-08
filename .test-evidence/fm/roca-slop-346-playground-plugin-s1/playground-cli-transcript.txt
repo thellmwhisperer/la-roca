@@ -1,0 +1,671 @@
+Synthetic CLI verification. Core: 25b88be170b523b133bda7687bfac49d7f6e63e4.
+Companion: f80f466b24b0b9d2d6ecff8f839ccbd0f3d60b53.
+Provider replies are deterministic fixtures; no live model or real federation is used.
+Paths and correlation IDs are normalized; outputs otherwise retained.
+
+$ roca playground 'cedar deployment decision'
+error: install the optional playground plugin: roca plugin install thellmwhisperer/roca-playground (correlation_id: <correlation-id>)
+
+exit: 1
+
+$ roca init --db-path <fixture-home>/.roca/roca.db --json
+{
+  "config_path": "<fixture-home>/.roca/config.toml",
+  "database": "created",
+  "verdict": "current",
+  "schema_structures": 17,
+  "repairs": [
+    "the table is missing: exchanges",
+    "the table is missing: ingest_file_state",
+    "the table is missing: layers",
+    "the table is missing: memories",
+    "the table is missing: sessions",
+    "the table is missing: thinking_blocks",
+    "the table is missing: tool_uses",
+    "the index is missing: idx_exchanges_identity",
+    "the index is missing: idx_exchanges_session",
+    "the index is missing: idx_ingest_state_project",
+    "the index is missing: idx_ingest_state_source_agent",
+    "the index is missing: idx_memories_layer",
+    "the index is missing: idx_memories_origin",
+    "the index is missing: idx_memories_project",
+    "the index is missing: idx_memories_status",
+    "the index is missing: idx_thinking_session",
+    "the index is missing: idx_tool_uses_session"
+  ],
+  "layers": 12,
+  "database_bytes": 4096,
+  "rows": {
+    "memories": 0,
+    "sessions": 0,
+    "exchanges": 0,
+    "thinking_blocks": 0,
+    "tool_uses": 0
+  },
+  "bedrock": null,
+  "search_index": {
+    "lexical_built": true,
+    "elapsed_ms": 1
+  },
+  "word_search": {
+    "ready": false,
+    "matches": 0,
+    "empty": true,
+    "reason": "there is nothing searchable in this machine's agent history yet"
+  },
+  "model": null,
+  "ingest": {
+    "dry_run": false,
+    "errors": 0,
+    "records_discarded": 0,
+    "records_excluded": 0,
+    "scanned": {
+      "chatgpt_web_export_files": 0,
+      "claude_desktop_files": 0,
+      "claude_memory_files": 0,
+      "claude_web_export_files": 0,
+      "codex_files": 0,
+      "codex_history_files": 0,
+      "codex_session_files": 0,
+      "cowork_files": 0,
+      "cursor_database_files": 0,
+      "cursor_store_files": 0,
+      "glm_skill_files": 0,
+      "grok_memtrace_files": 0,
+      "grok_session_files": 0,
+      "hermes_databases": 0,
+      "hermes_files": 0,
+      "legacy_store_databases": 0,
+      "opencode_databases": 0,
+      "pi_files": 0,
+      "pi_session_files": 0,
+      "qwen_code_files": 0,
+      "session_files": 0,
+      "subagent_files": 0,
+      "zcode_databases": 0
+    },
+    "sources": {},
+    "files_read": 0,
+    "files_skipped": 0,
+    "files_excluded": 0,
+    "files_seen": 0,
+    "exchanges_deferred": 0,
+    "seen": {},
+    "counts_before": {
+      "memories": 0,
+      "sessions": 0,
+      "exchanges": 0,
+      "thinking_blocks": 0,
+      "tool_uses": 0
+    },
+    "counts_after": {
+      "memories": 0,
+      "sessions": 0,
+      "exchanges": 0,
+      "thinking_blocks": 0,
+      "tool_uses": 0
+    },
+    "delta": {
+      "memories": 0,
+      "sessions": 0,
+      "exchanges": 0,
+      "thinking_blocks": 0,
+      "tool_uses": 0
+    },
+    "workspace_roots": {
+      "selected": []
+    },
+    "detected_agents": [],
+    "agents_not_found": [
+      "claude",
+      "claude-desktop",
+      "cowork",
+      "codex",
+      "opencode",
+      "zcode",
+      "pi",
+      "hermes",
+      "grok",
+      "cursor"
+    ],
+    "roots": {
+      "claude_desktop_sessions": "<fixture-home>/Library/Application Support/Claude/claude-code-sessions",
+      "claude_project_config": "<fixture-home>/.claude.json",
+      "claude_projects": "<fixture-home>/.claude/projects",
+      "codex_root": "<fixture-home>/.codex",
+      "codex_sessions": "<fixture-home>/.codex/sessions",
+      "cowork_sessions": "<fixture-home>/Library/Application Support/Claude/local-agent-mode-sessions",
+      "grok_memtrace": "<fixture-home>/.grok/memtrace",
+      "grok_sessions": "<fixture-home>/.grok/sessions",
+      "hermes_db": "<fixture-home>/.hermes/state.db",
+      "hermes_home": "<fixture-home>/.hermes",
+      "legacy_store_db": "<fixture-home>/.roca-madre/roca.db",
+      "opencode_db": "<fixture-home>/.local/share/opencode/opencode.db",
+      "opencode_telegram_bot_logs": "<fixture-home>/Library/Application Support/opencode-telegram-bot/logs",
+      "pi_root": "<fixture-home>/.pi",
+      "pi_sessions": "<fixture-home>/.pi/agent/sessions",
+      "zcode_db": "<fixture-home>/.zcode/cli/db/db.sqlite"
+    },
+    "elapsed_ms": 0,
+    "coverage": {
+      "files": {
+        "seen": 0,
+        "claimed": 0,
+        "ingested": 0,
+        "skipped": 0,
+        "skip_reasons": []
+      },
+      "records": {
+        "excluded": []
+      },
+      "opencode": {
+        "store": {},
+        "extracted": {}
+      }
+    },
+    "index": {
+      "lexical_built": true,
+      "elapsed_ms": 1
+    }
+  },
+  "prompt_path": "<fixture-home>/.roca/prompt.md",
+  "detected_model_binaries": null,
+  "missing_model_binaries": null,
+  "factory_default": false,
+  "version": "dev",
+  "source_sha": "none"
+}
+
+exit: 0
+
+$ roca store --layer project --content 'cedar deployment uses staged rollout' --origin human --json
+{
+  "id": "1",
+  "layer": "project",
+  "version": "dev",
+  "source_sha": "none"
+}
+
+exit: 0
+
+$ roca index --json
+{
+  "lexical_built": false,
+  "elapsed_ms": 0
+}
+
+exit: 0
+
+$ roca doctor --json
+{
+  "version": "dev",
+  "source_sha": "none",
+  "config_path": "<fixture-home>/.roca/config.toml",
+  "config_exists": true,
+  "memories": 1,
+  "bedrock": {
+    "timestamp": "2026-09-08 18:44:28"
+  },
+  "detected_agents": [],
+  "detected_model_binaries": null,
+  "missing_model_binaries": null,
+  "factory_default": false,
+  "providers": null,
+  "prompt_path": "<fixture-home>/.roca/prompt.md",
+  "prompt_exists": true,
+  "query_failures": {
+    "since": "2026-09-07T18:44:28.337798Z",
+    "count": 0,
+    "recent": null
+  },
+  "read_only_snapshots": {
+    "root": "<fixture-home>/tmp",
+    "count": 0,
+    "bytes": 0
+  }
+}
+
+exit: 0
+
+$ roca query cedar --json
+{
+  "question": "cedar",
+  "engines": [
+    "fts"
+  ],
+  "terms": [
+    "cedar"
+  ],
+  "notices": [
+    "vector index is not installed; continuing with FTS-only"
+  ],
+  "databases": [
+    "core",
+    "corpus"
+  ],
+  "top": 10,
+  "hits": [
+    {
+      "rank": 1,
+      "source": "core.memories.1",
+      "database": "core",
+      "table": "memories",
+      "id": "1",
+      "legs": [
+        "fts"
+      ],
+      "consensus": false,
+      "rrf": 0.01639344262295082,
+      "fts_rank": 1,
+      "snippet": "cedar deployment uses staged rollout"
+    }
+  ],
+  "row_count": 1,
+  "latency_ms": 12,
+  "version": "dev",
+  "source_sha": "none"
+}
+
+exit: 0
+
+$ roca plugin install <workspace>/.tmp/playground/dist/package --yes --json
+{
+  "action": "installed",
+  "checksum": "770e0f2d4d3a3b8689025dffa8fc78d126fb7d548de1e9665cd6120652dfb378",
+  "directory": "<fixture-home>/.roca/plugins/roca-playground",
+  "executable": "<fixture-home>/.local/bin/roca-playground",
+  "name": "roca-playground",
+  "risk": "executable",
+  "version": "0.1.0"
+}
+
+exit: 0
+
+$ roca doctor --json
+{
+  "provider_narration": "providers, in the declared order:\n  [ok] local-binary · model synthetic-provider (from <fixture-home>/.roca/config.toml · change with: models.local-binary.model in <fixture-home>/.roca/config.toml) · probe working\nthe one that is going to answer: local-binary\n",
+  "version": "dev",
+  "source_sha": "none",
+  "config_path": "<fixture-home>/.roca/config.toml",
+  "config_exists": true,
+  "memories": 1,
+  "bedrock": {
+    "timestamp": "2026-09-08 18:44:28"
+  },
+  "detected_agents": [],
+  "detected_model_binaries": null,
+  "missing_model_binaries": [
+    "claude",
+    "codex"
+  ],
+  "factory_default": false,
+  "providers": [
+    {
+      "provider": "local-binary",
+      "ready": true,
+      "model": "synthetic-provider"
+    }
+  ],
+  "titular_provider": "local-binary",
+  "prompt_path": "<fixture-home>/.roca/prompt.md",
+  "prompt_exists": true,
+  "query_failures": {
+    "since": "2026-09-07T18:44:29.258902Z",
+    "count": 0,
+    "recent": null
+  },
+  "read_only_snapshots": {
+    "root": "<fixture-home>/tmp",
+    "count": 0,
+    "bytes": 0
+  }
+}
+
+exit: 0
+
+$ roca query cedar --json
+{
+  "question": "cedar",
+  "engines": [
+    "fts"
+  ],
+  "terms": [
+    "cedar"
+  ],
+  "notices": [
+    "vector index is not installed; continuing with FTS-only"
+  ],
+  "databases": [
+    "core",
+    "corpus"
+  ],
+  "top": 10,
+  "hits": [
+    {
+      "rank": 1,
+      "source": "core.memories.1",
+      "database": "core",
+      "table": "memories",
+      "id": "1",
+      "legs": [
+        "fts"
+      ],
+      "consensus": false,
+      "rrf": 0.01639344262295082,
+      "fts_rank": 1,
+      "snippet": "cedar deployment uses staged rollout"
+    }
+  ],
+  "row_count": 1,
+  "latency_ms": 12,
+  "version": "dev",
+  "source_sha": "none"
+}
+
+exit: 0
+
+$ roca exec 'SELECT content FROM main.memories' --json
+{
+  "sql": "SELECT content FROM main.memories LIMIT 1000",
+  "columns": [
+    "content",
+    "database"
+  ],
+  "rows": [
+    {
+      "content": "cedar deployment uses staged rollout",
+      "database": "core"
+    }
+  ],
+  "row_count": 1,
+  "databases": [
+    "core",
+    "plugin:roca-corpus"
+  ],
+  "latency_ms": 10,
+  "version": "dev",
+  "source_sha": "none"
+}
+
+exit: 0
+
+$ roca playground 'cedar deployment decision' --json
+{
+  "question": "cedar deployment decision",
+  "path": "model",
+  "sql": "SELECT id, content AS text FROM main.memories ORDER BY id LIMIT 1",
+  "columns": [
+    "id",
+    "text",
+    "database"
+  ],
+  "rows": [
+    {
+      "database": "core",
+      "id": "1",
+      "text": "cedar deployment uses staged rollout"
+    }
+  ],
+  "row_count": 1,
+  "match": "found",
+  "databases": [
+    "core",
+    "plugin:roca-corpus"
+  ],
+  "sql_provider": "local-binary",
+  "sql_model": "synthetic-provider",
+  "model_sql": "SELECT id, content AS text FROM main.memories ORDER BY id LIMIT 1",
+  "providers": [
+    {
+      "provider": "local-binary",
+      "ready": true,
+      "model": "synthetic-provider"
+    }
+  ],
+  "sql_provider_latency_ms": 7,
+  "sql_retry_provider_latency_ms": 0,
+  "sql_inference_ms": 7,
+  "sql_retry_inference_ms": 0,
+  "execution_ms": 1,
+  "interpretation_ms": 0,
+  "latency_ms": 16,
+  "version": "0.1.0",
+  "source_sha": "",
+  "database_path": "<fixture-home>/.roca/roca.db"
+}
+
+exit: 0
+
+$ roca playground 'cedar deployment decision' --sql-only --json
+{
+  "question": "cedar deployment decision",
+  "path": "",
+  "sql": "SELECT id, content AS text FROM main.memories ORDER BY id LIMIT 1",
+  "row_count": 0,
+  "databases": [
+    "core",
+    "plugin:roca-corpus"
+  ],
+  "sql_provider": "local-binary",
+  "sql_model": "synthetic-provider",
+  "model_sql": "SELECT id, content AS text FROM main.memories ORDER BY id LIMIT 1",
+  "providers": [
+    {
+      "provider": "local-binary",
+      "ready": true,
+      "model": "synthetic-provider"
+    }
+  ],
+  "sql_provider_latency_ms": 6,
+  "sql_retry_provider_latency_ms": 0,
+  "sql_inference_ms": 6,
+  "sql_retry_inference_ms": 0,
+  "execution_ms": 0,
+  "interpretation_ms": 0,
+  "latency_ms": 14,
+  "version": "0.1.0",
+  "source_sha": "",
+  "database_path": "<fixture-home>/.roca/roca.db"
+}
+
+exit: 0
+
+$ roca playground 'cedar deployment decision' --full
+database: <fixture-home>/.roca/roca.db
+databases: core, plugin:roca-corpus
+route model
+SQL · provider local-binary · model synthetic-provider · 7 ms
+search · 1 ms
+answer · provider local-binary · model synthetic-provider · 5 ms
+The cedar deployment uses staged rollout.
+
+exit: 0
+
+$ roca explore cedar --json
+{
+  "question": "cedar",
+  "path": "model",
+  "mode": "explore",
+  "sql": "SELECT id, content AS text FROM main.memories ORDER BY id LIMIT 1",
+  "columns": [
+    "id",
+    "text",
+    "database"
+  ],
+  "rows": [
+    {
+      "database": "core",
+      "id": "1",
+      "text": "cedar deployment uses staged rollout"
+    }
+  ],
+  "row_count": 1,
+  "match": "found",
+  "databases": [
+    "core",
+    "plugin:roca-corpus"
+  ],
+  "sql_provider": "local-binary",
+  "sql_model": "synthetic-provider",
+  "model_sql": "SELECT id, content AS text FROM main.memories ORDER BY id LIMIT 1",
+  "providers": [
+    {
+      "provider": "local-binary",
+      "ready": true,
+      "model": "synthetic-provider"
+    }
+  ],
+  "sql_provider_latency_ms": 6,
+  "sql_retry_provider_latency_ms": 0,
+  "sql_inference_ms": 6,
+  "sql_retry_inference_ms": 0,
+  "execution_ms": 1,
+  "interpretation_ms": 5,
+  "interpretation": "The cedar deployment uses staged rollout.",
+  "terrain": {
+    "row_count": 1,
+    "sources": [
+      {
+        "value": "core",
+        "count": 1
+      }
+    ],
+    "co_occurring_terms": [
+      {
+        "value": "deployment",
+        "count": 1
+      },
+      {
+        "value": "rollout",
+        "count": 1
+      },
+      {
+        "value": "staged",
+        "count": 1
+      },
+      {
+        "value": "uses",
+        "count": 1
+      }
+    ],
+    "negative_space": [
+      "no returned rows labelled memory, exchange, human or thinking",
+      "the returned result set exposes no parseable date clusters"
+    ]
+  },
+  "interpretation_provider": "local-binary",
+  "interpretation_model": "synthetic-provider",
+  "latency_ms": 20,
+  "version": "0.1.0",
+  "source_sha": "",
+  "database_path": "<fixture-home>/.roca/roca.db"
+}
+
+exit: 0
+
+$ roca explore cedar --deep --json
+{
+  "question": "cedar",
+  "path": "model",
+  "mode": "explore_deep",
+  "sql": "SELECT id, content AS text FROM main.memories ORDER BY id LIMIT 1",
+  "columns": [
+    "id",
+    "text",
+    "database"
+  ],
+  "rows": [
+    {
+      "database": "core",
+      "id": "1",
+      "text": "cedar deployment uses staged rollout"
+    }
+  ],
+  "row_count": 1,
+  "match": "found",
+  "databases": [
+    "core",
+    "plugin:roca-corpus"
+  ],
+  "sql_provider": "local-binary",
+  "sql_model": "synthetic-provider",
+  "model_sql": "SELECT id, content AS text FROM main.memories ORDER BY id LIMIT 1",
+  "providers": [
+    {
+      "provider": "local-binary",
+      "ready": true,
+      "model": "synthetic-provider"
+    }
+  ],
+  "sql_provider_latency_ms": 6,
+  "sql_retry_provider_latency_ms": 0,
+  "sql_inference_ms": 6,
+  "sql_retry_inference_ms": 0,
+  "execution_ms": 1,
+  "interpretation_ms": 6,
+  "interpretation": "The cedar deployment uses staged rollout.",
+  "terrain": {
+    "row_count": 1,
+    "sources": [
+      {
+        "value": "core",
+        "count": 1
+      }
+    ],
+    "co_occurring_terms": [
+      {
+        "value": "deployment",
+        "count": 1
+      },
+      {
+        "value": "rollout",
+        "count": 1
+      },
+      {
+        "value": "staged",
+        "count": 1
+      },
+      {
+        "value": "uses",
+        "count": 1
+      }
+    ],
+    "negative_space": [
+      "no returned rows labelled memory, exchange, human or thinking",
+      "the returned result set exposes no parseable date clusters"
+    ]
+  },
+  "interpretation_provider": "local-binary",
+  "interpretation_model": "synthetic-provider",
+  "latency_ms": 21,
+  "version": "0.1.0",
+  "source_sha": "",
+  "database_path": "<fixture-home>/.roca/roca.db"
+}
+
+exit: 0
+
+$ roca exec 'SELECT content FROM main.memories' --json
+{
+  "sql": "SELECT content FROM main.memories LIMIT 1000",
+  "columns": [
+    "content",
+    "database"
+  ],
+  "rows": [
+    {
+      "content": "cedar deployment uses staged rollout",
+      "database": "core"
+    }
+  ],
+  "row_count": 1,
+  "databases": [
+    "core",
+    "plugin:roca-corpus"
+  ],
+  "latency_ms": 10,
+  "version": "dev",
+  "source_sha": "none"
+}
+
+exit: 0
