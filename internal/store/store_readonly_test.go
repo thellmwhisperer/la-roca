@@ -1,3 +1,13 @@
+// @overview Read-only live database and killed-reader regression tests.
+// READING GUIDE: Start at TestOpenReadOnlyReadsCommittedWAL, then the kill test.
+// MAIN FLOW: isolated database -> read-only open -> verify rows and no snapshots.
+// PUBLIC API: TestOpenReadOnlyUsesTheLiveFileWithoutCopying verifies live reads;
+// TestOpenReadOnlyReadsCommittedWAL verifies WAL visibility;
+// TestOpenReadOnlyKillLeavesNoDirectory verifies interrupted-reader cleanup.
+// INTERNALS: readOnlyTestPath prepares isolation; runReadOnlyHoldHelper and
+// waitHelperReady coordinate the child; leftoverSnapshotDirs inspects residue.
+// @exports TestOpenReadOnlyUsesTheLiveFileWithoutCopying, TestOpenReadOnlyReadsCommittedWAL, TestOpenReadOnlyKillLeavesNoDirectory
+// @deps Standard library SQL, process, filesystem, synchronization and testing.
 package store
 
 import (
@@ -20,10 +30,9 @@ import (
 
 const readOnlyHelperEnv = "ROCA_READONLY_TEST_HELPER"
 
+// -- 1/3 CORE · Live read-only database tests -- <- START HERE
 func TestOpenReadOnlyUsesTheLiveFileWithoutCopying(t *testing.T) {
-	tmp := t.TempDir()
-	t.Setenv("TMPDIR", tmp)
-	dbPath := filepath.Join(tmp, "roca.db")
+	tmp, dbPath := readOnlyTestPath(t)
 	db, err := Open(dbPath)
 	if err != nil {
 		t.Fatal(err)
@@ -56,9 +65,7 @@ func TestOpenReadOnlyUsesTheLiveFileWithoutCopying(t *testing.T) {
 }
 
 func TestOpenReadOnlyReadsCommittedWAL(t *testing.T) {
-	tmp := t.TempDir()
-	t.Setenv("TMPDIR", tmp)
-	path := filepath.Join(tmp, "live.db")
+	tmp, path := readOnlyTestPath(t)
 	writer, err := sql.Open("sqlite", path)
 	if err != nil {
 		t.Fatal(err)
@@ -90,6 +97,9 @@ func TestOpenReadOnlyReadsCommittedWAL(t *testing.T) {
 	}
 }
 
+// -/ 1/3
+
+// -- 2/3 CORE · TestOpenReadOnlyKillLeavesNoDirectory --
 func TestOpenReadOnlyKillLeavesNoDirectory(t *testing.T) {
 	if os.Getenv(readOnlyHelperEnv) == "hold" {
 		runReadOnlyHoldHelper()
@@ -110,9 +120,7 @@ func TestOpenReadOnlyKillLeavesNoDirectory(t *testing.T) {
 	}
 	for _, tc := range signals {
 		t.Run(tc.name, func(t *testing.T) {
-			tmp := t.TempDir()
-			t.Setenv("TMPDIR", tmp)
-			dbPath := filepath.Join(tmp, "roca.db")
+			tmp, dbPath := readOnlyTestPath(t)
 			db, err := Open(dbPath)
 			if err != nil {
 				t.Fatal(err)
@@ -160,6 +168,16 @@ func TestOpenReadOnlyKillLeavesNoDirectory(t *testing.T) {
 	}
 }
 
+// -/ 2/3
+
+// -- 3/3 HELPER · Fixture, child readiness and snapshot inspection --
+func readOnlyTestPath(t *testing.T) (string, string) {
+	t.Helper()
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	return tmp, filepath.Join(tmp, "roca.db")
+}
+
 func runReadOnlyHoldHelper() {
 	reader, err := OpenReadOnly(os.Getenv("ROCA_READONLY_DB"))
 	if err != nil {
@@ -202,3 +220,5 @@ func leftoverSnapshotDirs(t *testing.T, root string) []string {
 	}
 	return matches
 }
+
+// -/ 3/3
