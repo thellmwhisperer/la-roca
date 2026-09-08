@@ -26,6 +26,23 @@ Adjacent features already found are recorded as dragons in
 acceptance harness runs a `cost` group against a lab fixture (`make check`);
 it never measures the operator's live federation.
 
+## Public text
+
+Issues, PR titles and bodies, commit messages, and new diff lines must omit
+personal home, temporary and mounted-volume paths, local hostnames, private LAN
+addresses, and session UUIDs. Use `~`, `$TMPDIR`, `<workspace>`, `<host>`,
+`<lan-ip>`, and rounded counts. Only UUIDs in `testdata/` are exempt.
+Existing history is outside this gate's scope.
+
+`scripts/public-text.py` owns the shared check. The `public-text` CI job fails
+with the offending line; issue events flag the pattern without repeating the
+value. Before publishing a PR body (including generated evidence), pipe its
+exact candidate text to `python3 scripts/public-text.py --text` and replace
+findings until it passes. The no-mistakes document step uses the same command.
+Rare legitimate matches belong in `.github/public-text-allow.txt` as exact
+matched strings or exact complete lines, never regexes or globs.
+Run `python3 scripts/public-text-test.py` for the synthetic acceptance/cost check.
+
 ## Build and test
 
 ```sh

@@ -1,0 +1,25 @@
+name: Public text
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  public-text:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Synthetic acceptance and cost check
+        run: python3 scripts/public-text-test.py
+      - name: Check PR title, body, commits and added diff lines
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: python3 scripts/public-text.py --event "$GITHUB_EVENT_PATH" --base "$BASE" --head "$HEAD"
