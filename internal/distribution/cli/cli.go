@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/corpusarchive"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/plugininstall"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
@@ -825,6 +826,25 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 	opsDatabase := ""
 	if pluginDir != "" {
 		opsDatabase = filepath.Join(pluginDir, rocaops.Name, rocaops.DatabaseFilename)
+	}
+	if readLayout != service.LayoutLegacyServing && fileExists(paths.DB) {
+		ready, err := rocaops.MemoryCustodyCutoverEligible(context.Background(), opsDatabase)
+		if err != nil {
+			return nil, fmt.Errorf("inspect DATA-2 readiness; run `roca migrate`: %w", err)
+		}
+		if !ready {
+			return nil, fmt.Errorf("DATA-2 memory custody is unfinished; run `roca migrate`")
+		}
+		if !env.omitCorpus {
+			ready, err = corpusarchive.CutoverEligible(context.Background(),
+				filepath.Join(pluginDir, rocacorpus.Name, rocacorpus.DatabaseFilename))
+			if err != nil {
+				return nil, fmt.Errorf("inspect DATA-3 readiness; run `roca migrate`: %w", err)
+			}
+			if !ready {
+				return nil, fmt.Errorf("DATA-3 corpus custody is unfinished; run `roca migrate`")
+			}
+		}
 	}
 	writerFenced := false
 	if fileExists(opsDatabase) {
