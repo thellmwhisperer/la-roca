@@ -251,7 +251,10 @@ func classifySidecar(exists, readable, workerActive bool, chunks *int64, storedC
 		if storedContract == "" || currentContract == "" || storedContract != currentContract {
 			return StateUnknown
 		}
-		if storedMarker != "" && currentMarker != nil && storedMarker != *currentMarker {
+		if storedMarker == "" || currentMarker == nil {
+			return StateUnknown
+		}
+		if storedMarker != *currentMarker {
 			return StateOutdated
 		}
 		return StateComplete

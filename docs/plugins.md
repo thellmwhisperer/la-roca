@@ -563,9 +563,12 @@ Core `exec` and `query` remain checked SQLite and FTS plus vector reads with
 zero answering-model inference. Source and moved acceptance scenarios live in
 [roca-playground](https://github.com/thellmwhisperer/roca-playground).
 
-Core resolves the executable at `~/.roca/plugins/roca-playground/roca-playground`
-(`roca-playground.exe` on Windows). CLI dispatch forwards the answering and
-model-management verbs, database selection, JSON mode, and read-only policy.
+CLI dispatch first resolves `roca-playground` in the selected installation's
+managed plugin directory, then falls back to PATH using core's companion
+resolver, which excludes the current directory. It forwards the original
+arguments once, including global flags and `--`. MCP and provider diagnostics
+use the installed executable at `~/.roca/plugins/roca-playground/roca-playground`
+(`roca-playground.exe` on Windows).
 For `playground` and `explore`, `--transport` leaves stdout as command output,
 while stderr carries the JSON audit envelope defined by
 [`playground.Audit`](../internal/distribution/playground/plugin.go), which core
