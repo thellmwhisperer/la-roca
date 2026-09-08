@@ -216,6 +216,3 @@ func (s *Service) memoryCount(ctx context.Context) int {
 	}
 	return total
 }
-
-// verdicts is one cascade diagnosed: every provider with its verdict, in the
-// declared order, and the first available one.

@@ -1,12 +1,13 @@
 # Model providers
 
-After [installation](lifecycle.md#install), La Roca uses **detected agent CLIs
-with a local floor**. It finds shipped CLI presets on `PATH`, uses their
-existing signed-in sessions in stable order (`claude`, then `codex`), then
-tries local Ollama. No La Roca login or provider table is required for
-`roca playground`, `roca explore`, or `roca_sql`. An explicit provider order
-remains authoritative. `roca query` itself uses no answering model; its optional
-vector leg only embeds the search text.
+This reference covers the provider configuration, repair, and interpretation
+contracts of the [optional playground plugin](plugins.md#optional-human-answering).
+After it is installed, the plugin uses **detected agent CLIs with a local
+floor**: shipped CLI presets on `PATH` use their existing signed-in sessions in
+stable order (`claude`, then `codex`), followed by local Ollama. No additional
+La Roca login or provider table is required. An explicit provider order remains
+authoritative. Core `roca query` uses no answering model; its optional vector
+leg only embeds the search text.
 
 Model-backed questions use the first configured provider that reports itself
 ready. If the selected provider is unavailable or produces unusable SQL, La
@@ -59,22 +60,9 @@ Enabling it lets `roca update` refresh unchanged SYSTEM zones while preserving
 USER zones. See [Update](lifecycle.md#update) for legacy adoption, divergence,
 backup, and force behavior.
 
-A fresh interactive `roca init` creates the configuration and can add explicit
-model overrides. It starts with models rather than provider names: detected
-agent CLIs are grouped as origins with their shipped default and a free-text option, while
-Ollama contributes the models returned by its local `/api/tags` catalogue.
-After the model choice, init auto-selects its harness when exactly one origin
-matches or asks which harness to use when several match. The confirmed pair is
-probed when it differs from the already-ready default, then `models.order` and
-`models.<provider>.model` are added to the new config. If a config existed when
-init began, init preserves it byte-for-byte and skips the chooser; use `roca
-model set` to change the selection later. The complete question and automation
-contracts live in [Initialize](lifecycle.md#initialize).
-
-Plain Enter through the fresh-config chooser preserves the effective selection
-the normal factory ordering would have made. Non-terminal init does not run
-this chooser or add model settings; it reports the effective provider/model and
-the configuration path once so automation stays question-free.
+Core initialization is documented under [Initialize](lifecycle.md#initialize).
+For answering-model selection after plugin installation, use
+`roca model set` or the overrides below.
 
 ```toml
 [models]
@@ -413,9 +401,8 @@ range over it without checking for the key. `model set` reads
 the target provider's catalogue, refuses IDs outside it, and probes the selected
 ID before writing only `models.<provider>.model`. A refused ID names the
 catalogue it missed and how to widen it: declare it in `models.<provider>.models`
-for a command transport, or pull it into Ollama first. The shared
-catalogue-and-probe gate lives in
-`internal/distribution/cli/model_validation.go`.
+for a command transport, or pull it into Ollama first. The plugin owns the shared
+catalogue-and-probe gate.
 
 `roca model set <model-id>` validates and probes the first configured provider.
 Both commands read "first" from the same live cascade, so `ROCA_MODELS_ORDER`
@@ -434,22 +421,12 @@ roca model set ollama qwen3.5:4b
 
 Existing configuration that names a retired remote provider remains readable.
 The provider is ignored with a warning and the rest of the cascade keeps
-working. On first run, reconciliation offers to remove those retired settings
-when the provider has a transport of its own, to replace it with a detected CLI,
-or to drop it when no supported CLI is on `PATH`. A `command` you declared is a
-transport of your own, so it is never removed, never migrated away, and keeps
-answering while retired keys sit unread beside it. Declining changes nothing;
-non-terminal runs emit one plain alert. A provider left with nothing but a
-retired transport becomes available again only by accepting that proposal or by
-removing the retired keys by hand, so declining deliberately keeps the
-configuration unusable.
-
-Old files under `~/.roca/credentials` are never read and never disable a
-provider that works: they get a cleanup proposal of their own, and a Codex or
-Claude CLI on `PATH` keeps answering whether or not you accept it. `roca init`
-retires nothing behind its model confirmation; when the provider you choose
-still carries retired settings or a leftover credential file, that proposal is
-shown with its own yes or no first.
+working. A declared custom `command` remains its own transport and keeps
+answering while retired keys sit unread beside it. A provider left with only a
+retired transport remains unavailable until its configuration is migrated.
+Old files under `~/.roca/credentials` are never read and never disable a working
+provider. Migration and credential cleanup follow the proposal and consent
+rules under [Update](lifecycle.md#update).
 
 ## What happens in the playground
 

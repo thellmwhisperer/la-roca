@@ -1,7 +1,6 @@
 # The MCP plug
 
-First-time path: [install, detect an already signed-in agent CLI, and query
-without a La Roca login](lifecycle.md#install).
+First-time path: [install and initialize search](lifecycle.md#install).
 
 The way La Roca reaches an agent that is not typing commands: the MCP server it
 can call.
@@ -14,9 +13,8 @@ what to run next.
 
 `roca_query` is the same deterministic hybrid search as the CLI: it uses
 full-text plus an optional template-expanded vector leg and never calls an
-answering model. The model-backed `roca_sql` and `roca_explore` tools use
-already signed-in supported agent CLIs or local Ollama; La Roca stores no
-provider secrets.
+answering model. The model-backed `roca_sql` and `roca_explore` tools require
+the [optional playground plugin](plugins.md#optional-human-answering).
 
 ---
 
@@ -83,8 +81,10 @@ as the CLI, including session-writer, required-field, and supersession checks.
 
 With semantic search enabled and its companion available, the same server also
 exposes `roca_vector_query`. It searches selected local indexes by meaning and
-uses the shared resident, pre-prepared model described above. The six core
-tools remain available whether or not semantic search is enabled.
+uses the shared resident, pre-prepared model described above. Core tools remain
+available whether or not semantic search is enabled. `roca_sql` and
+`roca_explore` are registered only when the playground executable is installed
+at server startup; restart the MCP server after installing it.
 
 `roca_query`, `roca_explore`, and `roca_sql` reject empty questions and share
 the CLI's generous 1000-character cap before work begins. The model-backed
@@ -94,10 +94,10 @@ tools also follow the playground input and SQL gate:
 `roca_explore` is a separate tool rather than a mode on `roca_query`. That keeps
 the established query schema and rows-first answer untouched while making the
 investigation mode explicit at dispatch. Omitted or false `deep` is the plain
-radius mission; `deep: true` is the full terrain mission. Both call the same
-`Service.Explore` and `axi.Explore` as the CLI, so the MCP result has full output
-parity: prose and generated SQL, with terrain and next probes required by the
-selected mission, rather than returning rows for the agent to reinterpret.
+radius mission; `deep: true` is the full terrain mission. Both dispatch to the
+plugin's `explore` verb and render its JSON result as
+TOON: prose and generated SQL, with terrain and next probes for the selected
+mission.
 
 `roca_list_runs` is **not** in v1: `runs` is v2 scope and this binary creates no
 such table. A tool with nothing behind it is a tool that lies.
@@ -114,16 +114,12 @@ for identifier encoding and `roca_store` input compatibility.
 
 ### The law of this surface
 
-**Every handler is a single call into the service.** It is not a comment, it is
-two structural tests over `internal/distribution/mcpplug/handlers.go`
-(`passthrough_test.go`): the body of a handler must be one return statement into
-the service, and the file may contain no control flow at all. A handler that
-needs an `if` needs it in the service, where the shell can reach it too.
-
-Parity is measured, not asserted: `roca_query` and the CLI return the same
-labeled hits and build from one service call; explore likewise shares its
-service call and text renderer byte-for-byte
-(`internal/distribution/mcpplug/plug_test.go`).
+Core handlers call the shared service. The optional answering handlers dispatch
+to the playground executable through `internal/distribution/mcpplug/playground.go`
+and pass the selected database and read-only policy. TOON rendering stays in the
+MCP wrappers; the inference implementation and its acceptance scenarios belong
+to the plugin. `internal/distribution/mcpplug/plug_test.go` pins the core tool
+list; `playground_test.go` checks text budgets through the plugin boundary.
 
 ### On the protocol version
 

@@ -1,8 +1,8 @@
 // Package mcpplug is La Roca's MCP surface: the plug, not the product.
 //
 // The CLI is the complete surface over the kernel. This package exists for the
-// agents that have no shell, and it carries six tools, each a single call into
-// the same service object the CLI drives. There is no
+// agents that have no shell. Core tools call the shared service; optional
+// answering tools dispatch to the playground executable. There is no
 // state between calls: the process is born when the agent launches it and dies
 // when the agent closes the pipe, matching the stateless protocol.
 package mcpplug

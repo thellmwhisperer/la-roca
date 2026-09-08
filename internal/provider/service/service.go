@@ -438,9 +438,8 @@ type InitResult struct {
 	// from a row this machine holds, asked back of the index, and Found. The
 	// index being built is a step; this is the promise that step was for.
 	WordSearch *search.Proof `json:"word_search,omitempty"`
-	// Model and Ingest are the rest of the bootstrap: whether a model is going
-	// to answer, and what the first read of the disk Found. Neither can fail
-	// the command, and both report.
+	// Model is retained for wire compatibility; core init leaves it nil.
+	// Ingest reports the first read of disk without failing initialization.
 	Model                  *InitModel    `json:"model"`
 	Ingest                 *IngestResult `json:"ingest"`
 	PromptPath             string        `json:"prompt_path"`
@@ -456,9 +455,8 @@ type InitResult struct {
 	TotalElapsedMS         int64         `json:"-"`
 }
 
-// InitModel is the model gate at bootstrap: which provider is going to answer,
-// or why none is and what to do about it. It is the same verdict `roca doctor`
-// prints, said once at the moment an operator first has a reason to care.
+// InitModel preserves the legacy bootstrap result shape for clients.
+// Answering-model diagnosis now belongs to the optional playground plugin.
 type InitModel struct {
 	Ready    bool   `json:"ready"`
 	Provider string `json:"provider,omitempty"`
@@ -669,10 +667,6 @@ func (s *Service) bootstrapIngest(ctx context.Context) *IngestResult {
 	}
 	return &report
 }
-
-// modelGate asks who is going to answer, without stopping at the first yes:
-// the operator reading the bootstrap wants the picture, and a provider that is
-// not available has to arrive with its remedy attached.
 
 // dataDir is the directory the database hangs off. The agent prompt the
 // bootstrap writes lives here, beside the operator's database.

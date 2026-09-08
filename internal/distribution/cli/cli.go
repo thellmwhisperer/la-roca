@@ -993,15 +993,6 @@ func runtimeStatus[R any](
 	return nil
 }
 
-// buildProviders turns the configuration into the main, interpretation, and
-// deep-exploration cascades.
-//
-// Whatever it has to say travels as data inside the cascade and comes out
-// through the answer and through `roca doctor`, which is where an operator
-// reads it. It is not also printed to the error stream: a copy on every single
-// command is noise, and noise on stderr is what makes an operator stop reading
-// it.
-
 func (env *cliEnv) printJSON(value any) error {
 	env.capture(value)
 	encoder := json.NewEncoder(env.out)
