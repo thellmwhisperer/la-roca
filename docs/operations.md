@@ -387,18 +387,21 @@ cleanup.
 
 `roca migrate` resumes DATA-2 memory custody, DATA-3 corpus custody and DATA-4
 legacy custody, then reports `migration: verified` (`{"verified":true}` with
-`--json`). It uses the existing frozen snapshots and committed batch receipts;
-an interrupted run can be invoked again. A verified installation returns without
-opening frozen snapshots, hashing, checking integrity or materializing rows.
-Backups remain in place. Read-only mode refuses migration.
+`--json`). It prepares bundled ops, corpus, and cron databases and creates
+snapshots when DATA-2 is unfinished; committed batch receipts let an interrupted
+run resume. Once DATA-2 is `verified` or `verified-empty`, unfinished downstream
+stages reuse that frozen generation and fail if a required snapshot is missing,
+rather than recreating it from live data. When all stages are eligible, migration
+returns without opening frozen snapshots, hashing, checking integrity or
+materializing rows. Backups remain in place. Read-only mode refuses migration.
 
 Run it before selecting `shadow-equal` or `cutover` in `[layout].serving`.
 The command preserves that selection. Ordinary commands read the selected
 layout directly and never migrate it as a side effect of opening the service.
+If custody is unfinished, a federated open against an existing core database
+fails with a `roca migrate` instruction and leaves the serving selection intact.
+Run the command, then retry the operation; playground dispatch uses the same
+explicit migration requirement.
 
-The D2 cost regression is `TestCostMigrate` in the acceptance suite. With
-`ROCA_PUBLISHED_BIN` pointing to the published executable, it records both
-`published.json` and `branch.json` under `.tmp/migrate-evidence`, against the
-same synthetic verified home. It measures logical process reads (including
-cache hits), requires less than 1 MB and 100 ms, and takes the snapshots offline
-before repeating both SELECT and migrate. It never measures the live federation.
+[Contribution checks](../CONTRIBUTING.md#build-and-test) own the D2 cost
+regression and published-versus-branch evidence procedure.

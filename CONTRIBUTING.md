@@ -82,6 +82,15 @@ It is a separate opt-in comparison on synthetic homes, never a mutable
 `make check` dependency. It requires an explicit executable, validates its
 v1.82.6 version, and fails if the published comparison does not execute.
 
+`make migrate-test ROCA_PUBLISHED_BIN=<published-binary>` runs `TestCostMigrate`
+against the same synthetic verified home for both binaries, never the live
+federation. It retains `published.json`, `branch.json`, and a CLI transcript
+under `.tmp/migrate-evidence` by default (`ROCA_MIGRATE_EVIDENCE_DIR` overrides
+that directory). The branch must read less than 1 MB in logical process reads
+(including cache hits) and finish under 100 ms. The test takes frozen snapshots
+offline before repeating SELECT and migration. Without `ROCA_PUBLISHED_BIN`,
+the acceptance suite runs only the branch regression.
+
 The D1 acceptance denies temporary copies throughout the read-only operation
 and checks durable database digests, allowing SQLite SHM. Synthetic vector
 latency tests live in `plugins/vector/internal/vector/status_issue336_test.go`:

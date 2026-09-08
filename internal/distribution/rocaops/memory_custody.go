@@ -163,10 +163,9 @@ func MemoryCustodyWriterFenced(ctx context.Context, opsPath string) (fenced bool
 // never selected as a destination, so a completed shadow migration cannot
 // change an answer before cutover.
 //
-// DATA-2 deliberately ships this engine and its frozen-home proof with no
-// caller: nothing in the installer or the CLI invokes it, exactly as DATA-1
-// shipped the ledger with only Prepare wired. Choosing when a real home runs
-// the copy, and serving the result, belongs to the DATA-6 cutover rung.
+// ReuseVerifiedSnapshots preserves the frozen generation after DATA-2 verifies,
+// including verified-empty: a missing snapshot must not be rebuilt from a live
+// source that may have changed while downstream custody work was interrupted.
 func MigrateMemoryCustody(ctx context.Context, options MemoryCustodyOptions) (MemoryCustodyReport, error) {
 	if err := options.valid(); err != nil {
 		return MemoryCustodyReport{}, err

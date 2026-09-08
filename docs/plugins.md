@@ -699,11 +699,9 @@ of reshaping them into an active surface. Bumping one of those versions is a
 schema change a released database has to adopt, so it owes what
 [releases](releases.md#schema-migration-definition-of-done) requires of one.
 
-The DATA SPLIT orphan import has no command, MCP tool, or make target. Only the
-internal DATA-6 cutover coordinator in
-`internal/distribution/datasplit/cutover.go` runs it, so it remains an internal
-stage of the split rather than an operator surface. What follows is what it
-does.
+The DATA SPLIT orphan import is a stage of the
+[explicit migration](operations.md#explicit-data-split-migration).
+Its custody contract follows.
 
 The import reads a verified core snapshot in read-only mode. It keeps old
 `runs` and `run_logs` as legacy cron payloads; the garden coordination tables,
@@ -762,7 +760,11 @@ surface, and the served tables above keep answering exactly as before until the
 atomic cutover. Each family is a named custody migration of its own,
 `corpus-archive-<family>`, because a migration owns exactly one destination.
 The five family migrations retain their table-level archive seal, and cutover
-additionally requires the versioned DATA-3 reconciliation seal.
+additionally requires the versioned DATA-3 reconciliation seal. Rewriting old
+version tables to the digest-only storage law resets that reconciliation to
+`prepared` and clears its verification digest and timestamp. The family seals
+remain intact; [explicit migration](operations.md#explicit-data-split-migration)
+must reconcile the frozen sources again before the corpus is eligible.
 
 `roca compact` rewrites an existing corpus database onto that one-row law and
 VACUUMs. Current session, exchange, thinking, and tool rows stay. Once those
@@ -826,20 +828,19 @@ prompts and the SQL gate during shadow mode, so the served `memories`/
 `memories_fts` route and source databases remain untouched until the atomic
 cutover.
 
-The DATA-6 cutover coordinator in `internal/distribution/datasplit/cutover.go`
-is DATA-2's sole runtime caller, the way DATA-1 shipped the ledger with only
-`Prepare` wired: no installer and no command invokes the copy directly. Sources
-are free to move between an interrupted run and its resume. A row whose payload
-changed is carried forward as a further version of the same legacy ID rather
-than refused, a row that disappeared keeps the membership its batch truthfully
-recorded, and both are reported as drift events; membership counts are verified
+The operator entry point is documented in
+[migration operations](operations.md#explicit-data-split-migration). Until
+DATA-2 verifies, sources are free to move between an interrupted run and its
+resume. A row whose payload changed is carried forward as a further version of
+the same legacy ID rather than refused, a row that disappeared keeps the
+membership its batch truthfully recorded, and both are reported as drift events; membership counts are verified
 against what the committed batches recorded, not against the live source. A
 home whose three sources are all empty verifies as `verified-empty` rather than
-`verified`: nothing was carried, so the migration stays open and a later run
-still carries whatever the sources hold by then, while the home counts as
-cutover-ready because there is nothing left to carry. Each source's frozen copy
-is named once per migration generation and published by renaming a validated
-sibling copy over it, so retries replace their own snapshot instead of
+`verified` and counts as cutover-ready because there is nothing left to carry.
+The low-level custody API can reopen that state when snapshot reuse is disabled;
+the coordinator's snapshot policy is owned by the migration operations above.
+Each source's frozen copy is named once per migration generation and published
+by renaming a validated sibling copy over it, so retries replace their own snapshot instead of
 accumulating a full database per attempt, a failed replacement leaves the
 previously verified copy intact, and no reader sees a half-written database.
 

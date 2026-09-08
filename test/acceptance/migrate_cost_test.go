@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,6 +25,20 @@ func TestCostMigrate(t *testing.T) {
 	root, err := acceptanceRoot()
 	if err != nil {
 		t.Fatal(err)
+	}
+	evidenceDir := os.Getenv("ROCA_MIGRATE_EVIDENCE_DIR")
+	if evidenceDir == "" {
+		evidenceDir = filepath.Join(root, ".tmp", "migrate-evidence")
+	}
+	if err := os.MkdirAll(evidenceDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	var transcript strings.Builder
+	record := func(args []string, output string, code int) {
+		fmt.Fprintf(&transcript, "$ roca %s\n%s\nexit: %d\n\n", strings.Join(args, " "), output, code)
+		if err := os.WriteFile(filepath.Join(evidenceDir, "cli.txt"), []byte(transcript.String()), 0600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	dbPath := filepath.Join(m.home, ".roca", "roca.db")
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0700); err != nil {
@@ -56,6 +71,7 @@ func TestCostMigrate(t *testing.T) {
 		t.Fatal(err)
 	}
 	output, code := m.runUnder(t, nil, "migrate", "--json")
+	record([]string{"migrate", "--json"}, output, code)
 	if code != 0 || !strings.Contains(output, `"verified": true`) {
 		t.Fatalf("migrate: code=%d %s", code, output)
 	}
@@ -74,11 +90,7 @@ func TestCostMigrate(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		dir := filepath.Join(root, ".tmp", "migrate-evidence")
-		if err := os.MkdirAll(dir, 0700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, label+".json"), evidence, 0600); err != nil {
+		if err := os.WriteFile(filepath.Join(evidenceDir, label+".json"), evidence, 0600); err != nil {
 			t.Fatal(err)
 		}
 		t.Logf("%s: %s", label, evidence)
@@ -98,8 +110,15 @@ func TestCostMigrate(t *testing.T) {
 	if err := os.Rename(snapshots, snapshots+"-offline"); err != nil {
 		t.Fatal(err)
 	}
-	for _, args := range [][]string{{"exec", "SELECT 1"}, {"migrate", "--json"}} {
-		if output, code := m.runUnder(t, nil, args...); code != 0 {
+	transcript.WriteString("Frozen sources moved offline; original snapshot bytes retained.\n\n")
+	for _, args := range [][]string{
+		{"exec", "SELECT 1"},
+		{"migrate", "--json"},
+		{"--read-only", "exec", "SELECT COUNT(*) AS migrated_exchanges FROM plugin_roca_corpus.exchanges"},
+	} {
+		output, code := m.runUnder(t, nil, args...)
+		record(args, output, code)
+		if code != 0 {
 			t.Fatalf("without frozen sources: %v: %s", args, output)
 		}
 	}

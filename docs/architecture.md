@@ -11,16 +11,18 @@ The migration to that shape is incremental. The current release has
 manifest-backed `roca-corpus` and `roca-ops` domains, plus a separate
 `roca-cron` journey store that still uses its legacy descriptor. One atomic
 `layout.serving` marker selects `legacy-serving`, `shadow-equal`, or `cutover`.
-Before either federated route opens against an existing core database, the
-internal cutover coordinator completes and verifies the ops, corpus, and cron
-custody imports from frozen snapshots. That preparation has no public command.
+The explicit migration and service-open readiness contract is owned by
+[migration operations](operations.md#explicit-data-split-migration).
 DATA-3 refuses cutover unless its reproducible custody reconciliation is exactly
 100% green; the detailed count, hash, provenance, and occurrence contract is
 owned by the [bundled `roca-corpus` plugin](plugins.md#the-bundled-roca-corpus-plugin).
 Shadow mode serves the legacy answer and returns the marker to legacy on any
 row difference. Cutover uses temporary compatibility views and indexes over
-the read-only plugin attachments; it does not open `roca.db`. That file remains
-in place as the reversible legacy route until the separate retirement step.
+the read-only plugin attachments. The hub itself does not open `roca.db`,
+but the CLI's DATA-4 readiness check reads its table inventory and counts.
+That file remains in place as the reversible legacy route until the separate
+retirement step. Hub reopen failures also restore legacy serving; the DATA-2
+writer fence keeps ops/corpus authoritative across restarts.
 
 ## Runtime map
 
