@@ -212,6 +212,8 @@ func listenTestResident(t *testing.T, socket string, extra map[string]any, conne
 					"kind": "result", "stage": "query", "id": request["id"],
 					"result": json.RawMessage(result),
 				})
+				// Like the shared resident, keep the connection open until the client closes it.
+				_, _ = io.Copy(io.Discard, conn)
 			}(conn)
 		}
 	}()
