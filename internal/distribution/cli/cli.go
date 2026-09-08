@@ -288,6 +288,11 @@ func dispatchPlugin(env *cliEnv, root *cobra.Command, args []string, features co
 	if !found {
 		return false, 0, nil
 	}
+	if args[0] == "vector" && features.Vector {
+		if handled, code, err := runVectorQueryResident(env, args[1:], path, paths); handled {
+			return true, code, err
+		}
+	}
 	command := exec.Command(path, args[1:]...)
 	command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, os.Stderr
 	err := command.Run()

@@ -21,11 +21,13 @@ const defaultResidentIdle = 5 * time.Minute
 var errResidentUnusable = errors.New("semantic search resident is unusable")
 
 type residentRequest struct {
-	ID        int64  `json:"id"`
-	Op        string `json:"op"`
-	Query     string `json:"query"`
-	K         int    `json:"k"`
-	Databases string `json:"databases,omitempty"`
+	ID              int64   `json:"id"`
+	Op              string  `json:"op"`
+	Query           string  `json:"query"`
+	K               int     `json:"k"`
+	Databases       string  `json:"databases,omitempty"`
+	ExpandTemplates bool    `json:"expand_templates,omitempty"`
+	MinScore        float64 `json:"min_score,omitempty"`
 }
 
 type residentSession struct {
@@ -92,6 +94,7 @@ func residentSessionWithEmbedder(ctx context.Context, env *environment, embedder
 	if reporter, ok := embedder.(interface{ Accelerated() bool }); ok {
 		extra["accelerated"] = reporter.Accelerated()
 	}
+	scopes := vector.NewScopeCache()
 	return residentSession{
 		waitReady: func(context.Context) error { return nil },
 		extra:     extra,
@@ -100,7 +103,14 @@ func residentSessionWithEmbedder(ctx context.Context, env *environment, embedder
 			if err != nil {
 				return nil, err
 			}
-			result, queryErr := federation.Query(ctx, request.Query, request.K, request.Databases)
+			federation.Core.SetScopeCache(scopes)
+			var result vector.FederatedQuery
+			var queryErr error
+			if request.ExpandTemplates {
+				result, queryErr = federation.QueryExpanded(ctx, request.Query, request.K, request.Databases, request.MinScore)
+			} else {
+				result, queryErr = federation.Query(ctx, request.Query, request.K, request.Databases)
+			}
 			if terminalErr := residentTerminalError(embedder); terminalErr != nil {
 				return result, fmt.Errorf("%w: %w", errResidentUnusable, terminalErr)
 			}
@@ -143,9 +153,11 @@ func serveResidentSession(ctx context.Context, rw io.ReadWriter, session residen
 		}
 		queryStarted := time.Now()
 		result, queryErr := session.query(ctx, request)
+		elapsed := time.Since(queryStarted).Milliseconds()
+		fmt.Fprintf(os.Stderr, "semantic search: answered query in %dms\n", elapsed)
 		response := map[string]any{
 			"kind": engine.KindResult, "stage": "query", "id": request.ID,
-			"elapsed_ms": time.Since(queryStarted).Milliseconds(), "result": result,
+			"elapsed_ms": elapsed, "result": result,
 		}
 		if queryErr != nil {
 			response["kind"] = engine.KindError

@@ -30,10 +30,11 @@ directories have separate residents. The default socket is
 `<data-directory>/vector-resident/resident.sock`, normally under `~/.roca`.
 If none is listening, `mcp serve` starts one. The resident prepares the model
 once; a query arriving before preparation finishes waits for readiness.
-Closing an MCP session disconnects only that client. The resident exits after
-five minutes with no clients attached by default, and a stale socket from a
-killed resident is replaced on the next start. One-shot CLI queries still load
-the model for that invocation only.
+Closing an MCP session disconnects only that client. `roca vector query` and
+`roca query` use that same resident: they connect when one is listening and
+start one when not. Closing the CLI process disconnects only that client. The
+resident exits after five minutes with no clients attached by default, and a
+stale socket from a killed resident is replaced on the next start.
 
 `ROCA_VECTOR_RESIDENT_SOCKET` overrides the socket path and places its startup
 lock alongside it. Use a separate socket for each data context: the resident

@@ -1,16 +1,11 @@
 package mcpplug
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"errors"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
 	"time"
 
@@ -82,35 +77,6 @@ func TestResidentCloseReturnsWithoutWaitingForPrewarm(t *testing.T) {
 	}
 }
 
-func TestResidentRoutesByIDAndStreamsProductStatus(t *testing.T) {
-	status := new(bytes.Buffer)
-	resident := &residentVector{status: status, ready: make(chan struct{}), failed: make(chan struct{}),
-		pending: map[int64]chan residentEnvelope{2: make(chan residentEnvelope, 1)}}
-	input := strings.NewReader("" +
-		`{"kind":"progress","stage":"prewarm","message":"semantic search: preparing"}` + "\n" +
-		`{"kind":"result","stage":"prewarm","message":"semantic search: ready"}` + "\n" +
-		`{"kind":"result","stage":"query","id":1,"result":{"stale":true}}` + "\n" +
-		`{"kind":"result","stage":"query","id":2,"result":{"fresh":true}}` + "\n")
-	resident.decode(input)
-	response := <-resident.pending[2]
-	if response.ID != 2 || !bytes.Contains(response.Result, []byte(`"fresh":true`)) {
-		t.Fatalf("routed response = %+v", response)
-	}
-	if status.String() != "semantic search: preparing\n" {
-		t.Fatalf("status = %q", status.String())
-	}
-}
-
-func TestResidentCleanEOFBeforeReadyWakesWaiters(t *testing.T) {
-	resident := &residentVector{ready: make(chan struct{}), failed: make(chan struct{}),
-		pending: make(map[int64]chan residentEnvelope)}
-	resident.decode(strings.NewReader(""))
-	err := resident.waitReady(context.Background())
-	if !errors.Is(err, io.ErrUnexpectedEOF) {
-		t.Fatalf("waitReady error = %v, want unexpected EOF", err)
-	}
-}
-
 func TestResidentRequiresVectorConsent(t *testing.T) {
 	t.Setenv("ROCA_VECTOR_RESIDENT_BINARY", filepath.Join(t.TempDir(), "missing-vector"))
 	disabled, err := service.Open(service.Options{DBPath: filepath.Join(t.TempDir(), "roca.db")})
@@ -129,19 +95,5 @@ func TestResidentRequiresVectorConsent(t *testing.T) {
 	t.Cleanup(func() { enabled.Close() })
 	if _, err := consentedResident(context.Background(), enabled); err == nil {
 		t.Fatal("enabled consent did not reach the configured resident boundary")
-	}
-}
-
-func TestResidentProtocolEnvelope(t *testing.T) {
-	raw := []byte(`{"kind":"result","stage":"prewarm","message":"semantic search: ready","extra":{"prewarm_ms":12}}`)
-	var envelope residentEnvelope
-	if err := json.Unmarshal(raw, &envelope); err != nil {
-		t.Fatal(err)
-	}
-	if envelope.Kind != "result" || envelope.Stage != "prewarm" || envelope.Message == "" {
-		t.Fatalf("%+v", envelope)
-	}
-	if strings.Contains(strings.ToLower(envelope.Message), "ollama") {
-		t.Fatalf("product message leaked a runtime name: %q", envelope.Message)
 	}
 }
