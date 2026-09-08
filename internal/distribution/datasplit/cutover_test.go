@@ -4,6 +4,9 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"strings"
+
+	"github.com/thellmwhisperer/la-roca/internal/distribution/corpusarchive"
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
@@ -123,4 +126,113 @@ func openCutoverDatabase(t *testing.T, path string) *sql.DB {
 		t.Fatal(err)
 	}
 	return db
+}
+
+func TestMigrateMaterializesCurrentRowsAfterStorageUpgrade(t *testing.T) {
+	options := newMigrationFixture(t)
+	if _, err := Migrate(t.Context(), options); err != nil {
+		t.Fatal(err)
+	}
+	corpus := openCutoverDatabase(t, options.CorpusDatabase)
+	if _, err := corpus.Exec(`DELETE FROM sessions;
+		ALTER TABLE session_versions ADD COLUMN title TEXT;
+		UPDATE session_versions SET title = 'Synthetic archive marker';
+		UPDATE plugin_schema SET schema_version = 4`); err != nil {
+		t.Fatal(err)
+	}
+	if err := corpus.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := rocacorpus.ApplySchema(options.CorpusDatabase); err != nil {
+		t.Fatal(err)
+	}
+	if ready, err := corpusarchive.CutoverEligible(t.Context(), options.CorpusDatabase); err != nil || ready {
+		t.Fatalf("unmaterialized upgrade eligibility = %t, err=%v", ready, err)
+	}
+	if report, err := Migrate(t.Context(), options); err != nil || !report.Ready {
+		t.Fatalf("explicit upgrade migration = %+v, err=%v", report, err)
+	}
+	corpus = openCutoverDatabase(t, options.CorpusDatabase)
+	defer corpus.Close()
+	var title string
+	if err := corpus.QueryRow(`SELECT title FROM sessions WHERE session_id = 'synthetic-session'`).Scan(&title); err != nil {
+		t.Fatal(err)
+	}
+	if title != "Synthetic archive marker" {
+		t.Fatalf("materialized title = %q", title)
+	}
+	if err := os.Rename(options.SnapshotDir, options.SnapshotDir+"-offline"); err != nil {
+		t.Fatal(err)
+	}
+	if report, err := Migrate(t.Context(), options); err != nil || !report.Ready {
+		t.Fatalf("verified upgrade reopened frozen sources: %+v, err=%v", report, err)
+	}
+}
+
+func TestMigrateResumesEmptyMemoryCustodyAfterArchiveInterruption(t *testing.T) {
+	options := newMigrationFixture(t)
+	core := openCutoverDatabase(t, options.CoreDatabase)
+	if _, err := core.Exec(`DELETE FROM memories;
+		INSERT INTO exchanges(session_id, exchange_number, agent_text)
+		VALUES ('synthetic-session', 1, 'resumable archive marker')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := core.Close(); err != nil {
+		t.Fatal(err)
+	}
+	corpus := openCutoverDatabase(t, options.CorpusDatabase)
+	defer corpus.Close()
+	if _, err := corpus.Exec(`CREATE TRIGGER interrupt_archive BEFORE INSERT ON exchange_versions
+		BEGIN SELECT RAISE(ABORT, 'synthetic archive interruption'); END`); err != nil {
+		t.Fatal(err)
+	}
+	interrupted, err := Migrate(t.Context(), options)
+	if err == nil || !strings.Contains(err.Error(), "synthetic archive interruption") {
+		t.Fatalf("archive interruption = %v", err)
+	}
+	var snapshots int
+	if err := corpus.QueryRow(`SELECT COUNT(*) FROM corpus_source_snapshots`).Scan(&snapshots); err != nil || snapshots != 2 {
+		t.Fatalf("committed source snapshots = %d, err=%v", snapshots, err)
+	}
+	before := map[string]string{}
+	for source, path := range interrupted.Memory.SnapshotPaths {
+		digest, err := corpusarchive.SnapshotDigest(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		before[source] = digest
+	}
+	if _, err := corpus.Exec(`DROP TRIGGER interrupt_archive`); err != nil {
+		t.Fatal(err)
+	}
+	if report, err := Migrate(t.Context(), options); err != nil || !report.Ready {
+		t.Fatalf("resume after committed archive batches = %+v, err=%v", report, err)
+	}
+	for source, path := range interrupted.Memory.SnapshotPaths {
+		digest, err := corpusarchive.SnapshotDigest(path)
+		if err != nil || digest != before[source] {
+			t.Fatalf("resume replaced %s snapshot: digest=%s err=%v", source, digest, err)
+		}
+	}
+	var text string
+	if err := corpus.QueryRow(`SELECT agent_text FROM exchanges WHERE session_id = 'synthetic-session'`).Scan(&text); err != nil {
+		t.Fatal(err)
+	}
+	if text != "resumable archive marker" {
+		t.Fatalf("resumed exchange = %q", text)
+	}
+}
+
+func newMigrationFixture(t *testing.T) HubOptions {
+	t.Helper()
+	directory := t.TempDir()
+	options := HubOptions{
+		CoreDatabase:   filepath.Join(directory, "roca.db"),
+		OpsDatabase:    filepath.Join(directory, "ops.db"),
+		CorpusDatabase: filepath.Join(directory, "corpus.db"),
+		CronDatabase:   filepath.Join(directory, "cron.db"),
+		SnapshotDir:    filepath.Join(directory, "snapshots"),
+	}
+	seedHubSources(t, options)
+	return options
 }
