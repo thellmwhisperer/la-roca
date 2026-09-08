@@ -8,9 +8,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -95,7 +92,7 @@ func TestDataSplitCompatibilityOracle(t *testing.T) {
 		ScenarioInitializer: func(ctx *godog.ScenarioContext) {
 			ctx.Given(`^the digest-pinned DATA SPLIT synthetic fixture$`, w.loadFixture)
 			ctx.When(`^the compatibility oracle records and replays the golden bundle$`, w.recordAndReplay)
-			ctx.Then(`^the CLI golden cases cover query, rescue, ranking, store, SQL, warnings, identities, and failures$`, w.cliCoverage)
+			ctx.Then(`^the core CLI golden cases cover ranking, store, SQL, identities, and failures$`, w.cliCoverage)
 			ctx.Then(`^the MCP golden cases cover query, exec, store, read-only enforcement, and failures$`, w.mcpCoverage)
 			ctx.When(`^one byte of the golden bundle is changed$`, w.changeGolden)
 			ctx.Then(`^the compatibility oracle rejects the changed bundle$`, w.changedGoldenRejected)
@@ -144,16 +141,24 @@ func (w *oracleWorld) recordAndReplay() error {
 	if err != nil {
 		return err
 	}
-	if !bytes.Equal(actual, want) {
+	var recorded, baseline oracleGolden
+	if err := json.Unmarshal(actual, &recorded); err != nil {
+		return err
+	}
+	if err := json.Unmarshal(want, &baseline); err != nil {
+		return err
+	}
+	// Keep the extraction archive intact. Human inference cases are now owned
+	// by the plugin; compare every remaining core case, including exact output.
+	baseline.Cases = coreOracleCases(baseline.Cases)
+	if !reflect.DeepEqual(recorded, baseline) {
 		recording, err := keepOracleRecording(actual)
 		if err != nil {
 			return err
 		}
 		return fmt.Errorf("recorded behavior differs from the golden (-want +got):\n%s\nthe complete recording is kept at %s for owner review", compactDiff(string(want), string(actual)), recording)
 	}
-	if err := json.Unmarshal(want, &w.bundle); err != nil {
-		return err
-	}
+	w.bundle = baseline
 	replayed := w.bundle
 	w.replayed = &replayed
 	return nil
@@ -186,9 +191,6 @@ func (w *oracleWorld) record() ([]byte, error) {
 	if err := os.MkdirAll(filepath.Join(home, "bin"), 0o700); err != nil {
 		return nil, err
 	}
-	if err := installPlaygroundForAcceptance(home); err != nil {
-		return nil, err
-	}
 	runner := &oracleRunner{binary: w.binary, home: home, normalizer: compatibility.Normalizer{Home: home}}
 	if err := runner.writeConfig(providerDeadEndpoint); err != nil {
 		return nil, err
@@ -206,12 +208,6 @@ func (w *oracleWorld) record() ([]byte, error) {
 		return nil, fmt.Errorf("index oracle fixture: %s", indexResult.Stderr)
 	}
 
-	server := oracleModelServer(w.fixture.ModelSQL)
-	defer server.Close()
-	if err := runner.writeConfig(server.URL); err != nil {
-		return nil, err
-	}
-
 	var cases []oracleCase
 	appendCLI := func(name, operation string, readOnly bool, args ...string) (oracleCase, string) {
 		var result oracleCase
@@ -224,13 +220,7 @@ func (w *oracleWorld) record() ([]byte, error) {
 		cases = append(cases, result)
 		return result, stdout
 	}
-	appendCLI("cli.query.model.json", "query", false, "playground", w.fixture.ModelQuestion, "--json")
-	appendCLI("cli.query.model.toon", "query", false, "playground", w.fixture.ModelQuestion)
-	_, sqlOnlyStdout := appendCLI("cli.sql-only", "sql", false, "playground", w.fixture.ModelQuestion, "--sql-only", "--json")
-	statement, err := sqlFromOracleOutput(sqlOnlyStdout)
-	if err != nil {
-		return nil, err
-	}
+	statement := w.fixture.ModelSQL
 	appendCLI("cli.exec.generated", "exec", false, "exec", statement, "--json")
 	appendCLI("cli.fts-ranking", "exec", false, "exec", oracleFTSSQL, "--json")
 	appendCLI("cli.store.first", "store", false, "store", "--layer", "discovery", "--content", w.fixture.StoreContent, "--origin", "agent", "--json")
@@ -239,15 +229,6 @@ func (w *oracleWorld) record() ([]byte, error) {
 	appendCLI("cli.exec.write-refused", "exec", false, "exec", "DELETE FROM memories", "--json")
 	appendCLI("cli.store.read-only", "store", true, "store", "--layer", "discovery", "--content", oracleRefusedCLIWrite, "--json")
 	appendCLI("cli.store.read-only-count", "exec", false, "exec", oracleCountSQL(oracleRefusedCLIWrite), "--json")
-
-	if err := runner.writeConfig(providerDeadEndpoint); err != nil {
-		return nil, err
-	}
-	appendCLI("cli.query.literal-rescue", "query", false, "playground", w.fixture.LiteralQuestion, "--json")
-	appendCLI("cli.query.empty-failure", "query", false, "playground", w.fixture.MissingQuestion, "--json")
-	if err := runner.writeConfig(server.URL); err != nil {
-		return nil, err
-	}
 
 	mcpCases, err := runner.recordMCP(w.fixture)
 	if err != nil {
@@ -448,36 +429,22 @@ func seedOracleMemories(path string, memories []oracleMemory) error {
 	return nil
 }
 
-func oracleModelServer(statement string) *httptest.Server {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/api/tags", func(out http.ResponseWriter, _ *http.Request) {
-		out.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(out, `{"models":[{"name":"oracle-model","model":"oracle-model"}]}`)
-	})
-	mux.HandleFunc("/api/chat", func(out http.ResponseWriter, _ *http.Request) {
-		out.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(out).Encode(map[string]any{"message": map[string]string{"content": statement}})
-	})
-	return httptest.NewServer(mux)
-}
-
-func sqlFromOracleOutput(stdout string) (string, error) {
-	var document map[string]any
-	if err := json.Unmarshal([]byte(stdout), &document); err != nil {
-		return "", err
+func coreOracleCases(cases []oracleCase) []oracleCase {
+	var core []oracleCase
+	for _, c := range cases {
+		switch c.Name {
+		case "cli.query.model.json", "cli.query.model.toon", "cli.sql-only", "cli.query.literal-rescue", "cli.query.empty-failure":
+			continue
+		}
+		core = append(core, c)
 	}
-	statement := strings.TrimSpace(fmt.Sprint(document["sql"]))
-	if statement == "" || !strings.HasPrefix(strings.ToUpper(statement), "SELECT") {
-		return "", fmt.Errorf("SQL-only case did not return SELECT: %s", stdout)
-	}
-	return statement, nil
+	return core
 }
 
 func (w *oracleWorld) cliCoverage() error {
 	return requireOracleCases(w.bundle, "cli", []string{
 		"cli.exec.generated", "cli.exec.write-refused", "cli.fts-ranking",
-		"cli.query.empty-failure", "cli.query.literal-rescue", "cli.query.model.json",
-		"cli.query.model.toon", "cli.sql-only", "cli.store.first",
+		"cli.store.first",
 		"cli.store.count", "cli.store.idempotent", "cli.store.read-only",
 		"cli.store.read-only-count",
 	})

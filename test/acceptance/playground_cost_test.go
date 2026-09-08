@@ -59,6 +59,12 @@ func TestCostPlayground(t *testing.T) {
 	writePlaygroundEvidence(t, root, "branch", m.binary, after, false)
 	if published := os.Getenv("ROCA_PUBLISHED_BIN"); published != "" {
 		m = aWorldIn(t, "published-playground-cost")
+		if !filepath.IsAbs(published) {
+			published, err = filepath.Abs(published)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
 		m.binary = published
 		version, code := m.runUnder(t, nil, "version")
 		if code != 0 || !strings.Contains(version, "v1.82.6") {

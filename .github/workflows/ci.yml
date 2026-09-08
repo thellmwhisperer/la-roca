@@ -113,7 +113,9 @@ jobs:
 
       # `make check` builds the binary itself and runs the acceptance-tagged
       # suite through its `accept` prerequisite, so there is no separate build
-      # or acceptance step: a green check is a green suite over the real binary,
+      # or acceptance step. Optional playground contracts use local fake
+      # executables; no external playground branch is checked out here.
+      # A green check is a green suite over the real binary,
       # on a runner that had nothing an hour ago.
       - name: Build, format, vet, tests and slop gate
         run: make check

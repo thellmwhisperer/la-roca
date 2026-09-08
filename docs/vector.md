@@ -56,10 +56,10 @@ otherwise it omits this section. `roca doctor --json` exposes these under
 [Support report](operations.md#support-report).
 
 The states are `building`, `complete`, `empty`, `outdated`, and `unknown`.
-`complete` requires a sealed source fingerprint and the current declaration.
-A cheap source-file marker, when stored, detects drift without hashing the
-corpus; a legacy seal that has the fingerprint but no marker is still
-`complete`. A changed declaration or stored marker is `outdated`. A missing
+`complete` requires a sealed source fingerprint, the current declaration,
+and a matching current source-file marker. A missing or unreadable marker
+means `unknown`; the next real indexing pass refreshes the seal. Status never
+hashes or sweeps the source to manufacture proof. A changed declaration or stored marker is `outdated`. A missing
 sidecar, or a readable unsealed sidecar with exactly zero chunks, is `empty`.
 An unsealed sidecar is `building` only while the live worker identifies that
 database. Missing or unreadable evidence is `unknown`.

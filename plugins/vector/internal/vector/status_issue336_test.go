@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func TestReportVectorizationTreatsSealedSidecarWithoutMarkerAsComplete(t *testing.T) {
+func TestReportVectorizationTreatsSealedSidecarWithoutMarkerAsUnknown(t *testing.T) {
 	root := t.TempDir()
 	database := vectorDatabase{
 		Plugin: "roca-corpus", Database: "corpus", Path: "roca-corpus.db", Alias: "corpus",
@@ -28,8 +28,8 @@ func TestReportVectorizationTreatsSealedSidecarWithoutMarkerAsComplete(t *testin
 		t.Fatal(err)
 	}
 	row := report.Databases[0]
-	if row.State != StateComplete {
-		t.Fatalf("sealed sidecar without source_marker = %q, want complete", row.State)
+	if row.State != StateUnknown {
+		t.Fatalf("sealed sidecar without source_marker = %q, want unknown", row.State)
 	}
 	if row.EmbeddedChunks == nil || *row.EmbeddedChunks != 1 {
 		t.Fatalf("embedded chunks = %v, want 1", row.EmbeddedChunks)
@@ -229,4 +229,55 @@ func valueOrZero(value *int64) int64 {
 		return 0
 	}
 	return *value
+}
+
+// The latency belongs to this process: it runs a completed federation pass
+// and a real kNN query with a deterministic embedder, without model downloads.
+// These synthetic budgets do not claim to measure native model load or I/O.
+func TestCostVectorSynthetic(t *testing.T) {
+	federation, corpusPath, _, _ := federationFixture(t)
+	ctx := context.Background()
+	first, err := federation.Ingest(ctx, "")
+	if err != nil || first.Chunks == 0 {
+		t.Fatalf("nonempty initial pass: %+v %v", first, err)
+	}
+	// Removing only the old seal's marker reproduces a legacy sidecar. Status
+	// must remain unknown until real index work refreshes it.
+	db := openTestSQLite(t, SidecarPath(corpusPath))
+	if _, err := db.Exec("DELETE FROM meta WHERE key=?", sourceMarkerMetaKey); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	started := time.Now()
+	steady, err := federation.Ingest(ctx, "")
+	passLatency := time.Since(started)
+	if err != nil || steady.Unchanged != first.Chunks || steady.Added != 0 || steady.Updated != 0 || steady.Removed != 0 {
+		t.Fatalf("completed unchanged pass: %+v %v", steady, err)
+	}
+	if sidecarMeta(t, SidecarPath(corpusPath))[sourceMarkerMetaKey] == "" {
+		t.Fatal("real index pass did not refresh source marker")
+	}
+	index := Index{Corpus: &memoryCorpus{sources: []sourceRow{{kind: "memories", sourceID: "cost", text: "harbor lantern"}}},
+		VectorPath: filepath.Join(t.TempDir(), "cost.vector.db"), Model: DefaultModel, Embedder: &recordingEmbedder{}, Database: "cost"}
+	if delta, err := index.Ingest(ctx); err != nil || delta.Chunks == 0 {
+		t.Fatalf("query fixture: %+v %v", delta, err)
+	}
+	for i := 0; i < 2; i++ {
+		started = time.Now()
+		hits, err := index.Query(ctx, "harbor lantern", 1)
+		latency := time.Since(started)
+		if err != nil || len(hits) != 1 || hits[0].Text != "harbor lantern" {
+			t.Fatalf("real result: %+v %v", hits, err)
+		}
+		if i == 1 {
+			t.Logf("warm synthetic vector query latency: %s", latency)
+			if latency >= 500*time.Millisecond {
+				t.Fatalf("warm query latency %s exceeds 500ms", latency)
+			}
+		}
+	}
+	t.Logf("completed unchanged synthetic pass latency: %s", passLatency)
+	if passLatency >= 2*time.Second {
+		t.Fatalf("unchanged pass latency %s exceeds 2s", passLatency)
+	}
 }
