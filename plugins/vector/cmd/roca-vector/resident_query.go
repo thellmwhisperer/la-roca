@@ -15,15 +15,11 @@ import (
 func (env *environment) queryThroughResident(ctx context.Context, text string, k int,
 	databases string, expandTemplates bool, minScore float64) (vector.FederatedQuery, bool, error) {
 	opts := env.residentQueryOptions()
-	conn, err := vectorresident.DialOrSpawn(ctx, opts)
+	client, err := vectorresident.ConnectCurrent(ctx, opts)
 	if err != nil {
 		return vector.FederatedQuery{}, false, nil
 	}
-	client := vectorresident.NewClient(conn, opts.Status)
 	defer client.Close()
-	if err := client.WaitReady(ctx); err != nil {
-		return vector.FederatedQuery{}, true, err
-	}
 	raw, err := client.Query(ctx, vectorresident.Request{
 		Query: text, K: k, Databases: databases,
 		ExpandTemplates: expandTemplates, MinScore: minScore,

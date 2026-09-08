@@ -254,18 +254,52 @@ func (c *Client) Close() error {
 	return nil
 }
 
-// QueryOnce dials or starts the resident, waits until it is ready, and runs one
-// query. Closing the connection does not stop the resident.
-func QueryOnce(ctx context.Context, opts Options, in Request) (json.RawMessage, error) {
+// CurrentQueryCapable reports whether the listening resident advertised the
+// query options this companion uses. A pre-upgrade resident answers plain
+// queries but still runs the old snapshot copy path.
+func (c *Client) CurrentQueryCapable() bool {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	return c.queryOptions["expand_templates"] && c.queryOptions["min_score"]
+}
+
+func connectReady(ctx context.Context, opts Options) (*Client, error) {
 	conn, err := DialOrSpawn(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
 	client := NewClient(conn, opts.Status)
-	defer client.Close()
 	if err := client.WaitReady(ctx); err != nil {
+		_ = client.Close()
 		return nil, err
 	}
+	return client, nil
+}
+
+// ConnectCurrent dials or starts a resident that can run the current query
+// path. A listening legacy resident is left running; this companion then
+// starts its own socket beside it so the query uses live reads.
+func ConnectCurrent(ctx context.Context, opts Options) (*Client, error) {
+	client, err := connectReady(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+	if client.CurrentQueryCapable() {
+		return client, nil
+	}
+	_ = client.Close()
+	opts.Socket, opts.Lock = currentQueryPaths(opts)
+	return connectReady(ctx, opts)
+}
+
+// QueryOnce dials or starts the resident, waits until it is ready, and runs one
+// query. Closing the connection does not stop the resident.
+func QueryOnce(ctx context.Context, opts Options, in Request) (json.RawMessage, error) {
+	client, err := ConnectCurrent(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+	defer client.Close()
 	return client.Query(ctx, in)
 }
 

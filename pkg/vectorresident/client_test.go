@@ -10,6 +10,9 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
+	"runtime"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -130,5 +133,97 @@ func TestClientRequiresAdvertisedQueryOptions(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestQueryOnceSkipsLegacyResident(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix sockets are the shared resident transport")
+	}
+	dir, err := os.MkdirTemp("/tmp", "rv-c-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ROCA_VECTOR_RESIDENT_SOCKET", "")
+	primary, _ := SocketPaths(dir)
+	if err := os.MkdirAll(filepath.Dir(primary), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Dir(primary), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var legacyHits, currentHits atomic.Int32
+	listenTestResident(t, primary, nil, &legacyHits, `{"legacy":true}`)
+	listenTestResident(t, primary+".current", map[string]any{
+		"query_options": []any{"expand_templates", "min_score"},
+	}, &currentHits, `{"current":true}`)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	raw, err := QueryOnce(ctx, Options{DataDir: dir}, Request{Query: "harbor lantern", K: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(raw, []byte(`"current":true`)) {
+		t.Fatalf("result = %s", raw)
+	}
+	if currentHits.Load() != 1 {
+		t.Fatalf("current hits = %d, want 1", currentHits.Load())
+	}
+	if legacyHits.Load() != 0 {
+		t.Fatalf("legacy hits = %d, want 0", legacyHits.Load())
+	}
+}
+
+func listenTestResident(t *testing.T, socket string, extra map[string]any, hits *atomic.Int32, result string) {
+	t.Helper()
+	_ = os.Remove(socket)
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(socket, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = listener.Close()
+		_ = os.Remove(socket)
+	})
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func(conn net.Conn) {
+				defer conn.Close()
+				encoder := json.NewEncoder(conn)
+				_ = encoder.Encode(envelope{Kind: "result", Stage: "prewarm", Extra: extra})
+				var request map[string]any
+				if err := json.NewDecoder(conn).Decode(&request); err != nil {
+					return
+				}
+				hits.Add(1)
+				_ = encoder.Encode(map[string]any{
+					"kind": "result", "stage": "query", "id": request["id"],
+					"result": json.RawMessage(result),
+				})
+			}(conn)
+		}
+	}()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		conn, err := Dial(socket)
+		if err == nil {
+			_ = conn.Close()
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("resident was not listening on %s: %v", socket, err)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

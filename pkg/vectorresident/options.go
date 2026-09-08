@@ -53,3 +53,8 @@ func (o Options) socketAndLock() (socket, lock string) {
 	}
 	return SocketPaths(o.DataDir)
 }
+
+func currentQueryPaths(opts Options) (socket, lock string) {
+	socket, lock = opts.socketAndLock()
+	return socket + ".current", lock + ".current"
+}
