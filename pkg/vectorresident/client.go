@@ -4,11 +4,14 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
 	"sync"
 )
+
+var ErrUnsupportedOptions = errors.New("semantic search resident does not support query options; restart the resident to use the updated companion")
 
 // Request is one semantic search against the shared resident.
 type Request struct {
@@ -32,22 +35,23 @@ type envelope struct {
 
 // Client is one connection to the shared embedding resident.
 type Client struct {
-	stdin     io.WriteCloser
-	conn      io.Closer
-	encoder   *json.Encoder
-	status    io.Writer
-	closeOnce sync.Once
-	writeMu   sync.Mutex
-	stateMu   sync.Mutex
-	pendingMu sync.Mutex
-	ready     chan struct{}
-	failed    chan struct{}
-	readyErr  error
-	failure   error
-	prewarmMS int64
-	nextID    int64
-	pending   map[int64]chan envelope
-	closing   bool
+	stdin        io.WriteCloser
+	conn         io.Closer
+	encoder      *json.Encoder
+	status       io.Writer
+	closeOnce    sync.Once
+	writeMu      sync.Mutex
+	stateMu      sync.Mutex
+	pendingMu    sync.Mutex
+	ready        chan struct{}
+	failed       chan struct{}
+	readyErr     error
+	failure      error
+	prewarmMS    int64
+	queryOptions map[string]bool
+	nextID       int64
+	pending      map[int64]chan envelope
+	closing      bool
 }
 
 // NewClient decodes resident protocol from conn and writes product progress to
@@ -86,6 +90,16 @@ func (c *Client) decode(reader io.Reader) {
 						c.stateMu.Unlock()
 					}
 				}
+				c.stateMu.Lock()
+				c.queryOptions = make(map[string]bool)
+				if options, ok := response.Extra["query_options"].([]any); ok {
+					for _, option := range options {
+						if name, ok := option.(string); ok {
+							c.queryOptions[name] = true
+						}
+					}
+				}
+				c.stateMu.Unlock()
 				c.markReady(nil)
 				continue
 			}
@@ -171,6 +185,12 @@ func (c *Client) Query(ctx context.Context, in Request) (json.RawMessage, error)
 	}
 	if in.K < 1 || in.K > 100 {
 		return nil, fmt.Errorf("k must be between 1 and 100")
+	}
+	c.stateMu.Lock()
+	unsupported := in.ExpandTemplates && !c.queryOptions["expand_templates"] || in.MinScore != 0 && !c.queryOptions["min_score"]
+	c.stateMu.Unlock()
+	if unsupported {
+		return nil, ErrUnsupportedOptions
 	}
 	c.pendingMu.Lock()
 	c.nextID++

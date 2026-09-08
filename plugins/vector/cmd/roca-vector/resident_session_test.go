@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"os"
@@ -9,7 +10,9 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/thellmwhisperer/la-roca-vector/internal/model"
 	"github.com/thellmwhisperer/la-roca-vector/internal/vector"
 )
 
@@ -18,6 +21,70 @@ type residentTestEmbedder struct {
 	warms       int
 	prewarmErr  error
 	terminalErr error
+}
+
+type downloadingResidentEmbedder struct {
+	residentTestEmbedder
+}
+
+func (e *downloadingResidentEmbedder) Embed(context.Context, string, []string) ([][]float32, error) {
+	return nil, e.prewarmErr
+}
+
+func TestResidentQueryDuringModelDownloadReturnsNotices(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix resident and shell fixture")
+	}
+	root := t.TempDir()
+	plugins := filepath.Join(root, "plugins")
+	if err := os.MkdirAll(filepath.Join(plugins, "fixture"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	registry := `{"schema":2,"databases":[{"plugin":"fixture","database":"records","path":"records.db","alias":"fixture_records","tables":[{"name":"records","id_column":"id","text_columns":["body"]}]}]}`
+	if err := os.WriteFile(filepath.Join(plugins, "vector-registry.json"), []byte(registry), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ROCA_VECTOR_PLUGIN_ROOT", plugins)
+	script := filepath.Join(root, "roca")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf '%s' '{\"databases\":[\"records\"],\"selected\":[{\"source\":\"plugin:fixture/records\",\"database\":\"records\"}]}'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ROCA_VECTOR_ROCA_BINARY", script)
+	sidecar := vector.SidecarPath(filepath.Join(plugins, "fixture", "records.db"))
+	if err := vector.InitOwnedSidecar(sidecar, "fixture/records", vector.DefaultModel); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", sidecar)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`INSERT OR REPLACE INTO meta(key,value) VALUES('dimensions','8')`)
+	_ = db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, missing := model.Existing(root, model.DefaultManifest())
+	if !errors.Is(missing, model.ErrNotDownloaded) {
+		t.Fatalf("missing model = %v", missing)
+	}
+	embedder := &downloadingResidentEmbedder{residentTestEmbedder: residentTestEmbedder{prewarmErr: missing}}
+	env := &environment{dbPath: filepath.Join(root, "roca.db"), stateDir: filepath.Join(root, "state")}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	session, err := residentSessionWithEmbedder(ctx, env, embedder, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener := boundResident(t)
+	t.Setenv("ROCA_VECTOR_RESIDENT_SOCKET", listener.Addr().String())
+	go func() { _ = serveListeningResident(ctx, listener, time.Minute, session) }()
+	result, used, err := env.queryThroughResident(ctx, "harbor", 3, "records", true, 0.35)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !used || result.VectorExecuted || len(result.Results) != 0 || !strings.Contains(strings.Join(result.Notices, " "), "embedding model is not downloaded") {
+		t.Fatalf("query while downloading = %+v, resident=%v", result, used)
+	}
 }
 
 func (e *residentTestEmbedder) Prewarm(context.Context) error {

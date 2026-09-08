@@ -6,17 +6,20 @@ import (
 	"testing"
 )
 
-func TestResolveDatabaseScopeCachesRepeatedAnswers(t *testing.T) {
+func TestResolveDatabaseScopeRefreshesRepeatedAnswers(t *testing.T) {
 	calls := 0
 	core := CoreCLI{
 		Executable: "/synthetic/roca",
 		Run: func(context.Context, string, ...string) ([]byte, error) {
 			calls++
-			return json.Marshal(DatabaseScope{Databases: []string{"ops"},
-				Selected: []DatabaseSelection{{Source: "plugin:roca-ops", Database: "ops"}}})
+			name := "ops"
+			if calls > 1 {
+				name = "newdb"
+			}
+			return json.Marshal(DatabaseScope{Databases: []string{name},
+				Selected: []DatabaseSelection{{Source: "plugin:roca-ops", Database: name}}})
 		},
 	}
-	core.SetScopeCache(NewScopeCache())
 	first, err := core.ResolveDatabaseScope(context.Background(), "ops")
 	if err != nil {
 		t.Fatal(err)
@@ -25,10 +28,10 @@ func TestResolveDatabaseScopeCachesRepeatedAnswers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if calls != 1 {
-		t.Fatalf("scope subprocess calls = %d, want 1", calls)
+	if calls != 2 {
+		t.Fatalf("scope subprocess calls = %d, want 2", calls)
 	}
-	if len(first.Selected) != 1 || first.Selected[0].Database != second.Selected[0].Database {
-		t.Fatalf("cached scope = %+v / %+v", first, second)
+	if len(first.Selected) != 1 || first.Selected[0].Database != "ops" || len(second.Selected) != 1 || second.Selected[0].Database != "newdb" {
+		t.Fatalf("refreshed scope = %+v / %+v", first, second)
 	}
 }

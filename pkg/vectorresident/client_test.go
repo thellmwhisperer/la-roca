@@ -76,3 +76,59 @@ func TestQueryOnceUnavailableWithoutBinaryOrListener(t *testing.T) {
 		t.Fatalf("QueryOnce = %v, want unavailable", err)
 	}
 }
+
+func TestClientRequiresAdvertisedQueryOptions(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		extra       map[string]any
+		request     Request
+		unsupported bool
+	}{
+		{"legacy plain", nil, Request{Query: "harbor"}, false},
+		{"legacy expanded", nil, Request{Query: "harbor", ExpandTemplates: true}, true},
+		{"legacy score", nil, Request{Query: "harbor", MinScore: 0.35}, true},
+		{"partial support", map[string]any{"query_options": []string{"expand_templates"}}, Request{Query: "harbor", ExpandTemplates: true, MinScore: 0.35}, true},
+		{"supported", map[string]any{"query_options": []string{"expand_templates", "min_score"}}, Request{Query: "harbor", ExpandTemplates: true, MinScore: 0.35}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			clientEnd, serverEnd := net.Pipe()
+			defer serverEnd.Close()
+			client := NewClient(clientEnd, nil)
+			defer client.Close()
+			seen := make(chan map[string]any, 1)
+			go func() {
+				encoder := json.NewEncoder(serverEnd)
+				_ = encoder.Encode(envelope{Kind: "result", Stage: "prewarm", Extra: test.extra})
+				var request map[string]any
+				if err := json.NewDecoder(serverEnd).Decode(&request); err == nil {
+					seen <- request
+					_ = encoder.Encode(map[string]any{"kind": "result", "stage": "query", "id": request["id"], "result": map[string]any{"results": []any{}}})
+				}
+			}()
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			if err := client.WaitReady(ctx); err != nil {
+				t.Fatal(err)
+			}
+			_, err := client.Query(ctx, test.request)
+			if test.unsupported {
+				if !errors.Is(err, ErrUnsupportedOptions) {
+					t.Fatalf("query error = %v", err)
+				}
+				select {
+				case request := <-seen:
+					t.Fatalf("unsupported query sent: %v", request)
+				default:
+				}
+			} else {
+				if err != nil {
+					t.Fatal(err)
+				}
+				request := <-seen
+				if test.request.ExpandTemplates && (request["expand_templates"] != true || request["min_score"] != test.request.MinScore) {
+					t.Fatalf("query options = %v", request)
+				}
+			}
+		})
+	}
+}

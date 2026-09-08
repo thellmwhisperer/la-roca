@@ -4,6 +4,8 @@ package acceptance
 
 import (
 	"bufio"
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -60,7 +62,7 @@ type cliResidentEvidence struct {
 	warmMedianMS int64
 	logDelta     int
 	residentPS   string
-	cliMaxRSS    int64
+	cliMaxRSS    string
 	transcript   string
 }
 
@@ -104,7 +106,7 @@ func measureCLIVectorQuery(t *testing.T, binary, lab string, args []string, warm
 	fmt.Fprintf(&transcript, "scope: ops only (companion corpus defect excluded)\n")
 
 	cold := timeLabQuery(t, binary, args, env)
-	fmt.Fprintf(&transcript, "cold real_ms=%d maxrss_bytes=%d out=%q err=%q\n",
+	fmt.Fprintf(&transcript, "cold real_ms=%d maxrss_bytes=%s out=%q err=%q\n",
 		cold.realMS, cold.maxRSS, trimForEvidence(cold.stdout), trimForEvidence(cold.stderr))
 	warms := make([]int64, 0, warmRuns)
 	var last timedRun
@@ -112,7 +114,7 @@ func measureCLIVectorQuery(t *testing.T, binary, lab string, args []string, warm
 		run := timeLabQuery(t, binary, args, env)
 		warms = append(warms, run.realMS)
 		last = run
-		fmt.Fprintf(&transcript, "warm[%d] real_ms=%d maxrss_bytes=%d out=%q err=%q\n",
+		fmt.Fprintf(&transcript, "warm[%d] real_ms=%d maxrss_bytes=%s out=%q err=%q\n",
 			i, run.realMS, run.maxRSS, trimForEvidence(run.stdout), trimForEvidence(run.stderr))
 	}
 	afterLog := countFileLines(logPath)
@@ -135,24 +137,103 @@ func measureCLIVectorQuery(t *testing.T, binary, lab string, args []string, warm
 
 type timedRun struct {
 	realMS int64
-	maxRSS int64
+	maxRSS string
 	stdout string
 	stderr string
 }
 
 func timeLabQuery(t *testing.T, binary string, args []string, env []string) timedRun {
 	t.Helper()
-	command := exec.Command("/usr/bin/time", append([]string{"-p", binary}, args...)...)
-	command.Env = env
-	output, err := command.CombinedOutput()
-	text := string(output)
-	run := timedRun{stdout: text, stderr: text}
-	run.realMS = parseTimeRealMS(text)
-	run.maxRSS = parseTimeMaxRSS(text)
-	if err != nil && run.realMS == 0 {
-		t.Fatalf("time %s %s: %v\n%s", binary, strings.Join(args, " "), err, text)
+	run, err := collectLabQuery(binary, args, env)
+	if err != nil {
+		t.Fatal(err)
 	}
 	return run
+}
+
+func collectLabQuery(binary string, args []string, env []string) (timedRun, error) {
+	timingArgs := []string{"-p", "-l"}
+	if runtime.GOOS == "linux" {
+		timingArgs = []string{"-f", "real %e\n%M maximum resident set size"}
+	}
+	commandArgs := append(timingArgs, binary, "--json")
+	command := exec.Command("/usr/bin/time", append(commandArgs, args...)...)
+	command.Env = env
+	var stdout, stderr bytes.Buffer
+	command.Stdout, command.Stderr = &stdout, &stderr
+	err := command.Run()
+	run := timedRun{stdout: stdout.String(), stderr: stderr.String()}
+	run.realMS = parseTimeRealMS(run.stderr)
+	run.maxRSS = parseTimeMaxRSS(run.stderr)
+	if err != nil {
+		return run, fmt.Errorf("time %s %s: %w\n%s\n%s", binary, strings.Join(args, " "), err, run.stdout, run.stderr)
+	}
+	var result struct {
+		VectorExecuted bool `json:"vector_executed"`
+		Results        []struct {
+			Database string `json:"database"`
+			ID       string `json:"id"`
+			Text     string `json:"text"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		return run, fmt.Errorf("decode measured vector query: %w", err)
+	}
+	if !result.VectorExecuted || len(result.Results) == 0 {
+		return run, fmt.Errorf("measured query returned no vector hits: %s", run.stdout)
+	}
+	for _, hit := range result.Results {
+		if hit.Database != "ops" || hit.ID == "" || strings.TrimSpace(hit.Text) == "" {
+			return run, fmt.Errorf("invalid measured vector hit: %+v", hit)
+		}
+	}
+	return run, nil
+}
+
+func TestCLIVectorMeasurementRequiresSuccessfulVectorResults(t *testing.T) {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		t.Skip("resource-reporting time options")
+	}
+	valid := `{"vector_executed":true,"results":[{"database":"ops","id":"1","text":"harbor"}]}`
+	for _, test := range []struct {
+		name      string
+		output    string
+		status    string
+		wantError bool
+	}{
+		{"success", valid, "0", false},
+		{"failed with output", valid, "1", true},
+		{"unavailable", `{"vector_executed":false,"results":[],"notices":["model unavailable"]}`, "0", true},
+		{"empty", `{"vector_executed":true,"results":[]}`, "0", true},
+		{"malformed", `not json`, "0", true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			binary := filepath.Join(t.TempDir(), "roca")
+			body := "#!/bin/sh\nsleep 0.1\nprintf '%s' '" + test.output + "'\nexit " + test.status + "\n"
+			if err := os.WriteFile(binary, []byte(body), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			run, err := collectLabQuery(binary, []string{"vector", "query", "harbor"}, os.Environ())
+			if (err != nil) != test.wantError {
+				t.Fatalf("measurement error = %v", err)
+			}
+			if run.realMS <= 0 {
+				t.Fatalf("elapsed time = %d", run.realMS)
+			}
+			if !test.wantError {
+				rss, err := strconv.ParseInt(run.maxRSS, 10, 64)
+				if err != nil || rss <= 0 {
+					t.Fatalf("peak RSS = %q", run.maxRSS)
+				}
+			}
+		})
+	}
+}
+
+func TestCLIVectorMeasurementMissingRSSIsUnknown(t *testing.T) {
+	if got := parseTimeMaxRSS("real 0.12\nuser 0.01\nsys 0.01\n"); got != "unknown" {
+		t.Fatalf("missing RSS = %s", got)
+	}
 }
 
 func isolatedLabEnv(home, binDir, binaryDir, socket string) []string {
@@ -257,23 +338,26 @@ func parseTimeRealMS(text string) int64 {
 	return 0
 }
 
-func parseTimeMaxRSS(text string) int64 {
+func parseTimeMaxRSS(text string) string {
 	scanner := bufio.NewScanner(strings.NewReader(text))
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.Contains(line, "maximum resident set size") {
 			fields := strings.Fields(line)
 			if len(fields) == 0 {
-				return 0
+				return "unknown"
 			}
 			value, err := strconv.ParseInt(fields[0], 10, 64)
-			if err != nil {
-				return 0
+			if err != nil || value <= 0 {
+				return "unknown"
 			}
-			return value
+			if runtime.GOOS == "linux" {
+				value *= 1024
+			}
+			return strconv.FormatInt(value, 10)
 		}
 	}
-	return 0
+	return "unknown"
 }
 
 func countFileLines(path string) int {
@@ -321,7 +405,7 @@ func writeCLIResidentEvidence(t *testing.T, name string, evidence cliResidentEvi
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	body := fmt.Sprintf("point: %s\ncold_ms: %d\nwarm_median_ms: %d\nwarm_runs_ms: %v\nlog_delta: %d\ncli_maxrss: %d\nps:\n%s\n%s",
+	body := fmt.Sprintf("point: %s\ncold_ms: %d\nwarm_median_ms: %d\nwarm_runs_ms: %v\nlog_delta: %d\ncli_maxrss_bytes: %s\nps:\n%s\n%s",
 		name, evidence.coldMS, evidence.warmMedianMS, evidence.warmRunsMS, evidence.logDelta, evidence.cliMaxRSS,
 		evidence.residentPS, evidence.transcript)
 	if err := os.WriteFile(filepath.Join(dir, name+"-cli-query.txt"), []byte(body), 0o600); err != nil {

@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/thellmwhisperer/la-roca-vector/internal/engine"
+	"github.com/thellmwhisperer/la-roca-vector/internal/model"
 	"github.com/thellmwhisperer/la-roca-vector/internal/vector"
 )
 
@@ -87,14 +88,13 @@ func newResidentSession(ctx context.Context, env *environment) (residentSession,
 
 func residentSessionWithEmbedder(ctx context.Context, env *environment, embedder vector.Embedder, events engine.Sink) (residentSession, error) {
 	started := time.Now()
-	if err := prewarmEmbedder(ctx, embedder); err != nil {
+	if err := prewarmEmbedder(ctx, embedder); err != nil && !errors.Is(err, model.ErrNotDownloaded) {
 		return residentSession{}, err
 	}
 	extra := map[string]any{"prewarm_ms": time.Since(started).Milliseconds()}
 	if reporter, ok := embedder.(interface{ Accelerated() bool }); ok {
 		extra["accelerated"] = reporter.Accelerated()
 	}
-	scopes := vector.NewScopeCache()
 	return residentSession{
 		waitReady: func(context.Context) error { return nil },
 		extra:     extra,
@@ -103,7 +103,6 @@ func residentSessionWithEmbedder(ctx context.Context, env *environment, embedder
 			if err != nil {
 				return nil, err
 			}
-			federation.Core.SetScopeCache(scopes)
 			var result vector.FederatedQuery
 			var queryErr error
 			if request.ExpandTemplates {
@@ -131,7 +130,11 @@ func serveResidentSession(ctx context.Context, rw io.ReadWriter, session residen
 		return fmt.Errorf("%w: %w", errResidentUnusable, err)
 	} else {
 		event := engine.Result("prewarm", "semantic search: ready")
-		event.Extra = session.extra
+		event.Extra = make(map[string]any, len(session.extra)+1)
+		for key, value := range session.extra {
+			event.Extra[key] = value
+		}
+		event.Extra["query_options"] = []string{"expand_templates", "min_score"}
 		if err := encoder.Encode(event); err != nil {
 			return err
 		}

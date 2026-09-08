@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -13,7 +12,6 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 	"github.com/thellmwhisperer/la-roca/internal/provider/query"
 	"github.com/thellmwhisperer/la-roca/internal/store/search"
-	"github.com/thellmwhisperer/la-roca/pkg/vectorresident"
 )
 
 // SearchRequest is the zero-inference hybrid query: FTS plus optional vector,
@@ -557,78 +555,43 @@ func (s *Service) runSearchSQL(ctx context.Context, route PluginRoute, statement
 	return rows, err
 }
 
-// PluginVectorSearch asks the shared embedding resident when a database path
-// is known, and otherwise shells out to `roca-vector query --expand-templates`.
+// PluginVectorSearch shells out to `roca-vector query --expand-templates`.
 func PluginVectorSearch(dbPath string) VectorSearchFunc {
 	return func(ctx context.Context, question string, k int, databases string) (VectorHits, error) {
+		path, err := exec.LookPath("roca-vector")
+		if err != nil {
+			return VectorHits{Notices: []string{
+				"vector plugin is not installed; continuing with FTS-only",
+			}}, nil
+		}
+		args := []string{"--json", "query", "--expand-templates",
+			"--min-score", strconv.FormatFloat(search.MinVectorScore, 'f', -1, 64)}
+		if strings.TrimSpace(databases) != "" {
+			args = append(args, "--databases", databases)
+		}
+		args = append(args, question, strconv.Itoa(k))
 		if strings.TrimSpace(dbPath) != "" {
-			if hits, ok := pluginVectorSearchResident(ctx, dbPath, question, k, databases); ok {
-				return hits, nil
+			args = append([]string{"--db-path", dbPath}, args...)
+		}
+		cmd := exec.CommandContext(ctx, path, args...)
+		out, runErr := cmd.Output()
+		if runErr != nil {
+			message := runErr.Error()
+			if exit, ok := runErr.(*exec.ExitError); ok && len(exit.Stderr) > 0 {
+				message = strings.TrimSpace(string(exit.Stderr))
 			}
+			return VectorHits{Notices: []string{"vector search unavailable: " + message}}, nil
 		}
-		return pluginVectorSearchExec(ctx, dbPath, question, k, databases)
-	}
-}
-
-func pluginVectorSearchResident(ctx context.Context, dbPath, question string, k int, databases string) (VectorHits, bool) {
-	binary := vectorresident.PayloadPath()
-	if binary == "" {
-		return VectorHits{}, false
-	}
-	raw, err := vectorresident.QueryOnce(ctx, vectorresident.Options{
-		Binary: binary, DataDir: filepath.Dir(dbPath), DBPath: dbPath,
-	}, vectorresident.Request{
-		Query: question, K: k, Databases: databases,
-		ExpandTemplates: true, MinScore: search.MinVectorScore,
-	})
-	if err != nil {
-		return VectorHits{}, false
-	}
-	hits, err := decodePluginVectorHits(raw)
-	if err != nil {
-		return VectorHits{}, false
-	}
-	return hits, true
-}
-
-func pluginVectorSearchExec(ctx context.Context, dbPath, question string, k int, databases string) (VectorHits, error) {
-	path, err := exec.LookPath("roca-vector")
-	if err != nil {
-		return VectorHits{Notices: []string{
-			"vector plugin is not installed; continuing with FTS-only",
-		}}, nil
-	}
-	args := []string{"--json", "query", "--expand-templates",
-		"--min-score", strconv.FormatFloat(search.MinVectorScore, 'f', -1, 64)}
-	if strings.TrimSpace(databases) != "" {
-		args = append(args, "--databases", databases)
-	}
-	args = append(args, question, strconv.Itoa(k))
-	if strings.TrimSpace(dbPath) != "" {
-		args = append([]string{"--db-path", dbPath}, args...)
-	}
-	cmd := exec.CommandContext(ctx, path, args...)
-	out, runErr := cmd.Output()
-	if runErr != nil {
-		message := runErr.Error()
-		if exit, ok := runErr.(*exec.ExitError); ok && len(exit.Stderr) > 0 {
-			message = strings.TrimSpace(string(exit.Stderr))
+		var envelope struct {
+			Results        []VectorHit `json:"results"`
+			Notices        []string    `json:"notices"`
+			VectorExecuted bool        `json:"vector_executed"`
+			MixedModels    bool        `json:"mixed_models"`
 		}
-		return VectorHits{Notices: []string{"vector search unavailable: " + message}}, nil
+		if err := json.Unmarshal(out, &envelope); err != nil {
+			return VectorHits{}, fmt.Errorf("decode vector query: %w", err)
+		}
+		return VectorHits{Results: envelope.Results, Notices: envelope.Notices,
+			Executed: envelope.VectorExecuted, MixedModels: envelope.MixedModels}, nil
 	}
-	return decodePluginVectorHits(out)
-}
-
-func decodePluginVectorHits(raw []byte) (VectorHits, error) {
-	var envelope struct {
-		Results        []VectorHit `json:"results"`
-		Notices        []string    `json:"notices"`
-		VectorExecuted bool        `json:"vector_executed"`
-		MixedModels    bool        `json:"mixed_models"`
-	}
-	if err := json.Unmarshal(raw, &envelope); err != nil {
-		return VectorHits{}, fmt.Errorf("decode vector query: %w", err)
-	}
-	return VectorHits{Results: envelope.Results, Notices: envelope.Notices,
-		Executed: envelope.VectorExecuted, MixedModels: envelope.MixedModels}, nil
 }
