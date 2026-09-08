@@ -122,6 +122,9 @@ func writePlaygroundEvidence(t *testing.T, root, label, binary, output string, w
 		t.Fatal(err)
 	}
 	dir := filepath.Join(root, ".tmp", "playground-evidence")
+	if evidenceDir := os.Getenv("ROCA_PLAYGROUND_EVIDENCE_DIR"); evidenceDir != "" {
+		dir = evidenceDir
+	}
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +132,7 @@ func writePlaygroundEvidence(t *testing.T, root, label, binary, output string, w
 		t.Fatal(err)
 	}
 	t.Log(string(text))
-	t.Log("evidence: .tmp/playground-evidence/" + label + ".json")
+	t.Log("evidence: " + filepath.Join(dir, label+".json"))
 }
 
 func binaryDigest(payload []byte) string {

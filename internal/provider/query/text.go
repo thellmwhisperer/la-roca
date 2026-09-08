@@ -1,12 +1,7 @@
-// Package query builds the prompt the model answers over and renders the FTS
-// search the rescue falls back to.
-//
-// v1 is model-only: every question goes to the model, which generates SQL over
-// the SQLite + FTS5 schema (see prompt.go), validated by the gate
-// (internal/query/sqlgate). When the model cannot answer, the rescue searches
-// the FTS5 index with the question's own words (see fts.go). There is no
-// deterministic text processing with no language-specific vocabulary: the utilities
-// here are the only residue, and they are language-independent.
+// Package query supplies schema prompts, input checks, and lexical utilities
+// shared by core search and the optional playground plugin. Provider execution,
+// SQL repair, and interpretation belong to that plugin; core hybrid search
+// performs no answering-model inference.
 package query
 
 import (

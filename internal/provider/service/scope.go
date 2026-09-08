@@ -200,13 +200,6 @@ func (r PluginRoute) CanWiden(inventory PluginRoute) bool {
 	return len(r.UnusedNames(inventory)) > 0
 }
 
-// WidenReply reports that the reading seat asked for a second SQL pass over
-// the attached databases that were held back.
-
-// CanWidenAfterInterpretation reports whether a reading-seat reply may buy a
-// second SQL pass. SQL failures stay attributed to their first scoped pass;
-// widening cannot turn them into a different query with a different verdict.
-
 func bundledSearchDatabases(route PluginRoute) []plugin.Database {
 	var databases []plugin.Database
 	for _, database := range route.Databases {

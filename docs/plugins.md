@@ -563,6 +563,17 @@ Core `exec` and `query` remain checked SQLite and FTS plus vector reads with
 zero answering-model inference. Source and moved acceptance scenarios live in
 [roca-playground](https://github.com/thellmwhisperer/roca-playground).
 
+Core resolves the executable at `~/.roca/plugins/roca-playground/roca-playground`
+(`roca-playground.exe` on Windows). CLI dispatch forwards the answering and
+model-management verbs, database selection, JSON mode, and read-only policy.
+The executable must support `--transport`: stdout carries the command output,
+while stderr carries the JSON audit envelope defined by
+[`playground.Audit`](../internal/distribution/playground/plugin.go), which core
+uses to restore diagnostics and record query metadata. The `probe` and
+`capabilities` verbs return JSON for doctor and configuration reconciliation.
+[The MCP reference](mcp.md#the-tools-and-optional-plugins) owns tool registration
+and restart requirements.
+
 ## Executable-only packages
 
 A package that ships a command instead of data owns no database and needs no

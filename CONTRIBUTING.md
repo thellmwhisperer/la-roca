@@ -50,8 +50,9 @@ optional playground fixture through `make playground-fixture`. That target
 clones the plugin repository into `PLAYGROUND_DIR` when absent and builds it
 against this checkout; the defaults and selected ref live in `Makefile`.
 `make playground-test` additionally runs the plugin's checks and paired S1 cost
-measurement on synthetic fixtures. Set `ROCA_PUBLISHED_BIN` to the published `v1.82.6` executable for
-the before/after comparison and writes evidence under `.tmp/playground-evidence`.
+measurement on synthetic fixtures. Set `ROCA_PUBLISHED_BIN` to the published
+`v1.82.6` executable for the before/after comparison; the measurement writes
+evidence under `.tmp/playground-evidence`.
 For S1, the pipeline test step must retain both `published.json` and `branch.json`
 as evidence artifacts. A transcript of only the new binary is incomplete.
 The published executable can be downloaded from the `v1.82.6` GitHub release;

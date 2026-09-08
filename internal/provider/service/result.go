@@ -12,11 +12,10 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/store/search"
 )
 
-// Paths a question can leave by. v1 is model-only: every question is asked of
-// the model (PathLLM), and when the model cannot answer the keyword rescue
-// searches the FTS index with the question's own words (PathKeyword). There is
-// no compiler path. A model can explicitly refuse an out-of-scope question;
-// that is a legitimate result, distinct from an unavailable model or bad SQL.
+// Paths in the optional playground plugin's answer envelope. A model can
+// explicitly refuse an out-of-scope question; that is a legitimate result,
+// distinct from an unavailable model or bad SQL. Core hybrid search uses its
+// own result envelope.
 const (
 	PathLLM        = "model"
 	PathKeyword    = "keyword"
@@ -71,8 +70,8 @@ func progress(req QueryRequest, phase QueryPhase) {
 	}
 }
 
-// QueryResult is the complete answer: which path it left by, with what SQL, and
-// from which version of the code.
+// QueryResult is the shared playground answer envelope: which path it left by,
+// with what SQL, and from which version of the code.
 //
 // Provenance is not decoration: a poor result because the provider failed and
 // a poor one because
@@ -82,8 +81,8 @@ type QueryResult struct {
 	Question string `json:"question"`
 	Path     string `json:"path"`
 	MaxChars int    `json:"-"`
-	// Mode is set only by Explore. An ordinary query omits it, preserving the
-	// query envelope while every investigation declares plain or deep mode.
+	// Mode is set by the plugin's explore verb. An ordinary playground answer
+	// omits it, while every investigation declares plain or deep mode.
 	Mode     string             `json:"mode,omitempty"`
 	SQL      string             `json:"sql,omitempty"`
 	Columns  []string           `json:"columns,omitempty"`
@@ -165,7 +164,7 @@ type QueryResult struct {
 	// correction call, so retry cost is distinguishable from a first shot.
 	SQLRetryProviderLatencyMS int64 `json:"sql_retry_provider_latency_ms"`
 	// SQLInferenceMS, ExecutionMS and InterpretationMS are the three query
-	// phases. Interpretation is populated by query --full and every explore.
+	// phases. Interpretation is populated by playground --full and every explore.
 	SQLInferenceMS      int64    `json:"sql_inference_ms"`
 	SQLRetryInferenceMS int64    `json:"sql_retry_inference_ms"`
 	ExecutionMS         int64    `json:"execution_ms"`

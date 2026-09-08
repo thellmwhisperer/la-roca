@@ -114,15 +114,9 @@ help[2]:
 
 ## MCP (shell-less agents)
 
-Six tools, same service as the CLI: `roca_query`, `roca_explore`, `roca_sql`,
-`roca_exec`, `roca_store`, `roca_health`. `roca_explore` has full CLI parity:
-plain mode and `deep: true` both return the prose investigation and generated
-SQL, with the deep mission mapping the complete terrain and proposing probes.
-`roca_sql` is the shell-less form of
-`playground --sql-only` (the SQL without running it); `roca_exec` follows the
-authored-SQL contract linked above. The `roca_query`, `roca_explore`, and `roca_sql` tools accept the same
-comma list or `all` in their `databases` argument. Install them with
-`roca mcp install <runtime>`.
+Install the integration with `roca mcp install <runtime>`. The
+[MCP reference](https://github.com/thellmwhisperer/la-roca/blob/main/docs/mcp.md#the-tools-and-optional-plugins)
+owns tool availability, optional plugin requirements, and argument contracts.
 
 ## Provenance: who wrote what
 

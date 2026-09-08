@@ -738,12 +738,6 @@ func execCommand(env *cliEnv) *cobra.Command {
 	return cmd
 }
 
-// render is the readable output. The same answer --json hands over whole,
-// summarized here for a human at a terminal.
-//
-// prose is the model's natural-language rendering of the rows, when full mode's
-// second inference call answered. Empty means default row mode or a failed call.
-
 func compactCommand(env *cliEnv) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "compact [database]",

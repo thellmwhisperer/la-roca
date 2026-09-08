@@ -65,16 +65,16 @@ roca mcp serve
 Nothing but the protocol goes to standard output. A print there corrupts the
 session, which is why every diagnostic in this path writes to standard error.
 
-### The core tools and semantic search
+### The tools and optional plugins
 
 | Tool | What it does | The caller that defends it |
 |---|---|---|
 | `roca_exec` | Runs a SELECT under the same gate and [table-name contract](queries.md#table-names-in-authored-sql) as `roca exec` | Agents that received SQL from `roca_sql` and have no shell |
-| `roca_explore` | Runs plain or deep investigation with prose, terrain, next probes, and generated SQL | Agents following evidence without a shell |
+| `roca_explore` (playground plugin) | Runs plain or deep investigation with prose, terrain, next probes, and generated SQL | Agents following evidence without a shell |
 | `roca_query` | Returns labeled hybrid FTS/vector evidence; `top`, `require_both`, and `databases` match the CLI | An agent searching memory without a shell |
 | `roca_store` | Writes one memory back | The other half of the same job |
 | `roca_health` | The non-destructive checks over live data | An agent that cannot run `roca doctor` |
-| `roca_sql` | Compiles a question into SQL without running it | Agents that need to inspect the SQL before `roca_exec` runs it |
+| `roca_sql` (playground plugin) | Compiles a question into SQL without running it | Agents that need to inspect the SQL before `roca_exec` runs it |
 
 `roca_store` applies the same [handoff write policy](operations.md#handoff-writes)
 as the CLI, including session-writer, required-field, and supersession checks.
