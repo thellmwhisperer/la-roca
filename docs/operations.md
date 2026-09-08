@@ -382,3 +382,23 @@ consents. Nothing is deleted automatically. Non-interactive runs and
 `roca doctor --json` only report leftovers; `roca doctor --report` uses the
 separate support collector and neither scans for these directories nor offers
 cleanup.
+
+## Explicit DATA SPLIT migration
+
+`roca migrate` resumes DATA-2 memory custody, DATA-3 corpus custody and DATA-4
+legacy custody, then reports `migration: verified` (`{"verified":true}` with
+`--json`). It uses the existing frozen snapshots and committed batch receipts;
+an interrupted run can be invoked again. A verified installation returns without
+opening frozen snapshots, hashing, checking integrity or materializing rows.
+Backups remain in place. Read-only mode refuses migration.
+
+Run it before selecting `shadow-equal` or `cutover` in `[layout].serving`.
+The command preserves that selection. Ordinary commands read the selected
+layout directly and never migrate it as a side effect of opening the service.
+
+The D2 cost regression is `TestCostMigrate` in the acceptance suite. With
+`ROCA_PUBLISHED_BIN` pointing to the published executable, it records both
+`published.json` and `branch.json` under `.tmp/migrate-evidence`, against the
+same synthetic verified home. It measures logical process reads (including
+cache hits), requires less than 1 MB and 100 ms, and takes the snapshots offline
+before repeating both SELECT and migrate. It never measures the live federation.

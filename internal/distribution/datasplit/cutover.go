@@ -35,16 +35,19 @@ type hubEligibility struct {
 	legacy bool
 }
 
-// PrepareHub runs only the unfinished DATA-2, DATA-3, and DATA-4 custody work.
+// Migrate runs only the unfinished DATA-2, DATA-3, and DATA-4 custody work.
 // Every source read comes from the verified snapshots published by DATA-2;
 // the live core database remains untouched.
-func PrepareHub(ctx context.Context, options HubOptions) (HubReport, error) {
+func Migrate(ctx context.Context, options HubOptions) (HubReport, error) {
 	if err := options.valid(); err != nil {
 		return HubReport{}, err
 	}
 	eligibility, err := inspectHubEligibility(ctx, options)
 	if err != nil {
 		return HubReport{}, err
+	}
+	if eligibility.ready() {
+		return HubReport{Ready: true}, nil
 	}
 	report := HubReport{}
 	report.Memory, err = rocaops.MigrateMemoryCustody(ctx, rocaops.MemoryCustodyOptions{
@@ -79,10 +82,8 @@ func PrepareHub(ctx context.Context, options HubOptions) (HubReport, error) {
 		if err != nil {
 			return report, fmt.Errorf("prepare DATA-3 corpus custody: %w", err)
 		}
-	} else if err := corpusarchive.MaterializeCurrent(ctx, options.CorpusDatabase,
-		corpusSources); err != nil {
-		return report, fmt.Errorf("materialize DATA-3 current corpus: %w", err)
 	}
+
 	if !eligibility.legacy {
 		report.Legacy, err = ImportLegacyOrphans(ctx, LegacyOptions{
 			SourceClone: coreSnapshot, CronDatabase: options.CronDatabase,
