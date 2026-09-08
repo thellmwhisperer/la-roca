@@ -91,7 +91,8 @@ roca vector query "what did we decide" 10
 roca vector query --databases corpus,ops "what did we decide" 10
 ```
 
-CLI query embedding uses the shared resident the MCP path already keeps. `k` is optional (default 10) and capped at 100. Default scope and background
+CLI model reuse is defined in `docs/mcp.md#1-roca-mcp-serve-the-mcp-over-stdio`.
+`k` is optional (default 10) and capped at 100. Default scope and background
 model-download behavior are defined in `docs/vector.md#first-query`:
 `--databases` narrows the whole attached federation, and a missing or
 downloading model leaves its database FTS-only without blocking. Same-model

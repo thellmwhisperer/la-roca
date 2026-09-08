@@ -156,8 +156,9 @@ func collectLabQuery(binary string, args []string, env []string) (timedRun, erro
 	if runtime.GOOS == "linux" {
 		timingArgs = []string{"-f", "real %e\n%M maximum resident set size"}
 	}
-	commandArgs := append(timingArgs, binary, "--json")
-	command := exec.Command("/usr/bin/time", append(commandArgs, args...)...)
+	commandArgs := append(timingArgs, binary)
+	commandArgs = append(commandArgs, args...)
+	command := exec.Command("/usr/bin/time", append(commandArgs, "--json")...)
 	command.Env = env
 	var stdout, stderr bytes.Buffer
 	command.Stdout, command.Stderr = &stdout, &stderr

@@ -44,12 +44,21 @@ and the socket path must be shorter than 100 bytes. A positive Go duration in
 `ROCA_VECTOR_RESIDENT_IDLE` overrides the idle period when a resident starts;
 the internal `_resident --idle` flag takes precedence.
 
-Preparation progress received by an MCP session goes to its standard error,
-leaving protocol output untouched. The detached resident appends its own
+Preparation progress received by an MCP or CLI client goes to its standard
+error, leaving result output untouched. The detached resident appends its own
 stdout and stderr to `<data-directory>/logs/vector-resident.log`. If connecting
 or starting the resident fails, serve emits a notice on stderr and keeps the core
 tools available without `roca_vector_query`. A lost connection fails that
 session's vector calls; a new MCP session can start or connect to a resident.
+
+If the CLI cannot connect to or start a resident, it uses its in-process query
+path, which may load the model for that invocation. Once connected, it returns
+resident errors without retrying locally. After a companion update, an older
+resident can still answer plain queries but rejects `--expand-templates` or a
+nonzero `--min-score` if it does not advertise support for those options. The
+error asks for a resident restart; disconnect its clients and let the idle
+period expire before retrying with the updated companion. Hybrid `roca query`
+also uses template expansion for its vector leg.
 
 The same session parent raises every installed plugin that declares a
 `companion` in `plugin.json`. Each child is exec'd from the plugin directory

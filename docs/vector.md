@@ -312,10 +312,9 @@ roca vector query "what did we decide" 10
 roca vector query --databases corpus,ops "what did we decide" 10
 ```
 
-Query embedding goes through the shared resident documented in
-[the MCP plug](mcp.md#1-roca-mcp-serve-the-mcp-over-stdio): a warm machine
-reuses the prepared model, and a cold machine starts one. The default route
-searches every attached sidecar. `--databases` has the same
+See the [shared resident lifecycle](mcp.md#1-roca-mcp-serve-the-mcp-over-stdio)
+for CLI model reuse, startup fallback, and compatibility after an update.
+The default route searches every attached sidecar. `--databases` has the same
 explicit comma-list and `all` selection rules as `roca query`; the command fans
 out only to selected databases with vector declarations and ready sidecars.
 Same-model scores merge into one top-N. If selected sidecars use different
