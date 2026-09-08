@@ -151,7 +151,9 @@ func TestOpenReadOnlyKillLeavesNoDirectory(t *testing.T) {
 				t.Fatal(err)
 			}
 			_, _ = cmd.Process.Wait()
-			if dirs := leftoverSnapshotDirs(t, tmp); len(dirs) != 0 {
+			dirs := leftoverSnapshotDirs(t, tmp)
+			t.Logf("issue #341 branch evidence: after %s, leftover snapshot dirs=%d", tc.name, len(dirs))
+			if len(dirs) != 0 {
 				t.Fatalf("%s left snapshot directories %v", tc.name, dirs)
 			}
 		})
