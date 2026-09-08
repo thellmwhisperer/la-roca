@@ -160,7 +160,6 @@ The bootstrap JSON field `external_credential` is now named `command_transport`;
 
 ### Features
 
-* **cli:** add tool-call-observer for live session tool calls ([#254](https://github.com/thellmwhisperer/la-roca/issues/254)) ([bb2db08](https://github.com/thellmwhisperer/la-roca/commit/bb2db08aa5588eec88311c2ee5c0938d96cd51be))
 * **cli:** prove word search and ask the vector question inside init ([#255](https://github.com/thellmwhisperer/la-roca/issues/255)) ([6b050dc](https://github.com/thellmwhisperer/la-roca/commit/6b050dc396d77552739ee553c81071ce15649f17))
 * declare no-mistakes lint and test commands ([#248](https://github.com/thellmwhisperer/la-roca/issues/248)) ([05552fd](https://github.com/thellmwhisperer/la-roca/commit/05552fd2efa37b9d4efe94aa91003a840883c6ee))
 * **distribution:** install and update owner/repo plugins from published releases ([#253](https://github.com/thellmwhisperer/la-roca/issues/253)) ([7a5223d](https://github.com/thellmwhisperer/la-roca/commit/7a5223db2a1df87cd320a038703b26c8ee16b25e))

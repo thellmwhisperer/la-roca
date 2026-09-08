@@ -123,10 +123,8 @@ else is adjacent until proven core.
 - Read-only means SQLite `mode=ro`, never a copy.
 - Reuse the OS, SQLite and the standard library before writing an equivalent.
 
-The registry of adjacent features (dragons D1–D12) is
-[`.slop/dragons/`](.slop/dragons/README.md). `make slop` fails if a `removed`
-record's `forbid` reappears. Cost assertions for that registry live in the
-acceptance harness (`make check`).
+The [adjacent-feature registry](.slop/dragons/README.md) owns dragon records,
+removal rules, and cost-check guidance.
 
 ## Maintaining this file
 

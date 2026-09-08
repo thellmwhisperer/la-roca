@@ -1,0 +1,20 @@
+schema: 1
+id: S3
+status: removed
+category: adjacent_feature
+title: "Tool-call observer opened Herdr tabs and terminal windows"
+created_at: 2026-09-08
+incident:
+  intent: "La Roca is a memory that queries SQLite; observing tools belongs outside it."
+  what_was_built: >
+    A live session tailer with process ancestry, native file watches,
+    terminal launchers and a hard-coded human-facing Herdr workspace.
+  justifying_sentence: "The workspace name was explicitly chosen by the operator."
+  source: "INFORME-SLOP-ADYACENTE.md, suspicion S3 (2026-09-08); issue #345."
+  cost: "Reported footprint: 1,009 product lines in 11 files plus 678 test lines; retained package: 0 bytes."
+rule: "Do not observe tool calls or open operator windows inside La Roca."
+forbid:
+  paths:
+    - "internal/distribution/toolcallobserver/**"
+  symbols: []
+  strings: []
