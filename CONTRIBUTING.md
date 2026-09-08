@@ -38,7 +38,7 @@ Existing history is outside this gate's scope.
 with the offending line; issue events flag the pattern without repeating the
 value. Before publishing a PR body (including generated evidence), pipe its
 exact candidate text to `python3 scripts/public-text.py --text` and replace
-findings until it passes. The no-mistakes document step uses the same command.
+findings until it passes.
 Rare legitimate matches belong in `.github/public-text-allow.txt` as exact
 matched strings or exact complete lines, never regexes or globs.
 Run `python3 scripts/public-text-test.py` for the synthetic acceptance/cost check.
