@@ -288,8 +288,18 @@ func dispatchPlugin(env *cliEnv, root *cobra.Command, args []string, features co
 	if !found {
 		return false, 0, nil
 	}
+	if args[0] == "vector" && features.Vector {
+		if handled, code, err := runVectorQueryResident(env, args[1:], path, paths); handled {
+			return true, code, err
+		}
+	}
 	command := exec.Command(path, args[1:]...)
 	command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, os.Stderr
+	if strings.TrimSpace(os.Getenv("ROCA_VECTOR_ROCA_BINARY")) == "" {
+		if host, locErr := os.Executable(); locErr == nil && strings.TrimSpace(host) != "" {
+			command.Env = append(os.Environ(), "ROCA_VECTOR_ROCA_BINARY="+host)
+		}
+	}
 	err := command.Run()
 	if err == nil {
 		return true, ExitOK, nil

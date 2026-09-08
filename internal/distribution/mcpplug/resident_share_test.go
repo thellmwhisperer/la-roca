@@ -24,6 +24,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
+	"github.com/thellmwhisperer/la-roca/pkg/vectorresident"
 	"github.com/thellmwhisperer/la-roca/test/testfixture"
 )
 
@@ -272,7 +273,7 @@ func TestResidentRejectsSymlinkedSocket(t *testing.T) {
 	if err := os.Symlink(socket, alias); err != nil {
 		t.Fatal(err)
 	}
-	conn, err := dialResidentSocket(alias)
+	conn, err := vectorresident.Dial(alias)
 	if conn != nil {
 		conn.Close()
 	}

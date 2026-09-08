@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +14,8 @@ import (
 
 	"github.com/thellmwhisperer/la-roca-vector/internal/engine"
 )
+
+var ErrNotDownloaded = errors.New("the embedding model is not downloaded")
 
 type Manifest struct {
 	ID     string
@@ -41,7 +44,7 @@ func Existing(dataDir string, manifest Manifest) (string, error) {
 	}
 	path := FilePath(dataDir, manifest)
 	if !validModelFile(path, manifest) {
-		return "", fmt.Errorf("the embedding model is not downloaded")
+		return "", ErrNotDownloaded
 	}
 	return path, nil
 }

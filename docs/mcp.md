@@ -30,10 +30,11 @@ directories have separate residents. The default socket is
 `<data-directory>/vector-resident/resident.sock`, normally under `~/.roca`.
 If none is listening, `mcp serve` starts one. The resident prepares the model
 once; a query arriving before preparation finishes waits for readiness.
-Closing an MCP session disconnects only that client. The resident exits after
-five minutes with no clients attached by default, and a stale socket from a
-killed resident is replaced on the next start. One-shot CLI queries still load
-the model for that invocation only.
+Closing an MCP session disconnects only that client. `roca vector query` and
+`roca query` normally use that same resident: they connect when one is listening
+and start one when not. Closing the CLI process disconnects only that client. The
+resident exits after five minutes with no clients attached by default, and a
+stale socket from a killed resident is replaced on the next start.
 
 `ROCA_VECTOR_RESIDENT_SOCKET` overrides the socket path and places its startup
 lock alongside it. Use a separate socket for each data context: the resident
@@ -43,12 +44,29 @@ and the socket path must be shorter than 100 bytes. A positive Go duration in
 `ROCA_VECTOR_RESIDENT_IDLE` overrides the idle period when a resident starts;
 the internal `_resident --idle` flag takes precedence.
 
-Preparation progress received by an MCP session goes to its standard error,
-leaving protocol output untouched. The detached resident appends its own
+Preparation progress received by an MCP or CLI client goes to its standard
+error, leaving result output untouched. The detached resident appends its own
 stdout and stderr to `<data-directory>/logs/vector-resident.log`. If connecting
 or starting the resident fails, serve emits a notice on stderr and keeps the core
 tools available without `roca_vector_query`. A lost connection fails that
 session's vector calls; a new MCP session can start or connect to a resident.
+
+If the CLI cannot establish a ready resident connection, it uses its in-process
+query path, which may load the model for that invocation. After establishing
+that connection, it returns query errors without retrying locally.
+
+After a companion update, if the primary resident does not advertise both
+`expand_templates` and `min_score`, the CLI leaves it running and connects to
+or starts a separate resident using the updated companion. Its socket and
+startup lock append `.current` to the primary paths, including an overridden
+socket path; the Unix path-length limit also applies to this socket. This
+applies even to plain CLI queries. Existing MCP vector clients stay on their
+original resident until disconnected. Hybrid `roca query` uses this CLI path
+with template expansion for its vector leg.
+
+If the selected resident still lacks a requested query option, the query fails
+with a restart instruction. Disconnect its clients and let the idle period
+expire before retrying with the updated companion.
 
 The same session parent raises every installed plugin that declares a
 `companion` in `plugin.json`. Each child is exec'd from the plugin directory

@@ -1,6 +1,6 @@
 //go:build windows
 
-package mcpplug
+package vectorresident
 
 import (
 	"io"
