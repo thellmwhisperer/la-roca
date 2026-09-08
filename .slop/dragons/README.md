@@ -1,6 +1,6 @@
 # Adjacent-feature dragons
 
-One YAML record per adjacent feature the 2026-09-08 dive named D1–D12.
+One YAML record per recorded adjacent feature from the 2026-09-08 dive.
 The shape matches [slopslint#4](https://github.com/thellmwhisperer/slopslint/issues/4):
 `category: adjacent_feature`, `status: removed|accepted`, and the incident
 fields (`intent`, `what_was_built`, `justifying_sentence`, `source`, `cost`),
@@ -15,9 +15,10 @@ documented and still in the product; later wave tickets flip them to
 The temporary gate accepts block lists and empty `[]` under `forbid`;
 other forms, including nonempty inline lists, fail with a format error.
 
-Mark `removed` only when the forbid is absent from `main`. Cost assertions
-for this registry live in the acceptance `cost` group and run against a lab
-fixture, never the operator's live federation.
+Mark `removed` only when the forbid is absent from the tree being checked.
+Cost assertions for this registry live in the acceptance `cost` group and
+run against a lab fixture, never the operator's live federation.
 
 Each record cites `INFORME-SLOP-ADYACENTE.md` (dive of 2026-09-08) by
-section. Section 3 describes the dragon; section 6 is the dismantling order.
+section or suspicion. For D-series records, section 3 describes the dragon;
+section 6 is the dismantling order.
