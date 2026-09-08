@@ -308,7 +308,8 @@ write, so a read-only run never places it: on an installation that does not have
 it yet, answers cover core only and carry that omission as a warning. The
 durable half of the call log is database I/O under the same rule: a read-only
 run writes and backfills no call history, and `roca doctor` reads its failure
-history from JSONL, so an audit leaves the machine exactly as it found it.
+history from JSONL. See [Read-only snapshot cleanup](#read-only-snapshot-cleanup)
+for SQLite reader traffic and operator-consented cleanup.
 
 ## Exact duplicate maintenance
 
@@ -365,31 +366,19 @@ JSONL copy is written to. See [Plugins](plugins.md#scheduled-rides).
 
 ## Read-only snapshot cleanup
 
-Read-only commands copy the source database into a `roca-read-only-snapshot-*`
-directory under the process temp root. The creating process removes that copy
-when it closes the snapshot.
+Read-only commands open the live SQLite file with `mode=ro` and `query_only`.
+They do not copy the database. WAL read marks in the `-shm` file are ordinary
+SQLite reader traffic, not a copy of the store.
 
-Each new copy writes a `lease` file naming the creating process. A later open
-runs one budgeted reaper pass over those directories, oldest first, and deletes
-a directory only when the lease proves the owner is dead and the directory is at
-least an hour old. A missing lease is treated as in-creation, not as an orphan.
-If liveness cannot be proven, the directory is kept.
+Older binaries copied each database into `roca-read-only-snapshot-*` directories
+under the process temp root and left them behind when a run was killed.
+`roca doctor` reports the count and size of matching directories under its
+current process temp root. It does not check whether an older binary still
+owns them: stop older `roca` processes and confirm the copies are abandoned
+before accepting cleanup.
 
-The pass has one time-and-work budget at its entry point. When the budget is
-gone it stops, records a cursor, and the next open continues. It takes no lock
-that other processes must wait on, and it does not rename a directory before the
-keep-or-delete decision.
-
-These cases stay out of automatic deletion because they would break those rules:
-
-- Leftovers from binaries that did not write leases
-- Directories whose owner liveness cannot be proven
-- PID reuse while a lease has no start time and a new process occupies that PID
-- A failed `RemoveAll` (the next pass retries the same directory; we do not
-  claim by rename)
-
-Operator cleanup for lease-less leftovers: with no `roca` process running,
-delete the `roca-read-only-snapshot-*` directories you confirm are abandoned
-under the temp root.
-
-The reaper lives in `internal/store/snapshot_reaper.go`.
+An interactive run offers deletion with a default of no; only `y` or `yes`
+consents. Nothing is deleted automatically. Non-interactive runs and
+`roca doctor --json` only report leftovers; `roca doctor --report` uses the
+separate support collector and neither scans for these directories nor offers
+cleanup.

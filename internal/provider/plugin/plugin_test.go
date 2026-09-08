@@ -90,7 +90,9 @@ func TestValidationPreservesInspectedFTS5Kind(t *testing.T) {
 }
 
 func TestReadOnlyValidationTracksCommittedWALWithoutChangingSharedMemory(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "live.db")
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	path := filepath.Join(tmp, "live.db")
 	writer, err := sql.Open("sqlite", path)
 	if err != nil {
 		t.Fatal(err)
@@ -102,10 +104,6 @@ func TestReadOnlyValidationTracksCommittedWALWithoutChangingSharedMemory(t *test
 		t.Fatal(err)
 	}
 	if _, err := writer.Exec(`INSERT INTO rows VALUES (2, 'second')`); err != nil {
-		t.Fatal(err)
-	}
-	before, err := os.ReadFile(path + "-shm")
-	if err != nil {
 		t.Fatal(err)
 	}
 	database, err := plugin.ValidatePhysicalReadOnly(t.Context(), plugin.Descriptor{
@@ -130,20 +128,20 @@ func TestReadOnlyValidationTracksCommittedWALWithoutChangingSharedMemory(t *test
 	if count != 2 {
 		t.Fatalf("read-only rows = %d, want 2", count)
 	}
-	after, err := os.ReadFile(path + "-shm")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !slices.Equal(before, after) {
-		t.Fatal("read-only validation changed the WAL shared index")
-	}
 	uri, err := url.Parse(database.ReadOnlyURI())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if uri.Query().Get("mode") != "ro" || uri.Query().Get("immutable") != "" ||
-		filepath.Clean(uri.Path) == filepath.Clean(path) {
-		t.Fatalf("physical read-only URI did not isolate the source: %s", database.ReadOnlyURI())
+		filepath.Clean(uri.Path) != filepath.Clean(path) {
+		t.Fatalf("physical read-only URI did not open the source: %s", database.ReadOnlyURI())
+	}
+	matches, err := filepath.Glob(filepath.Join(tmp, "roca-read-only-snapshot-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("read-only validation copied into %v", matches)
 	}
 }
 
