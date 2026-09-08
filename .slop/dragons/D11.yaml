@@ -1,0 +1,29 @@
+schema: 1
+id: D11
+status: accepted
+category: adjacent_feature
+title: "remote cross copies Go results into in-memory SQLite to concatenate them"
+created_at: 2026-09-08
+incident:
+  intent: >
+    Query several databases and return evidence with origin. Concatenating rows
+    and filling missing columns does not require storing those results in
+    another database.
+  what_was_built: >
+    remote cross already has local and remote results in Go, then opens an
+    in-memory SQLite, creates a table per origin, inserts each row, builds a
+    UNION ALL and reads the rows back.
+  justifying_sentence: "loading JSON resultsets into in-memory SQLite tables r_local and r_name with origin columns"
+  source: >
+    INFORME-SLOP-ADYACENTE.md §3 D11 and §6 item 9; PR #228 (the brief
+    prescribed the tables); issue #354.
+  cost: "138 lines of gather/helpers + 522 remote tests; extra memory linear in returned cells"
+rule: >
+  Concatenate result lists in origin order, add origin, fill missing columns;
+  keep types and the envelope. Do not open a SQLite connection on that path.
+forbid:
+  paths: []
+  symbols:
+    - "loadCrossTable"
+    - "gatherCross"
+  strings: []

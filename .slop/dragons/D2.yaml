@@ -1,0 +1,30 @@
+schema: 1
+id: D2
+status: accepted
+category: adjacent_feature
+title: "PrepareHub and MaterializeCurrent rerun a finished migration on every open"
+created_at: 2026-09-08
+incident:
+  intent: >
+    Move data once, prove nothing was lost, and query the databases that now
+    own it. A finished migration is not part of answering a query.
+  what_was_built: >
+    openServiceWith calls PrepareHub on ordinary opens; even when corpus is
+    already eligible it recomputes SHA-256 of frozen sources, runs
+    integrity_check, and MaterializeCurrent walks sessions issuing
+    INSERT-if-absent per row.
+  justifying_sentence: "no observable behavior change"
+  source: >
+    INFORME-SLOP-ADYACENTE.md §3 D2 and §6 item 2; PRs #125/#133/#135
+    (owner-ratified DATA SPLIT), #144, #250; issue #347.
+  cost: "5,109 lines + 2,370 test lines; 2 × (C + L) bytes hashed per eligible open"
+rule: >
+  An explicit resumable migrate verb owns hashing, integrity checks and
+  materialization. When the ledger says verified, the open path reads corpus
+  and ops directly.
+forbid:
+  paths: []
+  symbols:
+    - "PrepareHub"
+    - "MaterializeCurrent"
+  strings: []
