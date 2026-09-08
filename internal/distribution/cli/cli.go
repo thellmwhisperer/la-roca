@@ -22,7 +22,6 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacron"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
-	"github.com/thellmwhisperer/la-roca/internal/distribution/toolcallobserver"
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
@@ -79,14 +78,6 @@ type cliEnv struct {
 	forceReadOnly        bool
 	sshRunner            sshCommandRunner
 	bundledVectorPayload []byte
-	observerLive         func() toolcallobserver.Evidence
-	observerResolve      func() (toolcallobserver.Session, error)
-	observerFollow       func(context.Context, toolcallobserver.Session, io.Writer, toolcallobserver.FollowOptions) error
-	observerOpen         func(context.Context, toolcallobserver.Session, toolcallobserver.WindowRequest) (toolcallobserver.OpenedWindow, error)
-	observerLookPath     func(string) (string, bool)
-	observerRunner       toolcallobserver.CommandRunner
-	observerTerminal     func(toolcallobserver.TerminalRequest) error
-	observerExecutable   string
 }
 
 // Execute runs the CLI and returns the process exit code.
@@ -225,7 +216,7 @@ func rootCommand(env *cliEnv) *cobra.Command {
 	commands := []*cobra.Command{
 		versionCommand(env), initCommand(env), exploreCommand(env), schemaCommand(env),
 		indexCommand(env), doctorCommand(env), dedupCommand(env), compactCommand(env), memoryCommand(env), layersCommand(env),
-		healthCommand(env), databaseScopeCommand(env), toolCallObserverCommand(env),
+		healthCommand(env), databaseScopeCommand(env),
 		mcpCommand(env), skillCommand(env), hooksCommand(env),
 		loginCommand(env), modelCommand(env),
 		updateCommand(env), uninstallCommand(env),
@@ -272,7 +263,7 @@ func rootCommand(env *cliEnv) *cobra.Command {
 
 func publicCommand(name string) bool {
 	switch name {
-	case "init", "query", "playground", "explore", "store", "pill", "handoff", "ingest", "model", "doctor", "update", "uninstall", "plugin", "plugins", "hooks", "cron", "layers", "remote", "tool-call-observer":
+	case "init", "query", "playground", "explore", "store", "pill", "handoff", "ingest", "model", "doctor", "update", "uninstall", "plugin", "plugins", "hooks", "cron", "layers", "remote":
 		return true
 	default:
 		return false

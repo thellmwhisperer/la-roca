@@ -18,8 +18,46 @@ import (
 	"testing"
 	"time"
 
+	"gopkg.in/yaml.v3"
 	_ "modernc.org/sqlite"
 )
+
+// TestCostTerminalObserver pins S3's zero-byte package budget and executes the
+// public help interface in a disposable home. Asking for command help cannot
+// start the retired observer even when testing an older published binary.
+func TestCostTerminalObserver(t *testing.T) {
+	root, err := acceptanceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record struct {
+		Forbid struct{ Paths []string }
+	}
+	body, err := os.ReadFile(filepath.Join(root, ".slop", "dragons", "S3-terminal-observer.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := yaml.Unmarshal(body, &record); err != nil {
+		t.Fatal(err)
+	}
+	if len(record.Forbid.Paths) != 1 {
+		t.Fatal("S3 must forbid its retired package")
+	}
+	packagePath := filepath.Join(root, strings.TrimSuffix(record.Forbid.Paths[0], "/**"))
+	if _, err := os.Stat(packagePath); !os.IsNotExist(err) {
+		t.Fatalf("S3: package budget is 0 bytes; retired directory exists or cannot be inspected: %v", err)
+	}
+	m := aWorldIn(t, "retired-observer")
+	output, code := m.runUnder(t, nil, "--help")
+	if code != 0 || strings.Contains(output, "tool-call-observer") {
+		t.Fatalf("S3: root help still exposes the observer: code %d\n%s", code, output)
+	}
+	output, code = m.runUnder(t, nil, "tool-call-observer", "--help")
+	if code == 0 || !strings.Contains(output, `unknown command "tool-call-observer"`) {
+		t.Fatalf("S3: retired command still resolves: code %d\n%s", code, output)
+	}
+	t.Log("S3: retained observer package 0 bytes; CLI seat absent")
+}
 
 // TestCost is the adjacent-feature cost group: three assertions against a
 // lab fixture with the real schema and row shape. It never opens the

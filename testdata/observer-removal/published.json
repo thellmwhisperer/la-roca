@@ -1,0 +1,32 @@
+{
+  "binary": "roca-v1.82.5-darwin-arm64",
+  "sha256": "d82a2218bf897715f4d6c84da9c7298a77573566dd869cacac213298f03eb1e2",
+  "environment": "disposable HOME, ROCA_READ_ONLY=1, ROCA_MODELS_ORDER=none",
+  "commands": [
+    {
+      "args": [
+        "--version"
+      ],
+      "exit": 0,
+      "stdout": "roca v1.82.5 (12b6d98) darwin/arm64\n",
+      "stderr": ""
+    },
+    {
+      "args": [
+        "--help"
+      ],
+      "exit": 0,
+      "stdout": "La Roca is the memory your agents leave behind, made searchable.\n\nIt reads what Claude, Codex, OpenCode and the rest write to disk, normalizes\nthat into one local SQLite database, and answers natural-language questions\nabout it. The database and search index stay on this machine. Natural-language\nquestions, and up to ten result rows for --full, go to the selected model provider.\n\nUsage:\n  roca [flags]\n  roca [command]\n\nAvailable Commands:\n  doctor                   Diagnose the configuration and which model is going to answer\n  explore                  Investigate one concept through grounded memory\n  handoff                  Load session-continuity handoffs\n  hooks                    Install and withdraw authorship and session-context hooks\n  ingest                   Read every source of the matrix and normalize what changed\n  init                     Choose a database and answering model, then bootstrap them\n  layers                   Register layers and repair layer drift\n  model                    Check or set a provider's answering model\n  pill                     Load active pills for the current project\n  playground               Human reading room: natural-language SQL and optional prose\n  plugin                   Install, update, or uninstall an experimental plugin\n  plugins                  List neighbor plugin executables on PATH\n  query                    Hybrid FTS and vector search with labeled evidence\n  remote                   Run read-only queries across SSH-connected Roca installations\n  store                    Write one memory\n  tool-call-observer       Live tool-call tail of this agent session\n  uninstall                Remove La Roca, and with your consent its data too\n  update                   Replace this binary with the latest published release\n\nFlags:\n      --db-path string   database to use\n  -h, --help             help for roca\n      --json             JSON output\n      --read-only        refuse database, audit, and reconciliation writes\n  -v, --version          version for roca\n\nUse \"roca [command] --help\" for more information about a command.\n",
+      "stderr": ""
+    },
+    {
+      "args": [
+        "tool-call-observer",
+        "--help"
+      ],
+      "exit": 0,
+      "stdout": "Opens a live window of the tool calls this agent session is making.\nWith Herdr, a new tab in the operator's designated human-facing workspace; without Herdr, a system terminal.\n\nUsage:\n  roca tool-call-observer [flags]\n\nFlags:\n  -h, --help   help for tool-call-observer\n\nGlobal Flags:\n      --db-path string   database to use\n      --json             JSON output\n      --read-only        refuse database, audit, and reconciliation writes\n",
+      "stderr": ""
+    }
+  ]
+}
