@@ -174,15 +174,6 @@ func Merge(ctx context.Context, destinationPath string, sources []Source, option
 	return report, nil
 }
 
-func MaterializeCurrent(ctx context.Context, destinationPath string, sources []Source) error {
-	run, err := openArchiveRun(ctx, destinationPath, sources, Options{}, false)
-	if err != nil {
-		return err
-	}
-	defer run.close()
-	return materializeCurrent(ctx, run.destination, run.sources)
-}
-
 // Verify reproduces DATA-3's frozen-source reconciliation without importing
 // rows. It succeeds only when the recorded migrations, every custody table,
 // and every source session still reproduce the verification digest that Merge

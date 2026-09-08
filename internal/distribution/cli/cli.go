@@ -16,11 +16,9 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/thellmwhisperer/la-roca/internal/distribution/datasplit"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/plugininstall"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
-	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacron"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
@@ -212,7 +210,7 @@ func rootCommand(env *cliEnv) *cobra.Command {
 	root.PersistentFlags().BoolVar(&env.forceReadOnly, "read-only", false,
 		"refuse database, audit, and reconciliation writes")
 	commands := []*cobra.Command{
-		versionCommand(env), initCommand(env), playgroundPluginCommand(env, "explore"), schemaCommand(env),
+		versionCommand(env), initCommand(env), migrateCommand(env), playgroundPluginCommand(env, "explore"), schemaCommand(env),
 		indexCommand(env), doctorCommand(env), dedupCommand(env), compactCommand(env), memoryCommand(env), layersCommand(env),
 		healthCommand(env), databaseScopeCommand(env),
 		mcpCommand(env), skillCommand(env), hooksCommand(env),
@@ -261,7 +259,7 @@ func rootCommand(env *cliEnv) *cobra.Command {
 
 func publicCommand(name string) bool {
 	switch name {
-	case "init", "query", "playground", "explore", "store", "pill", "handoff", "ingest", "model", "doctor", "update", "uninstall", "plugin", "plugins", "hooks", "cron", "layers", "remote":
+	case "init", "migrate", "query", "playground", "explore", "store", "pill", "handoff", "ingest", "model", "doctor", "update", "uninstall", "plugin", "plugins", "hooks", "cron", "layers", "remote":
 		return true
 	default:
 		return false
@@ -824,29 +822,9 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 		ingestProgress = env.liveIngest.update
 	}
 	readLayout := service.ReadLayout(file.Layout.Serving)
-	opsDatabase, corpusDatabase := "", ""
+	opsDatabase := ""
 	if pluginDir != "" {
 		opsDatabase = filepath.Join(pluginDir, rocaops.Name, rocaops.DatabaseFilename)
-		corpusDatabase = filepath.Join(pluginDir, rocacorpus.Name, rocacorpus.DatabaseFilename)
-	}
-	if !readOnly && !env.skipBundledLifecycle && readLayout != service.LayoutLegacyServing && fileExists(paths.DB) {
-		if _, err := rocacron.Ensure(pluginDir, pluginExecutableDir(paths), env.build.Version); err != nil {
-			return nil, fmt.Errorf("install bundled cron plugin for DATA SPLIT: %w", err)
-		}
-		_, prepareErr := datasplit.PrepareHub(context.Background(), datasplit.HubOptions{
-			CoreDatabase: paths.DB, OpsDatabase: opsDatabase, CorpusDatabase: corpusDatabase,
-			CronDatabase: filepath.Join(pluginDir, rocacron.Name, rocacron.DatabaseFilename),
-			SnapshotDir:  filepath.Join(paths.Backups, "data-split"),
-			LockPath:     logfile.New(filepath.Dir(paths.DB)).LockPath(),
-		})
-		if prepareErr != nil {
-			if rollbackErr := config.SetServingLayout(paths.Config, config.LayoutLegacyServing); rollbackErr != nil {
-				return nil, errors.Join(prepareErr,
-					fmt.Errorf("roll back the DATA SPLIT serving marker: %w", rollbackErr))
-			}
-			return nil, fmt.Errorf("prepare the federation hub; serving marker returned to legacy-serving: %w",
-				prepareErr)
-		}
 	}
 	writerFenced := false
 	if fileExists(opsDatabase) {

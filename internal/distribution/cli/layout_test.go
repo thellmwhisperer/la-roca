@@ -38,7 +38,7 @@ func TestCutoverCLIHasNoFileBackedKernelDependency(t *testing.T) {
 	}
 }
 
-func TestShadowCLIOrchestratesCustodyBeforeComparingTheHub(t *testing.T) {
+func TestShadowCLIComparesTheHubAfterExplicitMigration(t *testing.T) {
 	t.Setenv("ROCA_MODELS_ORDER", "claude")
 	t.Setenv("PATH", t.TempDir())
 	home := t.TempDir()
@@ -68,6 +68,9 @@ func TestShadowCLIOrchestratesCustodyBeforeComparingTheHub(t *testing.T) {
 
 	env := &cliEnv{dbPath: corePath, out: io.Discard, errOut: io.Discard,
 		build: Build{Version: "v-test", Commit: "fixture"}}
+	if code, err := executeWithEnv(env, []string{"--db-path", corePath, "migrate"}, nil); err != nil || code != 0 {
+		t.Fatalf("explicit migration: code=%d err=%v", code, err)
+	}
 	svc, _, err := env.openService()
 	if err != nil {
 		t.Fatal(err)

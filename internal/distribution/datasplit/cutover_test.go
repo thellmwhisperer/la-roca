@@ -12,7 +12,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/store"
 )
 
-func TestPrepareHubRunsEveryShadowCustodyMigrationBeforeCutover(t *testing.T) {
+func TestMigrateRunsEveryShadowCustodyMigrationBeforeCutover(t *testing.T) {
 	directory := t.TempDir()
 	options := HubOptions{
 		CoreDatabase:   filepath.Join(directory, "roca.db"),
@@ -27,10 +27,13 @@ func TestPrepareHubRunsEveryShadowCustodyMigrationBeforeCutover(t *testing.T) {
 		t.Fatalf("pre-migration eligibility = %t, err=%v", ready, err)
 	}
 
-	if _, err := PrepareHub(t.Context(), options); err != nil {
+	if _, err := Migrate(t.Context(), options); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := PrepareHub(t.Context(), options); err != nil {
+	if err := os.Rename(options.SnapshotDir, options.SnapshotDir+"-offline"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Migrate(t.Context(), options); err != nil {
 		t.Fatalf("idempotent preparation: %v", err)
 	}
 	if ready, err := HubCutoverEligible(t.Context(), options); err != nil || !ready {
