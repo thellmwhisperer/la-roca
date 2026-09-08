@@ -1,0 +1,5 @@
+# Exact matched strings or exact complete lines only; no regexes or globs.
+# RFC 1918 network definitions used by the detector itself.
+10.0.0.0
+172.16.0.0
+192.168.0.0

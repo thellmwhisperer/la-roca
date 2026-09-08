@@ -1,0 +1,29 @@
+name: Issue public text
+
+on:
+  issues:
+    types: [opened, edited]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  flag:
+    runs-on: ubuntu-latest
+    steps:
+      # Issue events always use trusted default-branch code.
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const {execFileSync} = require('node:child_process');
+            const body = execFileSync('python3', [
+              'scripts/public-text.py', '--issue-comment', process.env.GITHUB_EVENT_PATH
+            ], {encoding: 'utf8'}).trim();
+            if (body) {
+              await github.rest.issues.createComment({...context.repo,
+                issue_number: context.issue.number, body});
+            }
