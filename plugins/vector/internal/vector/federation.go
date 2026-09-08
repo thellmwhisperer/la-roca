@@ -725,7 +725,7 @@ func (f Federation) Ingest(ctx context.Context, sourceKind string) (FederationDe
 		go func(id int, job *ingestJob) {
 			defer workers.Done()
 			index := f.index(job.database, job.reader, job.sidecar)
-			index.BatchSize = 1
+			index.BatchSize = defaultBatchSize
 			index.liveness = scheduler.heartbeat
 			index.Embedder = scheduledEmbedder{base: f.Embedder, id: id, scheduler: scheduler,
 				database: job.database.owner(), stateDir: f.WorkerStateDir}
