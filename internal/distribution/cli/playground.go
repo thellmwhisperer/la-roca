@@ -1,3 +1,11 @@
+// @overview Optional playground dispatch, custody preparation and provider diagnostics.
+// READING GUIDE: playgroundPluginCommand forwards CLI argv; preparePlayground
+// prepares custody without opening a service; OpenForPlugin is the child entry.
+// MAIN FLOW: command -> resolve companion -> prepare custody -> forward argv.
+// PUBLIC API: OpenForPlugin opens core's read-only engine for the companion.
+// INTERNALS: playgroundPluginCommand, preparePlayground, providerProbe.
+// @exports OpenForPlugin
+// @deps cobra; playground transport; bundled packages; datasplit; config; service.
 package cli
 
 import (
@@ -5,9 +13,11 @@ import (
 	"errors"
 	"fmt"
 	"github.com/spf13/cobra"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/datasplit"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/playground"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacron"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
@@ -18,6 +28,7 @@ import (
 	"slices"
 )
 
+// -- 1 HELPER · Companion service entry --
 // OpenForPlugin resolves the same installation and read-only engine as core.
 func OpenForPlugin(build Build, dbPath string, readOnly bool, out, errOut io.Writer) (*service.Service, config.Paths, error) {
 	env := &cliEnv{build: build, dbPath: dbPath, forceReadOnly: readOnly, skipBundledLifecycle: true, out: out, errOut: errOut}
@@ -25,6 +36,9 @@ func OpenForPlugin(build Build, dbPath string, readOnly bool, out, errOut io.Wri
 	return env.openService()
 }
 
+// -/ 1
+
+// -- 2 CORE · CLI delegation <- START HERE --
 func playgroundPluginCommand(env *cliEnv, verb string) *cobra.Command {
 	return &cobra.Command{Use: verb + " [arguments]", Short: map[string]string{"playground": "Optional plugin: compile a question into SQL", "explore": "Optional plugin: investigate a concept", "model": "Optional plugin: select the answering model", "models": "Optional plugin: list answering models", "login": "Optional plugin: use an agent CLI login"}[verb],
 		DisableFlagParsing: true,
@@ -70,6 +84,9 @@ func playgroundPluginCommand(env *cliEnv, verb string) *cobra.Command {
 		}}
 }
 
+// -/ 2
+
+// -- 3 HELPER · Custody preparation --
 func (env *cliEnv) preparePlayground(paths config.Paths) error {
 	file, err := config.LoadFile(paths.Config)
 	if err != nil {
@@ -91,9 +108,33 @@ func (env *cliEnv) preparePlayground(paths config.Paths) error {
 	if err := env.refreshVectorRegistry(); err != nil {
 		env.warnVectorRegistryRefresh(err)
 	}
-	return env.prepareHub(paths, root, service.ReadLayout(file.Layout.Serving))
+	if file.Layout.Serving == config.LayoutLegacyServing || !fileExists(paths.DB) {
+		return nil
+	}
+	if _, err := rocacron.Ensure(root, pluginExecutableDir(paths), env.build.Version); err != nil {
+		return fmt.Errorf("install bundled cron plugin for DATA SPLIT: %w", err)
+	}
+	_, prepareErr := datasplit.PrepareHub(context.Background(), datasplit.HubOptions{
+		CoreDatabase: paths.DB, OpsDatabase: filepath.Join(root, rocaops.Name, rocaops.DatabaseFilename),
+		CorpusDatabase: filepath.Join(root, rocacorpus.Name, rocacorpus.DatabaseFilename),
+		CronDatabase:   filepath.Join(root, rocacron.Name, rocacron.DatabaseFilename),
+		SnapshotDir:    filepath.Join(paths.Backups, "data-split"),
+		LockPath:       logfile.New(filepath.Dir(paths.DB)).LockPath(),
+	})
+	if prepareErr != nil {
+		if rollbackErr := config.SetServingLayout(paths.Config, config.LayoutLegacyServing); rollbackErr != nil {
+			return errors.Join(prepareErr,
+				fmt.Errorf("roll back the DATA SPLIT serving marker: %w", rollbackErr))
+		}
+		return fmt.Errorf("prepare the federation hub; serving marker returned to legacy-serving: %w",
+			prepareErr)
+	}
+	return nil
 }
 
+// -/ 3
+
+// -- 4 HELPER · Provider diagnostics --
 func providerProbe(paths config.Paths, readOnly bool) func(context.Context, *service.DoctorReport) error {
 	if _, err := playground.Executable(); err != nil {
 		return nil
@@ -119,3 +160,5 @@ func providerProbe(paths config.Paths, readOnly bool) func(context.Context, *ser
 		return nil
 	}
 }
+
+// -/ 4

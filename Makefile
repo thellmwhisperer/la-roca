@@ -133,11 +133,16 @@ help:
 	@grep -E '^[a-z-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  %-16s %s\n", $$1, $$2}'
 
+# Core's optional-plugin contracts use local fake executables and no native build.
+.PHONY: playground-test
+playground-test: ## Test local playground argv, absence, audit and custody contracts
+	go test ./internal/distribution/cli -run '^Test(Playground|OpenForPlugin)' -count=1
+
 # Optional extraction evidence uses an explicitly supplied published binary.
 # Human answering scenarios belong to the plugin repo.
 ROCA_PUBLISHED_BIN ?=
-.PHONY: playground-test
-playground-test: build
+.PHONY: playground-evidence
+playground-evidence: build ## Compare extraction against an explicit v1.82.6 binary
 	@test -x "$(ROCA_PUBLISHED_BIN)" || { echo "set ROCA_PUBLISHED_BIN to the published v1.82.6 binary" >&2; exit 1; }
 	ROCA_BIN=$(BIN) ROCA_PUBLISHED_BIN="$(ROCA_PUBLISHED_BIN)" go test -tags acceptance ./test/acceptance -run '^TestCostPlayground$$' -count=1 -v
 

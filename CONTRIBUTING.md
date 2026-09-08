@@ -57,6 +57,7 @@ make accept-index
 make e2e-smoke
 make upgrade-gauntlet
 make split-oracle
+make playground-test
 make dist
 ```
 
@@ -70,14 +71,19 @@ acceptance harnesses are compiled only with the `acceptance` build tag.
 `make accept` (also part of `make check`) and `make split-oracle` run without
 an external playground checkout or network service. Core exercises the optional
 plugin's argv, errors, audit and diagnostic contracts with small local fake
-executables. Human answering scenarios belong to the playground repository.
+executables. `make playground-test` runs these local fake-executable and
+plugin-absence contracts directly, including custody and diagnostics, without
+building the native vector payload or requiring a published binary.
+Human answering scenarios belong to the playground repository.
 `make playground-integration` separately downloads the pinned `v0.1.1` release
 through the real `roca plugin install` flow and verifies a synthetic SQL result.
 
-`make playground-test ROCA_PUBLISHED_BIN=<pinned-v1.82.6-binary>` retains the
+`make playground-evidence ROCA_PUBLISHED_BIN=<pinned-v1.82.6-binary>` retains the
 published-versus-branch S1 extraction evidence under `.tmp/playground-evidence`.
 It is a separate opt-in comparison on synthetic homes, never a mutable
-`make check` dependency. The DATA SPLIT oracle keeps its full digest-pinned
+`make check` dependency. It requires an explicit executable, validates its
+v1.82.6 version, and fails if the published comparison does not execute.
+The DATA SPLIT oracle keeps its full digest-pinned
 archive and compares the core cases; the extracted inference cases are not
 replayed by core.
 
