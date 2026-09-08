@@ -3,6 +3,7 @@ package rocacorpus_test
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -157,23 +158,32 @@ func seedFatCorpus(t *testing.T, db *sql.DB) {
 }
 
 func TestApplySchemaPreservesVersionObservedTimes(t *testing.T) {
-	db, path := openCorpusDB(t)
-	seedFatCorpus(t, db)
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-	db = reapplySchemaAndReopen(t, path)
-	defer db.Close()
-	for _, table := range []string{
-		"session_versions", "exchange_versions", "tool_use_versions", "thinking_block_versions",
-	} {
-		var observedAt string
-		if err := db.QueryRow("SELECT observed_at FROM " + table).Scan(&observedAt); err != nil {
-			t.Fatal(err)
-		}
-		if observedAt != "2001-02-03T04:05:06Z" {
-			t.Fatalf("%s observed_at = %q", table, observedAt)
-		}
+	for _, ledgerPresent := range []bool{false, true} {
+		t.Run(fmt.Sprintf("ledger=%t", ledgerPresent), func(t *testing.T) {
+			db, path := openCorpusDB(t)
+			seedFatCorpus(t, db)
+			if !ledgerPresent {
+				if _, err := db.Exec(`DROP TABLE plugin_migrations`); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := db.Close(); err != nil {
+				t.Fatal(err)
+			}
+			db = reapplySchemaAndReopen(t, path)
+			defer db.Close()
+			for _, table := range []string{
+				"session_versions", "exchange_versions", "tool_use_versions", "thinking_block_versions",
+			} {
+				var observedAt string
+				if err := db.QueryRow("SELECT observed_at FROM " + table).Scan(&observedAt); err != nil {
+					t.Fatal(err)
+				}
+				if observedAt != "2001-02-03T04:05:06Z" {
+					t.Fatalf("%s observed_at = %q", table, observedAt)
+				}
+			}
+		})
 	}
 }
 

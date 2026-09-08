@@ -268,7 +268,7 @@ func (w *distributionWorld) helpIsComplete() error {
 		"hooks": "authorship", "layers": "layer", "model": "model", "query": "search",
 		"explore": "concept", "playground": "sql", "remote": "ssh", "store": "memory",
 		"pill": "pill", "handoff": "handoff", "uninstall": "remove", "update": "release",
-		"plugin": "plugin", "plugins": "plugin",
+		"plugin": "plugin", "plugins": "plugin", "migrate": "migration",
 	}
 	found := map[string]string{}
 	inCommands := false
