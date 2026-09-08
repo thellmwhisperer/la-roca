@@ -1,0 +1,27 @@
+schema: 1
+id: D9
+status: accepted
+category: adjacent_feature
+title: "vector status re-chunks the corpus to report counts"
+created_at: 2026-09-08
+incident:
+  intent: >
+    Show cheap facts from the index and use unknown when a number is not
+    available. The contract already allows null.
+  what_was_built: >
+    roca vector status recomputes SUM(roca_vector_declared_chunks(...)) over
+    all declared text, re-chunking the corpus with a 2 s per-database budget.
+  justifying_sentence: "complete only with cheap proof of the current source"
+  source: >
+    INFORME-SLOP-ADYACENTE.md §3 D9 and §6 item 7; PRs #303, #338; issue #352;
+    related #336.
+  cost: "642 lines + 997 test lines in status.go; up to 2 s per database, 8 s global"
+rule: >
+  Store the exact chunk count obtained while indexing with its source
+  generation; status shows it while the generation holds, and unknown
+  otherwise, never re-chunking.
+forbid:
+  paths: []
+  symbols:
+    - "roca_vector_declared_chunks"
+  strings: []
