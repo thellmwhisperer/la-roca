@@ -377,7 +377,7 @@ roca model check claude   # probes Claude without writing configuration
 roca doctor               # diagnoses binaries, models, and remedies
 ```
 
-`roca login` survives only as a hidden read-only alias for `roca model check`.
+`roca login` survives as a read-only alias for `roca model check`.
 It takes no `--model` and writes nothing, so a script that used to select a model
 with `roca login <provider> --model <id>` moves to
 `roca model set <provider> <model-id>`.
