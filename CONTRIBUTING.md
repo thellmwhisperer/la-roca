@@ -1,8 +1,9 @@
 # Contributing
 
 The [docs index](docs/README.md) is the operator-facing reading order.
-Contributor agent notes (the project-intrinsic memory that used to live in
-`AGENTS.md`) are in [project memory](docs/project-memory.md).
+Contributor entry guidance lives in [AGENTS.md](AGENTS.md#contributor-notes);
+build, test, release, and architecture notes are in
+[project memory](docs/project-memory.md).
 
 ## Adjacent features
 
