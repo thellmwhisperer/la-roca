@@ -1,3 +1,8 @@
 commands:
   lint: make fmt && make vet && make slop
-  test: make test
+  test: make test playground-test
+
+test:
+  evidence:
+    store_in_repo: true
+    dir: .test-evidence

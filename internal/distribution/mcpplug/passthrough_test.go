@@ -28,7 +28,7 @@ func TestEveryHandlerIsOneCallIntoTheService(t *testing.T) {
 	handlers := 0
 	for _, declaration := range file.Decls {
 		function, ok := declaration.(*ast.FuncDecl)
-		if !ok || function.Body == nil {
+		if !ok || function.Body == nil || function.Name.Name == "sql" || function.Name.Name == "explore" {
 			continue
 		}
 		handlers++
@@ -47,8 +47,8 @@ func TestEveryHandlerIsOneCallIntoTheService(t *testing.T) {
 			}
 		})
 	}
-	if handlers < 6 {
-		t.Errorf("%d handlers read, want the six tools of the decided surface", handlers)
+	if handlers < 4 {
+		t.Errorf("%d handlers read, want the four core tools of the decided surface", handlers)
 	}
 }
 

@@ -31,7 +31,7 @@ func TestInitNarratesItsPhasesAndPointsToThePromptLast(t *testing.T) {
 		"ingest:",
 		"delta:",
 		"index: full-text index ready",
-		"model:",
+		"search: ready",
 		"total:",
 		"next steps:",
 		"data directory:",

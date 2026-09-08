@@ -1,38 +1,25 @@
 package cli
 
 import (
-	"context"
-	"io"
-	"slices"
+	"os"
+	"path/filepath"
+	"testing"
 )
 
 func hermeticCLIEnv(env *cliEnv) *cliEnv {
 	env.skipReconciliation = true
 	env.skipInitChooser = true
-	env.modelBackend = testModelBackend{}
-	env.modelPicker = testModelPicker
 	return env
 }
 
-type testModelBackend struct{}
-
-func (testModelBackend) Catalogue(_ context.Context, _, current string) (modelCatalogue, error) {
-	models := []string{
-		"claude-test",
-		"deepseek-chat", "gpt-5.6-luna", "gpt-5.6-sol", "grok-4", "grok-chosen",
-		"internal-7b", "qwen3.5:4b",
+func writeConfig(t *testing.T, home, body string) string {
+	t.Helper()
+	path := filepath.Join(home, ".roca", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
 	}
-	if current != "" && !slices.Contains(models, current) {
-		models = append(models, current)
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	return modelCatalogue{IDs: canonicalModelIDs(models)}, nil
-}
-
-func (testModelBackend) Probe(context.Context, string, string) error { return nil }
-
-func testModelPicker(_ io.Reader, _ io.Writer, models []string, current string) (string, error) {
-	if slices.Contains(models, current) {
-		return current, nil
-	}
-	return models[0], nil
+	return path
 }

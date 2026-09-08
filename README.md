@@ -121,6 +121,8 @@ roca exec "SELECT source_agent, COUNT(*) FROM plugin_roca_corpus.sessions
 ```
 
 `roca query` searches with deterministic full-text and optional vector fusion.
+The optional [roca-playground plugin](https://github.com/thellmwhisperer/roca-playground) supplies human answering. Install it with
+`roca plugin install thellmwhisperer/roca-playground`.
 `roca playground` compiles a question into one checked `SELECT`, while
 `roca explore` turns that model-backed machinery into a guided investigation.
 [Queries, explore, and the read-only gate.](docs/queries.md)

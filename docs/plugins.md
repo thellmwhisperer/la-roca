@@ -552,6 +552,17 @@ authors write `plugin.json`; they must not write or distribute the local
 inventory file. [Verified packages and lifecycle](#verified-packages-and-lifecycle)
 below is what the installer verifies, asks, and preserves.
 
+## Optional human answering
+
+`roca-playground` owns `playground`, `explore`, model management, the provider
+platform, SQL repair and interpretation. Install it with
+`roca plugin install thellmwhisperer/roca-playground`. Without it, the answering
+commands print that install hint; `doctor` does not probe model providers.
+The existing `[models]` configuration continues to apply after installation.
+Core `exec` and `query` remain checked SQLite and FTS plus vector reads with
+zero answering-model inference. Source and moved acceptance scenarios live in
+[roca-playground](https://github.com/thellmwhisperer/roca-playground).
+
 ## Executable-only packages
 
 A package that ships a command instead of data owns no database and needs no

@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/playground"
 	"io"
 	"os"
 	"path/filepath"
@@ -40,8 +41,8 @@ const ServerName = "roca"
 // `roca_sql` to answer a question `roca_query` answers whole.
 const instructions = "La Roca is local semantic memory for agent fleets: it answers " +
 	"natural-language questions about what the agents on this machine have left " +
-	"behind. Ask with roca_query; investigate with roca_explore. Use roca_sql only to compile SQL, then roca_exec " +
-	"to run it under the read-only gate. Write back what is worth remembering with roca_store."
+	"behind. Search with roca_query and use roca_exec " +
+	"for checked SQL. Write back what is worth remembering with roca_store. The optional playground plugin adds roca_sql and roca_explore."
 
 // Build is what the linker put inside the binary. The version the handshake
 // declares is the product's, never the SDK's: an agent that reports a library
@@ -93,14 +94,15 @@ func newServer(svc *service.Service, build Build, resident *residentVector) *mcp
 	if manifest.HasVerb(service.ExecVerb) {
 		mcp.AddTool(server, execTool, sanitizing(p.exec, dbPath, dataDir))
 	}
-	mcp.AddTool(server, exploreTool, sanitizing(p.explore, dbPath, dataDir))
+	if _, err := playground.Executable(); err == nil {
+		mcp.AddTool(server, exploreTool, sanitizing(p.explore, dbPath, dataDir))
+		mcp.AddTool(server, sqlTool, sanitizing(p.sql, dbPath, dataDir))
+	}
 	mcp.AddTool(server, healthTool, sanitizing(p.health, dbPath, dataDir))
 	if manifest.HasVerb(service.QueryVerb) {
 		mcp.AddTool(server, queryTool, sanitizing(p.query, dbPath, dataDir))
 	}
-	if manifest.HasVerb(service.SQLVerb) {
-		mcp.AddTool(server, sqlTool, sanitizing(p.sql, dbPath, dataDir))
-	}
+
 	if manifest.HasVerb(service.StoreVerb) {
 		mcp.AddTool(server, storeTool, sanitizing(p.store, dbPath, dataDir))
 	}
@@ -147,7 +149,7 @@ func auditCalls(audit *logfile.Writer, warnings io.Writer) mcp.Middleware {
 			// degraded answer this surface marks IsError is one of them, and it
 			// reaches the agent as an error like any other.
 			surfaced := err != nil
-			if callResult, isToolResult := result.(*mcp.CallToolResult); isToolResult && callResult.IsError {
+			if callResult, isToolResult := result.(*mcp.CallToolResult); isToolResult && callResult != nil && callResult.IsError {
 				ok, surfaced = false, true
 			}
 			degraded := resultDegraded(result)
@@ -317,6 +319,9 @@ func numberAsInt64(value any) int64 {
 func resultDegraded(value any) string {
 	switch result := value.(type) {
 	case *mcp.CallToolResult:
+		if result == nil {
+			return ""
+		}
 		return resultDegraded(result.Meta)
 	case service.QueryResult:
 		return result.Degraded

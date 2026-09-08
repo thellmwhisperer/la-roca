@@ -21,7 +21,7 @@ learn: see below.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/thellmwhisperer/la-roca/main/install.sh | sh
-roca init      # adopts an already signed-in agent CLI; no login, no keys
+roca init      # imports agent history; no answering model required
 roca query "what did we decide about <something your user cares about>"
 ```
 
@@ -82,7 +82,7 @@ Read `roca-operations` before your first real search. Write the SQL yourself
 against the semantic catalog and run it with `roca exec`. That is the craft.
 `roca query` is hybrid search (FTS plus vector, zero answering-model
 inference). Anything that spends inference is last resort: `roca playground`
-and `roca explore`. `--full` is for humans; agents do not use it.
+and `roca explore`, supplied by the optional [roca-playground plugin](docs/plugins.md#optional-human-answering). `--full` is for humans; agents do not use it.
 
 A fresh install has no vector index. Exec still works. When the index exists,
 that same skill makes the hybrid loop mandatory: vector search finds the

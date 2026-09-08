@@ -82,7 +82,7 @@ func TestCutoverWritersRemainAuthoritativeInPlugins(t *testing.T) {
 func TestRocaOpsLayerRepairUsesTheOperationalOwner(t *testing.T) {
 	options := residentTestOptions(t)
 	svc := openResident(t, options)
-	if _, err := svc.ensureSchema(t.Context()); err != nil {
+	if _, err := svc.EnsureSchema(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.ops.SQL().Exec(`INSERT INTO memories (layer, content, origin)
@@ -368,9 +368,9 @@ func TestSearchFailureRollsBackTheMarkerAndServesLegacy(t *testing.T) {
 			if err := svc.hub.Close(); err != nil {
 				t.Fatal(err)
 			}
-			_, rows, _, _, _, err := svc.searchByTerm(t.Context(), query.Plan{
+			_, rows, _, _, _, err := svc.SearchByTerm(t.Context(), query.Plan{
 				Term: "quartz", Limit: 10,
-			}, "", DefaultMaxChars, false, pluginRoute{includeCore: true})
+			}, "", DefaultMaxChars, false, PluginRoute{IncludeCore: true})
 			if err != nil || len(rows) != 1 || rows[0]["text"] != "Synthetic quartz legacy marker" || rollback == nil {
 				t.Fatalf("fallback rows = %+v, error = %v, rollback = %v", rows, err, rollback)
 			}
@@ -505,8 +505,8 @@ func seedLegacyMemories(t *testing.T, fixture hubFixture, memories []hubMemory) 
 func executeHubSQL(t *testing.T, svc *Service, statement string) ExecResult {
 	t.Helper()
 	route := svc.pluginsForSQL(t.Context(), statement)
-	defer route.closeOnDemand()
-	gate, closeGate, err := svc.gateFor(route.includeCore, route.databases)
+	defer route.CloseOnDemand()
+	gate, closeGate, err := svc.GateFor(route.IncludeCore, route.Databases)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -515,7 +515,7 @@ func executeHubSQL(t *testing.T, svc *Service, statement string) ExecResult {
 	if err != nil {
 		t.Fatal(err)
 	}
-	columns, rows, err := svc.executeWithPluginsBudget(t.Context(), validated, "", DefaultMaxChars, route.databases, execBudget{})
+	columns, rows, err := svc.executeWithPluginsBudget(t.Context(), validated, "", DefaultMaxChars, route.Databases, execBudget{})
 	if err != nil {
 		t.Fatal(err)
 	}

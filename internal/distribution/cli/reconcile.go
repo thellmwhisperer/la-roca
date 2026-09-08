@@ -1,13 +1,15 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/playground"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/reconcile"
-	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
+	"os/exec"
 )
 
 func (env *cliEnv) reconciliationContext() (reconcile.Context, error) {
@@ -30,7 +32,7 @@ func (env *cliEnv) reconciliationContextFor(paths config.Paths) (reconcile.Conte
 	return reconcile.Context{
 		Version: env.build.Version, ConfigPath: paths.Config,
 		StampPath: paths.Reconciliation,
-		LookPath:  provider.LookPath, Env: os.Getenv, File: file,
+		LookPath:  exec.LookPath, Env: os.Getenv, File: file,
 		RetiredCredentialPaths: legacyProviderCredentialPaths(dirOf(paths.DB)),
 		RecoveryBackupPaths:    backups,
 	}, nil
@@ -54,7 +56,7 @@ func (env *cliEnv) openCapabilityProposals() ([]reconcile.Entry, error) {
 	if err != nil {
 		return nil, err
 	}
-	return reconcile.Open(context, reconcile.Registry()), nil
+	return reconcile.Open(context, env.reconciliationRegistry()), nil
 }
 
 func (env *cliEnv) reconcileCapabilities(cmd *cobra.Command, interactive, listAll bool) (reconcile.Result, error) {
@@ -62,10 +64,29 @@ func (env *cliEnv) reconcileCapabilities(cmd *cobra.Command, interactive, listAl
 	if err != nil {
 		return reconcile.Result{}, err
 	}
-	return reconcile.Run(context, reconcile.Registry(), reconcile.Options{
+	return reconcile.Run(context, env.reconciliationRegistry(), reconcile.Options{
 		Interactive: interactive, ListAll: listAll,
 		In: cmd.InOrStdin(), Out: env.errOut,
 	})
+}
+
+func (env *cliEnv) reconciliationRegistry() []reconcile.Entry {
+	if _, err := playground.Executable(); err != nil {
+		return nil
+	}
+	args := []string{"capabilities"}
+	if env.dbPath != "" {
+		args = append(args, "--db-path", env.dbPath)
+	}
+	var entries []reconcile.Entry
+	if err := playground.JSON(context.Background(), args, &entries); err != nil {
+		return nil
+	}
+	// The plugin has already evaluated its provider-specific conditions.
+	for i := range entries {
+		entries[i].Detection = reconcile.Detection{}
+	}
+	return entries
 }
 
 func capabilityCountLine(count int) string {
