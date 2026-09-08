@@ -70,6 +70,28 @@ class PublicTextTest(unittest.TestCase):
         self.assertEqual(self.check("--text", "--allow", str(allow), body="other-" + HOST).returncode, 1)
         self.assertEqual(self.check("--text", "--allow", str(allow), body=HOME_PATH + "-other").returncode, 1)
 
+    def test_lan_ip_sentence_punctuation_and_malformed_addresses(self):
+        for parts in ((10, 2, 3, 4), (172, 16, 2, 3), (192, 168, 1, 2)):
+            address = ".".join(map(str, parts))
+            for suffix in (".", ". Next sentence", ",", ")", ";"):
+                with self.subTest(address=address, suffix=suffix):
+                    body = "Server was " + address + suffix
+                    result = self.check("--text", body=body)
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn(':1: lan-ip: ' + json.dumps(body), result.stdout)
+            body = "Server was " + address + "."
+            result = self.check("--issue-comment", self.event("issue", body=body))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("issue body, line 1: `lan-ip`", result.stdout)
+            self.assertNotIn(address, result.stdout)
+            for value in (address + ".5", "1." + address, address + "999",
+                          "x" + address, address + "x", address + ".example"):
+                with self.subTest(value=value):
+                    result = self.check("--text", body="Server was " + value + ".")
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        result = self.check("--text", body="Server was " + ".".join(("192", "168", "1", "999")) + ".")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_issue_flag_does_not_repeat_value(self):
         for field in ("title", "body"):
             result = self.check("--issue-comment", self.event("issue", **{field: TEMP_PATH}))
