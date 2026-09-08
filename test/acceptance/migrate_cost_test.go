@@ -135,6 +135,9 @@ func measureMigrateExec(t *testing.T, m *world, root string) migrateCost {
 		cmd.Env = m.environment()
 		raw, err := cmd.Output()
 		if err != nil {
+			if exit, ok := err.(*exec.ExitError); ok {
+				t.Fatalf("Linux read counter: %v: %s", err, exit.Stderr)
+			}
 			t.Fatal(err)
 		}
 		var result migrateCost
