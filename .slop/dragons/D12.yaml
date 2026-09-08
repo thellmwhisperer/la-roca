@@ -1,0 +1,29 @@
+schema: 1
+id: D12
+status: accepted
+category: adjacent_feature
+title: "Deterministic search rejects prompt-attack phrases before looking anything up"
+created_at: 2026-09-08
+incident:
+  intent: >
+    Find texts from agent history. Conversations about prompts, attacks or
+    code are valid content of that history. A deterministic search string has
+    no instructions to hijack.
+  what_was_built: >
+    Before searching, 16 prompt-injection regexes reject strings such as
+    "system prompt", jailbreak, Markdown fences and long hex literals, even
+    on the FTS-plus-embeddings path that invokes no answering model.
+  justifying_sentence: "extend the question gate for jailbreak, role-hijack, delimiter, and encoding attacks"
+  source: >
+    INFORME-SLOP-ADYACENTE.md §3 D12 and §6 item 9; PR #66 said not to add
+    them, PR #85 added them, PR #240 made the find path LLM-free; issue #354.
+  cost: "65 lines + 111 test lines; roca query \"system prompt\" is rejected before search"
+rule: >
+  On the deterministic search path check only empty and length; leave any
+  prompt defence to surfaces that invoke a model.
+forbid:
+  paths: []
+  symbols:
+    - "hostileQuestionPatterns"
+  strings:
+    - "\\bsystem\\s+prompt\\b"

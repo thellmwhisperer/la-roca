@@ -1,0 +1,28 @@
+schema: 1
+id: D4
+status: accepted
+category: adjacent_feature
+title: "Vector reader spawns a full roca process per 500-row page"
+created_at: 2026-09-08
+incident:
+  intent: >
+    The vector worker needs to read local text and later retrieve neighbour
+    texts. Isolating the vector engine from the main binary does not require
+    restarting the SQLite reader per page.
+  what_was_built: >
+    CoreCLI obtains scope, pages and texts by invoking the roca executable per
+    500-row page: one process, service open, JSON encode/decode per page.
+  justifying_sentence: "isolated executable plugin"
+  source: >
+    INFORME-SLOP-ADYACENTE.md §3 D4 and §6 item 4; PRs #111, #220, #331
+    (ROCA_READ_ONLY=1); issue #349.
+  cost: "974 lines + 588 test lines; 2,000 process launches per 1,000,000-row sweep"
+rule: >
+  One read connection (or one streaming reader process) for the whole sweep
+  and for neighbour text retrieval, keeping gate, database selection,
+  visibility rules and cancellation.
+forbid:
+  paths: []
+  symbols:
+    - "CoreCLI"
+  strings: []

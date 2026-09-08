@@ -1,8 +1,8 @@
 # La Roca is an AI agent memory
 
 If your user pointed you here to **install and use** La Roca, this section is
-yours. If you are here to develop La Roca itself, skip to the contributor
-notes below.
+yours. If you are here to develop La Roca itself, skip to the
+[contributor notes](#contributor-notes) below.
 
 You are about to give your user a memory of everything their agents ever
 did on this machine: every session, decision, fix, and note that you and
@@ -104,6 +104,29 @@ answering back.
 
 This tool was built for agents to do great work with. Enjoy it, and make
 the first impact count.
+
+## Contributor notes
+
+Build, test, and architecture notes live in [CONTRIBUTING.md](CONTRIBUTING.md)
+and [project memory](docs/project-memory.md).
+
+### Adjacent features
+
+La Roca is a light binary that queries local SQLite, attaches other databases,
+answers by FTS or by vectors with one embedding model, plus plugins. Anything
+else is adjacent until proven core.
+
+- Every brief states what NOT to build and the real data size.
+- A reviewer demand must state its cost (bytes, seconds, lines) or it cannot
+  block.
+- No new subsystem outside the ticket's scope.
+- Read-only means SQLite `mode=ro`, never a copy.
+- Reuse the OS, SQLite and the standard library before writing an equivalent.
+
+The registry of adjacent features (dragons D1–D12) is
+[`.slop/dragons/`](.slop/dragons/README.md). `make slop` fails if a `removed`
+record's `forbid` reappears. Cost assertions for that registry live in the
+acceptance harness (`make check`).
 
 ## Maintaining this file
 

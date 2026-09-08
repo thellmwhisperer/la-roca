@@ -1,0 +1,28 @@
+schema: 1
+id: D7
+status: accepted
+category: adjacent_feature
+title: "Federation scheduler forces one embedding transaction per chunk"
+created_at: 2026-09-08
+incident:
+  intent: >
+    Index recent history first and show progress. That does not require
+    coordinating every fragment globally across databases or persisting an
+    activity transition per fragment.
+  what_was_built: >
+    The federation scheduler forces BatchSize = 1 (the index supports 64) and
+    commits one embedding transaction per chunk, writing and renaming the
+    active-worker JSON before and after each.
+  justifying_sentence: "newest-first indexing"
+  source: >
+    INFORME-SLOP-ADYACENTE.md §3 D7 and §6 item 6; PRs #237, #293, #303;
+    issue #351.
+  cost: "1,000,000 transactions and ~2,000,000 state writes where 15,625 would do"
+rule: >
+  Newest-first stays as an ordering between batches; batches of 64; progress
+  and activity persisted per batch; native-engine aborts and resumability kept.
+forbid:
+  paths: []
+  symbols: []
+  strings:
+    - "index.BatchSize = 1"

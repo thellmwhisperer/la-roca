@@ -1,0 +1,28 @@
+schema: 1
+id: D10
+status: accepted
+category: adjacent_feature
+title: "Call history is dual-written to JSONL and ops with no ops expiry"
+created_at: 2026-09-08
+incident:
+  intent: >
+    Querying databases does not require keeping every command forever. One
+    audit destination is enough: bounded JSONL for diagnosis, or ops with an
+    explicit retention policy.
+  what_was_built: >
+    Every call is written to JSONL and to roca-ops.db with segment import,
+    hashes, parity checks and fallback; ops rows never expire.
+  justifying_sentence: "Dual-write the ops database and existing executions/mcp-audit JSONL"
+  source: >
+    INFORME-SLOP-ADYACENTE.md §3 D10 and §6 item 8; PR #69 reversed by PR #132
+    (DATA-5); issue #353 (held for an owner destination decision).
+  cost: "1,399 lines + 702 test lines; payload stored at least twice plus extracted SQL columns"
+rule: >
+  One write per call. Choose JSONL only or ops only, import history that is
+  not yet in the chosen destination, remove parity/backfill, document and
+  enforce retention.
+forbid:
+  paths: []
+  symbols:
+    - "BackfillIfNeeded"
+  strings: []

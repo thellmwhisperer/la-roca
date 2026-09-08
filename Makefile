@@ -105,13 +105,15 @@ check: build fmt vet test accept slop ## What CI requires before merging
 upgrade-gauntlet: build ## Upgrade frozen old-version homes through the current binary
 	./scripts/upgrade-gauntlet.sh $(BIN) $(UPGRADE_HOME)
 
-# The slop gate blocks duplication and orphan regressions, and verifies every
-# catalogued public surface still has a live acceptance claim. `--enforce` fails
-# both ways on a ceiling: over is a regression, under is an uncommitted
+# The slop gate blocks duplication and orphan regressions, verifies every
+# catalogued public surface still has a live acceptance claim, and fails when a
+# removed adjacent-feature dragon's forbid reappears. `--enforce` fails both
+# ways on a ceiling: over is a regression, under is an uncommitted
 # improvement. The ratchets in .slop/ceilings.yml are monotonic.
 .PHONY: slop
-slop: ## Duplication, orphan and public-surface claims gates
+slop: ## Duplication, orphan, public-surface and adjacent-feature gates
 	./scripts/slopslint.sh check --classify --enforce
+	./scripts/check-dragons.sh
 
 .PHONY: fmt
 fmt:

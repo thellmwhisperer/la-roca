@@ -1,0 +1,30 @@
+schema: 1
+id: D8
+status: accepted
+category: adjacent_feature
+title: "Unchanged vector pass hashes the whole SQLite file plus WAL"
+created_at: 2026-09-08
+incident:
+  intent: >
+    A cheap incremental pass when nothing changed. Chunk fingerprints already
+    avoid re-embedding identical text; hashing the whole database is not
+    required when metadata is identical.
+  what_was_built: >
+    Before declaring a sidecar unchanged, the pass hashes the whole SQLite
+    file plus WAL even when metadata is identical
+    (stableDatabaseIdentity / TargetFingerprint).
+  justifying_sentence: "cheap unchanged-pass logic"
+  source: >
+    INFORME-SLOP-ADYACENTE.md §3 D8 and §6 item 7; PRs #213, #220, #303;
+    issue #352.
+  cost: "225 lines + 136 tests in incrementality; whole-file hash of ~6.7 GB per corpus pass"
+rule: >
+  A cheap source marker (size, mtime, WAL size, data_version) exits the pass
+  early; hash and chunk comparison only when the marker changed or on explicit
+  --verify.
+forbid:
+  paths: []
+  symbols:
+    - "stableDatabaseIdentity"
+    - "fingerprintVectorSource"
+  strings: []

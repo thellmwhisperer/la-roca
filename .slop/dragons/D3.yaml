@@ -1,0 +1,29 @@
+schema: 1
+id: D3
+status: accepted
+category: adjacent_feature
+title: "Four compatibility FTS indexes rebuilt per service instance"
+created_at: 2026-09-08
+incident:
+  intent: >
+    Query the FTS of attached plugin databases. Keeping historical identifiers
+    does not require regenerating their search indexes per process.
+  what_was_built: >
+    The hub creates temp.memories_fts, temp.exchanges_fts, temp.thinking_fts
+    and temp.sessions_fts and runs four rebuilds once per service instance
+    whenever a statement merely contains one of those names, including
+    qualified plugin_roca_corpus.exchanges_fts.
+  justifying_sentence: "Preserve legacy labels and IDs"
+  source: >
+    INFORME-SLOP-ADYACENTE.md §3 D3 and §6 item 3; PR #144; issue #348.
+  cost: "181 lines + 611 test lines; cost proportional to the corpus per process"
+rule: >
+  Route FTS to each plugin's persistent index. Keep column views or identifier
+  translations where legacy SQL needs them. Close shadow-equal once its
+  validation purpose is over.
+forbid:
+  paths: []
+  symbols: []
+  strings:
+    - "CREATE VIRTUAL TABLE temp.exchanges_fts"
+    - "CREATE VIRTUAL TABLE temp.memories_fts"
