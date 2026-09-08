@@ -135,7 +135,7 @@ printf '%s\n' "$@"
 	env := hermeticCLIEnv(&cliEnv{build: Build{Version: "test"}, out: &out, errOut: &out})
 	db := filepath.Join(root, "roca.db")
 	code, err := executeWithEnv(env, []string{"--db-path", db, "--json", "playground", "--", "who wrote this?"}, strings.NewReader(""))
-	want := "playground\n--db-path\n" + db + "\n--json\n--db-path\n" + db + "\n--json\n--\nwho wrote this?\n"
+	want := "playground\n--db-path\n" + db + "\n--json\n--\nwho wrote this?\n"
 	if code != 0 || err != nil || out.String() != want {
 		t.Fatalf("code=%d err=%v output=%q want=%q", code, err, out.String(), want)
 	}
@@ -210,5 +210,23 @@ printf 'selected %s\n' "$reply"
 	prompt.Close()
 	if err != nil || audit != nil || !<-seen || out.String() != "selected fixture\n" {
 		t.Fatalf("model prompt was buffered: audit=%v err=%v output=%q", audit, err, out.String())
+	}
+}
+
+func TestPlaygroundDelegatesWithoutOpeningFederation(t *testing.T) {
+	fixtureInstallation(t)
+	home := os.Getenv("HOME")
+	db := filepath.Join(home, ".roca", "roca.db")
+	// A valid installation path but deliberately unreadable SQLite contents:
+	// only the child owns database opening and its diagnostic.
+	if err := os.WriteFile(db, []byte("synthetic invalid SQLite"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	installPlaygroundFixture(t, home, "printf '%s\\n' \"$@\"\n")
+	var out strings.Builder
+	env := hermeticCLIEnv(&cliEnv{out: &out, errOut: &out})
+	code, err := executeWithEnv(env, []string{"--read-only", "playground", "--", "question"}, strings.NewReader(""))
+	if code != 0 || err != nil || out.String() != "playground\n--read-only\n--\nquestion\n" {
+		t.Fatalf("parent opened federation or duplicated argv: code=%d err=%v output=%q", code, err, out.String())
 	}
 }

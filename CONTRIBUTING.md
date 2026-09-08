@@ -67,18 +67,26 @@ forbids). Godog acceptance contracts live directly under
 discovered automatically, and `make accept-index` rejects any other layout. The
 acceptance harnesses are compiled only with the `acceptance` build tag.
 
-`make accept` (also part of `make check`) and `make split-oracle` build the
-optional playground fixture through `make playground-fixture`. That target
-clones the plugin repository into `PLAYGROUND_DIR` when absent and builds it
-against this checkout; the defaults and selected ref live in `Makefile`.
-`make playground-test` additionally runs the plugin's checks and paired S1 cost
-measurement on synthetic fixtures. Set `ROCA_PUBLISHED_BIN` to the published
-`v1.82.6` executable for the before/after comparison; the measurement writes
-evidence under `.tmp/playground-evidence`.
-For S1, the pipeline test step must retain both `published.json` and `branch.json`
-as evidence artifacts. A transcript of only the new binary is incomplete.
-The published executable can be downloaded from the `v1.82.6` GitHub release;
-run it only with the synthetic home supplied by `TestCostPlayground`.
+`make accept` (also part of `make check`) and `make split-oracle` run without
+an external playground checkout or network service. Core exercises the optional
+plugin's argv, errors, audit and diagnostic contracts with small local fake
+executables. Human answering scenarios belong to the playground repository.
+`make playground-integration` separately downloads the pinned `v0.1.1` release
+through the real `roca plugin install` flow and verifies a synthetic SQL result.
+
+`make playground-test ROCA_PUBLISHED_BIN=<pinned-v1.82.6-binary>` retains the
+published-versus-branch S1 extraction evidence under `.tmp/playground-evidence`.
+It is a separate opt-in comparison on synthetic homes, never a mutable
+`make check` dependency. The DATA SPLIT oracle keeps its full digest-pinned
+archive and compares the core cases; the extracted inference cases are not
+replayed by core.
+
+The D1 acceptance denies temporary copies throughout the read-only operation
+and checks durable database digests, allowing SQLite SHM. Synthetic vector
+latency tests live in `plugins/vector/internal/vector/status_issue336_test.go`:
+they require a completed nonempty indexing pass and an actual query result
+before judging latency in the process doing the work. They do not claim to
+measure native model residency or bytes read. There are no expected-fail costs.
 
 `make e2e-smoke` isolates the real-binary operator path in a disposable `HOME`
 and covers init, ingest, query, plugin install, and plugin update. It is also

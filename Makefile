@@ -78,14 +78,14 @@ test: ## Unit and contract tests
 .PHONY: accept accept-index split-oracle e2e-smoke
 # Pin the suite to the artefact this recipe's `build` just wrote. An inherited
 # ROCA_BIN, including a stub, cannot select a different binary.
-accept: build accept-index playground-fixture ## The godog acceptance suites against the real binary
-	ROCA_BIN=$(BIN) ROCA_PLAYGROUND_BIN="$(CURDIR)/$(PLAYGROUND_DIR)/bin/roca-playground" go test -tags=acceptance ./test/acceptance -count=1
+accept: build accept-index ## The godog acceptance suites against the real binary
+	ROCA_BIN=$(BIN) ROCA_PLAYGROUND_INTEGRATION= ROCA_PLAYGROUND_FEATURES= ROCA_PUBLISHED_BIN= go test -tags=acceptance ./test/acceptance -count=1
 
 e2e-smoke: build ## Real binary in a disposable home: init, ingest, query, plugin install and update
-	ROCA_BIN=$(BIN) go test -tags=acceptance ./test/acceptance -run '^TestRealBinaryDisposableHomeSmoke$$' -count=1
+	ROCA_BIN=$(BIN) ROCA_PLAYGROUND_INTEGRATION= ROCA_PLAYGROUND_FEATURES= ROCA_PUBLISHED_BIN= go test -tags=acceptance ./test/acceptance -run '^TestRealBinaryDisposableHomeSmoke$$' -count=1
 
-split-oracle: build playground-fixture ## Record and replay the DATA SPLIT compatibility goldens
-	ROCA_PLAYGROUND_BIN="$(CURDIR)/$(PLAYGROUND_DIR)/bin/roca-playground" go test -tags=acceptance ./test/acceptance -run '^TestDataSplitCompatibilityOracle$$' -count=1
+split-oracle: build ## Record and replay the DATA SPLIT compatibility goldens
+	ROCA_BIN=$(BIN) ROCA_PLAYGROUND_INTEGRATION= ROCA_PLAYGROUND_FEATURES= ROCA_PUBLISHED_BIN= go test -tags=acceptance ./test/acceptance -run '^TestDataSplitCompatibilityOracle$$' -count=1
 
 accept-index: ## List and verify the per-domain acceptance scenarios
 	@files="$$(find features -name '*.feature' -type f | sort)"; \
@@ -133,15 +133,14 @@ help:
 	@grep -E '^[a-z-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  %-16s %s\n", $$1, $$2}'
 
-PLAYGROUND_DIR ?= .tmp/playground
-PLAYGROUND_REF ?= fm/s1-boundary-followup
-ROCA_PUBLISHED_BIN ?= $(shell command -v roca)
-.PHONY: playground-fixture playground-test
-playground-fixture:
-	@test -f "$(PLAYGROUND_DIR)/go.mod" || git clone --depth 1 --branch "$(PLAYGROUND_REF)" https://github.com/thellmwhisperer/roca-playground.git "$(PLAYGROUND_DIR)"
-	$(MAKE) -C "$(PLAYGROUND_DIR)" build CORE_DIR="$(CURDIR)"
-
-playground-test: playground-fixture
-	$(MAKE) -C "$(PLAYGROUND_DIR)" check CORE_DIR="$(CURDIR)"
+# Optional extraction evidence uses an explicitly supplied published binary.
+# Human answering scenarios belong to the plugin repo.
+ROCA_PUBLISHED_BIN ?=
+.PHONY: playground-test
+playground-test: build
 	@test -x "$(ROCA_PUBLISHED_BIN)" || { echo "set ROCA_PUBLISHED_BIN to the published v1.82.6 binary" >&2; exit 1; }
-	ROCA_BIN="$(CURDIR)/$(PLAYGROUND_DIR)/bin/roca" ROCA_PUBLISHED_BIN="$(ROCA_PUBLISHED_BIN)" go test -tags acceptance ./test/acceptance -run '^TestCostPlayground$$' -count=1 -v
+	ROCA_BIN=$(BIN) ROCA_PUBLISHED_BIN="$(ROCA_PUBLISHED_BIN)" go test -tags acceptance ./test/acceptance -run '^TestCostPlayground$$' -count=1 -v
+
+.PHONY: playground-integration
+playground-integration: build
+	ROCA_BIN=$(BIN) ROCA_PLAYGROUND_INTEGRATION=1 go test -tags acceptance ./test/acceptance -run '^TestPlaygroundPinnedReleaseIntegration$$' -count=1 -v
