@@ -346,6 +346,12 @@ func (f Federation) queryTexts(ctx context.Context, texts []string, k int, datab
 	targets := make([]queryTarget, 0, len(selected))
 	for _, database := range selected {
 		path := SidecarPath(f.databasePath(database))
+		if info, statErr := os.Stat(path); statErr == nil && skipInteractiveSidecar(databaseList, info.Size()) {
+			result.Notices = append(result.Notices, fmt.Sprintf(
+				"database %s vector sidecar is %.1f GB; skipping interactive query (pass --databases %s to search it)",
+				database.Database, float64(info.Size())/(1<<30), database.Database))
+			continue
+		}
 		model, dimensions, err := querySidecarState(path, database.owner())
 		if errors.Is(err, os.ErrNotExist) || errors.Is(err, errSidecarNotReady) {
 			result.Notices = append(result.Notices, fmt.Sprintf(
@@ -427,9 +433,11 @@ func (f Federation) searchTarget(ctx context.Context, result *FederatedQuery, ta
 				target.database.Database, target.dimensions, model))
 			return nil
 		}
-		store, err := openSQLite(target.path, true)
+		store, err := openSQLiteBusy(target.path, true, 100)
 		if err != nil {
-			return fmt.Errorf("open vector sidecar for %s: %w", target.database.owner(), err)
+			result.Notices = append(result.Notices, fmt.Sprintf(
+				"database %s vector sidecar is busy; continuing with FTS-only", target.database.Database))
+			return nil
 		}
 		index := f.index(target.database,
 			DeclaredCorpus{Core: f.Core, Database: target.database}, target.path)
@@ -549,13 +557,22 @@ func sortFederatedResults(results []Result) {
 
 var errSidecarNotReady = errors.New("vector sidecar is not ready")
 
+// interactiveSidecarBytes is the size at which an unscoped query skips a
+// sidecar instead of scanning it. A 10s prompt hook cannot wait on a 14 GB
+// index; pass --databases to search that sidecar explicitly.
+const interactiveSidecarBytes = 1 << 30
+
+func skipInteractiveSidecar(databaseList string, size int64) bool {
+	return strings.TrimSpace(databaseList) == "" && size >= interactiveSidecarBytes
+}
+
 func querySidecarState(path, owner string) (string, int, error) {
 	if _, err := os.Stat(path); err != nil {
 		return "", 0, err
 	}
-	store, err := openSQLite(path, true)
+	store, err := openSQLiteBusy(path, true, 100)
 	if err != nil {
-		return "", 0, fmt.Errorf("open vector sidecar for %s: %w", owner, err)
+		return "", 0, errSidecarNotReady
 	}
 	defer store.Close()
 	metadata, err := readMetadata(store, "owner", "model", "dimensions")

@@ -425,8 +425,15 @@ func queryCommand(env *environment) *cobra.Command {
 			}
 			defer release()
 			started := time.Now()
-			federation, federationErr := env.federationForQuery("")
+			federation, federationErr := env.federationWithEmbedder("", nil, nil)
 			if federationErr == nil {
+				if result, used, residentErr := env.queryThroughResident(command.Context(), args[0], k, databases, expandTemplates, minScore); used {
+					if residentErr != nil {
+						return residentErr
+					}
+					return printFederatedQuery(env, args[0], k, started, result)
+				}
+				federation.Embedder, federation.Events = env.queryEmbedder()
 				var result vector.FederatedQuery
 				if expandTemplates {
 					result, err = federation.QueryExpanded(command.Context(), args[0], k, databases, minScore)
@@ -436,26 +443,7 @@ func queryCommand(env *environment) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				if env.json {
-					return printJSON(map[string]any{"query": args[0], "k": k,
-						"databases": result.Databases, "model": result.Model,
-						"mixed_models": result.MixedModels, "results": result.Results,
-						"database_results": result.DatabaseResults, "notices": result.Notices,
-						"vector_executed": result.VectorExecuted,
-						"elapsed_ms":      time.Since(started).Milliseconds()})
-				}
-				for _, notice := range result.Notices {
-					fmt.Fprintln(os.Stderr, "notice:", notice)
-				}
-				if result.MixedModels {
-					for _, database := range result.DatabaseResults {
-						fmt.Printf("database %s · model %s\n", database.Database, database.Model)
-						printResults(database.Results)
-					}
-				} else {
-					printResults(result.Results)
-				}
-				return nil
+				return printFederatedQuery(env, args[0], k, started, result)
 			}
 			if !errors.Is(federationErr, os.ErrNotExist) {
 				return federationErr
