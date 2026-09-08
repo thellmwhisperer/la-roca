@@ -34,14 +34,26 @@ nobody answered has not consented to a download.
 
 `roca vector status` reports one row per database declared in
 `vector-registry.json`: plugin, database, declared tables, embedded chunks,
-candidate chunks, sidecar size, last write, state, whether `index.lock` is
-`live`, `stale`, or `absent`, and whether `roca vector compact` would reclaim
-empty embedding pages. Embedded and candidate counts are exact under the
-declared chunking policy or unknown (`null`), never estimates or invented
-zeroes. Sidecar size and last write include its SQLite WAL and shared-memory
-files when present. A large sidecar with a matching live chunk count is not
-automatically a compaction candidate: density around 4 KB per 768-dimension
-chunk is healthy. `roca doctor` repeats the compact and lock remedies.
+candidate chunks, sidecar size, last write, state, lock status, and a
+`compact_recommended` flag. Embedded counts report live indexed chunks;
+candidate counts follow the declared chunking policy. Either count can be
+unknown (`null`), never an estimate or invented zero. Sidecar size and last
+write include its SQLite WAL and shared-memory files when present.
+
+Lock status is `live` when held, `stale` when the file exists but is unheld,
+or `absent`. A lock that cannot be inspected renders as `unknown` and is
+omitted from JSON. Ingest and compact can acquire a stale lock without manual
+file deletion. The compaction flag recommends reclaiming sparse embedding
+pages based on page and live chunk counts, not file size alone. A false flag
+does not prove there is no reclaimable space, including when page counts are
+unavailable. JSON also includes `embedding_pages` when readable. See
+[Disk and maintenance](#disk-and-maintenance) for sizing and reclamation.
+
+`roca doctor` includes sidecar diagnostics and the same remedies when the
+installed companion returns database rows within its bounded status call;
+otherwise it omits this section. `roca doctor --json` exposes these under
+`vector`. For the separate `roca doctor --report` snapshot, see
+[Support report](operations.md#support-report).
 
 The states are `building`, `complete`, `empty`, `outdated`, and `unknown`.
 `complete` requires a sealed source fingerprint and the current declaration.
@@ -307,6 +319,9 @@ Same-model scores merge into one top-N. If selected sidecars use different
 models, results stay grouped per database with a notice because their scores
 are not comparable. Every hit carries database, table, and source id. `k` is
 optional (default 10) and capped at 100.
+
+Query setup reads model and dimension metadata without loading every stored
+chunk's bookkeeping. Search and reranking still depend on the index size.
 
 A missing sidecar or unavailable embedding model emits a notice and leaves that
 database on its deterministic FTS/SQL route. A pending model download never

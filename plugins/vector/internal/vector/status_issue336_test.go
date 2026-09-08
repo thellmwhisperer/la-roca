@@ -186,12 +186,42 @@ func TestQueryDoesNotLoadEveryStoredChunk(t *testing.T) {
 		t.Fatal(err)
 	}
 	query := time.Since(started)
+	t.Logf("Query API with 20000 unrelated stored chunks: scan=%s query=%s results=%+v", scan, query, results)
 	if len(results) == 0 {
 		t.Fatal("query returned no hits")
 	}
 	if scan >= 30*time.Millisecond && query >= scan {
 		t.Fatalf("query %s loaded chunk state that took %s", query, scan)
 	}
+}
+
+// A non-retrieved row must not be decoded just to initialize a query. This
+// sentinel makes the regression deterministic even on fast machines where
+// the timing comparison above is below its noise threshold.
+func TestQueryDoesNotDecodeUnrelatedChunkMetadata(t *testing.T) {
+	corpus := &memoryCorpus{sources: []sourceRow{
+		{kind: "memories", sourceID: "keep", text: "alpha memory"},
+	}}
+	index := Index{Corpus: corpus, VectorPath: filepath.Join(t.TempDir(), "vector.db"),
+		Model: DefaultModel, Embedder: &recordingEmbedder{}, Database: "corpus"}
+	if _, err := index.Ingest(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	db := openTestSQLite(t, index.VectorPath)
+	_, err := db.Exec(`INSERT INTO chunks(source_kind,source_id,chunk_index,fingerprint,locator)
+		VALUES('notes','unrelated','not-an-integer','fp','{}')`)
+	if err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	hits, err := index.Query(context.Background(), "alpha", 5)
+	if err != nil || len(hits) != 1 || hits[0].Text != "alpha memory" {
+		t.Fatalf("query decoded unrelated metadata: hits=%+v err=%v", hits, err)
+	}
+	t.Logf("Query API returned the intact matching source despite unrelated malformed metadata: %+v", hits)
 }
 
 func valueOrZero(value *int64) int64 {
