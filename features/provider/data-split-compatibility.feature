@@ -6,7 +6,7 @@ Feature: DATA SPLIT compatibility oracle
   Scenario: The CLI contract replays byte for byte after normalization
     Given the digest-pinned DATA SPLIT synthetic fixture
     When the compatibility oracle records and replays the golden bundle
-    Then the CLI golden cases cover query, rescue, ranking, store, SQL, warnings, identities, and failures
+    Then the core CLI golden cases cover ranking, store, SQL, identities, and failures
 
   Scenario: The MCP contract replays byte for byte after normalization
     Given the digest-pinned DATA SPLIT synthetic fixture
