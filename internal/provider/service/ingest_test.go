@@ -46,7 +46,7 @@ func TestPlainIngestAdoptsThePreviousSchemaAndFillsProvenance(t *testing.T) {
 }
 
 // What the ingest wrote has to be answerable in the same command. A memory that is
-// in the database and cannot be found is worse than one that is not there: it
+// in the database and cannot be Found is worse than one that is not there: it
 // reads as data loss.
 func TestWhatTheIngestWritesIsSearchableAtOnce(t *testing.T) {
 	home := t.TempDir()

@@ -51,9 +51,8 @@ Init installs the skills into every runtime it detects. If your runtime was not
 detected, use `roca skill install codex` (or `claude`, `opencode`, `pi`,
 `hermes`, or `zcode`) as a fallback. ZCode is opt-in: init does not seed it.
 
-If an already signed-in agent CLI is on `PATH` (`claude`, `codex`, ...),
-no login of any kind is needed: La Roca borrows the plan you already pay
-for. Supported on macOS and Linux. On Windows, use WSL (first class): Linux
+Search needs no answering-model account or login. Supported on macOS and Linux.
+On Windows, use WSL (first class): Linux
 binaries and the curl installer work as-is there. The native `.exe` is
 manual and untested, and Windows-side agent paths (`/mnt/c`) are not
 auto-detected.
@@ -121,6 +120,8 @@ roca exec "SELECT source_agent, COUNT(*) FROM plugin_roca_corpus.sessions
 ```
 
 `roca query` searches with deterministic full-text and optional vector fusion.
+The optional [roca-playground plugin](docs/plugins.md#optional-human-answering)
+supplies human answering.
 `roca playground` compiles a question into one checked `SELECT`, while
 `roca explore` turns that model-backed machinery into a guided investigation.
 [Queries, explore, and the read-only gate.](docs/queries.md)

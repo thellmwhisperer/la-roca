@@ -14,7 +14,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
-	"github.com/thellmwhisperer/la-roca/internal/provider"
+
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
@@ -22,18 +22,9 @@ func TestExecutionLogCarriesMetadataWithoutResultRowsAndRedactsFlags(t *testing.
 	dataDir := t.TempDir()
 	dbPath := filepath.Join(dataDir, "roca.db")
 	rawSQL := "<think>shape it</think>\n```sql\n" + queryModeSQL + "\n```"
-	frontier := &queryModeProvider{
-		answers: []string{"SELECT missing FROM memories LIMIT 1", rawSQL},
-		name:    "codex", model: "gpt-frontier",
-	}
-	local := &queryModeProvider{answers: []string{queryModeProse}, name: "ollama", model: "qwen-local"}
-	answer, err := answerQuery(t.Context(), queryModeServiceWithTimeout(t, frontier, 0, local),
-		service.QueryRequest{Question: queryModeQuestion}, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	answer.result.Rows[0]["text"] = "private row contents"
-	env := &cliEnv{dbPath: dbPath, outcome: answer.result, auditQuery: &answer.result}
+	answer := service.QueryResult{Question: queryModeQuestion, SQL: queryModeSQL, ModelSQL: rawSQL, CleanedSQL: queryModeSQL, Path: "model", RowCount: 1, Rows: []map[string]any{{"text": "synthetic"}}, RetriedSQL: true, FirstModelSQL: "SELECT missing FROM memories LIMIT 1", RetryReason: "no such column: missing", Engine: "codex", Model: "gpt-frontier", InterpretEngine: "ollama", InterpretModel: "qwen-local"}
+	answer.Rows[0]["text"] = "private row contents"
+	env := &cliEnv{dbPath: dbPath, outcome: answer, auditQuery: &answer}
 	root := &cobra.Command{Use: "roca"}
 	query := &cobra.Command{Use: "query"}
 	root.AddCommand(query)
@@ -112,47 +103,6 @@ func TestUnexpectedCLIErrorIsDurableAndUserVisibleByCorrelationID(t *testing.T) 
 	}
 	if record.CorrelationID == "" || !strings.Contains(runErr.Error(), record.CorrelationID) {
 		t.Fatalf("screen error %q does not match audit correlation %q", runErr, record.CorrelationID)
-	}
-}
-
-func TestADegradedQueryNamesItsAuditLineWithoutAnError(t *testing.T) {
-	fixtureInstallation(t)
-	home := os.Getenv("HOME")
-	writeConfig(t, home, "[models]\norder = [\"mycorp\"]\nprobe_ms = 200\n\n"+
-		"[models.mycorp]\ncommand = [\"missing-mycorp-cli\", \"{prompt}\"]\n"+
-		"model = \"internal-7b\"\n")
-	t.Setenv(provider.EnvOrder, "mycorp")
-
-	var out, errs strings.Builder
-	code, runErr := execute(contractBuild(), &out, &errs,
-		[]string{"playground", "how many synthetic memories are there"})
-	if runErr != nil {
-		t.Fatalf("a degraded answer became a program error: %v", runErr)
-	}
-	if code != ExitError {
-		t.Fatalf("exit code = %d, want %d: the question needed a model and had none", code, ExitError)
-	}
-	raw := readAuditStream(t, filepath.Join(home, ".roca"), logfile.Executions)
-	var record struct {
-		OK            bool   `json:"ok"`
-		ErrorType     string `json:"error_type"`
-		CorrelationID string `json:"correlation_id"`
-	}
-	if err := json.Unmarshal(raw, &record); err != nil {
-		t.Fatal(err)
-	}
-	if record.OK || record.ErrorType != service.DegradedUnavailable {
-		t.Fatalf("audit record = %+v, want a failed %s call", record, service.DegradedUnavailable)
-	}
-	if record.CorrelationID == "" {
-		t.Fatalf("a degraded run left no correlation id in its audit record: %s", raw)
-	}
-	if !strings.Contains(errs.String(), record.CorrelationID) {
-		t.Fatalf("the run does not name its audit line %q on the error stream:\n%s",
-			record.CorrelationID, errs.String())
-	}
-	if strings.Contains(out.String(), record.CorrelationID) {
-		t.Fatalf("the correlation id landed in the answer itself:\n%s", out.String())
 	}
 }
 
@@ -402,3 +352,6 @@ func readAuditStream(t *testing.T, dataDir, stream string) []byte {
 	}
 	return raw
 }
+
+const queryModeQuestion = "synthetic orbit"
+const queryModeSQL = "SELECT content AS text FROM memories LIMIT 1"

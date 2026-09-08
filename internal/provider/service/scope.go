@@ -78,55 +78,55 @@ func matchesScope(database plugin.Database, name string) bool {
 	return false
 }
 
-func questionRoute(names []string, inventory pluginRoute) (pluginRoute, error) {
+func QuestionRoute(names []string, inventory PluginRoute) (PluginRoute, error) {
 	route, err := resolveScope(names, inventory)
 	if err != nil {
-		return pluginRoute{}, err
+		return PluginRoute{}, err
 	}
 	if len(names) == 0 || (len(names) == 1 && names[0] == ScopeAll) {
 		return route, nil
 	}
-	route.warnings = append(slices.Clone(inventory.warnings), route.warnings...)
+	route.Warnings = append(slices.Clone(inventory.Warnings), route.Warnings...)
 	return route, nil
 }
 
-func (s *Service) inventoryRoute(ctx context.Context) pluginRoute {
-	if !s.pluginsActive() {
-		return pluginRoute{includeCore: true}
+func (s *Service) InventoryRoute(ctx context.Context) PluginRoute {
+	if !s.PluginsActive() {
+		return PluginRoute{IncludeCore: true}
 	}
-	route := pluginRoute{
-		includeCore: true,
-		databases:   slices.Clone(s.resident),
-		omitted:     slices.Clone(s.residentOmitted),
-		warnings:    slices.Clone(s.residentWarnings),
+	route := PluginRoute{
+		IncludeCore: true,
+		Databases:   slices.Clone(s.resident),
+		Omitted:     slices.Clone(s.residentOmitted),
+		Warnings:    slices.Clone(s.residentWarnings),
 	}
 	if !s.opts.PluginsEnabled {
 		return route
 	}
 	candidates, warnings := plugin.Discover(s.opts.PluginDir)
-	route.warnings = append(route.warnings, warnings...)
-	limit := max(0, plugin.MaxAttached-len(route.databases)-s.layerRegistryAttachmentCost())
+	route.Warnings = append(route.Warnings, warnings...)
+	limit := max(0, plugin.MaxAttached-len(route.Databases)-s.layerRegistryAttachmentCost())
 	extra := validatePluginRouteLimit(ctx, s.onDemand(candidates), nil, limit, s.opts.ReadOnly)
-	route.databases = append(route.databases, extra.databases...)
-	route.omitted = append(route.omitted, extra.omitted...)
-	route.warnings = append(route.warnings, extra.warnings...)
+	route.Databases = append(route.Databases, extra.Databases...)
+	route.Omitted = append(route.Omitted, extra.Omitted...)
+	route.Warnings = append(route.Warnings, extra.Warnings...)
 	return route
 }
 
 func (s *Service) ResolveDatabaseScope(ctx context.Context, names []string) (DatabaseScope, error) {
-	inventory := s.inventoryRoute(ctx)
-	defer inventory.closeOnDemand()
-	route, err := questionRoute(names, inventory)
+	inventory := s.InventoryRoute(ctx)
+	defer inventory.CloseOnDemand()
+	route, err := QuestionRoute(names, inventory)
 	if err != nil {
 		return DatabaseScope{}, err
 	}
-	databases := make([]string, 0, len(route.databases)+1)
-	selected := make([]DatabaseSelection, 0, len(route.databases)+1)
-	if route.includeCore {
+	databases := make([]string, 0, len(route.Databases)+1)
+	selected := make([]DatabaseSelection, 0, len(route.Databases)+1)
+	if route.IncludeCore {
 		databases = append(databases, ScopeCore)
 		selected = append(selected, DatabaseSelection{Source: ScopeCore, Database: ScopeCore})
 	}
-	for _, database := range route.databases {
+	for _, database := range route.Databases {
 		name := scopeName(database)
 		databases = append(databases, name)
 		selected = append(selected, DatabaseSelection{Source: database.Source(), Database: name})
@@ -134,30 +134,30 @@ func (s *Service) ResolveDatabaseScope(ctx context.Context, names []string) (Dat
 	return DatabaseScope{
 		Databases:        databases,
 		Selected:         selected,
-		OmittedDatabases: route.omittedSources(),
-		Warnings:         slices.Clone(route.warnings),
+		OmittedDatabases: route.OmittedSources(),
+		Warnings:         slices.Clone(route.Warnings),
 	}, nil
 }
 
-func resolveScope(names []string, inventory pluginRoute) (pluginRoute, error) {
+func resolveScope(names []string, inventory PluginRoute) (PluginRoute, error) {
 	if len(names) == 0 {
 		return inventory, nil
 	}
 	if len(names) == 1 && names[0] == ScopeAll {
 		return inventory, nil
 	}
-	attached := attachedNames(inventory.includeCore, inventory.databases)
-	route := pluginRoute{}
+	attached := attachedNames(inventory.IncludeCore, inventory.Databases)
+	route := PluginRoute{}
 	var unknown []string
 	for _, name := range names {
 		if name == ScopeCore {
-			route.includeCore = true
+			route.IncludeCore = true
 			continue
 		}
 		var matched *plugin.Database
-		for index := range inventory.databases {
-			if matchesScope(inventory.databases[index], name) {
-				matched = &inventory.databases[index]
+		for index := range inventory.Databases {
+			if matchesScope(inventory.Databases[index], name) {
+				matched = &inventory.Databases[index]
 				break
 			}
 		}
@@ -165,30 +165,30 @@ func resolveScope(names []string, inventory pluginRoute) (pluginRoute, error) {
 			unknown = append(unknown, name)
 			continue
 		}
-		already := slices.ContainsFunc(route.databases, func(database plugin.Database) bool {
+		already := slices.ContainsFunc(route.Databases, func(database plugin.Database) bool {
 			return database.Schema == matched.Schema
 		})
 		if !already {
-			route.databases = append(route.databases, *matched)
+			route.Databases = append(route.Databases, *matched)
 		}
 	}
 	if len(unknown) > 0 {
-		return pluginRoute{}, fmt.Errorf("unknown database %q; attached databases: %s",
+		return PluginRoute{}, fmt.Errorf("unknown database %q; attached databases: %s",
 			strings.Join(unknown, ", "), strings.Join(attached, ", "))
 	}
 	return route, nil
 }
 
-func (r pluginRoute) unusedNames(inventory pluginRoute) []string {
-	selected := make(map[string]bool, len(r.databases)+1)
-	if r.includeCore {
+func (r PluginRoute) UnusedNames(inventory PluginRoute) []string {
+	selected := make(map[string]bool, len(r.Databases)+1)
+	if r.IncludeCore {
 		selected[ScopeCore] = true
 	}
-	for _, database := range r.databases {
+	for _, database := range r.Databases {
 		selected[scopeName(database)] = true
 	}
 	var unused []string
-	for _, name := range attachedNames(inventory.includeCore, inventory.databases) {
+	for _, name := range attachedNames(inventory.IncludeCore, inventory.Databases) {
 		if !selected[name] {
 			unused = append(unused, name)
 		}
@@ -196,46 +196,13 @@ func (r pluginRoute) unusedNames(inventory pluginRoute) []string {
 	return unused
 }
 
-func (r pluginRoute) canWiden(inventory pluginRoute) bool {
-	return len(r.unusedNames(inventory)) > 0
+func (r PluginRoute) CanWiden(inventory PluginRoute) bool {
+	return len(r.UnusedNames(inventory)) > 0
 }
 
-func insufficientAnswer(res QueryResult) bool {
-	if res.Path == PathAsk || res.Path == PathRefused || res.Path == PathUnresolved {
-		return false
-	}
-	if wideningBlockedByDegradation(res.Degraded) {
-		return false
-	}
-	return res.RowCount == 0
-}
-
-func wideningBlockedByDegradation(degraded string) bool {
-	switch degraded {
-	case DegradedInvalidSQL, DegradedExecution, DegradedTimeout:
-		return true
-	default:
-		return false
-	}
-}
-
-// WidenReply reports that the reading seat asked for a second SQL pass over
-// the attached databases that were held back.
-func WidenReply(text string) bool {
-	return strings.TrimSpace(text) == "WIDEN"
-}
-
-// CanWidenAfterInterpretation reports whether a reading-seat reply may buy a
-// second SQL pass. SQL failures stay attributed to their first scoped pass;
-// widening cannot turn them into a different query with a different verdict.
-func CanWidenAfterInterpretation(res QueryResult, text string) bool {
-	return len(res.UnusedDatabases) > 0 && !wideningBlockedByDegradation(res.Degraded) &&
-		WidenReply(text)
-}
-
-func bundledSearchDatabases(route pluginRoute) []plugin.Database {
+func bundledSearchDatabases(route PluginRoute) []plugin.Database {
 	var databases []plugin.Database
-	for _, database := range route.databases {
+	for _, database := range route.Databases {
 		if database.Name == rocaOpsPluginName || database.Name == rocaCorpusPluginName {
 			databases = append(databases, database)
 		}

@@ -62,50 +62,9 @@ func TestRowShapedResultsRenderAsTOONNotAJSONDump(t *testing.T) {
 
 // The natural-language tool carries the route narration above its answer, and
 // is never the raw envelope either.
-func TestQueryThroughThePlugRendersTheRouteLineNotAJSONDump(t *testing.T) {
-	session := connect(t, seededServiceWithModel(t))
-
-	result := callTool(t, session, "roca_query", map[string]any{
-		"query": "how many memories are there",
-	})
-	text := renderedText(result)
-
-	if !strings.Contains(text, "search ") {
-		t.Errorf("the hybrid search narration is missing:\n%s", text)
-	}
-	if looksLikeJSONDump(text) {
-		t.Errorf("the readable half is a JSON dump, not AXI TOON:\n%s", text)
-	}
-	assertNoStructuredEnvelope(t, result)
-	if strings.Contains(text, "Run `roca ") {
-		t.Errorf("MCP help points a shell-less agent at shell commands:\n%s", text)
-	}
-}
 
 // The compile-only tool answers with its SQL under the route line, not with the
 // envelope that carries the route provenance.
-func TestSQLThroughThePlugRendersTheRouteLineAndSQLNotAJSONDump(t *testing.T) {
-	session := connect(t, seededServiceWithModel(t))
-
-	result := callTool(t, session, "roca_sql", map[string]any{
-		"query": "how many memories are there",
-	})
-	text := renderedText(result)
-
-	if !strings.Contains(text, "route ") {
-		t.Errorf("the route narration is missing:\n%s", text)
-	}
-	if !strings.Contains(text, "SELECT") {
-		t.Errorf("the compiled SQL is missing:\n%s", text)
-	}
-	if looksLikeJSONDump(text) {
-		t.Errorf("the readable half is a JSON dump, not AXI TOON:\n%s", text)
-	}
-	if strings.Contains(text, "Run `roca ") {
-		t.Errorf("MCP exec help points a shell-less agent at shell commands:\n%s", text)
-	}
-	assertNoStructuredEnvelope(t, result)
-}
 
 // The health tool answers with its status line and the check table the shell
 // prints, not the diagnosis envelope.

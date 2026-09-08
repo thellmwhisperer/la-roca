@@ -30,7 +30,7 @@ type HealthRequest struct {
 	MaxRows int
 }
 
-// HealthCheck is one check with its verdict, how many rows it found and a
+// HealthCheck is one check with its verdict, how many rows it Found and a
 // sample of them. The count is the truth; the sample is what makes it
 // actionable.
 type HealthCheck struct {
@@ -163,7 +163,7 @@ var healthChecks = []healthCheck{
 // it answers the same in a read-only installation, which is exactly where an
 // operator who suspects something reaches for it.
 func (s *Service) Health(ctx context.Context, req HealthRequest) (HealthReport, error) {
-	if _, err := s.ensureSchema(ctx); err != nil {
+	if _, err := s.EnsureSchema(ctx); err != nil {
 		return HealthReport{}, err
 	}
 	maxRows := req.MaxRows

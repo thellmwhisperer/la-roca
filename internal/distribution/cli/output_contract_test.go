@@ -83,15 +83,6 @@ func failingRoot(t *testing.T, args ...string) error {
 // The probe reports whichever provider the cascade puts first, so the home and
 // the PATH are fixed here: a machine with no agent CLI installed answers with
 // its local runtime instead, and the contract would read as broken.
-func TestBareLoginHonoursTheJSONFlag(t *testing.T) {
-	isolatedLoginHome(t)
-	out := runRoot(t, contractBuild(), "login", "--json")
-
-	doc := mustJSON(t, out)
-	if doc["provider"] != "codex" || doc["ready"] != true || doc["configuration_changed"] != false {
-		t.Fatalf("login alias JSON = %v", doc)
-	}
-}
 
 // `roca doctor` is the diagnosis the skill points an agent at ("diagnosis +
 // remedies"). Its human narration names the database, the configuration and the
@@ -102,7 +93,7 @@ func TestDoctorNarratesAndAnswersJSON(t *testing.T) {
 	human := runRoot(t, contractBuild(), "doctor")
 	for _, want := range []string{
 		"roca " + contractVersion, "database:", "configuration:",
-		"agents detected:", "agents not found:", "model:",
+		"agents detected:", "agents not found:", "playground:",
 	} {
 		if !strings.Contains(human, want) {
 			t.Errorf("doctor narration does not carry %q:\n%s", want, human)

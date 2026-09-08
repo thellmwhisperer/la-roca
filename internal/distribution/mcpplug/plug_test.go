@@ -15,14 +15,14 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/axi"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/mcpplug"
-	"github.com/thellmwhisperer/la-roca/internal/provider"
+
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
 // The surface this version decided, and no other. `roca_list_runs` is out
 // because `runs` is v2: a tool with no table behind it is a tool that lies.
 var theDecidedSurface = []string{
-	"roca_exec", "roca_explore", "roca_health", "roca_query", "roca_sql", "roca_store",
+	"roca_exec", "roca_health", "roca_query", "roca_store",
 }
 
 // The tools the pruning withdrew. They are named here so that reintroducing one
@@ -117,83 +117,8 @@ func TestTheSameQuestionThroughThePlugAndThroughTheServiceIsTheSameAnswer(t *tes
 	}
 }
 
-func TestAClarificationAskTravelsAsSuccessfulMetadata(t *testing.T) {
-	result := callTool(t, connect(t, seededService(t)), "roca_sql", map[string]any{
-		"query": "what happened in a specific project?",
-	})
-	if result.IsError || renderedText(result) != "Which project should I use? Please name it in the question." {
-		t.Fatalf("clarification result = error %v, text %q", result.IsError, renderedText(result))
-	}
-	if result.Meta["clarification_required"] != true || result.Meta["missing_slot"] != "project" {
-		t.Fatalf("clarification metadata = %#v", result.Meta)
-	}
-}
-
 // The compile-without-running tool is the same cascade with the SQL kept back,
 // which is what makes it a probe for the compiler and not a second compiler.
-func TestTheSQLToolCompilesWithoutRunning(t *testing.T) {
-	svc := seededServiceWithModel(t)
-	session := connect(t, svc)
-	direct, err := svc.Query(t.Context(), service.QueryRequest{
-		Question: "how many memories are there", SQLOnly: true,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	result := callTool(t, session, "roca_sql", map[string]any{
-		"query": "how many memories are there",
-	})
-	text := renderedText(result)
-	if direct.SQL == "" || !strings.Contains(text, direct.SQL) {
-		t.Error("the sql tool returned no SQL")
-	}
-	if strings.Contains(text, "rows[") {
-		t.Errorf("the sql tool ran what it was asked only to compile:\n%s", text)
-	}
-	assertNoStructuredEnvelope(t, result)
-}
-
-func TestQuestionGateIsSharedByBothMCPQuestionTools(t *testing.T) {
-	session := connect(t, seededServiceWithModel(t))
-	for _, tool := range []string{"roca_query", "roca_sql"} {
-		got := callToolExpectingError(t, session, tool, map[string]any{"query": " \n "})
-		if !strings.Contains(got, "question is empty") {
-			t.Errorf("%s error = %q", tool, got)
-		}
-	}
-}
-
-func TestExploreToolDeclaresModeAndReturnsProseWithGeneratedSQL(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		deep bool
-		mode string
-	}{
-		{name: "plain", mode: "explore"},
-		{name: "deep", deep: true, mode: "explore_deep"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			svc := seededServiceWithScriptedModel(t, []string{
-				"SELECT 'memory' AS source, content AS text, created_at FROM memories LIMIT 2",
-				"The rows support one format trail and its next probes.",
-			})
-			result := callTool(t, connect(t, svc), "roca_explore", map[string]any{
-				"query": "format", "deep": tc.deep,
-			})
-			text := renderedText(result)
-			for _, want := range []string{
-				"mode: " + tc.mode, "generated SQL:\nSELECT",
-				"The rows support one format trail and its next probes.",
-			} {
-				if !strings.Contains(text, want) {
-					t.Errorf("explore tool lacks %q:\n%s", want, text)
-				}
-			}
-			assertNoStructuredEnvelope(t, result)
-		})
-	}
-}
 
 func TestTheExecToolRunsTheSameValidatedSelectAsTheService(t *testing.T) {
 	svc := seededService(t)
@@ -234,116 +159,6 @@ func TestEveryToolCallWritesACredentialFreeAuditRecord(t *testing.T) {
 	}
 }
 
-func TestQueryAuditCarriesTheCurrentAttributionEnvelope(t *testing.T) {
-	svc := seededServiceWithModel(t)
-	callTool(t, connect(t, svc), "roca_sql", map[string]any{"query": "how many memories"})
-	raw := readSingleLog(t, svc.DataDir(), logfile.MCPAudit)
-	text := string(raw)
-	for _, want := range []string{`"sql_provider":"fake"`, `"sql_model":"fake-model"`,
-		`"sql_inference_ms":`, `"model_sql":`} {
-		if !strings.Contains(text, want) {
-			t.Errorf("query audit lacks %q: %s", want, text)
-		}
-	}
-	if strings.Contains(text, `"retried_sql":true`) || strings.Contains(text, `"retried":true`) {
-		t.Fatalf("first-shot success was logged as a retry or rescue: %s", text)
-	}
-	for _, obsolete := range []string{`"engine":`, `"model":`, `"interpret_engine":`, `"interpret_model":`} {
-		if strings.Contains(text, obsolete) {
-			t.Errorf("query audit returned obsolete key %q: %s", obsolete, text)
-		}
-	}
-}
-
-func TestQueryAuditDistinguishesRetrySuccessFromRescue(t *testing.T) {
-	for _, tc := range []struct {
-		name        string
-		answers     []string
-		expectError bool
-		want        []string
-	}{
-		{
-			name: "retry success",
-			answers: []string{
-				"SELECT missing FROM memories LIMIT 1",
-				"SELECT content FROM memories WHERE supersedes IS NULL LIMIT 1",
-			},
-			want: []string{`"retried_sql":true`,
-				`"first_model_sql":"SELECT missing FROM memories LIMIT 1"`,
-				`"model_sql":"SELECT content FROM memories WHERE supersedes IS NULL LIMIT 1"`,
-				`"retry_reason":"no such column:`, `missing`,
-				`"sql_retry_inference_ms":`, `"sql_retry_provider_latency_ms":`},
-		},
-		{
-			name: "rescue after retry",
-			answers: []string{
-				"SELECT missing FROM memories LIMIT 1",
-				"SELECT still_missing FROM memories LIMIT 1",
-			},
-			expectError: true,
-			want:        []string{`"retried_sql":true`, `"degraded":"invalid_sql"`},
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			svc := seededServiceWithScriptedModel(t, tc.answers)
-			session := connect(t, svc)
-			args := map[string]any{"query": "what decisions were made about the long dashes"}
-			if tc.expectError {
-				callToolExpectingError(t, session, "roca_sql", args)
-			} else {
-				callTool(t, session, "roca_sql", args)
-			}
-			text := string(readSingleLog(t, svc.DataDir(), logfile.MCPAudit))
-			for _, want := range tc.want {
-				if !strings.Contains(text, want) {
-					t.Errorf("query audit lacks %q: %s", want, text)
-				}
-			}
-		})
-	}
-}
-
-func TestEverySQLDegradationPersistsTheCompleteAuditFailure(t *testing.T) {
-	for _, testCase := range []struct {
-		name, degraded, retryType, sql, errorText string
-	}{
-		{
-			name: "gate rejection", degraded: service.DegradedInvalidSQL,
-			retryType: service.RetryGateRejection,
-			sql:       "SELECT still_missing FROM memories LIMIT 1", errorText: "still_missing",
-		},
-	} {
-		t.Run(testCase.name, func(t *testing.T) {
-			svc := seededServiceWithScriptedModel(t, []string{testCase.sql, testCase.sql})
-			result := callToolResult(t, connect(t, svc), "roca_sql", map[string]any{
-				"query": "what decisions were made about the long dashes",
-			})
-			if !result.IsError {
-				t.Fatal("degraded query was not surfaced as a tool error")
-			}
-			var record map[string]any
-			raw := readSingleLog(t, svc.DataDir(), logfile.MCPAudit)
-			if err := json.Unmarshal(raw, &record); err != nil {
-				t.Fatal(err)
-			}
-			for _, field := range []string{
-				"error", "error_type", "model_sql", "sql", "fallback_reason",
-				"correlation_id", "duration_ms", "sql_provider_latency_ms",
-				"sql_inference_ms", "sql_retry_inference_ms", "execution_ms",
-			} {
-				if _, exists := record[field]; !exists {
-					t.Errorf("degraded audit omitted %q: %s", field, raw)
-				}
-			}
-			if record["error_type"] != testCase.degraded || record["model_sql"] != testCase.sql ||
-				record["fallback_reason"] != testCase.degraded || record["retry_type"] != testCase.retryType ||
-				!strings.Contains(fmt.Sprint(record["error"]), testCase.errorText) {
-				t.Errorf("degraded audit lost its diagnostic payload: %s", raw)
-			}
-		})
-	}
-}
-
 func readSingleLog(t *testing.T, dataDir, stream string) []byte {
 	t.Helper()
 	matches, err := filepath.Glob(filepath.Join(dataDir, logfile.DirName, stream+"-*.jsonl"))
@@ -379,29 +194,6 @@ func TestMalformedToolCallIsAuditedAsAFailure(t *testing.T) {
 	}
 }
 
-func TestUnavailableLLMIsAuditedAsDegradedNotOK(t *testing.T) {
-	svc := seededServiceWithUnavailableModel(t)
-	result := callToolResult(t, connect(t, svc), "roca_sql", map[string]any{
-		"query": "question no provider can answer",
-	})
-	if !result.IsError {
-		t.Fatal("unavailable LLM did not fail the MCP tool result")
-	}
-	if !strings.Contains(renderedText(result), service.DegradedUnavailable) {
-		t.Fatalf("fixture answered without the unavailable path: %s", renderedText(result))
-	}
-	assertNoStructuredEnvelope(t, result)
-	matches, _ := filepath.Glob(filepath.Join(svc.DataDir(), logfile.DirName, "mcp-audit-*.jsonl"))
-	raw, err := os.ReadFile(matches[0])
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := string(raw)
-	if !strings.Contains(text, `"ok":false`) || !strings.Contains(text, `"degraded":"model_unavailable"`) {
-		t.Fatalf("degraded call was audited optimistically: %s", text)
-	}
-}
-
 func TestTheExecToolRefusesAWriteWithTheGatesVerdict(t *testing.T) {
 	svc := seededService(t)
 	statement := "DELETE FROM memories"
@@ -422,52 +214,6 @@ func TestTheExecToolRefusesAWriteWithTheGatesVerdict(t *testing.T) {
 	if !strings.Contains(refused, "correlation_id") {
 		t.Errorf("the refusal %q cannot be matched to its audit record", refused)
 	}
-}
-
-func TestADegradedQueryIsAnMCPToolErrorWithoutAnEnvelope(t *testing.T) {
-	svc := openServiceWith(t, false, provider.Cascade{Providers: []provider.Provider{
-		fakeModel{sql: "DELETE FROM memories"},
-	}})
-	if _, err := svc.Init(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
-	result, err := connect(t, svc).CallTool(t.Context(), &mcp.CallToolParams{
-		Name: "roca_sql", Arguments: map[string]any{"query": "invalid sql sentinel"},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !result.IsError {
-		t.Fatalf("degraded MCP result = isError %v", result.IsError)
-	}
-	if !strings.Contains(renderedText(result), service.DegradedInvalidSQL) {
-		t.Fatalf("degraded answer omits %q: %s", service.DegradedInvalidSQL, renderedText(result))
-	}
-	assertNoStructuredEnvelope(t, result)
-	audit := string(readSingleLog(t, svc.DataDir(), logfile.MCPAudit))
-	if !strings.Contains(audit, `"sql":"DELETE FROM memories"`) {
-		t.Fatalf("audit lost the model-generated SQL behind the rescue: %s", audit)
-	}
-}
-
-func TestMCPWarningsScrubTheWholeDataDirectoryPrefix(t *testing.T) {
-	providers := provider.Cascade{
-		Providers: []provider.Provider{fakeModel{sql: "SELECT 1 AS n LIMIT 1"}},
-	}
-	svc := openServiceWith(t, false, providers)
-	providers.Warnings = []string{"unknown key in " + filepath.Join(svc.DataDir(), "config.toml")}
-	svc.Close()
-	svc = openServiceWith(t, false, providers)
-	if _, err := svc.Init(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
-	result := callTool(t, connect(t, svc), "roca_query", map[string]any{"query": "count one"})
-	if output := renderedText(result); strings.Contains(output, svc.DataDir()) {
-		t.Errorf("text output leaked data directory %q: %s", svc.DataDir(), output)
-	}
-	assertNoStructuredEnvelope(t, result)
 }
 
 func TestTheExecToolNeverCarriesTheDatabasePath(t *testing.T) {
@@ -550,32 +296,6 @@ func TestHealthThroughThePlugIsTheSameDiagnosis(t *testing.T) {
 
 // A missing argument is the caller's mistake, not the server's: it is answered
 // as a tool error naming the argument, and the session survives it.
-func TestAMissingArgumentIsAToolErrorAndTheSessionSurvives(t *testing.T) {
-	session := connect(t, seededServiceWithModel(t))
-	ctx := context.Background()
-
-	failed, err := session.CallTool(ctx, &mcp.CallToolParams{
-		Name: "roca_query", Arguments: map[string]any{},
-	})
-	if err != nil {
-		t.Fatalf("a missing argument took the protocol down: %v", err)
-	}
-	if !failed.IsError {
-		t.Fatal("a call with no arguments was not answered as a tool error")
-	}
-	if !strings.Contains(strings.ToLower(renderedText(failed)), "query") {
-		t.Errorf("the error %q does not name the missing argument", renderedText(failed))
-	}
-
-	// And a correct call right after it works, which is what "the session is
-	// still alive" means.
-	after := queryThroughThePlug(t, session, map[string]any{
-		"query": "how many memories are there",
-	})
-	if after == "" {
-		t.Error("the session did not survive the mistaken call")
-	}
-}
 
 // The read-only refusal is the service's and the plug only renders it: the two
 // surfaces say the same thing because there is one refusal, not two.
@@ -788,12 +508,12 @@ func readOnlyService(t *testing.T) *service.Service {
 // test so that the read-only reopening lands on the database the first one
 // created.
 func openService(t *testing.T, readOnly bool) *service.Service {
-	return openServiceWith(t, readOnly, provider.Cascade{})
+	return openServiceWith(t, readOnly)
 }
 
 // openServiceWith opens the installation with an optional model cascade, for
 // the tools that need a provider to generate SQL.
-func openServiceWith(t *testing.T, readOnly bool, providers provider.Cascade) *service.Service {
+func openServiceWith(t *testing.T, readOnly bool) *service.Service {
 	t.Helper()
 	dir := theDirectoryOf(t)
 	options := service.Options{
@@ -803,7 +523,6 @@ func openServiceWith(t *testing.T, readOnly bool, providers provider.Cascade) *s
 		Version:   "0.0.0-test",
 		Commit:    "0123456789abcdef",
 		ReadOnly:  readOnly,
-		Providers: providers,
 	}
 	svc, err := service.Open(options)
 	if err != nil {
@@ -812,93 +531,6 @@ func openServiceWith(t *testing.T, readOnly bool, providers provider.Cascade) *s
 	t.Cleanup(func() { svc.Close() })
 	return svc
 }
-
-// fakeModel answers every chat with one canned SELECT, so the model-path tools
-// have a provider to ask in the hermetic fixture.
-type fakeModel struct{ sql string }
-
-func (f fakeModel) Name() string                             { return "fake" }
-func (f fakeModel) ModelID() string                          { return "fake-model" }
-func (f fakeModel) Ready(context.Context) provider.Readiness { return provider.Readiness{Ready: true} }
-func (f fakeModel) Models(context.Context) provider.ModelReport {
-	return provider.ModelReport{Ready: true, Models: []string{"fake-model"}}
-}
-func (f fakeModel) Chat(context.Context, provider.ChatRequest) (provider.ChatResponse, error) {
-	return provider.ChatResponse{Content: f.sql, Provider: "fake", ModelID: "fake-model"}, nil
-}
-
-type scriptedModel struct {
-	answers []string
-	calls   int
-}
-
-func (m *scriptedModel) Name() string    { return "fake" }
-func (m *scriptedModel) ModelID() string { return "fake-model" }
-func (m *scriptedModel) Ready(context.Context) provider.Readiness {
-	return provider.Readiness{Ready: true}
-}
-func (m *scriptedModel) Models(context.Context) provider.ModelReport {
-	return provider.ModelReport{Ready: true, Models: []string{"fake-model"}}
-}
-func (m *scriptedModel) Chat(context.Context, provider.ChatRequest) (provider.ChatResponse, error) {
-	answer := m.answers[min(m.calls, len(m.answers)-1)]
-	m.calls++
-	return provider.ChatResponse{Content: answer, Provider: m.Name(), ModelID: m.ModelID()}, nil
-}
-
-type unavailableModel struct{}
-
-func (unavailableModel) Name() string    { return "unavailable" }
-func (unavailableModel) ModelID() string { return "offline-model" }
-func (unavailableModel) Ready(context.Context) provider.Readiness {
-	return provider.Readiness{Reason: "offline", Action: "start it"}
-}
-func (unavailableModel) Models(context.Context) provider.ModelReport {
-	return provider.ModelReport{Reason: "offline"}
-}
-func (unavailableModel) Chat(context.Context, provider.ChatRequest) (provider.ChatResponse, error) {
-	return provider.ChatResponse{}, fmt.Errorf("must not call an unavailable provider")
-}
-
-func seededServiceWithUnavailableModel(t *testing.T) *service.Service {
-	t.Helper()
-	svc := openServiceWith(t, false, provider.Cascade{Providers: []provider.Provider{unavailableModel{}}})
-	if _, err := svc.Init(context.Background()); err != nil {
-		t.Fatalf("Init: %v", err)
-	}
-	return svc
-}
-
-// seededServiceWithModel is the seeded installation with a model that answers a
-// counting SELECT, for the tools whose contract is producing SQL.
-func seededServiceWithModel(t *testing.T) *service.Service {
-	t.Helper()
-	svc := openServiceWith(t, false, provider.Cascade{Providers: []provider.Provider{
-		fakeModel{sql: "SELECT COUNT(*) AS n FROM memories WHERE supersedes IS NULL LIMIT 1"},
-	}})
-	if _, err := svc.Init(context.Background()); err != nil {
-		t.Fatalf("Init: %v", err)
-	}
-	return svc
-}
-
-func seededServiceWithScriptedModel(t *testing.T, answers []string) *service.Service {
-	t.Helper()
-	model := &scriptedModel{answers: answers}
-	svc := openServiceWith(t, false, provider.Cascade{Providers: []provider.Provider{model}})
-	if _, err := svc.Init(context.Background()); err != nil {
-		t.Fatalf("Init: %v", err)
-	}
-	if _, err := svc.Store(context.Background(), service.StoreRequest{
-		Layer: "project", Content: "the team hates long dashes in generated text",
-		Authorship: service.Authorship{Surface: service.SurfaceMCP},
-	}); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-	return svc
-}
-
-var directories = map[string]string{}
 
 func theDirectoryOf(t *testing.T) string {
 	t.Helper()
@@ -910,3 +542,5 @@ func theDirectoryOf(t *testing.T) string {
 	t.Cleanup(func() { delete(directories, t.Name()) })
 	return dir
 }
+
+var directories = map[string]string{}
