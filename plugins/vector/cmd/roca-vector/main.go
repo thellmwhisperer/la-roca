@@ -425,14 +425,15 @@ func queryCommand(env *environment) *cobra.Command {
 			}
 			defer release()
 			started := time.Now()
-			if result, used, residentErr := env.queryThroughResident(command.Context(), args[0], k, databases, expandTemplates, minScore); used {
-				if residentErr != nil {
-					return residentErr
-				}
-				return printFederatedQuery(env, args[0], k, started, result)
-			}
-			federation, federationErr := env.federationForQuery("")
+			federation, federationErr := env.federationWithEmbedder("", nil, nil)
 			if federationErr == nil {
+				if result, used, residentErr := env.queryThroughResident(command.Context(), args[0], k, databases, expandTemplates, minScore); used {
+					if residentErr != nil {
+						return residentErr
+					}
+					return printFederatedQuery(env, args[0], k, started, result)
+				}
+				federation.Embedder, federation.Events = env.queryEmbedder()
 				var result vector.FederatedQuery
 				if expandTemplates {
 					result, err = federation.QueryExpanded(command.Context(), args[0], k, databases, minScore)

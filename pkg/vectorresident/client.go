@@ -280,6 +280,15 @@ func connectReady(ctx context.Context, opts Options) (*Client, error) {
 // path. A listening legacy resident is left running; this companion then
 // starts its own socket beside it so the query uses live reads.
 func ConnectCurrent(ctx context.Context, opts Options) (*Client, error) {
+	socket, lock := currentQueryPaths(opts)
+	if conn, err := Dial(socket); err == nil {
+		client := NewClient(conn, opts.Status)
+		if err := client.WaitReady(ctx); err != nil {
+			_ = client.Close()
+			return nil, err
+		}
+		return client, nil
+	}
 	client, err := connectReady(ctx, opts)
 	if err != nil {
 		return nil, err
@@ -288,7 +297,7 @@ func ConnectCurrent(ctx context.Context, opts Options) (*Client, error) {
 		return client, nil
 	}
 	_ = client.Close()
-	opts.Socket, opts.Lock = currentQueryPaths(opts)
+	opts.Socket, opts.Lock = socket, lock
 	return connectReady(ctx, opts)
 }
 

@@ -64,6 +64,7 @@ func TestQueryUsesAListeningResidentWithoutLoadingTheEmbedder(t *testing.T) {
 	t.Setenv("ROCA_VECTOR_PLUGIN_ROOT", "")
 	t.Setenv("ROCA_VECTOR_RESIDENT_SOCKET", socket)
 	t.Setenv("ROCA_VECTOR_RESIDENT_BINARY", "")
+	writeResidentQueryRegistry(t, home)
 	var embeds atomic.Int32
 	oldEmbedder := newEmbedder
 	t.Cleanup(func() { newEmbedder = oldEmbedder })
@@ -151,6 +152,8 @@ func TestQueryReplacesAStaleResidentSocket(t *testing.T) {
 	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("ROCA_VECTOR_PLUGIN_ROOT", "")
+	writeResidentQueryRegistry(t, home)
 	t.Setenv("ROCA_VECTOR_RESIDENT_SOCKET", socket)
 	t.Setenv("ROCA_VECTOR_RESIDENT_BINARY", script)
 	oldLaunch := launchWorker
@@ -166,5 +169,56 @@ func TestQueryReplacesAStaleResidentSocket(t *testing.T) {
 	output := executeForOutput(t, env, "--json", "query", "harbor lantern", "3")
 	if !strings.Contains(output, "replaced") {
 		t.Fatalf("stale socket query output = %s", output)
+	}
+}
+
+func writeResidentQueryRegistry(t *testing.T, root string) {
+	t.Helper()
+	t.Setenv("ROCA_VECTOR_ROCA_BINARY", filepath.Join(root, "roca"))
+	plugins := filepath.Join(root, "plugins")
+	if err := os.MkdirAll(plugins, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	registry := `{"schema":2,"databases":[{"plugin":"fixture","database":"ops","path":"ops.db","alias":"ops","tables":[{"name":"memories","id_column":"id","text_columns":["body"]}]}]}`
+	if err := os.WriteFile(filepath.Join(plugins, "vector-registry.json"), []byte(registry), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestQueryWithoutRegistryUsesStandaloneFallback(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix sockets are the shared resident transport")
+	}
+	listener := boundResident(t)
+	var seen atomic.Int32
+	session := residentSession{
+		waitReady: func(context.Context) error { return nil },
+		query: func(context.Context, residentRequest) (any, error) {
+			seen.Add(1)
+			return nil, os.ErrNotExist
+		},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	go func() { _ = serveListeningResident(ctx, listener, time.Minute, session) }()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("ROCA_VECTOR_PLUGIN_ROOT", "")
+	t.Setenv("ROCA_VECTOR_RESIDENT_SOCKET", listener.Addr().String())
+	t.Setenv("ROCA_VECTOR_ROCA_BINARY", filepath.Join(home, "roca"))
+	oldLaunch := launchWorker
+	t.Cleanup(func() { launchWorker = oldLaunch })
+	launchWorker = func(vector.LaunchRequest) (vector.LaunchResult, error) {
+		return vector.LaunchResult{}, nil
+	}
+	env := &environment{dbPath: filepath.Join(home, "roca.db"), stateDir: filepath.Join(home, "state")}
+	command := rootCommand(env)
+	command.SetArgs([]string{"query", "harbor lantern", "3"})
+	err := command.ExecuteContext(ctx)
+	if err == nil || err.Error() != "vector search is not installed; run `roca vector install`" {
+		t.Fatalf("standalone query error = %v", err)
+	}
+	if seen.Load() != 0 {
+		t.Fatalf("standalone query reached the federated resident %d times", seen.Load())
 	}
 }

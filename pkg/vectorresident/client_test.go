@@ -156,11 +156,11 @@ func TestQueryOnceSkipsLegacyResident(t *testing.T) {
 	if err := os.Chmod(filepath.Dir(primary), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	var legacyHits, currentHits atomic.Int32
-	listenTestResident(t, primary, nil, &legacyHits, `{"legacy":true}`)
+	var legacyConnections, currentConnections atomic.Int32
+	listenTestResident(t, primary, nil, &legacyConnections, `{"legacy":true}`)
 	listenTestResident(t, primary+".current", map[string]any{
 		"query_options": []any{"expand_templates", "min_score"},
-	}, &currentHits, `{"current":true}`)
+	}, &currentConnections, `{"current":true}`)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	raw, err := QueryOnce(ctx, Options{DataDir: dir}, Request{Query: "harbor lantern", K: 3})
@@ -170,15 +170,15 @@ func TestQueryOnceSkipsLegacyResident(t *testing.T) {
 	if !bytes.Contains(raw, []byte(`"current":true`)) {
 		t.Fatalf("result = %s", raw)
 	}
-	if currentHits.Load() != 1 {
-		t.Fatalf("current hits = %d, want 1", currentHits.Load())
+	if currentConnections.Load() != 1 {
+		t.Fatalf("current connections = %d, want 1", currentConnections.Load())
 	}
-	if legacyHits.Load() != 0 {
-		t.Fatalf("legacy hits = %d, want 0", legacyHits.Load())
+	if legacyConnections.Load() != 0 {
+		t.Fatalf("legacy connections = %d, want 0", legacyConnections.Load())
 	}
 }
 
-func listenTestResident(t *testing.T, socket string, extra map[string]any, hits *atomic.Int32, result string) {
+func listenTestResident(t *testing.T, socket string, extra map[string]any, connections *atomic.Int32, result string) {
 	t.Helper()
 	_ = os.Remove(socket)
 	listener, err := net.Listen("unix", socket)
@@ -198,6 +198,7 @@ func listenTestResident(t *testing.T, socket string, extra map[string]any, hits 
 			if err != nil {
 				return
 			}
+			connections.Add(1)
 			go func(conn net.Conn) {
 				defer conn.Close()
 				encoder := json.NewEncoder(conn)
@@ -206,7 +207,6 @@ func listenTestResident(t *testing.T, socket string, extra map[string]any, hits 
 				if err := json.NewDecoder(conn).Decode(&request); err != nil {
 					return
 				}
-				hits.Add(1)
 				_ = encoder.Encode(map[string]any{
 					"kind": "result", "stage": "query", "id": request["id"],
 					"result": json.RawMessage(result),
@@ -214,16 +214,4 @@ func listenTestResident(t *testing.T, socket string, extra map[string]any, hits 
 			}(conn)
 		}
 	}()
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		conn, err := Dial(socket)
-		if err == nil {
-			_ = conn.Close()
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("resident was not listening on %s: %v", socket, err)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
 }
