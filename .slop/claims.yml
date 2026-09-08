@@ -32,6 +32,10 @@ claims:
     contract:
       file: features/store/write.feature
       item: "Store writes one memory with layer, origin and project"
+  internal/distribution/cli/migrate.go:
+    contract:
+      file: features/distribution/cli.feature
+      item: "Help lists every command with one honest line each"
   internal/distribution/cli/models.go:
     contract:
       file: features/distribution/cli.feature

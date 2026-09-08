@@ -49,27 +49,13 @@ func TestShadowCLIComparesTheHubAfterExplicitMigration(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(corePath), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	core, err := store.Open(corePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.ApplySchema(t.Context(), core); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := core.SQL().Exec(`INSERT INTO memories
-		(id, layer, content, origin) VALUES (29, 'project', 'Synthetic shadow custody marker', 'agent')`); err != nil {
-		t.Fatal(err)
-	}
-	if err := core.Close(); err != nil {
-		t.Fatal(err)
-	}
+	env := seedLayoutCore(t, corePath, `INSERT INTO memories
+		(id, layer, content, origin) VALUES (29, 'project', 'Synthetic shadow custody marker', 'agent')`)
 	if err := os.WriteFile(filepath.Join(filepath.Dir(corePath), "config.toml"),
 		[]byte("[layout]\nserving = \"shadow-equal\"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	env := &cliEnv{dbPath: corePath, out: io.Discard, errOut: io.Discard,
-		build: Build{Version: "v-test", Commit: "fixture"}}
 	if code, err := executeWithEnv(env, []string{"--db-path", corePath, "migrate"}, nil); err != nil || code != 0 {
 		t.Fatalf("explicit migration: code=%d err=%v", code, err)
 	}
@@ -158,36 +144,12 @@ func TestCutoverCLIRejectsUnfinishedDestinationCustody(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	corePath := filepath.Join(home, "roca.db")
-	core, err := store.Open(corePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.ApplySchema(t.Context(), core); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := core.SQL().Exec(`INSERT INTO memories(layer, content, origin)
-		VALUES ('project', 'cutover readiness marker', 'agent')`); err != nil {
-		t.Fatal(err)
-	}
-	if err := core.Close(); err != nil {
-		t.Fatal(err)
-	}
-	env := &cliEnv{dbPath: corePath, out: io.Discard, errOut: io.Discard,
-		build: Build{Version: "v-test", Commit: "fixture"}}
+	env := seedLayoutCore(t, corePath, `INSERT INTO memories(layer, content, origin)
+		VALUES ('project', 'cutover readiness marker', 'agent')`)
 	if code, err := executeWithEnv(env, []string{"--db-path", corePath, "migrate"}, nil); err != nil || code != 0 {
 		t.Fatalf("explicit migration: code=%d err=%v", code, err)
 	}
-	paths, err := env.resolvePaths()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(paths.Config, []byte("[layout]\nserving = \"cutover\"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	snapshots := filepath.Join(paths.Backups, "data-split")
-	if err := os.Rename(snapshots, snapshots+"-offline"); err != nil {
-		t.Fatal(err)
-	}
+	selectCutoverWithoutSnapshots(t, env)
 	for _, probe := range []struct{ plugin, database, migration string }{
 		{rocaops.Name, rocaops.DatabaseFilename, "data2-memory-custody"},
 		{rocacorpus.Name, rocacorpus.DatabaseFilename, "corpus-archive-reconciliation-v1"},
@@ -198,16 +160,7 @@ func TestCutoverCLIRejectsUnfinishedDestinationCustody(t *testing.T) {
 			if _, err := db.Exec(`UPDATE plugin_migrations SET migration_state = 'batch-in-progress' WHERE migration = ?`, probe.migration); err != nil {
 				t.Fatal(err)
 			}
-			for _, readOnly := range []bool{false, true} {
-				env.forceReadOnly = readOnly
-				svc, _, err := env.openService()
-				if svc != nil {
-					svc.Close()
-				}
-				if err == nil || !strings.Contains(err.Error(), "roca migrate") {
-					t.Fatalf("unfinished custody readOnly=%t: %v", readOnly, err)
-				}
-			}
+			assertLayoutRequiresMigration(t, env)
 			if _, err := db.Exec(`UPDATE plugin_migrations SET migration_state = 'verified' WHERE migration = ?`, probe.migration); err != nil {
 				t.Fatal(err)
 			}
@@ -227,22 +180,8 @@ func TestCutoverCLIRejectsInterruptedLegacyCustody(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	corePath := filepath.Join(home, "roca.db")
-	core, err := store.Open(corePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.ApplySchema(t.Context(), core); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := core.SQL().Exec(`CREATE TABLE garden_channels (id INTEGER PRIMARY KEY, name TEXT);
-		INSERT INTO garden_channels VALUES (1, 'interrupted garden')`); err != nil {
-		t.Fatal(err)
-	}
-	if err := core.Close(); err != nil {
-		t.Fatal(err)
-	}
-	env := &cliEnv{dbPath: corePath, out: io.Discard, errOut: io.Discard,
-		build: Build{Version: "v-test", Commit: "fixture"}}
+	env := seedLayoutCore(t, corePath, `CREATE TABLE garden_channels (id INTEGER PRIMARY KEY, name TEXT);
+		INSERT INTO garden_channels VALUES (1, 'interrupted garden')`)
 	paths, err := env.resolvePaths()
 	if err != nil {
 		t.Fatal(err)
@@ -267,23 +206,8 @@ func TestCutoverCLIRejectsInterruptedLegacyCustody(t *testing.T) {
 	if ready, err := corpusarchive.CutoverEligible(t.Context(), filepath.Join(root, rocacorpus.Name, rocacorpus.DatabaseFilename)); err != nil || !ready {
 		t.Fatalf("DATA-3 readiness: ready=%t err=%v", ready, err)
 	}
-	if err := os.WriteFile(paths.Config, []byte("[layout]\nserving = \"cutover\"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	snapshots := filepath.Join(paths.Backups, "data-split")
-	if err := os.Rename(snapshots, snapshots+"-offline"); err != nil {
-		t.Fatal(err)
-	}
-	for _, readOnly := range []bool{false, true} {
-		env.forceReadOnly = readOnly
-		svc, _, err := env.openService()
-		if svc != nil {
-			svc.Close()
-		}
-		if err == nil || !strings.Contains(err.Error(), "roca migrate") {
-			t.Fatalf("unfinished DATA-4 readOnly=%t: %v", readOnly, err)
-		}
-	}
+	snapshots := selectCutoverWithoutSnapshots(t, env)
+	assertLayoutRequiresMigration(t, env)
 	var count int
 	if err := ops.QueryRow(`SELECT COUNT(*) FROM legacy_records`).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("ordinary open imported records: count=%d err=%v", count, err)
@@ -311,5 +235,55 @@ func TestCutoverCLIRejectsInterruptedLegacyCustody(t *testing.T) {
 	}
 	if err := ops.QueryRow(`SELECT COUNT(*) FROM legacy_records`).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("resumed legacy records: count=%d err=%v", count, err)
+	}
+}
+
+// seedLayoutCore owns the legacy database setup shared by migration cases.
+func seedLayoutCore(t *testing.T, corePath, seedSQL string) *cliEnv {
+	t.Helper()
+	core, err := store.Open(corePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ApplySchema(t.Context(), core); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := core.SQL().Exec(seedSQL); err != nil {
+		t.Fatal(err)
+	}
+	if err := core.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return &cliEnv{dbPath: corePath, out: io.Discard, errOut: io.Discard,
+		build: Build{Version: "v-test", Commit: "fixture"}}
+}
+
+func selectCutoverWithoutSnapshots(t *testing.T, env *cliEnv) string {
+	t.Helper()
+	paths, err := env.resolvePaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.Config, []byte("[layout]\nserving = \"cutover\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	snapshots := filepath.Join(paths.Backups, "data-split")
+	if err := os.Rename(snapshots, snapshots+"-offline"); err != nil {
+		t.Fatal(err)
+	}
+	return snapshots
+}
+
+func assertLayoutRequiresMigration(t *testing.T, env *cliEnv) {
+	t.Helper()
+	for _, readOnly := range []bool{false, true} {
+		env.forceReadOnly = readOnly
+		svc, _, err := env.openService()
+		if svc != nil {
+			svc.Close()
+		}
+		if err == nil || !strings.Contains(err.Error(), "roca migrate") {
+			t.Fatalf("unfinished custody readOnly=%t: %v", readOnly, err)
+		}
 	}
 }
