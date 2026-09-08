@@ -79,7 +79,7 @@ rows in the playground; agents narrate from the rows themselves.
 
 ## Which databases a question sees
 
-`roca query`, `roca explore`, and `roca vector query` default to every attached
+`roca query` and `roca explore` default to every attached
 plugin database (the whole installed federation), together with the core
 compatibility store. Searching operational memories does not require naming
 `ops`. `--databases` narrows that set: `--databases corpus`, `--databases
@@ -87,6 +87,9 @@ corpus,ops`, or `--databases all` for every attached database. Include `core`
 explicitly when a named deterministic set needs it. Unknown names fail and list
 what is attached. Routing does not guess relevance. It does not auto-select a
 plugin from the wording.
+
+Vector coverage for `roca vector query` and the hybrid vector leg follows
+`docs/vector.md#first-query`.
 
 The SQL seat sees tables only for the selected databases. It also sees an
 inventory of the other attached names, but not their tables, when they are held

@@ -156,7 +156,14 @@ func serveFakeResidentSession(in io.Reader, out io.Writer) {
 		}
 		_ = encoder.Encode(map[string]any{
 			"kind": "result", "stage": "query", "id": request.ID,
-			"result": map[string]any{"hit": request.Query, "k": request.K},
+			"result": map[string]any{
+				"hit": request.Query, "k": request.K,
+				"databases": []string{"ops"}, "vector_executed": true,
+				"results": []map[string]any{{
+					"rank": 1, "score": 0.5, "database": "ops", "table": "memories",
+					"id": "1", "source": "memories", "source_id": "1", "text": request.Query,
+				}},
+			},
 		})
 	}
 }

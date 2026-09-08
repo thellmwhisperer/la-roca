@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/thellmwhisperer/la-roca-vector/internal/engine"
+	"github.com/thellmwhisperer/la-roca-vector/internal/model"
 	"github.com/thellmwhisperer/la-roca-vector/internal/vector"
 )
 
@@ -21,11 +22,13 @@ const defaultResidentIdle = 5 * time.Minute
 var errResidentUnusable = errors.New("semantic search resident is unusable")
 
 type residentRequest struct {
-	ID        int64  `json:"id"`
-	Op        string `json:"op"`
-	Query     string `json:"query"`
-	K         int    `json:"k"`
-	Databases string `json:"databases,omitempty"`
+	ID              int64   `json:"id"`
+	Op              string  `json:"op"`
+	Query           string  `json:"query"`
+	K               int     `json:"k"`
+	Databases       string  `json:"databases,omitempty"`
+	ExpandTemplates bool    `json:"expand_templates,omitempty"`
+	MinScore        float64 `json:"min_score,omitempty"`
 }
 
 type residentSession struct {
@@ -85,7 +88,7 @@ func newResidentSession(ctx context.Context, env *environment) (residentSession,
 
 func residentSessionWithEmbedder(ctx context.Context, env *environment, embedder vector.Embedder, events engine.Sink) (residentSession, error) {
 	started := time.Now()
-	if err := prewarmEmbedder(ctx, embedder); err != nil {
+	if err := prewarmEmbedder(ctx, embedder); err != nil && !errors.Is(err, model.ErrNotDownloaded) {
 		return residentSession{}, err
 	}
 	extra := map[string]any{"prewarm_ms": time.Since(started).Milliseconds()}
@@ -100,7 +103,13 @@ func residentSessionWithEmbedder(ctx context.Context, env *environment, embedder
 			if err != nil {
 				return nil, err
 			}
-			result, queryErr := federation.Query(ctx, request.Query, request.K, request.Databases)
+			var result vector.FederatedQuery
+			var queryErr error
+			if request.ExpandTemplates {
+				result, queryErr = federation.QueryExpanded(ctx, request.Query, request.K, request.Databases, request.MinScore)
+			} else {
+				result, queryErr = federation.Query(ctx, request.Query, request.K, request.Databases)
+			}
 			if terminalErr := residentTerminalError(embedder); terminalErr != nil {
 				return result, fmt.Errorf("%w: %w", errResidentUnusable, terminalErr)
 			}
@@ -121,7 +130,11 @@ func serveResidentSession(ctx context.Context, rw io.ReadWriter, session residen
 		return fmt.Errorf("%w: %w", errResidentUnusable, err)
 	} else {
 		event := engine.Result("prewarm", "semantic search: ready")
-		event.Extra = session.extra
+		event.Extra = make(map[string]any, len(session.extra)+1)
+		for key, value := range session.extra {
+			event.Extra[key] = value
+		}
+		event.Extra["query_options"] = []string{"expand_templates", "min_score"}
 		if err := encoder.Encode(event); err != nil {
 			return err
 		}
@@ -143,9 +156,11 @@ func serveResidentSession(ctx context.Context, rw io.ReadWriter, session residen
 		}
 		queryStarted := time.Now()
 		result, queryErr := session.query(ctx, request)
+		elapsed := time.Since(queryStarted).Milliseconds()
+		fmt.Fprintf(os.Stderr, "semantic search: answered query in %dms\n", elapsed)
 		response := map[string]any{
 			"kind": engine.KindResult, "stage": "query", "id": request.ID,
-			"elapsed_ms": time.Since(queryStarted).Milliseconds(), "result": result,
+			"elapsed_ms": elapsed, "result": result,
 		}
 		if queryErr != nil {
 			response["kind"] = engine.KindError
