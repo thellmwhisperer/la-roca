@@ -72,6 +72,7 @@ orphan_scopes:
     ignore:
       - "**/*_test.go"
       # Internal doctor helpers; models.go owns the command registration.
+      - "internal/distribution/cli/doctor_snapshots.go"
       - "internal/distribution/cli/doctor_vector.go"
       - "internal/distribution/cli/execution_log.go"
       - "internal/distribution/cli/ingest_progress.go"
@@ -92,6 +93,7 @@ claims:
       files: ["internal/distribution/cli/*.go"]
       ignore:
         - "**/*_test.go"
+        - "internal/distribution/cli/doctor_snapshots.go"
         - "internal/distribution/cli/doctor_vector.go"
         - "internal/distribution/cli/execution_log.go"
         - "internal/distribution/cli/ingest_progress.go"

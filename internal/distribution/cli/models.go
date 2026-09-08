@@ -30,8 +30,9 @@ const (
 
 type doctorReport struct {
 	service.DoctorReport
-	QueryFailures logfile.QueryFailureSummary `json:"query_failures"`
-	Vector        *vectorDoctorReport         `json:"vector,omitempty"`
+	QueryFailures     logfile.QueryFailureSummary `json:"query_failures"`
+	Vector            *vectorDoctorReport         `json:"vector,omitempty"`
+	ReadOnlySnapshots leftoverSnapshots           `json:"read_only_snapshots"`
 }
 
 func doctorCommand(env *cliEnv) *cobra.Command {
@@ -45,7 +46,9 @@ func doctorCommand(env *cliEnv) *cobra.Command {
 			"through their own CLIs; La Roca stores no secrets.\n\n" +
 			"`roca doctor --report` writes a privacy-safe support snapshot for pasting\n" +
 			"into a chat or issue. It is read-only: it never installs plugins, never\n" +
-			"adopts schema, and never changes the serving marker.",
+			"adopts schema, and never changes the serving marker. Interactive doctor\n" +
+			"also reports leftover read-only snapshot copies under the temp root and\n" +
+			"offers to delete the abandoned ones.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if support {
 				env.skipExecutionLog = true
@@ -74,13 +77,18 @@ func doctorCommand(env *cliEnv) *cobra.Command {
 						"query failure log could not be read: "+logErr.Error())
 				}
 				answer := doctorReport{DoctorReport: report, QueryFailures: failures,
-					Vector: env.collectVectorDoctor(cmd.Context())}
+					Vector:            env.collectVectorDoctor(cmd.Context()),
+					ReadOnlySnapshots: collectSnapshotDoctor()}
 				if env.json {
 					return env.printJSON(answer)
 				}
 				renderDoctor(env, report)
 				renderVectorDoctor(env, answer.Vector)
+				renderSnapshotDoctor(env, answer.ReadOnlySnapshots)
 				renderQueryFailures(env, failures)
+				if err := env.offerSnapshotCleanup(cmd, answer.ReadOnlySnapshots); err != nil {
+					return err
+				}
 				if terminalInput(cmd.InOrStdin()) && !env.skipReconciliation {
 					_, err = env.reconcileCapabilities(cmd, true, true)
 				}
