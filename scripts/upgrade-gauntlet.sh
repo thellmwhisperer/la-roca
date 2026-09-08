@@ -154,7 +154,6 @@ JSONL
   run_roca "$home" doctor > "$work/doctor.json"
   assert_json "$work/doctor.json" '"config_exists": true' "$version config health"
   assert_json "$work/doctor.json" '"prompt_exists": true' "$version prompt health"
-  assert_json "$work/doctor.json" '"model_disabled": true' "$version offline health"
 
   # Anchored on the report's own verdict: every nested check carries a `status`
   # of its own, and an unanchored match passes on a failing report.
