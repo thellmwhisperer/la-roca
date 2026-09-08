@@ -2,15 +2,16 @@ package cli
 
 import (
 	"database/sql"
-	"github.com/thellmwhisperer/la-roca/internal/provider/query"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/thellmwhisperer/la-roca/internal/distribution/corpusarchive"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
+	"github.com/thellmwhisperer/la-roca/internal/provider/query"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 	"github.com/thellmwhisperer/la-roca/internal/store"
 	_ "modernc.org/sqlite"
@@ -219,5 +220,96 @@ func TestCutoverCLIRejectsUnfinishedDestinationCustody(t *testing.T) {
 	}
 	if err := svc.Close(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCutoverCLIRejectsInterruptedLegacyCustody(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	corePath := filepath.Join(home, "roca.db")
+	core, err := store.Open(corePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ApplySchema(t.Context(), core); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := core.SQL().Exec(`CREATE TABLE garden_channels (id INTEGER PRIMARY KEY, name TEXT);
+		INSERT INTO garden_channels VALUES (1, 'interrupted garden')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := core.Close(); err != nil {
+		t.Fatal(err)
+	}
+	env := &cliEnv{dbPath: corePath, out: io.Discard, errOut: io.Discard,
+		build: Build{Version: "v-test", Commit: "fixture"}}
+	paths, err := env.resolvePaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := pluginRoot(paths)
+	if _, err := rocaops.Ensure(root, pluginExecutableDir(paths), env.build.Version); err != nil {
+		t.Fatal(err)
+	}
+	opsPath := filepath.Join(root, rocaops.Name, rocaops.DatabaseFilename)
+	ops := openLayoutDatabase(t, opsPath)
+	defer ops.Close()
+	if _, err := ops.Exec(`CREATE TRIGGER interrupt_legacy BEFORE INSERT ON legacy_records
+		BEGIN SELECT RAISE(ABORT, 'synthetic legacy interruption'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if code, err := executeWithEnv(env, []string{"--db-path", corePath, "migrate"}, nil); code == 0 || err == nil || !strings.Contains(err.Error(), "synthetic legacy interruption") {
+		t.Fatalf("legacy interruption: code=%d err=%v", code, err)
+	}
+	if ready, err := rocaops.MemoryCustodyCutoverEligible(t.Context(), opsPath); err != nil || !ready {
+		t.Fatalf("DATA-2 readiness: ready=%t err=%v", ready, err)
+	}
+	if ready, err := corpusarchive.CutoverEligible(t.Context(), filepath.Join(root, rocacorpus.Name, rocacorpus.DatabaseFilename)); err != nil || !ready {
+		t.Fatalf("DATA-3 readiness: ready=%t err=%v", ready, err)
+	}
+	if err := os.WriteFile(paths.Config, []byte("[layout]\nserving = \"cutover\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	snapshots := filepath.Join(paths.Backups, "data-split")
+	if err := os.Rename(snapshots, snapshots+"-offline"); err != nil {
+		t.Fatal(err)
+	}
+	for _, readOnly := range []bool{false, true} {
+		env.forceReadOnly = readOnly
+		svc, _, err := env.openService()
+		if svc != nil {
+			svc.Close()
+		}
+		if err == nil || !strings.Contains(err.Error(), "roca migrate") {
+			t.Fatalf("unfinished DATA-4 readOnly=%t: %v", readOnly, err)
+		}
+	}
+	var count int
+	if err := ops.QueryRow(`SELECT COUNT(*) FROM legacy_records`).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("ordinary open imported records: count=%d err=%v", count, err)
+	}
+	if err := os.Rename(snapshots+"-offline", snapshots); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ops.Exec(`DROP TRIGGER interrupt_legacy`); err != nil {
+		t.Fatal(err)
+	}
+	env.forceReadOnly = false
+	if code, err := executeWithEnv(env, []string{"--db-path", corePath, "migrate"}, nil); code != 0 || err != nil {
+		t.Fatalf("resume legacy migration: code=%d err=%v", code, err)
+	}
+	if err := os.Rename(snapshots, snapshots+"-offline"); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"exec", "SELECT COUNT(*) FROM plugin_roca_ops.legacy_records"},
+		{"--read-only", "exec", "SELECT COUNT(*) FROM plugin_roca_ops.legacy_records"},
+	} {
+		if code, err := executeWithEnv(env, append([]string{"--db-path", corePath}, args...), nil); code != 0 || err != nil {
+			t.Fatalf("verified DATA-4 without snapshots: code=%d err=%v", code, err)
+		}
+	}
+	if err := ops.QueryRow(`SELECT COUNT(*) FROM legacy_records`).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("resumed legacy records: count=%d err=%v", count, err)
 	}
 }

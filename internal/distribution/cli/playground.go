@@ -86,8 +86,6 @@ func (env *cliEnv) preparePlayground(paths config.Paths) error {
 	root := filepath.Join(paths.Home, config.DirOwn, "plugins")
 	hub := datasplit.HubOptions{
 		CoreDatabase: paths.DB,
-		SnapshotDir:  filepath.Join(paths.Backups, "data-split"),
-		LockPath:     logfile.New(filepath.Dir(paths.DB)).LockPath(),
 	}
 	ops, err := rocaops.Ensure(root, pluginExecutableDir(paths), env.build.Version)
 	if err != nil {
@@ -110,14 +108,12 @@ func (env *cliEnv) preparePlayground(paths config.Paths) error {
 		return fmt.Errorf("install bundled cron plugin for DATA SPLIT: %w", err)
 	}
 	hub.CronDatabase = filepath.Join(cron.Directory, rocacron.DatabaseFilename)
-	_, prepareErr := datasplit.PrepareHub(context.Background(), hub)
-	if prepareErr != nil {
-		if rollbackErr := config.SetServingLayout(paths.Config, config.LayoutLegacyServing); rollbackErr != nil {
-			return errors.Join(prepareErr,
-				fmt.Errorf("roll back the DATA SPLIT serving marker: %w", rollbackErr))
-		}
-		return fmt.Errorf("prepare the federation hub; serving marker returned to legacy-serving: %w",
-			prepareErr)
+	ready, err := datasplit.HubCutoverEligible(context.Background(), hub)
+	if err != nil {
+		return fmt.Errorf("inspect DATA SPLIT readiness; run `roca migrate`: %w", err)
+	}
+	if !ready {
+		return fmt.Errorf("DATA SPLIT custody is unfinished; run `roca migrate`")
 	}
 	return nil
 }
