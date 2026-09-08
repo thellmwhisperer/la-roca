@@ -20,11 +20,9 @@ Rules every brief and review must follow:
 - Read-only means SQLite `mode=ro`, never a copy.
 - Reuse the OS, SQLite and the standard library before writing an equivalent.
 
-Adjacent features already found are recorded as dragons in
-[`.slop/dragons/`](.slop/dragons/README.md). `make slop` fails when a
-`removed` record's `forbid` path, symbol or string is back in the tree. The
-acceptance harness runs a `cost` group against a lab fixture (`make check`);
-it never measures the operator's live federation.
+Adjacent features already found are recorded in the
+[dragon registry](.slop/dragons/README.md), which owns removal rules and gate
+scope. See [Build and test](#build-and-test) for cost-check mechanics.
 
 ## Public text
 
@@ -57,6 +55,7 @@ make accept-index
 make e2e-smoke
 make upgrade-gauntlet
 make split-oracle
+make playground-test
 make dist
 ```
 
@@ -67,18 +66,28 @@ forbids). Godog acceptance contracts live directly under
 discovered automatically, and `make accept-index` rejects any other layout. The
 acceptance harnesses are compiled only with the `acceptance` build tag.
 
-`make accept` (also part of `make check`) and `make split-oracle` build the
-optional playground fixture through `make playground-fixture`. That target
-clones the plugin repository into `PLAYGROUND_DIR` when absent and builds it
-against this checkout; the defaults and selected ref live in `Makefile`.
-`make playground-test` additionally runs the plugin's checks and paired S1 cost
-measurement on synthetic fixtures. Set `ROCA_PUBLISHED_BIN` to the published
-`v1.82.6` executable for the before/after comparison; the measurement writes
-evidence under `.tmp/playground-evidence`.
-For S1, the pipeline test step must retain both `published.json` and `branch.json`
-as evidence artifacts. A transcript of only the new binary is incomplete.
-The published executable can be downloaded from the `v1.82.6` GitHub release;
-run it only with the synthetic home supplied by `TestCostPlayground`.
+`make accept` (also part of `make check`) and `make split-oracle` run without
+an external playground checkout or network service. Core exercises the optional
+plugin's argv, errors, audit and diagnostic contracts with small local fake
+executables. `make playground-test` runs these local fake-executable and
+plugin-absence contracts directly, including custody and diagnostics, without
+building the native vector payload or requiring a published binary.
+Human answering scenarios belong to the playground repository.
+`make playground-integration` separately downloads the pinned `v0.1.1` release
+through the real `roca plugin install` flow and verifies a synthetic SQL result.
+
+`make playground-evidence ROCA_PUBLISHED_BIN=<pinned-v1.82.6-binary>` retains the
+published-versus-branch S1 extraction evidence under `.tmp/playground-evidence`.
+It is a separate opt-in comparison on synthetic homes, never a mutable
+`make check` dependency. It requires an explicit executable, validates its
+v1.82.6 version, and fails if the published comparison does not execute.
+
+The D1 acceptance denies temporary copies throughout the read-only operation
+and checks durable database digests, allowing SQLite SHM. Synthetic vector
+latency tests live in `plugins/vector/internal/vector/status_issue336_test.go`:
+they require a completed nonempty indexing pass and an actual query result
+before judging latency in the process doing the work. They do not claim to
+measure native model residency or bytes read. There are no expected-fail costs.
 
 `make e2e-smoke` isolates the real-binary operator path in a disposable `HOME`
 and covers init, ingest, query, plugin install, and plugin update. It is also
@@ -89,13 +98,15 @@ upgrades the committed homes of older releases through the binary you just
 built. [Releases](docs/releases.md#schema-migration-definition-of-done) explains
 when a change owes the gauntlet a new frozen home.
 
-`make split-oracle` replays the DATA SPLIT compatibility oracle on its own, the
-executable definition of zero behavior change for CLI and MCP users that
+`make split-oracle` replays the core DATA SPLIT compatibility cases on their own,
+the executable definition of zero behavior change for core CLI and MCP users that
 `make check` already runs with the rest of the acceptance suite. It drives the
 binary you just built against a fully synthetic fixture, normalizes away run
 noise (timestamps, durations, correlation ids, home paths, and the build's own
 version and source sha), and compares the recording against the goldens in
-`testdata/data-split-oracle/`.
+`testdata/data-split-oracle/`. The full digest-pinned archive is retained;
+core excludes the extracted inference cases from comparison. Human answering
+scenarios belong to the playground repository, as described above.
 The oracle never reads a real `~/.roca` database and never writes user data: it
 records into a temporary home and keeps the recording under the project's
 `.tmp/` only when it differs from the golden. A difference is reported, never

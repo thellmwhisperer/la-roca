@@ -46,6 +46,11 @@ func Run(ctx context.Context, args []string, in io.Reader, out, stderr io.Writer
 	if err != nil {
 		return nil, err
 	}
+	return RunExecutable(ctx, path, args, in, out, stderr)
+}
+
+// RunExecutable forwards once to the already resolved companion.
+func RunExecutable(ctx context.Context, path string, args []string, in io.Reader, out, stderr io.Writer) (*service.QueryResult, error) {
 	cmd := exec.CommandContext(ctx, path, args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = in, out, stderr
 	if len(args) > 0 && (args[0] == "model" || args[0] == "models" || args[0] == "login") {
@@ -54,7 +59,7 @@ func Run(ctx context.Context, args []string, in io.Reader, out, stderr io.Writer
 	var wire bytes.Buffer
 	cmd.Args = append([]string{path, "--transport"}, args...)
 	cmd.Stderr = &wire
-	err = cmd.Run()
+	err := cmd.Run()
 	var audit Audit
 	if decodeErr := json.Unmarshal(wire.Bytes(), &audit); decodeErr != nil {
 		_, _ = stderr.Write(wire.Bytes())
