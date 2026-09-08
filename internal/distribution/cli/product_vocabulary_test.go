@@ -57,9 +57,10 @@ func TestProductVocabularyIsFreeOfInternalRoles(t *testing.T) {
 			}
 			return nil
 		}
+		// Go tests contain fixture data rather than authored product copy.
 		// Release Please generates CHANGELOG.md from commit history; it is not
 		// authored product copy owned by this source-tree vocabulary check.
-		if entry.Name() == ".git" || filepath.Clean(path) == filepath.Clean(here) ||
+		if entry.Name() == ".git" || strings.HasSuffix(entry.Name(), "_test.go") ||
 			filepath.Clean(path) == filepath.Join(root, "CHANGELOG.md") {
 			return nil
 		}

@@ -20,15 +20,19 @@ const (
 	StateOutdated = "outdated"
 	StateUnknown  = "unknown"
 
-	statusBusyTimeoutMS  = 250
-	statusCountTimeout   = time.Second
-	statusOverallTimeout = 3 * time.Second
+	IndexLockLive   = "live"
+	IndexLockStale  = "stale"
+	IndexLockAbsent = "absent"
+
+	statusBusyTimeoutMS  = 2000
+	statusCountTimeout   = 5 * time.Second
+	statusOverallTimeout = 8 * time.Second
 	workerActivityFile   = ".worker-status.json"
 	sourceMarkerMetaKey  = "source_marker"
 )
 
 var (
-	candidateCountTimeout = 500 * time.Millisecond
+	candidateCountTimeout = 2 * time.Second
 	countDeclaredChunks   = readDeclaredChunkCount
 	statVectorFile        = os.Stat
 	workerActivityMu      sync.Mutex
@@ -54,14 +58,17 @@ type WorkerStatus struct {
 }
 
 type DatabaseVectorization struct {
-	Plugin          string   `json:"plugin"`
-	Database        string   `json:"database"`
-	Tables          []string `json:"tables"`
-	EmbeddedChunks  *int64   `json:"embedded_chunks"`
-	CandidateChunks *int64   `json:"candidate_chunks"`
-	SidecarBytes    *int64   `json:"sidecar_bytes"`
-	LastWrite       *string  `json:"last_write"`
-	State           string   `json:"state"`
+	Plugin             string   `json:"plugin"`
+	Database           string   `json:"database"`
+	Tables             []string `json:"tables"`
+	EmbeddedChunks     *int64   `json:"embedded_chunks"`
+	CandidateChunks    *int64   `json:"candidate_chunks"`
+	SidecarBytes       *int64   `json:"sidecar_bytes"`
+	LastWrite          *string  `json:"last_write"`
+	State              string   `json:"state"`
+	IndexLock          string   `json:"index_lock,omitempty"`
+	CompactRecommended bool     `json:"compact_recommended"`
+	EmbeddingPages     *int64   `json:"embedding_pages,omitempty"`
 }
 
 func ReportVectorization(ctx context.Context, req StatusRequest) (Vectorization, error) {
@@ -128,6 +135,7 @@ func inspectDatabase(ctx context.Context, pluginRoot string, database vectorData
 	sidecarPath := SidecarPath(sourcePath)
 	facts, statErr := sidecarFileFacts(sidecarPath)
 	row.SidecarBytes, row.LastWrite = facts.Bytes, facts.LastWrite
+	row.IndexLock = inspectIndexLock(sidecarPath)
 	candidate := boundedCandidateCount(ctx, database, sourcePath)
 	if statErr != nil {
 		return row
@@ -135,6 +143,7 @@ func inspectDatabase(ctx context.Context, pluginRoot string, database vectorData
 	if !facts.Exists {
 		row.CandidateChunks = candidateCountForMarker(candidate, currentSourceMarker(sourcePath))
 		row.State = StateEmpty
+		row.IndexLock = IndexLockAbsent
 		return row
 	}
 	store, err := openSQLiteBusy(sidecarPath, true, statusBusyTimeoutMS)
@@ -147,6 +156,7 @@ func inspectDatabase(ctx context.Context, pluginRoot string, database vectorData
 		return row
 	}
 	row.EmbeddedChunks = &snapshot.EmbeddedChunks
+	row.EmbeddingPages = snapshot.EmbeddingPages
 	marker := currentSourceMarker(sourcePath)
 	row.CandidateChunks = candidateCountForMarker(candidate, marker)
 	row.State = classifySidecar(facts.Exists, true, workerActive, row.EmbeddedChunks, snapshot.Contract,
@@ -166,11 +176,13 @@ func inspectDatabase(ctx context.Context, pluginRoot string, database vectorData
 		row.SidecarBytes = nil
 		row.LastWrite = nil
 	}
+	row.CompactRecommended = compactRecommended(row.EmbeddedChunks, snapshot.EmbeddingPages)
 	return row
 }
 
 type sidecarSnapshot struct {
 	EmbeddedChunks int64
+	EmbeddingPages *int64
 	Contract       string
 	Fingerprint    string
 	SourceMarker   string
@@ -185,9 +197,12 @@ func readSidecarSnapshot(ctx context.Context, store *sql.DB) (sidecarSnapshot, b
 	}
 	defer tx.Rollback()
 	var snapshot sidecarSnapshot
-	if err := tx.QueryRowContext(snapshotCtx, `SELECT COUNT(*) FROM chunks`).Scan(&snapshot.EmbeddedChunks); err != nil {
+	count, err := countEmbeddedChunks(snapshotCtx, tx)
+	if err != nil {
 		return sidecarSnapshot{}, false
 	}
+	snapshot.EmbeddedChunks = count
+	snapshot.EmbeddingPages = embeddingPageCount(snapshotCtx, tx)
 	rows, err := tx.QueryContext(snapshotCtx, `SELECT key,value FROM meta WHERE key IN (?,?,?)`,
 		"contract", "source_fingerprint", sourceMarkerMetaKey)
 	if err != nil {
@@ -233,11 +248,10 @@ func classifySidecar(exists, readable, workerActive bool, chunks *int64, storedC
 		return StateOutdated
 	}
 	if fingerprint != "" {
-		if storedContract == "" || currentContract == "" || storedContract != currentContract ||
-			storedMarker == "" || currentMarker == nil {
+		if storedContract == "" || currentContract == "" || storedContract != currentContract {
 			return StateUnknown
 		}
-		if storedMarker != *currentMarker {
+		if storedMarker != "" && currentMarker != nil && storedMarker != *currentMarker {
 			return StateOutdated
 		}
 		return StateComplete
@@ -338,44 +352,25 @@ func readDeclaredChunkCount(ctx context.Context, database vectorDatabase, path s
 	defer tx.Rollback()
 	var total int64
 	for _, table := range database.Tables {
-		columns := make([]string, len(table.TextColumns))
-		for index, column := range table.TextColumns {
-			columns[index] = `COALESCE(CAST(` + quoteIdentifier(column) + ` AS TEXT),'')`
+		counts := make([]string, 0, len(table.TextColumns))
+		maxChars, overlap := 0, 0
+		if table.Chunking != nil && (table.Chunking.MaxChars != nil || table.Chunking.OverlapChars != nil) {
+			maxChars, overlap = table.chunking()
 		}
-		statement := `SELECT ` + strings.Join(columns, ",") + ` FROM ` + quoteIdentifier(table.Name) +
+		for _, column := range table.TextColumns {
+			text := `COALESCE(CAST(` + quoteIdentifier(column) + ` AS TEXT),'')`
+			counts = append(counts, fmt.Sprintf("%s(%s,%d,%d)", declaredChunkCountFunction, text, maxChars, overlap))
+		}
+		if len(counts) == 0 {
+			continue
+		}
+		statement := `SELECT COALESCE(SUM(` + strings.Join(counts, "+") + `),0) FROM ` + quoteIdentifier(table.Name) +
 			` WHERE ` + declaredSourcePredicate("", table)
-		rows, err := tx.QueryContext(ctx, statement)
-		if err != nil {
+		var n int64
+		if err := tx.QueryRowContext(ctx, statement).Scan(&n); err != nil {
 			return candidateChunkSnapshot{}, err
 		}
-		for rows.Next() {
-			values := make([]string, len(columns))
-			targets := make([]any, len(columns))
-			for index := range values {
-				targets[index] = &values[index]
-			}
-			if err := rows.Scan(targets...); err != nil {
-				rows.Close()
-				return candidateChunkSnapshot{}, err
-			}
-			for _, value := range values {
-				text := strings.TrimSpace(value)
-				if table.Chunking != nil &&
-					(table.Chunking.MaxChars != nil || table.Chunking.OverlapChars != nil) {
-					size, overlap := table.chunking()
-					total += int64(len(chunks(text, size, overlap)))
-				} else {
-					total += int64(len(tokenChunks(text, defaultChunkTokens, defaultOverlapTokens)))
-				}
-			}
-		}
-		if err := rows.Err(); err != nil {
-			rows.Close()
-			return candidateChunkSnapshot{}, err
-		}
-		if err := rows.Close(); err != nil {
-			return candidateChunkSnapshot{}, err
-		}
+		total += n
 	}
 	if err := tx.Commit(); err != nil {
 		return candidateChunkSnapshot{}, err
@@ -561,9 +556,66 @@ func readSQLiteFileFacts(path string, suffixes []string) ([]sqliteFileFact, erro
 	return facts, nil
 }
 
+func countEmbeddedChunks(ctx context.Context, tx *sql.Tx) (int64, error) {
+	var n int64
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='ann_embeddings_rowids'`).Scan(&n); err != nil {
+		return 0, err
+	}
+	if n > 0 {
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM ann_embeddings_rowids`).Scan(&n); err != nil {
+			return 0, err
+		}
+		return n, nil
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM chunks`).Scan(&n); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+func embeddingPageCount(ctx context.Context, tx *sql.Tx) *int64 {
+	var n int64
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='embeddings_vector_chunks00'`).Scan(&n); err != nil || n == 0 {
+		return nil
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM embeddings_vector_chunks00`).Scan(&n); err != nil {
+		return nil
+	}
+	return &n
+}
+
+func compactRecommended(chunks, pages *int64) bool {
+	if chunks == nil || pages == nil || *chunks < 0 || *pages <= 0 {
+		return false
+	}
+	expected := *chunks / 1024
+	if *chunks%1024 != 0 {
+		expected++
+	}
+	return *pages > expected*4
+}
+
+func inspectIndexLock(sidecarPath string) string {
+	path := sidecarPath + ".index.lock"
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return IndexLockAbsent
+	} else if err != nil {
+		return ""
+	}
+	release, busy, err := tryLockExisting(path)
+	if err != nil {
+		return ""
+	}
+	if busy {
+		return IndexLockLive
+	}
+	_ = release()
+	return IndexLockStale
+}
+
 func openSQLiteBusy(path string, readOnly bool, busyMS int) (*sql.DB, error) {
-	if sourceFingerprintRegistrationErr != nil {
-		return nil, sourceFingerprintRegistrationErr
+	if err := sqliteFunctionRegistrationError(); err != nil {
+		return nil, err
 	}
 	absolute, err := filepath.Abs(path)
 	if err != nil {
