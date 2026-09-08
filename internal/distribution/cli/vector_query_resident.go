@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/spf13/pflag"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/pkg/vectorresident"
 )
@@ -26,59 +28,21 @@ type vectorQueryInvocation struct {
 
 func parseVectorQueryInvocation(args []string) (vectorQueryInvocation, bool) {
 	inv := vectorQueryInvocation{k: 10}
-	positionals := make([]string, 0, 3)
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		switch {
-		case arg == "--json" || strings.HasPrefix(arg, "--json="):
-			inv.json = true
-		case arg == "--db-path":
-			i++
-			if i >= len(args) {
-				return vectorQueryInvocation{}, false
-			}
-			inv.dbPath = args[i]
-		case strings.HasPrefix(arg, "--db-path="):
-			inv.dbPath = strings.TrimPrefix(arg, "--db-path=")
-		case arg == "--databases":
-			i++
-			if i >= len(args) {
-				return vectorQueryInvocation{}, false
-			}
-			inv.databases = args[i]
-		case strings.HasPrefix(arg, "--databases="):
-			inv.databases = strings.TrimPrefix(arg, "--databases=")
-		case arg == "--expand-templates" || strings.HasPrefix(arg, "--expand-templates="):
-			inv.expandTemplates = true
-		case arg == "--min-score":
-			i++
-			if i >= len(args) {
-				return vectorQueryInvocation{}, false
-			}
-			parsed, err := strconv.ParseFloat(args[i], 64)
-			if err != nil {
-				return vectorQueryInvocation{}, false
-			}
-			inv.minScore = parsed
-		case strings.HasPrefix(arg, "--min-score="):
-			parsed, err := strconv.ParseFloat(strings.TrimPrefix(arg, "--min-score="), 64)
-			if err != nil {
-				return vectorQueryInvocation{}, false
-			}
-			inv.minScore = parsed
-		case strings.HasPrefix(arg, "-"):
-			continue
-		default:
-			positionals = append(positionals, arg)
-		}
+	flags := pflag.NewFlagSet("vector query", pflag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	flags.BoolVar(&inv.json, "json", false, "")
+	flags.StringVar(&inv.dbPath, "db-path", "", "")
+	flags.StringVar(&inv.databases, "databases", "", "")
+	flags.BoolVar(&inv.expandTemplates, "expand-templates", false, "")
+	flags.Float64Var(&inv.minScore, "min-score", 0, "")
+	if err := flags.Parse(args); err != nil || flags.ArgsLenAtDash() == 0 {
+		return vectorQueryInvocation{}, false
 	}
-	if len(positionals) == 0 || positionals[0] != "query" {
+	positionals := flags.Args()
+	if len(positionals) < 2 || len(positionals) > 3 || positionals[0] != "query" {
 		return vectorQueryInvocation{}, false
 	}
 	positionals = positionals[1:]
-	if len(positionals) == 0 {
-		return vectorQueryInvocation{}, false
-	}
 	inv.query = positionals[0]
 	if len(positionals) > 1 {
 		parsed, err := strconv.Atoi(positionals[1])
@@ -90,34 +54,55 @@ func parseVectorQueryInvocation(args []string) (vectorQueryInvocation, bool) {
 	return inv, true
 }
 
+func vectorQueryResidentOptions(inv vectorQueryInvocation, companion string, paths config.Paths) (vectorresident.Options, error) {
+	resolved, err := config.Resolve(config.Input{Flag: inv.dbPath, Env: paths.DB, Home: paths.Home})
+	if err != nil {
+		return vectorresident.Options{}, err
+	}
+	root := pluginRoot(paths)
+	if override := strings.TrimSpace(os.Getenv("ROCA_VECTOR_PLUGIN_ROOT")); override != "" {
+		root, err = filepath.Abs(override)
+		if err != nil {
+			return vectorresident.Options{}, err
+		}
+	}
+	state := filepath.Join(paths.Home, ".roca", "plugins", "roca-vector", "state")
+	if override := strings.TrimSpace(os.Getenv("ROCA_VECTOR_STATE_DIR")); override != "" {
+		state, err = filepath.Abs(override)
+		if err != nil {
+			return vectorresident.Options{}, err
+		}
+	}
+	host, err := os.Executable()
+	if err != nil {
+		return vectorresident.Options{}, err
+	}
+	return vectorresident.Options{
+		Binary: companion, HostBinary: host,
+		DataDir: filepath.Dir(resolved.DB), DBPath: resolved.DB,
+		PluginRoot: root, StateDir: state, Status: os.Stderr,
+	}, nil
+}
+
 func runVectorQueryResident(env *cliEnv, args []string, companion string, paths config.Paths) (bool, int, error) {
 	inv, ok := parseVectorQueryInvocation(args)
 	if !ok {
 		return false, 0, nil
 	}
-	dbPath := inv.dbPath
-	if dbPath == "" && paths.DB != "" {
-		dbPath = paths.DB
+	opts, err := vectorQueryResidentOptions(inv, companion, paths)
+	if err != nil || opts.PluginRoot == "" {
+		return false, 0, nil
 	}
-	dataDir := filepath.Dir(dbPath)
-	if dataDir == "." || dataDir == "" {
-		dataDir = paths.Home
-		if dataDir != "" {
-			dataDir = filepath.Join(dataDir, ".roca")
-		}
-	}
-	opts := vectorresident.Options{
-		Binary:     companion,
-		DataDir:    dataDir,
-		DBPath:     dbPath,
-		PluginRoot: pluginRoot(paths),
-		Status:     os.Stderr,
-	}
-	if opts.DataDir != "" {
-		opts.StateDir = filepath.Join(opts.DataDir, "plugins", "roca-vector", "state")
+	if info, err := os.Stat(filepath.Join(opts.PluginRoot, "vector-registry.json")); err != nil || !info.Mode().IsRegular() {
+		return false, 0, nil
 	}
 	started := time.Now()
-	raw, err := vectorresident.QueryOnce(context.Background(), opts, vectorresident.Request{
+	client, err := vectorresident.ConnectCurrent(context.Background(), opts)
+	if err != nil {
+		return false, 0, nil
+	}
+	defer client.Close()
+	raw, err := client.Query(context.Background(), vectorresident.Request{
 		Query: inv.query, K: inv.k, Databases: inv.databases,
 		ExpandTemplates: inv.expandTemplates, MinScore: inv.minScore,
 	})

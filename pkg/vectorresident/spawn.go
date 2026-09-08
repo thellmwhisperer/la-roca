@@ -112,6 +112,9 @@ func spawnResident(opts Options, socket string) error {
 
 func spawnEnv(opts Options) []string {
 	env := []string{}
+	if strings.TrimSpace(os.Getenv("ROCA_VECTOR_ROCA_BINARY")) == "" && strings.TrimSpace(opts.HostBinary) != "" {
+		env = append(env, "ROCA_VECTOR_ROCA_BINARY="+opts.HostBinary)
+	}
 	if root := strings.TrimSpace(opts.PluginRoot); root != "" {
 		env = append(env, "ROCA_VECTOR_PLUGIN_ROOT="+root)
 	}

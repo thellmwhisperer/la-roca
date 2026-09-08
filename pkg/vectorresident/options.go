@@ -17,6 +17,7 @@ var ErrUnavailable = errors.New("semantic search resident is not listening")
 // override used to reach the shared embedding resident.
 type Options struct {
 	Binary     string
+	HostBinary string
 	DataDir    string
 	DBPath     string
 	PluginRoot string

@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sync/atomic"
@@ -214,4 +215,28 @@ func listenTestResident(t *testing.T, socket string, extra map[string]any, conne
 			}(conn)
 		}
 	}()
+}
+
+func TestSpawnEnvPreservesHostExecutable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell environment probe")
+	}
+	for _, override := range []string{"", "/explicit/roca"} {
+		t.Run("override="+override, func(t *testing.T) {
+			t.Setenv("ROCA_VECTOR_ROCA_BINARY", override)
+			command := exec.Command("/bin/sh", "-c", `printf '%s' "$ROCA_VECTOR_ROCA_BINARY"`)
+			command.Env = append(os.Environ(), spawnEnv(Options{HostBinary: "/current/roca"})...)
+			output, err := command.Output()
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := override
+			if want == "" {
+				want = "/current/roca"
+			}
+			if string(output) != want {
+				t.Fatalf("child host = %q, want %q", output, want)
+			}
+		})
+	}
 }
