@@ -11,13 +11,20 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
-func TestPlaygroundQuestionsRemainPositionalArguments(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+// playgroundFixturePath prepares the optional plugin directory for a shell fixture.
+func playgroundFixturePath(t *testing.T, home string) string {
+	t.Helper()
 	executable := filepath.Join(home, ".roca", "plugins", "roca-playground", "roca-playground")
 	if err := os.MkdirAll(filepath.Dir(executable), 0700); err != nil {
 		t.Fatal(err)
 	}
+	return executable
+}
+
+func TestPlaygroundQuestionsRemainPositionalArguments(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	executable := playgroundFixturePath(t, home)
 	script := "#!/bin/sh\nprintf '%s\\0' \"$@\" > \"$HOME/argv\"\nprintf '%s\\n' '{}'\nprintf '%s\\n' '{\"stderr\":\"\",\"query\":{}}' >&2\n"
 	if err := os.WriteFile(executable, []byte(script), 0700); err != nil {
 		t.Fatal(err)
@@ -71,10 +78,7 @@ func TestPlaygroundExplorePreservesRequestedTextBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	executable := filepath.Join(home, ".roca", "plugins", "roca-playground", "roca-playground")
-	if err := os.MkdirAll(filepath.Dir(executable), 0700); err != nil {
-		t.Fatal(err)
-	}
+	executable := playgroundFixturePath(t, home)
 	if err := os.WriteFile(executable, []byte("#!/bin/sh\ncat <<'RESULT'\n"+string(payload)+"\nRESULT\nprintf '%s\\n' '{\"stderr\":\"\",\"cleaned_sql\":\"SELECT repaired\",\"query\":{}}' >&2\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -99,10 +103,7 @@ func TestPlaygroundExplorePreservesRequestedTextBudget(t *testing.T) {
 func TestPlaygroundValidationErrorsPreserveDiagnosticsAndScrubDatabasePath(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	executable := filepath.Join(home, ".roca", "plugins", "roca-playground", "roca-playground")
-	if err := os.MkdirAll(filepath.Dir(executable), 0700); err != nil {
-		t.Fatal(err)
-	}
+	executable := playgroundFixturePath(t, home)
 	svc := readOnlyService(t)
 	diagnostic := "unknown database missing in " + svc.DB().Path() + "\n"
 	transport, err := json.Marshal(map[string]string{"stderr": diagnostic})
