@@ -29,7 +29,7 @@ LAN = tuple(ipaddress.ip_network(net) for net in (
 
 
 def scan(text, source, allow, testdata=False):
-    """Return source/line/pattern diagnostics; exceptions are whole matched strings."""
+    """Return source/line/pattern diagnostics; allow exact matches or complete lines."""
     findings = []
     for number, line in enumerate(text.splitlines(), 1):
         for name, pattern in PATTERNS.items():
