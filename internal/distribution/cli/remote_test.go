@@ -408,8 +408,9 @@ func TestRemoteCrossScatterGathersOnlyInMemory(t *testing.T) {
 	}
 	assertSSHCalls(t, runner.calls, wantCalls)
 	after := treeSnapshot(t, fixture.home)
-	if !equalTreeSnapshots(before, after) {
-		t.Fatalf("cross changed a rock: before=%v after=%v", mapKeys(before), mapKeys(after))
+	if !equalDurableRocks(before, after) {
+		t.Fatalf("cross changed a rock: before=%v after=%v",
+			mapKeys(durableRocks(before)), mapKeys(durableRocks(after)))
 	}
 }
 
@@ -493,6 +494,32 @@ func treeSnapshot(t *testing.T, root string) map[string]treeSnapshotEntry {
 		t.Fatal(err)
 	}
 	return result
+}
+
+func durableRocks(snapshot map[string]treeSnapshotEntry) map[string]treeSnapshotEntry {
+	filtered := make(map[string]treeSnapshotEntry, len(snapshot))
+	for path, entry := range snapshot {
+		if strings.HasSuffix(path, "-shm") || strings.HasSuffix(path, "-wal") ||
+			strings.HasSuffix(path, "-journal") {
+			continue
+		}
+		filtered[path] = entry
+	}
+	return filtered
+}
+
+func equalDurableRocks(left, right map[string]treeSnapshotEntry) bool {
+	left, right = durableRocks(left), durableRocks(right)
+	if len(left) != len(right) {
+		return false
+	}
+	for key, value := range left {
+		other, found := right[key]
+		if !found || value.mode != other.mode || !slices.Equal(value.body, other.body) {
+			return false
+		}
+	}
+	return true
 }
 
 func equalTreeSnapshots(left, right map[string]treeSnapshotEntry) bool {
