@@ -1,11 +1,3 @@
-// @overview Optional playground dispatch, custody preparation and provider diagnostics.
-// READING GUIDE: playgroundPluginCommand forwards CLI argv; preparePlayground
-// prepares custody without opening a service; OpenForPlugin is the child entry.
-// MAIN FLOW: command -> resolve companion -> prepare custody -> forward argv.
-// PUBLIC API: OpenForPlugin opens core's read-only engine for the companion.
-// INTERNALS: playgroundPluginCommand, preparePlayground, providerProbe.
-// @exports OpenForPlugin
-// @deps cobra; playground transport; bundled packages; datasplit; config; service.
 package cli
 
 import (
@@ -28,7 +20,6 @@ import (
 	"slices"
 )
 
-// -- 1 HELPER · Companion service entry --
 // OpenForPlugin resolves the same installation and read-only engine as core.
 func OpenForPlugin(build Build, dbPath string, readOnly bool, out, errOut io.Writer) (*service.Service, config.Paths, error) {
 	env := &cliEnv{build: build, dbPath: dbPath, forceReadOnly: readOnly, skipBundledLifecycle: true, out: out, errOut: errOut}
@@ -36,9 +27,6 @@ func OpenForPlugin(build Build, dbPath string, readOnly bool, out, errOut io.Wri
 	return env.openService()
 }
 
-// -/ 1
-
-// -- 2 CORE · CLI delegation <- START HERE --
 func playgroundPluginCommand(env *cliEnv, verb string) *cobra.Command {
 	return &cobra.Command{Use: verb + " [arguments]", Short: map[string]string{"playground": "Optional plugin: compile a question into SQL", "explore": "Optional plugin: investigate a concept", "model": "Optional plugin: select the answering model", "models": "Optional plugin: list answering models", "login": "Optional plugin: use an agent CLI login"}[verb],
 		DisableFlagParsing: true,
@@ -84,9 +72,6 @@ func playgroundPluginCommand(env *cliEnv, verb string) *cobra.Command {
 		}}
 }
 
-// -/ 2
-
-// -- 3 HELPER · Custody preparation --
 func (env *cliEnv) preparePlayground(paths config.Paths) error {
 	file, err := config.LoadFile(paths.Config)
 	if err != nil {
@@ -132,9 +117,6 @@ func (env *cliEnv) preparePlayground(paths config.Paths) error {
 	return nil
 }
 
-// -/ 3
-
-// -- 4 HELPER · Provider diagnostics --
 func providerProbe(paths config.Paths, readOnly bool) func(context.Context, *service.DoctorReport) error {
 	if _, err := playground.Executable(); err != nil {
 		return nil
@@ -160,5 +142,3 @@ func providerProbe(paths config.Paths, readOnly bool) func(context.Context, *ser
 		return nil
 	}
 }
-
-// -/ 4

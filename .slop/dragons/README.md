@@ -21,8 +21,8 @@ checked. There is no scan-root argument. The synthetic test executes the same
 gate on versioned clean and reintroduced fixtures.
 
 Mark `removed` only when the forbid is absent from the tree being checked.
-Cost assertions for this registry live in the acceptance `cost` group and
-run against a lab fixture, never the operator's live federation.
+[CONTRIBUTING.md](../../CONTRIBUTING.md#build-and-test) owns cost-check
+mechanics, including the separate synthetic vector tests.
 
 Each record cites `INFORME-SLOP-ADYACENTE.md` (dive of 2026-09-08) by
 section or suspicion. For D-series records, section 3 describes the dragon;

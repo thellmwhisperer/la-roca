@@ -20,11 +20,9 @@ Rules every brief and review must follow:
 - Read-only means SQLite `mode=ro`, never a copy.
 - Reuse the OS, SQLite and the standard library before writing an equivalent.
 
-Adjacent features already found are recorded as dragons in
-[`.slop/dragons/`](.slop/dragons/README.md). `make slop` fails when a
-`removed` record's `forbid` path, symbol or string is back in the tree. The
-acceptance harness runs a `cost` group against a lab fixture (`make check`);
-it never measures the operator's live federation.
+Adjacent features already found are recorded in the
+[dragon registry](.slop/dragons/README.md), which owns removal rules and gate
+scope. See [Build and test](#build-and-test) for cost-check mechanics.
 
 ## Public text
 
@@ -83,9 +81,6 @@ published-versus-branch S1 extraction evidence under `.tmp/playground-evidence`.
 It is a separate opt-in comparison on synthetic homes, never a mutable
 `make check` dependency. It requires an explicit executable, validates its
 v1.82.6 version, and fails if the published comparison does not execute.
-The DATA SPLIT oracle keeps its full digest-pinned
-archive and compares the core cases; the extracted inference cases are not
-replayed by core.
 
 The D1 acceptance denies temporary copies throughout the read-only operation
 and checks durable database digests, allowing SQLite SHM. Synthetic vector
@@ -103,13 +98,15 @@ upgrades the committed homes of older releases through the binary you just
 built. [Releases](docs/releases.md#schema-migration-definition-of-done) explains
 when a change owes the gauntlet a new frozen home.
 
-`make split-oracle` replays the DATA SPLIT compatibility oracle on its own, the
-executable definition of zero behavior change for CLI and MCP users that
+`make split-oracle` replays the core DATA SPLIT compatibility cases on their own,
+the executable definition of zero behavior change for core CLI and MCP users that
 `make check` already runs with the rest of the acceptance suite. It drives the
 binary you just built against a fully synthetic fixture, normalizes away run
 noise (timestamps, durations, correlation ids, home paths, and the build's own
 version and source sha), and compares the recording against the goldens in
-`testdata/data-split-oracle/`.
+`testdata/data-split-oracle/`. The full digest-pinned archive is retained;
+core excludes the extracted inference cases from comparison. Human answering
+scenarios belong to the playground repository, as described above.
 The oracle never reads a real `~/.roca` database and never writes user data: it
 records into a temporary home and keeps the recording under the project's
 `.tmp/` only when it differs from the golden. A difference is reported, never
