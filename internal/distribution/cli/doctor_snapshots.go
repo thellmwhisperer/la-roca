@@ -16,6 +16,7 @@ type leftoverSnapshots struct {
 	Root  string `json:"root"`
 	Count int    `json:"count"`
 	Bytes int64  `json:"bytes"`
+	paths []string
 }
 
 func collectSnapshotDoctor() leftoverSnapshots {
@@ -39,6 +40,7 @@ func inspectLeftoverSnapshots(root string) leftoverSnapshots {
 			continue
 		}
 		size := leftoverDirSize(path)
+		residue.paths = append(residue.paths, path)
 		residue.Count++
 		residue.Bytes += size
 	}
@@ -83,7 +85,7 @@ func (env *cliEnv) offerSnapshotCleanup(cmd *cobra.Command, residue leftoverSnap
 	}
 	switch strings.ToLower(strings.TrimSpace(line)) {
 	case "y", "yes":
-		removed, bytes := removeLeftoverSnapshots(residue.Root)
+		removed, bytes := removeLeftoverSnapshots(residue.paths)
 		env.print("removed %d leftover read-only snapshot directories · %d bytes", removed, bytes)
 		return nil
 	case "", "n", "no":
@@ -93,18 +95,14 @@ func (env *cliEnv) offerSnapshotCleanup(cmd *cobra.Command, residue leftoverSnap
 	}
 }
 
-func removeLeftoverSnapshots(root string) (int, int64) {
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return 0, 0
-	}
+func removeLeftoverSnapshots(paths []string) (int, int64) {
 	removed := 0
 	var bytes int64
-	for _, entry := range entries {
-		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), leftoverSnapshotPrefix) {
+	for _, path := range paths {
+		info, err := os.Lstat(path)
+		if err != nil || !info.IsDir() {
 			continue
 		}
-		path := filepath.Join(root, entry.Name())
 		size := leftoverDirSize(path)
 		if err := os.RemoveAll(path); err != nil {
 			continue

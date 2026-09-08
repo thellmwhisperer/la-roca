@@ -31,7 +31,7 @@ func TestRenderSnapshotDoctorReportsCountAndSize(t *testing.T) {
 	}
 }
 
-func TestOfferSnapshotCleanupDeletesOrphansOnYes(t *testing.T) {
+func TestOfferSnapshotCleanupDeletesOnlyInspectedOrphansOnYes(t *testing.T) {
 	tmp := t.TempDir()
 	orphan := filepath.Join(tmp, leftoverSnapshotPrefix+"orphan")
 	if err := os.Mkdir(orphan, 0o700); err != nil {
@@ -48,13 +48,24 @@ func TestOfferSnapshotCleanupDeletesOrphansOnYes(t *testing.T) {
 	terminalInput = func(any) bool { return true }
 	t.Cleanup(func() { terminalInput = previous })
 	residue := inspectLeftoverSnapshots(tmp)
+	newSnapshot := filepath.Join(tmp, leftoverSnapshotPrefix+"new")
+	if err := os.Mkdir(newSnapshot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	newPayload := filepath.Join(newSnapshot, "payload")
+	if err := os.WriteFile(newPayload, []byte("active snapshot"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := env.offerSnapshotCleanup(cmd, residue); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(orphan); !os.IsNotExist(err) {
 		t.Fatalf("orphan still present: %v", err)
 	}
-	if !strings.Contains(out.String(), "removed") {
+	if payload, err := os.ReadFile(newPayload); err != nil || string(payload) != "active snapshot" {
+		t.Fatalf("uninspected snapshot changed: payload=%q, err=%v", payload, err)
+	}
+	if !strings.Contains(out.String(), "removed 1 leftover read-only snapshot directories · 32 bytes") {
 		t.Fatalf("cleanup did not narrate removal:\n%s", out.String())
 	}
 }
