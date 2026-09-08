@@ -41,13 +41,14 @@ const (
 // explicit: callers keep the verified VACUUM copies beside their other Roca
 // backups, never in a process-global temporary directory.
 type MemoryCustodyOptions struct {
-	CorePath    string
-	CorpusPath  string
-	OpsPath     string
-	SnapshotDir string
-	LockPath    string
-	BatchSize   int
-	AfterBatch  func(MemoryBatch) error
+	CorePath               string
+	CorpusPath             string
+	OpsPath                string
+	SnapshotDir            string
+	LockPath               string
+	BatchSize              int
+	AfterBatch             func(MemoryBatch) error
+	ReuseVerifiedSnapshots bool
 }
 
 type MemoryBatch struct {
@@ -204,7 +205,8 @@ func MigrateMemoryCustody(ctx context.Context, options MemoryCustodyOptions) (Me
 		{name: coreMemorySource, path: options.CorePath},
 		{name: corpusMemorySource, path: options.CorpusPath},
 	}
-	if state.State == migrationledger.StateVerified {
+	if state.State == migrationledger.StateVerified ||
+		(state.State == migrationledger.StateVerifiedEmpty && options.ReuseVerifiedSnapshots) {
 		report, err := inspectMemoryCustody(ctx, ops, state, options.SnapshotDir, plugin)
 		if err != nil {
 			return MemoryCustodyReport{}, err
@@ -219,6 +221,9 @@ func MigrateMemoryCustody(ctx context.Context, options MemoryCustodyOptions) (Me
 				return MemoryCustodyReport{}, fmt.Errorf("%s memory snapshot is not a regular file", source.name)
 			case !errors.Is(statErr, os.ErrNotExist):
 				return MemoryCustodyReport{}, fmt.Errorf("inspect %s memory snapshot: %w", source.name, statErr)
+			}
+			if options.ReuseVerifiedSnapshots {
+				return MemoryCustodyReport{}, fmt.Errorf("the verified %s memory snapshot is missing: %w", source.name, statErr)
 			}
 			if err := snapshotMemories(ctx, source, path); err != nil {
 				return MemoryCustodyReport{}, err

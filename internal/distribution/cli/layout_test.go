@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 	"github.com/thellmwhisperer/la-roca/internal/store"
@@ -150,4 +151,73 @@ func openLayoutDatabase(t *testing.T, path string) *sql.DB {
 		t.Fatal(err)
 	}
 	return db
+}
+
+func TestCutoverCLIRejectsUnfinishedDestinationCustody(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	corePath := filepath.Join(home, "roca.db")
+	core, err := store.Open(corePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ApplySchema(t.Context(), core); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := core.SQL().Exec(`INSERT INTO memories(layer, content, origin)
+		VALUES ('project', 'cutover readiness marker', 'agent')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := core.Close(); err != nil {
+		t.Fatal(err)
+	}
+	env := &cliEnv{dbPath: corePath, out: io.Discard, errOut: io.Discard,
+		build: Build{Version: "v-test", Commit: "fixture"}}
+	if code, err := executeWithEnv(env, []string{"--db-path", corePath, "migrate"}, nil); err != nil || code != 0 {
+		t.Fatalf("explicit migration: code=%d err=%v", code, err)
+	}
+	paths, err := env.resolvePaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.Config, []byte("[layout]\nserving = \"cutover\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	snapshots := filepath.Join(paths.Backups, "data-split")
+	if err := os.Rename(snapshots, snapshots+"-offline"); err != nil {
+		t.Fatal(err)
+	}
+	for _, probe := range []struct{ plugin, database, migration string }{
+		{rocaops.Name, rocaops.DatabaseFilename, "data2-memory-custody"},
+		{rocacorpus.Name, rocacorpus.DatabaseFilename, "corpus-archive-reconciliation-v1"},
+	} {
+		t.Run(probe.plugin, func(t *testing.T) {
+			db := openLayoutDatabase(t, filepath.Join(home, ".roca", "plugins", probe.plugin, probe.database))
+			defer db.Close()
+			if _, err := db.Exec(`UPDATE plugin_migrations SET migration_state = 'batch-in-progress' WHERE migration = ?`, probe.migration); err != nil {
+				t.Fatal(err)
+			}
+			for _, readOnly := range []bool{false, true} {
+				env.forceReadOnly = readOnly
+				svc, _, err := env.openService()
+				if svc != nil {
+					svc.Close()
+				}
+				if err == nil || !strings.Contains(err.Error(), "roca migrate") {
+					t.Fatalf("unfinished custody readOnly=%t: %v", readOnly, err)
+				}
+			}
+			if _, err := db.Exec(`UPDATE plugin_migrations SET migration_state = 'verified' WHERE migration = ?`, probe.migration); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+	env.forceReadOnly = false
+	svc, _, err := env.openService()
+	if err != nil {
+		t.Fatalf("verified open without frozen snapshots: %v", err)
+	}
+	if err := svc.Close(); err != nil {
+		t.Fatal(err)
+	}
 }
