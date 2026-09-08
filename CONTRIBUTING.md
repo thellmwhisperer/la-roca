@@ -26,6 +26,28 @@ Adjacent features already found are recorded as dragons in
 acceptance harness runs a `cost` group against a lab fixture (`make check`);
 it never measures the operator's live federation.
 
+## Public text
+
+Issues, PR titles and bodies, commit messages, changed filenames, and added diff
+lines must omit personal home, temporary and mounted-volume paths, local
+hostnames, private LAN addresses, and session UUIDs. Use `~`, `$TMPDIR`, `<workspace>`, `<host>`,
+`<lan-ip>`, and rounded counts. The UUID check detects version 4; it exempts
+files beneath a `testdata/` directory.
+Existing history is outside this gate's scope.
+
+Use the [bug report](.github/ISSUE_TEMPLATE/bug_report.md) or
+[feature request](.github/ISSUE_TEMPLATE/feature_request.md) template when opening
+an issue; both include the public-text reminder.
+
+`scripts/public-text.py` owns the shared check. The `public-text` CI job fails
+with the offending line; opening or editing an issue flags the pattern without
+repeating the value. Before publishing a PR, pipe its final title and body
+(including generated evidence) to `python3 scripts/public-text.py --text` and
+replace findings until it passes.
+Rare legitimate matches belong in `.github/public-text-allow.txt` as exact
+matched strings or exact complete lines, never regexes or globs.
+Run `python3 scripts/public-text-test.py` for the synthetic acceptance/cost check.
+
 ## Build and test
 
 ```sh
