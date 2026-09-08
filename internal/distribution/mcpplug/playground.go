@@ -8,7 +8,7 @@ import (
 )
 
 func (p *plug) playground(ctx context.Context, verb, question, layer, databases string, maxChars int, deep bool) (service.QueryResult, error) {
-	args := []string{verb, question, "--db-path", p.svc.DB().Path()}
+	args := []string{verb, "--db-path", p.svc.DB().Path()}
 	if verb == "sql" {
 		args[0] = "playground"
 		args = append(args, "--sql-only")
@@ -28,6 +28,7 @@ func (p *plug) playground(ctx context.Context, verb, question, layer, databases 
 	if p.svc.ReadOnly() {
 		args = append(args, "--read-only")
 	}
+	args = append(args, "--", question)
 	var result service.QueryResult
 	err := playground.JSON(ctx, args, &result)
 	result.MaxChars = service.TextBudget(maxChars)

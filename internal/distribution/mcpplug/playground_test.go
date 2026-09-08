@@ -4,11 +4,59 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
+
+func TestPlaygroundQuestionsRemainPositionalArguments(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	executable := filepath.Join(home, ".roca", "plugins", "roca-playground", "roca-playground")
+	if err := os.MkdirAll(filepath.Dir(executable), 0700); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\nprintf '%s\\0' \"$@\" > \"$HOME/argv\"\nprintf '%s\\n' '{}'\nprintf '%s\\n' '{\"stderr\":\"\",\"query\":{}}' >&2\n"
+	if err := os.WriteFile(executable, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	svc := readOnlyService(t)
+	session := connect(t, svc)
+	for _, tool := range []string{"roca_sql", "roca_explore"} {
+		for _, question := range []string{"--", "--read-only=false", "--db-path=other.db", "a normal question"} {
+			t.Run(tool+"/"+question, func(t *testing.T) {
+				input := map[string]any{"query": question, "layer": "project", "databases": "corpus"}
+				verb := "playground"
+				if tool == "roca_explore" {
+					verb = "explore"
+					input["max_chars"], input["deep"] = 900, true
+				}
+				response := callTool(t, session, tool, input)
+				if response.IsError {
+					t.Fatalf("plugin call failed: %s", renderedText(response))
+				}
+				raw, err := os.ReadFile(filepath.Join(home, "argv"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := []string{"--transport", "--json", verb, "--db-path", svc.DB().Path()}
+				if tool == "roca_sql" {
+					want = append(want, "--sql-only")
+				}
+				want = append(want, "--layer", "project", "--databases", "corpus")
+				if tool == "roca_explore" {
+					want = append(want, "--max-chars", "900", "--deep")
+				}
+				want = append(want, "--read-only", "--", question)
+				if got := strings.Split(strings.TrimSuffix(string(raw), "\x00"), "\x00"); !reflect.DeepEqual(got, want) {
+					t.Fatalf("plugin arguments = %q, want %q", got, want)
+				}
+			})
+		}
+	}
+}
 
 func TestPlaygroundExplorePreservesRequestedTextBudget(t *testing.T) {
 	home := t.TempDir()
