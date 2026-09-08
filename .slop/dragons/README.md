@@ -12,6 +12,9 @@ string is present in the tree fails the gate. `accepted` records are
 documented and still in the product; later wave tickets flip them to
 `removed` only when the forbid is actually gone.
 
+The temporary gate accepts block lists and empty `[]` under `forbid`;
+other forms, including nonempty inline lists, fail with a format error.
+
 Mark `removed` only when the forbid is absent from `main`. Cost assertions
 for this registry live in the acceptance `cost` group and run against a lab
 fixture, never the operator's live federation.

@@ -25,4 +25,4 @@ forbid:
   paths: []
   symbols: []
   strings:
-    - "each CLI query constructs a Native"
+    - "return vector.ConfiguredEmbedder(coreDataDir(env.dbPath), env.stateDir, events, nil, true,"

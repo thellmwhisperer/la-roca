@@ -55,6 +55,10 @@ path_exists() {
 forbid_items() {
   awk '
     /^forbid:[[:space:]]*$/ { in_forbid=1; next }
+    /^forbid:/ {
+      print FILENAME ": forbid must use block lists or []" > "/dev/stderr"
+      exit 1
+    }
     in_forbid && /^[^[:space:]#]/ { in_forbid=0 }
     in_forbid && /^[[:space:]]+paths:[[:space:]]*(\[\][[:space:]]*)?$/ { section="paths"; next }
     in_forbid && /^[[:space:]]+symbols:[[:space:]]*(\[\][[:space:]]*)?$/ { section="symbols"; next }
@@ -64,6 +68,11 @@ forbid_items() {
       sub(/^[[:space:]]*-[[:space:]]*/, "", val)
       gsub(/^["'\'']|["'\'']$/, "", val)
       if (val != "" && val != "[]") print section "\t" val
+      next
+    }
+    in_forbid && $0 !~ /^[[:space:]]*(#.*)?$/ {
+      print FILENAME ": unsupported forbid entry; use block lists or []" > "/dev/stderr"
+      exit 1
     }
   ' "$1"
 }
@@ -84,13 +93,14 @@ record_field() {
 check_tree() {
   local root=$1
   local hits=0
-  local file id status section value match
+  local file id status section value match items
   shopt -s nullglob
   for file in "$RECORDS"/*.yaml "$RECORDS"/*.yml; do
     status=$(record_field "$file" status)
     [ "$status" = "removed" ] || continue
     id=$(record_field "$file" id)
     [ -n "$id" ] || id=$(basename "$file")
+    items=$(forbid_items "$file") || return 1
     while IFS=$'\t' read -r section value; do
       [ -n "$value" ] || continue
       match=""
@@ -107,25 +117,26 @@ check_tree() {
         echo "check-dragons: ${id} forbid.${section} ${value} present:"
         echo "$match" | sed 's/^/  /'
       fi
-    done < <(forbid_items "$file")
+    done <<< "$items"
   done
   [ "$hits" -eq 0 ]
 }
 
 first_removed_forbid() {
-  local file id status section value
+  local file id status section value items
   shopt -s nullglob
   for file in "$RECORDS"/*.yaml "$RECORDS"/*.yml; do
     status=$(record_field "$file" status)
     [ "$status" = "removed" ] || continue
     id=$(record_field "$file" id)
     [ -n "$id" ] || id=$(basename "$file")
+    items=$(forbid_items "$file") || return 1
     while IFS=$'\t' read -r section value; do
       if [ -n "$value" ]; then
         printf '%s\t%s\t%s\n' "$id" "$section" "$value"
         return 0
       fi
-    done < <(forbid_items "$file")
+    done <<< "$items"
   done
   return 1
 }
