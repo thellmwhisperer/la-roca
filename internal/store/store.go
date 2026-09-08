@@ -33,7 +33,6 @@ type DB struct {
 	sql              *sql.DB
 	path             string
 	physicalReadOnly bool
-	snapshot         *ReadOnlySnapshot
 	// transient is an in-memory compatibility main owned by the federation
 	// hub. It can be read through the ordinary store contract, but it is never a
 	// durable write target and its handle is closed by the hub that attached the
@@ -86,15 +85,25 @@ func Open(path string) (*DB, error) {
 }
 
 func OpenReadOnly(path string) (*DB, error) {
-	abs, err := filepath.Abs(path)
+	abs, dsn, err := sqliteFileDSN(path, url.Values{
+		"mode": {"ro"},
+		"_pragma": {
+			fmt.Sprintf("busy_timeout(%d)", busyTimeout.Milliseconds()),
+			"query_only(1)",
+		},
+	})
 	if err != nil {
 		return nil, fmt.Errorf("resolve the database path %q: %w", path, err)
 	}
-	snapshot, err := OpenReadOnlySnapshot(context.Background(), abs)
+	handle, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open the database %q read-only: %w", abs, err)
 	}
-	return &DB{sql: snapshot.SQL(), path: abs, physicalReadOnly: true, snapshot: snapshot}, nil
+	if err := handle.Ping(); err != nil {
+		handle.Close()
+		return nil, fmt.Errorf("open the database %q read-only: %w", abs, err)
+	}
+	return &DB{sql: handle, path: abs, physicalReadOnly: true}, nil
 }
 
 // Transient exposes an already-open in-memory federation main through the read
@@ -199,9 +208,6 @@ func (db *DB) Path() string { return db.path }
 func (db *DB) Close() error {
 	if db.transient {
 		return nil
-	}
-	if db.snapshot != nil {
-		return db.snapshot.Close()
 	}
 	if db.readOnly != nil {
 		db.readOnly.Close()

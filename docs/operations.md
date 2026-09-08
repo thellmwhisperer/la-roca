@@ -365,31 +365,11 @@ JSONL copy is written to. See [Plugins](plugins.md#scheduled-rides).
 
 ## Read-only snapshot cleanup
 
-Read-only commands copy the source database into a `roca-read-only-snapshot-*`
-directory under the process temp root. The creating process removes that copy
-when it closes the snapshot.
+Read-only commands open the live SQLite file with `mode=ro` and `query_only`.
+They do not copy the database. WAL read marks in the `-shm` file are ordinary
+SQLite reader traffic, not a copy of the store.
 
-Each new copy writes a `lease` file naming the creating process. A later open
-runs one budgeted reaper pass over those directories, oldest first, and deletes
-a directory only when the lease proves the owner is dead and the directory is at
-least an hour old. A missing lease is treated as in-creation, not as an orphan.
-If liveness cannot be proven, the directory is kept.
-
-The pass has one time-and-work budget at its entry point. When the budget is
-gone it stops, records a cursor, and the next open continues. It takes no lock
-that other processes must wait on, and it does not rename a directory before the
-keep-or-delete decision.
-
-These cases stay out of automatic deletion because they would break those rules:
-
-- Leftovers from binaries that did not write leases
-- Directories whose owner liveness cannot be proven
-- PID reuse while a lease has no start time and a new process occupies that PID
-- A failed `RemoveAll` (the next pass retries the same directory; we do not
-  claim by rename)
-
-Operator cleanup for lease-less leftovers: with no `roca` process running,
-delete the `roca-read-only-snapshot-*` directories you confirm are abandoned
-under the temp root.
-
-The reaper lives in `internal/store/snapshot_reaper.go`.
+Older binaries copied each database into `roca-read-only-snapshot-*` directories
+under the process temp root and left them behind when a run was killed.
+`roca doctor` reports the count and size of any leftovers it still finds, and an
+interactive run offers to delete them.
