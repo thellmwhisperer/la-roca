@@ -95,3 +95,43 @@ func TestPlaygroundExplorePreservesRequestedTextBudget(t *testing.T) {
 		}
 	}
 }
+
+func TestPlaygroundValidationErrorsPreserveDiagnosticsAndScrubDatabasePath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	executable := filepath.Join(home, ".roca", "plugins", "roca-playground", "roca-playground")
+	if err := os.MkdirAll(filepath.Dir(executable), 0700); err != nil {
+		t.Fatal(err)
+	}
+	svc := readOnlyService(t)
+	diagnostic := "unknown database missing in " + svc.DB().Path() + "\n"
+	transport, err := json.Marshal(map[string]string{"stderr": diagnostic})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name   string
+		stderr string
+	}{
+		{"transport", string(transport)},
+		{"plain", diagnostic},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			script := "#!/bin/sh\ncat <<'DIAGNOSTIC' >&2\n" + tc.stderr + "\nDIAGNOSTIC\nexit 1\n"
+			if err := os.WriteFile(executable, []byte(script), 0700); err != nil {
+				t.Fatal(err)
+			}
+			session := connect(t, svc)
+			for _, tool := range []string{"roca_sql", "roca_explore"} {
+				response := callToolResult(t, session, tool, map[string]any{"query": "synthetic question", "databases": "missing"})
+				output := renderedText(response)
+				if !response.IsError || !strings.Contains(output, "unknown database missing in the database") {
+					t.Errorf("%s lost validation diagnostic: %s", tool, output)
+				}
+				if strings.Contains(output, svc.DB().Path()) {
+					t.Errorf("%s exposed the database path: %s", tool, output)
+				}
+			}
+		})
+	}
+}

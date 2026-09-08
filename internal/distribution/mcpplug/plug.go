@@ -140,6 +140,9 @@ func auditCalls(audit *logfile.Writer, warnings io.Writer) mcp.Middleware {
 			started := time.Now()
 			tool, args := toolCall(req)
 			result, err := next(ctx, method, req)
+			if callResult, ok := result.(*mcp.CallToolResult); ok && callResult == nil {
+				result = nil
+			}
 			ok := err == nil
 			// What the client reads as an error is what needs an ID in it. A
 			// degraded answer this surface marks IsError is one of them, and it

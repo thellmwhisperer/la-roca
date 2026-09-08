@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
 const InstallHint = "install the optional playground plugin: roca plugin install thellmwhisperer/roca-playground"
@@ -71,10 +72,11 @@ func Run(ctx context.Context, args []string, in io.Reader, out, stderr io.Writer
 
 func JSON(ctx context.Context, args []string, result any) error {
 	var out []byte
+	var stderr bytes.Buffer
 	var err error
 	var audit *service.QueryResult
 	if _, query := result.(*service.QueryResult); query {
-		var stdout, stderr bytes.Buffer
+		var stdout bytes.Buffer
 		audit, err = Run(ctx, append([]string{"--json"}, args...), nil, &stdout, &stderr)
 		out = stdout.Bytes()
 	} else {
@@ -82,10 +84,15 @@ func JSON(ctx context.Context, args []string, result any) error {
 		if resolveErr != nil {
 			return resolveErr
 		}
-		out, err = exec.CommandContext(ctx, path, append(args, "--json")...).Output()
+		cmd := exec.CommandContext(ctx, path, append(args, "--json")...)
+		cmd.Stderr = &stderr
+		out, err = cmd.Output()
 	}
 	var exited *exec.ExitError
 	if err != nil && (len(out) == 0 || !errors.As(err, &exited)) {
+		if diagnostic := strings.TrimSpace(stderr.String()); diagnostic != "" {
+			return fmt.Errorf("%w: %s", err, diagnostic)
+		}
 		return err
 	}
 	if err := json.Unmarshal(out, result); err != nil {
