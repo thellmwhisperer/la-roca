@@ -1,0 +1,28 @@
+schema: 1
+id: D5
+status: accepted
+category: adjacent_feature
+title: "CLI vector query loads the embedding model instead of using the shared resident"
+created_at: 2026-09-08
+incident:
+  intent: >
+    One embedding model to query the vectors. Once loaded, successive queries
+    do not need a new residency of the same model.
+  what_was_built: >
+    Each CLI query constructs a new Native and loads the model. Hybrid search
+    invokes that CLI. The dedicated MCP vector tool uses a resident; the CLI
+    path does not.
+  justifying_sentence: "MCP starts one resident child for the session"
+  source: >
+    INFORME-SLOP-ADYACENTE.md §3 D5 and §6 item 5; PRs #237, #331; issue #335.
+    Re-measurement is owned by PR https://github.com/thellmwhisperer/la-roca/pull/340.
+  cost: "816 lines + 837 test lines; 1.15 GB RSS per CLI query when a resident already existed"
+rule: >
+  Use the same model owner for CLI, hybrid search and the MCP vector tool. A
+  resident per data directory already exists; extend it before designing
+  another protocol.
+forbid:
+  paths: []
+  symbols: []
+  strings:
+    - "each CLI query constructs a Native"

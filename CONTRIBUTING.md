@@ -4,6 +4,27 @@ The [docs index](docs/README.md) is the operator-facing reading order.
 Contributor agent notes (the project-intrinsic memory that used to live in
 `AGENTS.md`) are in [project memory](docs/project-memory.md).
 
+## Adjacent features
+
+La Roca is a light binary that queries local SQLite, attaches other databases,
+answers by FTS or by vectors with one embedding model, plus plugins. Anything
+else is adjacent until proven core.
+
+Rules every brief and review must follow:
+
+- Every brief states what NOT to build and the real data size.
+- A reviewer demand must state its cost (bytes, seconds, lines) or it cannot
+  block.
+- No new subsystem outside the ticket's scope.
+- Read-only means SQLite `mode=ro`, never a copy.
+- Reuse the OS, SQLite and the standard library before writing an equivalent.
+
+Adjacent features already found are recorded as dragons in
+[`.slop/dragons/`](.slop/dragons/README.md). `make slop` fails when a
+`removed` record's `forbid` path, symbol or string is back in the tree. The
+acceptance harness runs a `cost` group against a lab fixture (`make check`);
+it never measures the operator's live federation.
+
 ## Build and test
 
 ```sh
@@ -17,7 +38,8 @@ make dist
 ```
 
 `make check` runs formatting, vet, unit tests, the acceptance tests, and the
-duplication gate. Godog acceptance contracts live directly under
+slop gate (duplication, orphans, claims, and removed adjacent-feature
+forbids). Godog acceptance contracts live directly under
 `features/{store,ingest,provider,distribution}/`; every feature there is
 discovered automatically, and `make accept-index` rejects any other layout. The
 acceptance harnesses are compiled only with the `acceptance` build tag.

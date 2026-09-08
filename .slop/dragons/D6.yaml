@@ -1,0 +1,26 @@
+schema: 1
+id: D6
+status: accepted
+category: adjacent_feature
+title: "The embedding model is SHA-256 hashed twice per ordinary CLI query"
+created_at: 2026-09-08
+incident:
+  intent: >
+    Download and verify a pinned model once, then reuse it. Do not authenticate
+    the same bytes twice per question on an unchanged local install.
+  what_was_built: >
+    startBackgroundSetup and Native.open both call model.Existing, which
+    computes the full SHA-256 of the 957,680,480-byte model.
+  justifying_sentence: "verified one-time model download"
+  source: >
+    INFORME-SLOP-ADYACENTE.md §3 D6 and §6 item 5; PR #237; companion of #335
+    (D5); issue #350.
+  cost: "196 lines + 186 test lines in download.go; 1.9 GB hashed per ordinary CLI query"
+rule: >
+  Verify at download or replace. At open, compare file identity (size, mtime,
+  inode or a stored digest of those) and only rehash when identity changed.
+forbid:
+  paths: []
+  symbols:
+    - "validModelFile"
+  strings: []
