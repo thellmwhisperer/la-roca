@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
-	"github.com/thellmwhisperer/la-roca/internal/provider"
 )
 
 // DoctorReport is the installation's diagnosis: where its data is, what it
@@ -19,10 +18,11 @@ import (
 // remedy; a diagnosis that names only the failure forces the operator to read
 // code.
 type DoctorReport struct {
-	Version    string `json:"version"`
-	SourceSHA  string `json:"source_sha"`
-	DBPath     string `json:"-"`
-	ConfigPath string `json:"config_path,omitempty"`
+	ProviderNarration string `json:"provider_narration,omitempty"`
+	Version           string `json:"version"`
+	SourceSHA         string `json:"source_sha"`
+	DBPath            string `json:"-"`
+	ConfigPath        string `json:"config_path,omitempty"`
 	// ConfigExists tells "there is no file, these are the defaults" apart from
 	// "there is a file and this is what it says".
 	ConfigExists bool     `json:"config_exists"`
@@ -85,33 +85,29 @@ type DoctorProvider struct {
 }
 
 func (s *Service) Doctor(ctx context.Context) (DoctorReport, error) {
-	if _, err := s.ensureSchema(ctx); err != nil {
+	if _, err := s.EnsureSchema(ctx); err != nil {
 		return DoctorReport{}, err
 	}
 	bedrock, err := s.bedrock(ctx)
 	if err != nil {
 		return DoctorReport{}, err
 	}
-	cascade := s.opts.Providers
 	promptPath := filepath.Join(s.dataDir(), "prompt.md")
 	promptInfo, promptErr := os.Stat(promptPath)
 	report := DoctorReport{
-		Version:               s.opts.Version,
-		SourceSHA:             s.opts.Commit,
-		DBPath:                s.db.Path(),
-		ConfigPath:            s.opts.ConfigPath,
-		ConfigExists:          s.opts.ConfigExists,
-		ModelDisabled:         cascade.Disabled,
-		Warnings:              cascade.Warnings,
-		Memories:              s.memoryCount(ctx),
-		Bedrock:               bedrock,
-		DetectedAgents:        ingest.DetectAgents(s.opts.Sources),
-		DetectedModelBinaries: append([]string(nil), cascade.DetectedBinaries...),
-		FactoryDefault:        cascade.FactoryDefault,
-		PromptPath:            promptPath,
-		PromptExists:          promptErr == nil && promptInfo.Mode().IsRegular(),
+		Version:      s.opts.Version,
+		SourceSHA:    s.opts.Commit,
+		DBPath:       s.db.Path(),
+		ConfigPath:   s.opts.ConfigPath,
+		ConfigExists: s.opts.ConfigExists,
+
+		Memories:       s.memoryCount(ctx),
+		Bedrock:        bedrock,
+		DetectedAgents: ingest.DetectAgents(s.opts.Sources),
+
+		PromptPath:   promptPath,
+		PromptExists: promptErr == nil && promptInfo.Mode().IsRegular(),
 	}
-	report.MissingModelBinaries = provider.MissingCommandPresets(cascade.DetectedBinaries)
 	unregistered, err := s.unregisteredLayers(ctx)
 	if err != nil {
 		return DoctorReport{}, err
@@ -121,15 +117,11 @@ func (s *Service) Doctor(ctx context.Context) (DoctorReport, error) {
 			"roca layers add "+shellQuoted(name)+" --db-path "+shellQuoted(report.DBPath))
 	}
 
-	report.Providers, report.Titular = verdicts(ctx, cascade)
-	if cascade.FactoryDefault {
-		report.FactoryDefaultProvider = report.Titular
+	if s.opts.ProviderProbe != nil {
+		if err := s.opts.ProviderProbe(ctx, &report); err != nil {
+			return report, err
+		}
 	}
-	// The second inference gets the same diagnosis as the first, and only when
-	// the operator declared one: an installation that does not split the two
-	// inferences has no second decision to report.
-	report.Interpreters, report.InterpretTitular = verdicts(ctx, s.opts.Interpreters)
-	report.Explorers, report.ExploreTitular = verdicts(ctx, s.opts.Explorers)
 	return report, nil
 }
 
@@ -223,24 +215,4 @@ func (s *Service) memoryCount(ctx context.Context) int {
 		total += count
 	}
 	return total
-}
-
-// verdicts is one cascade diagnosed: every provider with its verdict, in the
-// declared order, and the first available one.
-func verdicts(ctx context.Context, cascade provider.Cascade) ([]DoctorProvider, string) {
-	var reported []DoctorProvider
-	var titular string
-	for _, attempt := range cascade.Diagnose(ctx) {
-		reported = append(reported, DoctorProvider{
-			Name:   attempt.Name,
-			Ready:  attempt.Ready,
-			Model:  attempt.ModelID,
-			Reason: attempt.Reason,
-			Action: attempt.Action,
-		})
-		if attempt.Ready && titular == "" {
-			titular = attempt.Name
-		}
-	}
-	return reported, titular
 }

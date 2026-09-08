@@ -17,6 +17,19 @@ import (
 )
 
 func registerDistributionCLISteps(ctx *godog.ScenarioContext, w *distributionWorld) {
+	ctx.When(`^the operator asks playground without its plugin$`, func() error {
+		if err := w.prepare("missing-playground"); err != nil {
+			return err
+		}
+		w.last = w.runAt(w.home, w.installed, "playground", "synthetic question")
+		return nil
+	})
+	ctx.Then(`^the command names the playground installation command$`, func() error {
+		if w.last.code == 0 || !strings.Contains(w.last.stderr, "roca plugin install thellmwhisperer/roca-playground") {
+			return fmt.Errorf("missing plugin: %+v", w.last)
+		}
+		return nil
+	})
 	ctx.When(`^the operator asks for command-line help$`, w.askForCLIHelp)
 	ctx.Then(`^every public command appears once with an honest one-line summary$`, w.helpIsComplete)
 	ctx.When(`^the operator exercises the "([^"]*)" command in human and JSON form$`, w.exerciseOutputForms)
@@ -28,9 +41,9 @@ func registerDistributionCLISteps(ctx *godog.ScenarioContext, w *distributionWor
 	ctx.Then(`^built-ins win, missing plugins explain the convention, and plugins lists the fixtures$`, w.pluginBoundariesAreHonest)
 	ctx.When(`^the operator tries to install a plugin without enabling experimental plugins$`, w.tryDisabledPluginInstall)
 	ctx.Then(`^the installer is inert and names the feature flag$`, w.disabledPluginInstallerIsInert)
-	ctx.Then(`^init reports setup, ingest, index, model, and its total once in that order$`, w.initSummaryIsOrdered)
+	ctx.Then(`^init reports setup, ingest, index, and its total once in that order$`, w.initSummaryIsOrdered)
 	ctx.When(`^the operator initializes non-interactively with a detected model CLI$`, w.initWithDetectedModelCLI)
-	ctx.Then(`^init prints one answering notice and writes only the new-install features$`, w.initHasOneAnsweringNotice)
+	ctx.Then(`^init prints no answering notice and writes only the new-install features$`, w.initHasOneAnsweringNotice)
 	ctx.When(`^the operator asks for a doctor support report$`, w.askForDoctorReport)
 	ctx.Then(`^the report is one fenced block with a federation mode and the JSON form is one document$`,
 		w.doctorReportIsPasteable)
@@ -133,7 +146,7 @@ func (w *distributionWorld) initSummaryIsOrdered() error {
 		return fmt.Errorf("human init exited %d: %s%s", w.human.code, w.human.stdout, w.human.stderr)
 	}
 	position := -1
-	for _, prefix := range []string{"setup:", "ingest:", "index:", "model:", "total:"} {
+	for _, prefix := range []string{"setup:", "ingest:", "index:", "total:"} {
 		if count := countDistributionLines(w.human.stdout, prefix); count != 1 {
 			return fmt.Errorf("init %s line count=%d:\n%s", prefix, count, w.human.stdout)
 		}
@@ -187,10 +200,10 @@ func (w *distributionWorld) initHasOneAnsweringNotice() error {
 	if w.last.code != 0 {
 		return fmt.Errorf("non-interactive init exited %d: %s%s", w.last.code, w.last.stdout, w.last.stderr)
 	}
-	if count := countDistributionLines(w.last.stdout, "answering:"); count != 1 {
-		return fmt.Errorf("answering line count=%d, want 1:\n%s", count, w.last.stdout)
+	if count := countDistributionLines(w.last.stdout, "answering:"); count != 0 {
+		return fmt.Errorf("answering line count=%d, want 0:\n%s", count, w.last.stdout)
 	}
-	for _, want := range []string{"answering: claude/sonnet", "configuration:", "roca model set <id>"} {
+	for _, want := range []string{"configuration:", "roca plugin install thellmwhisperer/roca-playground"} {
 		if !strings.Contains(w.last.stdout, want) {
 			return fmt.Errorf("answering notice does not contain %q:\n%s", want, w.last.stdout)
 		}

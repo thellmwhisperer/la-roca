@@ -45,6 +45,19 @@ forbids). Godog acceptance contracts live directly under
 discovered automatically, and `make accept-index` rejects any other layout. The
 acceptance harnesses are compiled only with the `acceptance` build tag.
 
+`make accept` (also part of `make check`) and `make split-oracle` build the
+optional playground fixture through `make playground-fixture`. That target
+clones the plugin repository into `PLAYGROUND_DIR` when absent and builds it
+against this checkout; the defaults and selected ref live in `Makefile`.
+`make playground-test` additionally runs the plugin's checks and paired S1 cost
+measurement on synthetic fixtures. Set `ROCA_PUBLISHED_BIN` to the published
+`v1.82.6` executable for the before/after comparison; the measurement writes
+evidence under `.tmp/playground-evidence`.
+For S1, the pipeline test step must retain both `published.json` and `branch.json`
+as evidence artifacts. A transcript of only the new binary is incomplete.
+The published executable can be downloaded from the `v1.82.6` GitHub release;
+run it only with the synthetic home supplied by `TestCostPlayground`.
+
 `make e2e-smoke` isolates the real-binary operator path in a disposable `HOME`
 and covers init, ingest, query, plugin install, and plugin update. It is also
 part of `make check` and must never mutate an operator's live La Roca home.

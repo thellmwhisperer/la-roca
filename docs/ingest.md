@@ -1,7 +1,6 @@
 # Ingest sources
 
-First-time path: [install, detect an already signed-in agent CLI, and query
-without a La Roca login](lifecycle.md#install).
+First-time path: [install and initialize search](lifecycle.md#install).
 
 `roca ingest` incrementally reads supported local artefacts:
 

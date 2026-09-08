@@ -253,7 +253,7 @@ func TestPurgePreservesSymlinkedProductDirectoriesAndTargets(t *testing.T) {
 		name string
 	}{
 		{paths.Backups, "roca.20260811T120000Z.backup.db"},
-		{filepath.Join(dataDir, "cache"), modelsDevCacheFile},
+		{filepath.Join(dataDir, "cache"), "models.dev.json"},
 		{filepath.Join(dataDir, logfile.DirName), "executions-2026-08-11.jsonl"},
 	}
 	for _, directory := range directories {

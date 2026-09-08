@@ -186,6 +186,9 @@ func (w *oracleWorld) record() ([]byte, error) {
 	if err := os.MkdirAll(filepath.Join(home, "bin"), 0o700); err != nil {
 		return nil, err
 	}
+	if err := installPlaygroundForAcceptance(home); err != nil {
+		return nil, err
+	}
 	runner := &oracleRunner{binary: w.binary, home: home, normalizer: compatibility.Normalizer{Home: home}}
 	if err := runner.writeConfig(providerDeadEndpoint); err != nil {
 		return nil, err

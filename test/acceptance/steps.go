@@ -91,6 +91,11 @@ func registerSteps(ctx *godog.ScenarioContext, binary string) {
 			return c, err
 		}
 		m.home = home
+		if os.Getenv("ROCA_PLAYGROUND_FEATURES") != "" {
+			if err := installPlaygroundForAcceptance(home); err != nil {
+				return c, err
+			}
+		}
 		// TMPDIR points inside this HOME (see environment), and it has to be
 		// there before the first thing that shelled out read it. Creating it
 		// once here is what keeps the sandbox self-contained on both platforms:

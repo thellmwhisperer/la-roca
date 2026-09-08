@@ -21,6 +21,11 @@ func TestFirstTTYCommandOffersOpenCapabilitiesOnceForTheBuild(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			home, bin := t.TempDir(), t.TempDir()
+			installPlaygroundFixture(t, home, `case "$1" in
+capabilities) printf '%s\n' '[{"ID":"claude-cli-provider","Proposal":{"Alert":"Claude Code is on PATH","Prompt":"Enable Claude?"}}]' ;;
+probe) printf '{}\n' ;;
+esac`)
+
 			t.Setenv("HOME", home)
 			t.Setenv("PATH", bin)
 			if err := os.WriteFile(filepath.Join(bin, "claude"), []byte("fixture"), 0o700); err != nil {
@@ -64,6 +69,11 @@ func runCapabilityRoot(t *testing.T, build Build, in *strings.Reader, args ...st
 
 func TestDoctorListsAnOpenProposalEvenAfterItsVersionStamp(t *testing.T) {
 	home, bin := t.TempDir(), t.TempDir()
+	installPlaygroundFixture(t, home, `case "$1" in
+capabilities) printf '%s\n' '[{"ID":"claude-cli-provider","Proposal":{"Alert":"Claude Code is on PATH","Prompt":"Enable Claude?"}}]' ;;
+probe) printf '{}\n' ;;
+esac`)
+
 	isolateRuntimeDirs(t, home)
 	t.Setenv("PATH", bin)
 	if err := os.WriteFile(filepath.Join(bin, "claude"), []byte("fixture"), 0o700); err != nil {

@@ -21,14 +21,11 @@ Before first use, run `roca init` in a terminal. With no home database it asks
 copies that database into `~/.roca`, and leaves the original untouched; `new`
 creates an empty database and indexes detected agent sources. If the home
 database already exists, init asks to keep or explicitly reinitialize it.
-When no config exists, init creates the new-install feature configuration, then
-lists models by their detected CLI or local Ollama origin, asks for the model
-first, resolves its harness, and confirms the pair into that new file. Plain
-Enter keeps the factory choice and uses the CLI's existing session without a La
-Roca login. An existing config is preserved byte-for-byte and skips the chooser;
-use `roca model set` to change it. Automation that creates or selects a location
-must pass `--db-path`; non-terminal init does not open the chooser or add model
-settings.
+Initialization and configuration preservation follow the
+[init lifecycle](https://github.com/thellmwhisperer/la-roca/blob/main/docs/lifecycle.md#initialize).
+Automation that creates or selects a location must pass `--db-path`.
+Human answering uses the
+[optional playground plugin](https://github.com/thellmwhisperer/la-roca/blob/main/docs/plugins.md#optional-human-answering).
 
 ## Staying current
 
@@ -117,15 +114,9 @@ help[2]:
 
 ## MCP (shell-less agents)
 
-Six tools, same service as the CLI: `roca_query`, `roca_explore`, `roca_sql`,
-`roca_exec`, `roca_store`, `roca_health`. `roca_explore` has full CLI parity:
-plain mode and `deep: true` both return the prose investigation and generated
-SQL, with the deep mission mapping the complete terrain and proposing probes.
-`roca_sql` is the shell-less form of
-`playground --sql-only` (the SQL without running it); `roca_exec` follows the
-authored-SQL contract linked above. The `roca_query`, `roca_explore`, and `roca_sql` tools accept the same
-comma list or `all` in their `databases` argument. Install them with
-`roca mcp install <runtime>`.
+Install the integration with `roca mcp install <runtime>`. The
+[MCP reference](https://github.com/thellmwhisperer/la-roca/blob/main/docs/mcp.md#the-tools-and-optional-plugins)
+owns tool availability, optional plugin requirements, and argument contracts.
 
 ## Provenance: who wrote what
 

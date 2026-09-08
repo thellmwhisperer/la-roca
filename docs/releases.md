@@ -1,7 +1,6 @@
 # Releases
 
-First-time path: [install, detect an already signed-in agent CLI, and query
-without a La Roca login](lifecycle.md#install).
+First-time path: [install and initialize search](lifecycle.md#install).
 
 `.github/workflows/release-please.yml` maintains one release pull request from
 the Conventional Commits merged into `main`; it does not build artefacts.

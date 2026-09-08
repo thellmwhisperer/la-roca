@@ -27,7 +27,6 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocavector"
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
 	"github.com/thellmwhisperer/la-roca/internal/jsonid"
-	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 	"github.com/thellmwhisperer/la-roca/internal/securefile"
@@ -65,13 +64,11 @@ func versionLine(build Build) string {
 func initCommand(env *cliEnv) *cobra.Command {
 	return &cobra.Command{
 		Use:   "init",
-		Short: "Choose a database and answering model, then bootstrap them",
+		Short: "Choose a database, ingest history, and prepare word search",
 		Long: "Creates and bootstraps the database. With no home database, init asks new or adopt;\n" +
 			"adopt then asks for the source path and copies it, leaving the original untouched.\n" +
 			"An existing home database is kept or reinitialized only by explicit answer.\n" +
-			"With no existing config, a terminal model-first chooser lists detected CLI defaults and pulled Ollama models,\n" +
-			"resolves the harness, confirms the pair, and writes it into the new configuration.\n" +
-			"An existing config is preserved byte-for-byte and skips the chooser.\n" +
+			"An existing config is preserved byte-for-byte. Answering models belong to the optional playground plugin.\n" +
 			"Non-interactive callers must select a location explicitly with --db-path; they are never prompted.\n" +
 			"Init does not return until word search works. A terminal run then asks once whether to read the\n" +
 			"history for meaning as well; that yes downloads what it needs and indexes in the background.",
@@ -94,25 +91,6 @@ func initCommand(env *cliEnv) *cobra.Command {
 			if configMissingAtStart {
 				if err := writeNewInstallConfig(paths.Config); err != nil {
 					return err
-				}
-			}
-			if interactive && !env.skipInitChooser && configMissingAtStart {
-				chooserStarted := time.Now()
-				promptWaitBefore := env.initPromptWait
-				initialModel, modelErr := effectiveInitModel(cmd.Context(), paths)
-				if modelErr != nil {
-					return modelErr
-				}
-				chooserResult, completed, chooserErr := env.chooseInitModel(cmd.Context(), input, paths,
-					service.InitResult{ConfigPath: paths.Config, Model: initialModel})
-				env.initChooserElapsed = initMachineDuration(time.Since(chooserStarted),
-					env.initPromptWait-promptWaitBefore)
-				if chooserErr != nil {
-					return chooserErr
-				}
-				if choice == "reinitialize" && !completed {
-					renderInitAnswer(env, chooserResult)
-					return nil
 				}
 			}
 			if choice == "reinitialize" {
@@ -502,8 +480,6 @@ func renderBootstrap(env *cliEnv, result service.InitResult) {
 	for _, warning := range result.Warnings {
 		env.print("warning: %s", warning)
 	}
-	renderModelDetection(env, result.DetectedModelBinaries, result.MissingModelBinaries,
-		result.FactoryDefault, result.FactoryDefaultProvider)
 	if result.Ingest != nil {
 		env.print("  agents detected: %s", detectedAgentsLine(result.Ingest.DetectedAgents))
 		env.print("  agents not found: %s", missingAgentsLine(result.Ingest.DetectedAgents))
@@ -572,85 +548,7 @@ func renderWordSearch(env *cliEnv, proof *search.Proof) {
 }
 
 func renderInitAnswer(env *cliEnv, result service.InitResult) {
-	model := result.Model
-	if model == nil || !model.Ready {
-		env.print("answering: none · configuration: %s · change with: models.order and models.<provider>.model in that file; run roca doctor to confirm who will answer",
-			result.ConfigPath)
-		return
-	}
-	line := fmt.Sprintf("answering: %s/%s (%s) · configuration: %s",
-		model.Provider, model.Model, modelChoiceSource(result.ConfigPath, model.Provider, model.Model),
-		result.ConfigPath)
-	if model.CommandTransport {
-		line += " · uses the existing local CLI session; confirm it with roca model check"
-	}
-	line += " · change with: " + initModelChange(model.Provider, model.Model, result.ConfigPath)
-	env.print("%s", line)
-}
-
-func initModelChange(name, model, path string) string {
-	file, _ := config.LoadFile(path)
-	orderOverride := strings.TrimSpace(os.Getenv(provider.EnvOrder)) != ""
-	modelOverrides := initModelEnvironmentOverrides(name, model, file)
-	change := fmt.Sprintf("roca model set <id> or models.%s.model in %s", name, path)
-	effectiveChange := change
-	if orderOverride {
-		effectiveChange = "models.<provider>.model in " + path
-	}
-
-	var governing, unset []string
-	if orderOverride {
-		governing = append(governing, provider.EnvOrder)
-		unset = append(unset, provider.EnvOrder)
-	}
-	if len(modelOverrides) > 0 {
-		governing = append(governing, modelOverrides[0])
-		unset = append(unset, modelOverrides...)
-	}
-	guidance := effectiveChange
-	if len(governing) > 0 {
-		guidance = fmt.Sprintf("change %s directly; or unset %s before using %s",
-			strings.Join(governing, " and "), strings.Join(unset, " and "), effectiveChange)
-	}
-	if orderOverride {
-		guidance = change + "; " + guidance
-	}
-	if transport := initModelTransportOverride(name, path, file); transport != "" {
-		guidance += "; transport is governed by " + transport +
-			"; remove or change it to use the built-in transport"
-	}
-	return guidance + "; run roca doctor to confirm who will answer"
-}
-
-func initModelEnvironmentOverrides(name, model string, file config.File) []string {
-	keys := map[string][]string{
-		provider.NameCodex:  {"ROCA_CODEX_MODEL"},
-		provider.NameOllama: {"ROCA_OLLAMA_MODEL", "ROCA_MODEL"},
-	}[name]
-	if name == provider.NameCodex && provider.UsesCommandTransport(file, name) ||
-		name == provider.NameOllama && len(file.Models.Providers[name].Command) > 0 {
-		return nil
-	}
-	var overrides []string
-	for _, key := range keys {
-		if os.Getenv(key) != "" {
-			overrides = append(overrides, key)
-		}
-	}
-	if len(overrides) > 0 && os.Getenv(overrides[0]) != model {
-		return nil
-	}
-	return overrides
-}
-
-func initModelTransportOverride(name, path string, file config.File) string {
-	cfg := file.Models.Providers[name]
-	switch {
-	case len(cfg.Command) > 0:
-		return fmt.Sprintf("models.%s.command in %s", name, path)
-	default:
-		return ""
-	}
+	env.print("search: ready; optional human answering: roca plugin install thellmwhisperer/roca-playground")
 }
 
 func renderBedrock(env *cliEnv, bedrock *service.Bedrock) {
@@ -780,97 +678,6 @@ func queryCommand(env *cliEnv) *cobra.Command {
 	return cmd
 }
 
-func playgroundCommand(env *cliEnv) *cobra.Command {
-	var req service.QueryRequest
-	var full bool
-	var databases string
-	cmd := &cobra.Command{
-		Use:   "playground <question>",
-		Short: "Human reading room: natural-language SQL and optional prose",
-		Long: "Compile a question into SQL with the answering model and optionally explain the rows. " +
-			"Agents search with `roca query`; this room is for humans. " +
-			"Questions must contain text and may be at most 1000 characters.",
-		Args: cobra.MinimumNArgs(1),
-		RunE: scopedQuestionRunE(env, &req, &databases, func(cmd *cobra.Command, svc *service.Service) error {
-			// The query may round-trip a model, and a model takes long enough to read
-			// as frozen. The spinner says it is running on the error stream of an
-			// interactive terminal only, so a piped call and a --json call see nothing.
-			spin := startSpinner(env, spinnerShaping)
-			live := newLiveInterpretation(env, spin, full, svc.DB().Path())
-			req.Progress = queryProgress(spin)
-			req.InterpretationStart = live.start
-			req.InterpretationDelta = live.append
-			answer, err := answerQuery(cmd.Context(), svc, req, full)
-			spin.finish()
-			if err != nil {
-				return err
-			}
-			result := answer.result
-			// A question that needed a model on a machine with no model
-			// available is not an answer, even when the keyword rescue found
-			// rows. The rows are a courtesy; the exit code tells the truth, so
-			// a script does not read "it worked" from a machine that has
-			// nothing to answer with.
-			if printed, err := env.recordQueryResult(&result, svc); printed || err != nil {
-				return err
-			}
-			if live.finish(answer) {
-				return nil
-			}
-			env.print("database: %s", svc.DB().Path())
-			if answer.interpretErr != nil {
-				env.print("%s", interpretationFallback(answer.interpretErr))
-			}
-			answer.prose = formatInterpretation(answer.prose, termAware(env.out),
-				terminalWidth(env.out), colorOn(env.out))
-			env.print("%s", axiQuery(answer))
-			return nil
-		}),
-	}
-	cmd.Flags().StringVar(&req.Layer, "layer", "", "restrict the answer to one layer")
-	cmd.Flags().IntVar(&req.MaxChars, "max-chars", service.DefaultMaxChars, "character budget per text field")
-	cmd.Flags().BoolVar(&req.SQLOnly, "sql-only", false, "return the SQL without running it")
-	cmd.Flags().BoolVar(&full, "full", false, "add a prose interpretation for human reading")
-	addDatabaseFlag(cmd, &databases)
-	return cmd
-}
-
-func exploreCommand(env *cliEnv) *cobra.Command {
-	var req service.QueryRequest
-	var deep bool
-	var databases string
-	cmd := &cobra.Command{
-		Use:   "explore <term>",
-		Short: "Investigate one concept through grounded memory",
-		Long: "Investigate one concept with prose, deterministic terrain facts, and the generated SQL. " +
-			"Use --deep for the full terrain map and 2-3 next probes.",
-		Args: cobra.MinimumNArgs(1),
-		RunE: scopedQuestionRunE(env, &req, &databases, func(cmd *cobra.Command, svc *service.Service) error {
-			spin := startSpinner(env, spinnerShaping)
-			req.Progress = queryProgress(spin)
-			result, err := svc.Explore(cmd.Context(), service.ExploreRequest{
-				QueryRequest: req, Deep: deep,
-			})
-			spin.finish()
-			if err != nil {
-				return err
-			}
-			if printed, err := env.recordQueryResult(&result, svc); printed || err != nil {
-				return err
-			}
-			result.Interpretation = formatInterpretation(result.Interpretation, termAware(env.out),
-				terminalWidth(env.out), colorOn(env.out))
-			env.print("%s", axi.Explore(result))
-			return nil
-		}),
-	}
-	cmd.Flags().StringVar(&req.Layer, "layer", "", "restrict the investigation to one layer")
-	cmd.Flags().IntVar(&req.MaxChars, "max-chars", service.DefaultMaxChars, "character budget per text field")
-	cmd.Flags().BoolVar(&deep, "deep", false, "use the full terrain map and propose 2-3 next probes")
-	addDatabaseFlag(cmd, &databases)
-	return cmd
-}
-
 func addDatabaseFlag(cmd *cobra.Command, dest *string) {
 	cmd.Flags().StringVar(dest, "databases", "",
 		"comma list of attached database names to narrow the default federation, or all")
@@ -895,144 +702,6 @@ func databaseScopeCommand(env *cliEnv) *cobra.Command {
 	}
 	addDatabaseFlag(cmd, &databases)
 	return cmd
-}
-
-func scopedQuestionRunE(env *cliEnv, req *service.QueryRequest, databases *string,
-	run func(*cobra.Command, *service.Service) error) func(*cobra.Command, []string) error {
-	return env.serviceRunE(func(cmd *cobra.Command, args []string, svc *service.Service) error {
-		if err := bindQuestionScope(req, args, *databases); err != nil {
-			return err
-		}
-		return run(cmd, svc)
-	})
-}
-
-func queryProgress(spin *spinner) func(service.QueryPhase) {
-	return func(phase service.QueryPhase) {
-		switch phase {
-		case service.QueryPhaseExecution:
-			spin.phase(spinnerSearching)
-		case service.QueryPhaseInterpretation:
-			spin.phase(spinnerComposing)
-		default:
-			spin.phase(spinnerShaping)
-		}
-	}
-}
-
-func bindQuestionScope(req *service.QueryRequest, args []string, databases string) error {
-	req.Question = strings.Join(args, " ")
-	names, err := service.ParseDatabaseList(databases)
-	if err != nil {
-		return err
-	}
-	req.Databases = names
-	return nil
-}
-
-func (env *cliEnv) recordQueryResult(result *service.QueryResult,
-	svc *service.Service) (bool, error) {
-	env.auditQuery = result
-	env.capture(*result)
-	if service.IsDegradedFailure(result.Degraded) {
-		env.code = ExitError
-	}
-	if !env.json {
-		return false, nil
-	}
-	return true, env.printJSON(struct {
-		service.QueryResult
-		DatabasePath string `json:"database_path"`
-	}{*result, svc.DB().Path()})
-}
-
-// queryAnswer keeps the rows and the optional second inference together. The
-// interpretation error is presentation context, not a query failure: callers
-// still render the first inference's evidence when the second one fails.
-type queryAnswer struct {
-	result       service.QueryResult
-	prose        string
-	interpretErr error
-}
-
-// answerQuery always performs the natural-language-to-SQL query once. Full
-// mode adds one interpretation call only when that query returned model-backed
-// rows; default mode stops at the data, matching the MCP surface.
-func answerQuery(ctx context.Context, svc *service.Service, req service.QueryRequest,
-	full bool) (queryAnswer, error) {
-	result, err := svc.Query(ctx, req)
-	answer := queryAnswer{result: result}
-	if err != nil || !full || result.Engine == "" || result.RowCount == 0 {
-		return answer, err
-	}
-	var interpretationMS int64
-	if req.Progress != nil {
-		req.Progress(service.QueryPhaseInterpretation)
-	}
-	var onStart func(bool)
-	if req.InterpretationStart != nil {
-		onStart = func(native bool) { req.InterpretationStart(native, result) }
-	}
-	firstOnStart, firstOnDelta, flushInterpretation :=
-		service.BufferInterpretationCallbacks(onStart, req.InterpretationDelta)
-	started := time.Now()
-	interpretation, err := svc.InterpretStream(
-		ctx, result.Question, result.Columns, result.Rows,
-		time.Duration(result.SQLInferenceMS)*time.Millisecond,
-		result.Engine, service.InterpretationContext{
-			Mission: service.InterpretationAnswer, UnusedDatabases: result.UnusedDatabases,
-		},
-		firstOnStart, firstOnDelta)
-	interpretationMS += time.Since(started).Milliseconds()
-	if err == nil && service.CanWidenAfterInterpretation(result, interpretation.Text) {
-		first := result
-		req.Databases = []string{service.ScopeAll}
-		widened, widenErr := svc.Query(ctx, req)
-		if widenErr != nil {
-			return queryAnswer{result: service.MergeWidenedResult(first, widened)}, widenErr
-		}
-		secondSQLInferenceMS := widened.SQLInferenceMS
-		result = service.MergeWidenedResult(first, widened)
-		interpretation = service.Interpretation{}
-		err = nil
-		if result.Engine != "" && result.RowCount > 0 {
-			started = time.Now()
-			interpretation, err = svc.InterpretStream(
-				ctx, result.Question, result.Columns, result.Rows,
-				time.Duration(secondSQLInferenceMS)*time.Millisecond,
-				result.Engine, service.InterpretationContext{Mission: service.InterpretationAnswer},
-				onStart, req.InterpretationDelta)
-			interpretationMS += time.Since(started).Milliseconds()
-		}
-	} else if err == nil {
-		flushInterpretation()
-	}
-	answer.result = result
-	answer.prose, answer.interpretErr = interpretation.Text, err
-	answer.result.InterpretationMS = interpretationMS
-	answer.result.LatencyMS += answer.result.InterpretationMS
-	answer.result.Interpretation = interpretation.Text
-	// Who read the rows travels in the envelope beside who wrote the SQL: on an
-	// installation that splits the two inferences they are different providers,
-	// and that difference is the whole point of splitting them.
-	answer.result.InterpretEngine = interpretation.Engine
-	answer.result.InterpretModel = interpretation.Model
-	answer.result.InterpretNote = interpretation.Note
-	if answer.interpretErr != nil {
-		answer.result.ProviderError = answer.interpretErr.Error()
-	}
-	return answer, nil
-}
-
-func interpretationFallback(err error) string {
-	if errors.Is(err, context.DeadlineExceeded) {
-		return "summary timed out; showing rows instead."
-	}
-	return "summary unavailable; showing rows instead."
-}
-
-func axiQuery(answer queryAnswer) string {
-	return axi.Query(answer.result, answer.prose)
 }
 
 func execCommand(env *cliEnv) *cobra.Command {
@@ -1065,17 +734,6 @@ func execCommand(env *cliEnv) *cobra.Command {
 	cmd.Flags().IntVar(&req.MaxChars, "max-chars", service.DefaultMaxChars, "character budget per text field")
 	cmd.Flags().IntVar(&timeoutMS, "timeout-ms", -1, "statement budget in milliseconds; 0 disables the bound")
 	return cmd
-}
-
-// render is the readable output. The same answer --json hands over whole,
-// summarized here for a human at a terminal.
-//
-// prose is the model's natural-language rendering of the rows, when full mode's
-// second inference call answered. Empty means default row mode or a failed call.
-func render(env *cliEnv, res service.QueryResult, prose string) {
-	// The AXI text — route preamble, optional prose, rows and contextual help —
-	// has one owner in the axi package.
-	env.print("%s", axi.Query(res, prose))
 }
 
 func compactCommand(env *cliEnv) *cobra.Command {

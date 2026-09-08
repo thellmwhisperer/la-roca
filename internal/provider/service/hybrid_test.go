@@ -156,16 +156,16 @@ printf '%s' '{"mixed_models":true,"vector_executed":true,"results":[],"database_
 func TestSearchResolvesSessionSnippetsFromDeclaredColumns(t *testing.T) {
 	svc := seededHybridService(t, nil)
 	result := mustHybridSearch(t, svc, "recovery", false)
-	found := false
+	Found := false
 	for _, hit := range result.Hits {
 		if hit.Table == "sessions" && hit.ID == "session-salud" {
-			found = true
+			Found = true
 			if !strings.Contains(hit.Snippet, "Therapy notes") {
 				t.Fatalf("session snippet missing catalog title: %+v", hit)
 			}
 		}
 	}
-	if !found {
+	if !Found {
 		t.Fatalf("sessions hit missing: %+v", result.Hits)
 	}
 }

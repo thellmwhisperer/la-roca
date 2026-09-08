@@ -16,7 +16,7 @@ import (
 
 	"github.com/thellmwhisperer/la-roca/internal/artifact"
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
-	"github.com/thellmwhisperer/la-roca/internal/provider"
+
 	"github.com/thellmwhisperer/la-roca/internal/provider/layers"
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 	"github.com/thellmwhisperer/la-roca/internal/provider/query/sqlgate"
@@ -28,7 +28,7 @@ import (
 // A zero request means this default, never an unbounded response.
 const DefaultMaxChars = 500
 
-func textBudget(maxChars int) int {
+func TextBudget(maxChars int) int {
 	if maxChars <= 0 {
 		return DefaultMaxChars
 	}
@@ -80,21 +80,8 @@ type Options struct {
 	// other embeddings.
 	CorpusEnabled bool
 	// ReadOnly refuses in the service, before any database I/O.
-	ReadOnly bool
-	// Providers is the resolved model cascade. Its zero value is a service that
-	// contacts no provider, which is what an installation with no model
-	// configured needs.
-	Providers provider.Cascade
-	// Interpreters is the cascade the result rows travel to, when the operator
-	// declared one. Its zero value is the installation that does not split the
-	// two inferences: whoever wrote the SQL also reads the rows. Declared, it is
-	// what keeps the rows on this machine while the question goes to a frontier
-	// model.
-	Interpreters provider.Cascade
-	// Explorers is the optional stronger order for deep investigation prose.
-	// When it cannot serve, deep exploration falls through to Interpreters and
-	// then Providers; plain exploration starts at Interpreters.
-	Explorers provider.Cascade
+	ReadOnly      bool
+	ProviderProbe func(context.Context, *DoctorReport) error
 	// ConfigPath and ConfigExists are what doctor reports: every message about
 	// configuration names the file, never a TOML table.
 	ConfigPath   string
@@ -371,7 +358,7 @@ func (s *Service) DataDir() string { return s.dataDir() }
 func (s *Service) PluginDir() string { return s.opts.PluginDir }
 
 // ReadOnly reports whether this run refuses writes, so a caller that writes
-// beside the shared service leaves the machine as it found it too.
+// beside the shared service leaves the machine as it Found it too.
 func (s *Service) ReadOnly() bool { return s.opts.ReadOnly }
 
 // Close closes the database.
@@ -384,7 +371,7 @@ func (s *Service) Close() error {
 	return errors.Join(result, s.closeOpened())
 }
 
-func (s *Service) ensureSchema(ctx context.Context) (search.Report, error) {
+func (s *Service) EnsureSchema(ctx context.Context) (search.Report, error) {
 	s.schemaMu.Lock()
 	defer s.schemaMu.Unlock()
 	if s.schemaOK {
@@ -421,10 +408,10 @@ func (s *Service) ensureSchema(ctx context.Context) (search.Report, error) {
 	return index, nil
 }
 
-// theGate opens the read-only gate the first time it is needed. It is an
+// TheGate opens the read-only gate the first time it is needed. It is an
 // in-memory database with the visible schema, so it costs a few milliseconds a
 // command that does not query has no reason to pay.
-func (s *Service) theGate() (*sqlgate.Gate, error) {
+func (s *Service) TheGate() (*sqlgate.Gate, error) {
 	s.gateOnce.Do(func() { s.gate, s.gateFailure = sqlgate.Open() })
 	return s.gate, s.gateFailure
 }
@@ -448,12 +435,11 @@ type InitResult struct {
 	Bedrock    *Bedrock       `json:"bedrock"`
 	Search     *search.Report `json:"search_index,omitempty"`
 	// WordSearch is the round trip init will not return without: a word taken
-	// from a row this machine holds, asked back of the index, and found. The
+	// from a row this machine holds, asked back of the index, and Found. The
 	// index being built is a step; this is the promise that step was for.
 	WordSearch *search.Proof `json:"word_search,omitempty"`
-	// Model and Ingest are the rest of the bootstrap: whether a model is going
-	// to answer, and what the first read of the disk found. Neither can fail
-	// the command, and both report.
+	// Model is retained for wire compatibility; core init leaves it nil.
+	// Ingest reports the first read of disk without failing initialization.
 	Model                  *InitModel    `json:"model"`
 	Ingest                 *IngestResult `json:"ingest"`
 	PromptPath             string        `json:"prompt_path"`
@@ -469,9 +455,8 @@ type InitResult struct {
 	TotalElapsedMS         int64         `json:"-"`
 }
 
-// InitModel is the model gate at bootstrap: which provider is going to answer,
-// or why none is and what to do about it. It is the same verdict `roca doctor`
-// prints, said once at the moment an operator first has a reason to care.
+// InitModel preserves the legacy bootstrap result shape for clients.
+// Answering-model diagnosis now belongs to the optional playground plugin.
 type InitModel struct {
 	Ready    bool   `json:"ready"`
 	Provider string `json:"provider,omitempty"`
@@ -493,12 +478,11 @@ const presentationPrompt = presentationPromptSignature +
 	"context or a decision may exist.\n" +
 	"With a shell, use `roca query \"<natural question>\"`; preserve durable context " +
 	"with `roca store --agent <harness> --model <model>` so CLI authorship is explicit.\n" +
-	"Data = `roca query`; human reading = `roca query --full`; raw SQL = `roca exec`.\n" +
-	"Investigations start with `roca explore --deep \"<one bare word>\"`, then plain `roca explore` radius probes.\n" +
-	"Without a shell, use the MCP equivalents: `roca_query`, `roca_explore`, and `roca_store`.\n" +
+	"Search = `roca query`; checked SQL = `roca exec`.\n" +
+	"The optional playground plugin provides human answers with `roca playground --full` and investigations with `roca explore`.\n" +
+	"Without a shell, use `roca_query`, `roca_exec`, and `roca_store`; `roca_explore` requires the plugin.\n" +
 	"Authorship is automatic over MCP; CLI detection is conservative, so pass --agent and --model.\n" +
-	"`roca init` chooses an answering model only when initialization starts without a configuration; " +
-	"an existing configuration is preserved and its model selection remains in force.\n" +
+	"`roca init` prepares search and preserves existing configuration. The optional plugin uses its [models] settings.\n" +
 	"La Roca never edits agent instruction files; a human chooses where to paste this block.\n"
 
 // PresentationPrompt is the product-owned part of prompt.md. Distribution
@@ -569,21 +553,18 @@ func (s *Service) Init(ctx context.Context) (InitResult, error) {
 	progress(fmt.Sprintf("database: %s · %d bytes · %d memories · %d sessions · %d exchanges",
 		progressState, bytes, rows.Memories, rows.Sessions, rows.Exchanges))
 	result := InitResult{
-		DBPath:                s.db.Path(),
-		ConfigPath:            s.opts.ConfigPath,
-		Database:              state,
-		Verdict:               string(adoption.Verdict),
-		Structures:            adoption.RequiredStructures,
-		Orphans:               adoption.Orphans,
-		Repairs:               adoption.Repairs,
-		BackupPath:            adoption.BackupPath,
-		Layers:                len(s.registry.Layers),
-		Bytes:                 bytes,
-		Rows:                  rows,
-		RowsBefore:            rows,
-		DetectedModelBinaries: append([]string(nil), s.opts.Providers.DetectedBinaries...),
-		MissingModelBinaries:  provider.MissingCommandPresets(s.opts.Providers.DetectedBinaries),
-		FactoryDefault:        s.opts.Providers.FactoryDefault,
+		DBPath:     s.db.Path(),
+		ConfigPath: s.opts.ConfigPath,
+		Database:   state,
+		Verdict:    string(adoption.Verdict),
+		Structures: adoption.RequiredStructures,
+		Orphans:    adoption.Orphans,
+		Repairs:    adoption.Repairs,
+		BackupPath: adoption.BackupPath,
+		Layers:     len(s.registry.Layers),
+		Bytes:      bytes,
+		Rows:       rows,
+		RowsBefore: rows,
 	}
 	result.SetupElapsedMS = time.Since(started).Milliseconds()
 
@@ -618,18 +599,6 @@ func (s *Service) Init(ctx context.Context) (InitResult, error) {
 		if !result.WordSearch.Ready && !result.WordSearch.Empty {
 			return result, wordSearchInitError()
 		}
-	}
-	progress("model: checking declared providers")
-	modelStarted := time.Now()
-	result.Model = s.modelGate(ctx)
-	if result.FactoryDefault && result.Model.Ready {
-		result.FactoryDefaultProvider = result.Model.Provider
-	}
-	result.ModelElapsedMS = time.Since(modelStarted).Milliseconds()
-	if result.Model.Ready {
-		progress("model: " + result.Model.Provider + "/" + result.Model.Model + " will answer")
-	} else {
-		progress("model: no provider will answer · " + result.Model.Reason)
 	}
 	result.Rows = result.Ingest.After
 	result.Bedrock, err = s.bedrock(ctx)
@@ -696,35 +665,6 @@ func (s *Service) bootstrapIngest(ctx context.Context) *IngestResult {
 			ingest.Failure{Parser: "ingest", Reason: err.Error()})
 	}
 	return &report
-}
-
-// modelGate asks who is going to answer, without stopping at the first yes:
-// the operator reading the bootstrap wants the picture, and a provider that is
-// not available has to arrive with its remedy attached.
-func (s *Service) modelGate(ctx context.Context) *InitModel {
-	cascade := s.opts.Providers
-	if cascade.Disabled {
-		return &InitModel{Disabled: true, Reason: "the model is turned off in the configuration"}
-	}
-	if len(cascade.Providers) == 0 {
-		return &InitModel{
-			Reason: "no model provider is configured",
-			Action: "declare one under [models] in " + s.opts.ConfigPath +
-				", or run `roca doctor` to see the ones this version knows",
-		}
-	}
-	gate := &InitModel{}
-	for i, attempt := range cascade.Diagnose(ctx) {
-		if attempt.Ready {
-			transport, command := cascade.Providers[i].(interface{ CommandTransport() bool })
-			return &InitModel{Ready: true, Provider: attempt.Name, Model: attempt.ModelID,
-				CommandTransport: command && transport.CommandTransport()}
-		}
-		if gate.Reason == "" {
-			gate.Provider, gate.Reason, gate.Action = attempt.Name, attempt.Reason, attempt.Action
-		}
-	}
-	return gate
 }
 
 // dataDir is the directory the database hangs off. The agent prompt the
@@ -814,7 +754,7 @@ func (s *Service) syncLayers(ctx context.Context) error {
 
 // truncate clips a text to the requested budget while keeping both the leading
 // subject and the search match.
-func truncate(text string, budget int, term string) string {
+func Truncate(text string, budget int, term string) string {
 	pos, matchEnd := matchSpan(text, term)
 	return Excerpt(text, budget, pos, matchEnd)
 }
@@ -904,8 +844,8 @@ func lowerWithPositions(text string) (string, []int) {
 }
 
 func (s *Service) proveWordSearch(ctx context.Context) *search.Proof {
-	route := s.inventoryRoute(ctx)
-	defer route.closeOnDemand()
+	route := s.InventoryRoute(ctx)
+	defer route.CloseOnDemand()
 	var fault *search.Proof
 	var ready *search.Proof
 	for _, surface := range collectSurfaces(route) {
@@ -931,7 +871,7 @@ func (s *Service) proveWordSearch(ctx context.Context) *search.Proof {
 	return &empty
 }
 
-func (s *Service) proveWordSearchSurface(ctx context.Context, route pluginRoute,
+func (s *Service) proveWordSearchSurface(ctx context.Context, route PluginRoute,
 	surface searchSurface) search.Proof {
 	var ready *search.Proof
 	for _, column := range surface.TextColumns {
@@ -966,17 +906,17 @@ func (s *Service) proveWordSearchSurface(ctx context.Context, route pluginRoute,
 				if err != nil {
 					return search.Proof{Word: word, Reason: err.Error()}
 				}
-				found := 0
+				Found := 0
 				if len(matches) > 0 {
-					found = scalarInt(matches[0]["matches"])
+					Found = scalarInt(matches[0]["matches"])
 				}
-				if found == 0 {
+				if Found == 0 {
 					return search.Proof{Word: word, Reason: fmt.Sprintf(
 						"the word index did not answer for %q, a word %s already holds", word, surface.Table)}
 				}
 				if ready == nil {
-					candidate := search.Proof{Ready: true, Word: word, Matches: found,
-						Capped: found >= search.ProofLimit}
+					candidate := search.Proof{Ready: true, Word: word, Matches: Found,
+						Capped: Found >= search.ProofLimit}
 					ready = &candidate
 				}
 				columnReady = true
@@ -1002,10 +942,10 @@ func (s *Service) rebuildWordSearch(ctx context.Context) (search.Report, error) 
 			return search.Report{}, err
 		}
 	}
-	route := s.inventoryRoute(ctx)
-	defer route.closeOnDemand()
+	route := s.InventoryRoute(ctx)
+	defer route.CloseOnDemand()
 	surfaces := collectSurfaces(route)
-	for _, database := range route.databases {
+	for _, database := range route.Databases {
 		var sources []search.ProofSource
 		for _, surface := range surfaces {
 			if surface.Database == scopeName(database) {

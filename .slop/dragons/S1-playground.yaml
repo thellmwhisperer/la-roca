@@ -1,0 +1,43 @@
+schema: 1
+id: S1
+status: removed
+category: adjacent_feature
+title: "Human answering platform extracted to roca-playground"
+created_at: 2026-09-08
+incident:
+  intent: "Core queries SQLite with exec and zero-inference FTS plus vector search."
+  what_was_built: "A provider platform, SQL repairer, interpreter, playground and exploration service inside core."
+  justifying_sentence: "Human answering is an optional convenience."
+  source: "INFORME-SLOP-ADYACENTE.md, suspicion S1 (2026-09-08); issue #346."
+  cost: "Reported moving mass: about 3,600 product lines and 1,760 test lines; retained provider package budget: 0 bytes."
+rule: "The optional roca-playground executable owns answering-model inference."
+forbid:
+  paths:
+    - "internal/provider/catalog.go"
+    - "internal/provider/catalog_test.go"
+    - "internal/provider/command_presets.go"
+    - "internal/provider/localbinary.go"
+    - "internal/provider/localbinary_test.go"
+    - "internal/provider/localprocess_direct.go"
+    - "internal/provider/localprocess_group.go"
+    - "internal/provider/localprocess_group_test.go"
+    - "internal/provider/localprocess_windows.go"
+    - "internal/provider/lookpath_test.go"
+    - "internal/provider/ollama.go"
+    - "internal/provider/ollama_test.go"
+    - "internal/provider/probe.go"
+    - "internal/provider/probe_test.go"
+    - "internal/provider/provider.go"
+    - "internal/provider/provider_test.go"
+    - "internal/provider/sql_length_test.go"
+    - "internal/provider/text.go"
+    - "internal/provider/text_test.go"
+    - "internal/provider/transport.go"
+    - "internal/provider/query/sqlrepair/**"
+    - "internal/provider/query/interpretation.go"
+    - "internal/provider/query/interpretation_test.go"
+    - "internal/provider/service/query.go"
+    - "internal/provider/service/llm.go"
+    - "internal/provider/service/explore.go"
+  symbols: []
+  strings: []
