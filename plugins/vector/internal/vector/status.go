@@ -29,10 +29,6 @@ const (
 	statusOverallTimeout = 8 * time.Second
 	workerActivityFile   = ".worker-status.json"
 	sourceMarkerMetaKey  = "source_marker"
-	// compactBytesPerChunk is three times the measured healthy density of a
-	// 768-dimension float+ANN sidecar (~4 KB/chunk). Above this, empty sqlite-vec
-	// pages dominate the file and `roca vector compact` is the remedy.
-	compactBytesPerChunk int64 = 12000
 )
 
 var (
@@ -165,7 +161,6 @@ func inspectDatabase(ctx context.Context, pluginRoot string, database vectorData
 	row.CandidateChunks = candidateCountForMarker(candidate, marker)
 	row.State = classifySidecar(facts.Exists, true, workerActive, row.EmbeddedChunks, snapshot.Contract,
 		database.contractFingerprint(), snapshot.Fingerprint, snapshot.SourceMarker, marker)
-	row.CompactRecommended = compactRecommended(row.SidecarBytes, row.EmbeddedChunks, snapshot.EmbeddingPages)
 	currentFacts, currentFactsErr := sidecarFileFacts(sidecarPath)
 	if currentFactsErr != nil {
 		row.SidecarBytes = nil
@@ -181,7 +176,7 @@ func inspectDatabase(ctx context.Context, pluginRoot string, database vectorData
 		row.SidecarBytes = nil
 		row.LastWrite = nil
 	}
-	row.CompactRecommended = compactRecommended(row.SidecarBytes, row.EmbeddedChunks, snapshot.EmbeddingPages)
+	row.CompactRecommended = compactRecommended(row.EmbeddedChunks, snapshot.EmbeddingPages)
 	return row
 }
 
@@ -589,23 +584,15 @@ func embeddingPageCount(ctx context.Context, tx *sql.Tx) *int64 {
 	return &n
 }
 
-func compactRecommended(bytes, chunks, pages *int64) bool {
-	if bytes == nil || chunks == nil || *chunks <= 0 {
+func compactRecommended(chunks, pages *int64) bool {
+	if chunks == nil || pages == nil || *chunks < 0 || *pages <= 0 {
 		return false
 	}
-	if *bytes / *chunks >= compactBytesPerChunk {
-		return true
+	expected := *chunks / 1024
+	if *chunks%1024 != 0 {
+		expected++
 	}
-	if pages != nil && *pages > 0 {
-		expected := *chunks / 1000
-		if expected < 1 {
-			expected = 1
-		}
-		if *pages > expected*4 {
-			return true
-		}
-	}
-	return false
+	return *pages > expected*4
 }
 
 func inspectIndexLock(sidecarPath string) string {

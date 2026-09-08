@@ -2,6 +2,7 @@ package vector
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -81,7 +82,8 @@ func TestReportVectorizationReportsStaleAndLiveIndexLock(t *testing.T) {
 	}
 }
 
-func TestReportVectorizationRecommendsCompactWhenBytesPerChunkAreHigh(t *testing.T) {
+func TestReportVectorizationRecommendsCompactForReclaimableEmbeddingPages(t *testing.T) {
+	ctx := context.Background()
 	root := t.TempDir()
 	database := vectorDatabase{
 		Plugin: "roca-corpus", Database: "corpus", Path: "roca-corpus.db", Alias: "corpus",
@@ -91,28 +93,63 @@ func TestReportVectorizationRecommendsCompactWhenBytesPerChunkAreHigh(t *testing
 	path := filepath.Join(root, database.Plugin, database.Path)
 	writeSourceRows(t, path, `CREATE TABLE notes(id TEXT PRIMARY KEY, body TEXT);
 		INSERT INTO notes VALUES ('a','alpha');`)
-	sidecar := SidecarPath(path)
-	writeSidecarWithChunks(t, sidecar, database.owner(), 1, map[string]string{
-		"contract": database.contractFingerprint(), "source_fingerprint": "sealed",
-	})
-	store := openTestSQLite(t, sidecar)
-	if _, err := store.Exec(`CREATE TABLE bloat(payload BLOB); INSERT INTO bloat VALUES (zeroblob(256*1024));`); err != nil {
-		store.Close()
-		t.Fatal(err)
+	sources := make([]sourceRow, 4097)
+	for i := range sources {
+		sources[i] = sourceRow{kind: "sessions", sessionID: fmt.Sprint(i), text: "alpha"}
 	}
-	if err := store.Close(); err != nil {
-		t.Fatal(err)
+	corpus := &memoryCorpus{sources: sources[:1]}
+	index := Index{Corpus: corpus, VectorPath: SidecarPath(path), Model: DefaultModel,
+		Embedder: &recordingEmbedder{}, Database: "corpus"}
+	check := func(stage string, chunks, pages int64, recommended bool) {
+		t.Helper()
+		report, err := ReportVectorization(ctx, StatusRequest{PluginRoot: root})
+		if err != nil {
+			t.Fatal(err)
+		}
+		row := report.Databases[0]
+		if row.EmbeddedChunks == nil || *row.EmbeddedChunks != chunks ||
+			row.EmbeddingPages == nil || *row.EmbeddingPages != pages ||
+			row.CompactRecommended != recommended {
+			t.Fatalf("%s: chunks=%v pages=%v recommended=%v; want %d, %d, %v",
+				stage, valueOrZero(row.EmbeddedChunks), valueOrZero(row.EmbeddingPages),
+				row.CompactRecommended, chunks, pages, recommended)
+		}
 	}
-
-	report, err := ReportVectorization(context.Background(), StatusRequest{PluginRoot: root})
-	if err != nil {
-		t.Fatal(err)
+	ingest := func() {
+		t.Helper()
+		if _, err := index.Ingest(ctx); err != nil {
+			t.Fatal(err)
+		}
 	}
-	row := report.Databases[0]
-	if !row.CompactRecommended {
-		t.Fatalf("compact_recommended = false for %d bytes / %v chunks",
-			valueOrZero(row.SidecarBytes), row.EmbeddedChunks)
+	compact := func() CompactReport {
+		t.Helper()
+		report, err := Compact(ctx, index.VectorPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return report
 	}
+	ingest()
+	check("fresh single chunk", 1, 1, false)
+	compact()
+	check("compacted single chunk", 1, 1, false)
+	corpus.sources = sources
+	ingest()
+	check("dense multi-page index", 4097, 5, false)
+	corpus.sources = sources[:1]
+	ingest()
+	check("sparse index", 1, 5, true)
+	if report := compact(); report.BytesReclaimed <= 0 {
+		t.Fatalf("sparse compaction reclaimed no bytes: %+v", report)
+	}
+	check("compacted sparse index", 1, 1, false)
+	corpus.sources = nil
+	ingest()
+	check("deleted all chunks", 0, 1, true)
+	if report := compact(); report.BytesReclaimed <= 0 {
+		t.Fatalf("empty compaction reclaimed no bytes: %+v", report)
+	}
+	check("compacted empty index", 0, 0, false)
 }
 
 func TestQueryDoesNotLoadEveryStoredChunk(t *testing.T) {
