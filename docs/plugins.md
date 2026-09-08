@@ -566,10 +566,11 @@ zero answering-model inference. Source and moved acceptance scenarios live in
 Core resolves the executable at `~/.roca/plugins/roca-playground/roca-playground`
 (`roca-playground.exe` on Windows). CLI dispatch forwards the answering and
 model-management verbs, database selection, JSON mode, and read-only policy.
-The executable must support `--transport`: stdout carries the command output,
+For `playground` and `explore`, `--transport` leaves stdout as command output,
 while stderr carries the JSON audit envelope defined by
 [`playground.Audit`](../internal/distribution/playground/plugin.go), which core
-uses to restore diagnostics and record query metadata. The `probe` and
+uses to restore diagnostics and record query metadata. Model-management verbs
+retain their live stdin, stdout and stderr. The `probe` and
 `capabilities` verbs return JSON for doctor and configuration reconciliation.
 [The MCP reference](mcp.md#the-tools-and-optional-plugins) owns tool registration
 and restart requirements.

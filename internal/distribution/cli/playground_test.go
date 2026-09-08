@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/playground"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func installPlaygroundFixture(t *testing.T, home, script string) {
@@ -176,5 +178,37 @@ exit 1
 	}
 	if count != 1 {
 		t.Fatalf("playground audit records=%d", count)
+	}
+}
+
+func TestPlaygroundModelPromptArrivesBeforeInput(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	installPlaygroundFixture(t, home, `printf 'choose model\n' >&2
+read reply
+printf 'selected %s\n' "$reply"
+`)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	input, answer := io.Pipe()
+	defer input.Close()
+	diagnostic, prompt := io.Pipe()
+	defer diagnostic.Close()
+	go func() { <-ctx.Done(); answer.Close() }()
+	seen := make(chan bool, 1)
+	go func() {
+		message := make([]byte, len("choose model\n"))
+		_, err := io.ReadFull(diagnostic, message)
+		seen <- err == nil && string(message) == "choose model\n"
+		if err == nil {
+			_, _ = io.WriteString(answer, "fixture\n")
+		}
+		answer.Close()
+	}()
+	var out strings.Builder
+	audit, err := playground.Run(ctx, []string{"model"}, input, &out, prompt)
+	prompt.Close()
+	if err != nil || audit != nil || !<-seen || out.String() != "selected fixture\n" {
+		t.Fatalf("model prompt was buffered: audit=%v err=%v output=%q", audit, err, out.String())
 	}
 }

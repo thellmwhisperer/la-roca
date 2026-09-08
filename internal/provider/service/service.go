@@ -478,12 +478,11 @@ const presentationPrompt = presentationPromptSignature +
 	"context or a decision may exist.\n" +
 	"With a shell, use `roca query \"<natural question>\"`; preserve durable context " +
 	"with `roca store --agent <harness> --model <model>` so CLI authorship is explicit.\n" +
-	"Data = `roca query`; human reading = `roca query --full`; raw SQL = `roca exec`.\n" +
-	"Investigations start with `roca explore --deep \"<one bare word>\"`, then plain `roca explore` radius probes.\n" +
-	"Without a shell, use the MCP equivalents: `roca_query`, `roca_explore`, and `roca_store`.\n" +
+	"Search = `roca query`; checked SQL = `roca exec`.\n" +
+	"The optional playground plugin provides human answers with `roca playground --full` and investigations with `roca explore`.\n" +
+	"Without a shell, use `roca_query`, `roca_exec`, and `roca_store`; `roca_explore` requires the plugin.\n" +
 	"Authorship is automatic over MCP; CLI detection is conservative, so pass --agent and --model.\n" +
-	"`roca init` chooses an answering model only when initialization starts without a configuration; " +
-	"an existing configuration is preserved and its model selection remains in force.\n" +
+	"`roca init` prepares search and preserves existing configuration. The optional plugin uses its [models] settings.\n" +
 	"La Roca never edits agent instruction files; a human chooses where to paste this block.\n"
 
 // PresentationPrompt is the product-owned part of prompt.md. Distribution

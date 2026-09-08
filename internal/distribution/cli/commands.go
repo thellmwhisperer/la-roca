@@ -64,13 +64,11 @@ func versionLine(build Build) string {
 func initCommand(env *cliEnv) *cobra.Command {
 	return &cobra.Command{
 		Use:   "init",
-		Short: "Choose a database and answering model, then bootstrap them",
+		Short: "Choose a database, ingest history, and prepare word search",
 		Long: "Creates and bootstraps the database. With no home database, init asks new or adopt;\n" +
 			"adopt then asks for the source path and copies it, leaving the original untouched.\n" +
 			"An existing home database is kept or reinitialized only by explicit answer.\n" +
-			"With no existing config, a terminal model-first chooser lists detected CLI defaults and pulled Ollama models,\n" +
-			"resolves the harness, confirms the pair, and writes it into the new configuration.\n" +
-			"An existing config is preserved byte-for-byte and skips the chooser.\n" +
+			"An existing config is preserved byte-for-byte. Answering models belong to the optional playground plugin.\n" +
 			"Non-interactive callers must select a location explicitly with --db-path; they are never prompted.\n" +
 			"Init does not return until word search works. A terminal run then asks once whether to read the\n" +
 			"history for meaning as well; that yes downloads what it needs and indexes in the background.",
