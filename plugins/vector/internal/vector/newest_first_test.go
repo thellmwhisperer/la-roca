@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -221,7 +222,7 @@ func TestEmbeddingSchedulerMergesDatabaseHeadsNewestFirst(t *testing.T) {
 		embedder := scheduledEmbedder{base: base, id: id, scheduler: scheduler}
 		for _, entry := range entries {
 			ordered := context.WithValue(ctx, sourceOrderKey{}, sourceOrder{timestamp: entry.at, id: entry.text})
-			if _, err := embedder.Embed(ordered, DefaultModel, []string{entry.text}); err != nil {
+			if _, err := embedder.Embed(ordered, DefaultModel, slices.Repeat([]string{entry.text}, 64)); err != nil {
 				return
 			}
 		}

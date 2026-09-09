@@ -1158,14 +1158,34 @@ func writeBatch(ctx context.Context, db *sql.DB, chunks []desiredChunk, vectors 
 			fingerprint: chunk.fingerprint, sourceFingerprint: chunk.sourceFingerprint}
 		liveness.progressed()
 	}
+	if err := refreshSourceRecordsInBatch(ctx, tx, chunks, liveness); err != nil {
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return err
 	}
 	liveness.progressed()
-	return refreshSourceRecords(ctx, db, chunks, liveness)
+	return nil
 }
 
 func refreshSourceRecords(ctx context.Context, db *sql.DB, chunks []desiredChunk, liveness workLiveness) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := refreshSourceRecordsInBatch(ctx, tx, chunks, liveness); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+type progressStore interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func refreshSourceRecordsInBatch(ctx context.Context, db progressStore, chunks []desiredChunk, liveness workLiveness) error {
 	rows := map[string]desiredChunk{}
 	for _, chunk := range chunks {
 		rows[chunk.sourceKind+"\x00"+chunk.sourceID] = chunk
@@ -1199,7 +1219,7 @@ func refreshSourceRecords(ctx context.Context, db *sql.DB, chunks []desiredChunk
 	return nil
 }
 
-func markSourceProgressKnown(ctx context.Context, db *sql.DB) error {
+func markSourceProgressKnown(ctx context.Context, db progressStore) error {
 	_, err := db.ExecContext(ctx, `INSERT OR REPLACE INTO meta(key,value) VALUES ('progress_identity',?)`,
 		sourceProgressVersion)
 	return err

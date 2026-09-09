@@ -26,37 +26,42 @@ func (n *Native) Embed(ctx context.Context, requestedModel string, input []strin
 		return nil, err
 	}
 	callerCtx := ctx
-	ctx, cancel := boundContext(ctx, nativeCallTimeout)
+	waitCtx, cancelWait := boundContext(ctx, nativeCallTimeout)
+	err := n.acquireNative(waitCtx)
+	cancelWait()
+	if err != nil {
+		return nil, n.nativeContextError(callerCtx)
+	}
+	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	type reply struct {
 		vectors [][]float32
 		err     error
 	}
-	if err := n.acquireNative(ctx); err != nil {
-		return nil, n.nativeContextError(callerCtx)
-	}
 	done := make(chan reply, 1)
+	timeout := nativeCallTimeout
 	go func() {
 		defer n.releaseNative()
-		vectors, err := n.embedLocked(ctx, input)
+		vectors, err := n.embedLocked(ctx, input, func() *time.Timer {
+			return time.AfterFunc(timeout, cancel)
+		})
 		done <- reply{vectors: vectors, err: err}
 	}()
 	select {
 	case result := <-done:
-		if ctx.Err() != nil {
-			return nil, n.nativeContextError(callerCtx)
+		if ctx.Err() == nil {
+			return result.vectors, result.err
 		}
-		return result.vectors, result.err
 	case <-ctx.Done():
-		llamacpp.RequestAbort()
-		if callerCtx.Err() == nil {
-			n.markNativeTrapped(n.trappedElement(input))
-		}
-		return nil, n.nativeContextError(callerCtx)
 	}
+	llamacpp.RequestAbort()
+	if callerCtx.Err() == nil {
+		n.markNativeTrapped(n.trappedElement(input))
+	}
+	return nil, n.nativeContextError(callerCtx)
 }
 
-func (n *Native) embedLocked(ctx context.Context, input []string) ([][]float32, error) {
+func (n *Native) embedLocked(ctx context.Context, input []string, startWatchdog func() *time.Timer) ([][]float32, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -66,7 +71,10 @@ func (n *Native) embedLocked(ctx context.Context, input []string) ([][]float32, 
 	}
 	defer n.activeElement.Store(nil)
 	if n.engine == nil {
-		if err := n.open(ctx); err != nil {
+		watchdog := startWatchdog()
+		err := n.open(ctx)
+		watchdog.Stop()
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -78,7 +86,9 @@ func (n *Native) embedLocked(ctx context.Context, input []string) ([][]float32, 
 		}
 		element := nativeElementIdentity(text)
 		n.activeElement.Store(&element)
+		watchdog := startWatchdog()
 		vector, _, err := n.engine.Embed(text)
+		watchdog.Stop()
 		if err != nil {
 			n.record(telemetry.Record{Kind: telemetry.KindError, Backend: n.backend, Fallback: n.fallback, Err: "embed failed"})
 			return nil, fmt.Errorf("embed: %w", err)
