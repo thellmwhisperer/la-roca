@@ -4,6 +4,8 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -42,33 +44,47 @@ func TestPublishedBinaryKillLeavesReadOnlySnapshotOrphans(t *testing.T) {
 	if bytes := leftoverDirSize(home); bytes > 4<<20 {
 		t.Fatalf("lab is %d bytes; maximum is 4 MiB", bytes)
 	}
-	cmd := exec.CommandContext(ctx, published, "--db-path", dbPath, "_database-scope", "--databases", "corpus")
+	cmd := exec.CommandContext(ctx, published, "--db-path", dbPath, "mcp", "serve")
 	cmd.Env = append(env, "ROCA_READ_ONLY=1")
 	cmd.Dir = home
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = stdin.Close() })
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = stdout.Close() })
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
-	})
-	pattern := filepath.Join(tmp, leftoverSnapshotPrefix+"*")
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		found, err := filepath.Glob(pattern)
-		if err != nil {
+		if cmd.ProcessState == nil {
 			_ = cmd.Process.Kill()
 			_ = cmd.Wait()
-			t.Fatal(err)
 		}
-		if len(found) > 0 {
-			break
-		}
-		time.Sleep(100 * time.Microsecond)
+	})
+	if _, err := io.WriteString(stdin, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"snapshot-evidence","version":"1"}}}`+"\n"); err != nil {
+		t.Fatal(err)
 	}
-	_ = cmd.Process.Kill()
+	var ready struct {
+		ID     int             `json:"id"`
+		Result json.RawMessage `json:"result"`
+	}
+	if err := json.NewDecoder(stdout).Decode(&ready); err != nil {
+		t.Fatalf("published reader initialization: %v", err)
+	}
+	if ready.ID != 1 || len(ready.Result) == 0 || string(ready.Result) == "null" {
+		t.Fatalf("published reader did not initialize: %+v", ready)
+	}
+	if err := cmd.Process.Kill(); err != nil {
+		t.Fatalf("kill initialized published reader: %v", err)
+	}
 	_ = cmd.Wait()
 	// Count what survived the kill, not a directory observed before cleanup.
+	pattern := filepath.Join(tmp, leftoverSnapshotPrefix+"*")
 	matches, err := filepath.Glob(pattern)
 	if err != nil {
 		t.Fatal(err)
