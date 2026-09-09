@@ -19,7 +19,7 @@ incident:
     issue #352.
   cost: "225 lines + 136 tests in incrementality; whole-file hash of ~6.7 GB per corpus pass"
 rule: >
-  A cheap source marker (size, mtime, WAL size, data_version) exits the pass
+  A cheap, restart-stable source-generation marker exits the unchanged pass
   early; hash and chunk comparison only when the marker changed or on explicit
   --verify.
   Cost regression: TestCostUnchangedSourceAndStoredStatus

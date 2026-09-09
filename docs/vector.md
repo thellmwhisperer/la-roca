@@ -248,7 +248,7 @@ roca vector ingest --delta
 roca vector ingest --delta --reembed
 ```
 
-A full delta sweeps every table and prose column declared by installed plugin
+A full delta covers every table and prose column declared by installed plugin
 manifests. The bundled corpus declares session titles/projects, memory content,
 human/agent exchanges, and thinking text; ops declares operational memory
 content. Raw tool data, call telemetry, and other undeclared columns stay
@@ -264,9 +264,16 @@ duplicate chunks. A partially rebuilt sidecar can contain multiple chunk
 generations; queries search all of them while re-embedding continues. Progress
 prints counts, rate, and ETA at batch boundaries.
 
-The worker fingerprints each database (including its SQLite WAL) through
-`pkg/incrementality` and skips the row sweep when both source and declaration
-are unchanged. When a sweep is needed, existing chunk fingerprints decide
+An ordinary full delta first compares source file identity, size, modification
+and change times (including the WAL) with the completed sidecar's stored
+generation. When that marker, the declaration, model, and progress metadata
+match, it skips source hashing and the row sweep. Otherwise, the worker hashes
+the database and WAL through `pkg/incrementality`; a matching fingerprint can
+still avoid the sweep. `roca vector ingest --delta --verify` bypasses the cheap
+check and hashes the source even when its marker matches. SQLite
+connection-local `data_version` counters are not persisted generation evidence.
+`--source` and `--reembed` also bypass the cheap check and perform their sweep.
+When a sweep is needed, existing chunk fingerprints decide
 added, updated, and unchanged work; a desired-versus-stored fingerprint diff
 garbage-collects chunks and embeddings whose source disappeared. Optional
 manifest chunking hints override the kernel defaults without giving plugins
@@ -298,12 +305,6 @@ For a non-default database:
 ```sh
 roca vector --db-path /path/to/roca.db ingest --delta
 ```
-
-Unchanged full passes compare source file identity, size, modification and change
-times (including the WAL) before reading source content. `roca vector ingest
---delta --verify` bypasses this cheap check and hashes the source even when its
-marker matches. SQLite connection-local `data_version` counters are not used
-as persisted generation evidence.
 
 `ROCA_READ_ONLY` refuses `install`, `ingest --delta`, and `compact`.
 The companion always sets `ROCA_READ_ONLY=1` on its core CLI subprocesses for
