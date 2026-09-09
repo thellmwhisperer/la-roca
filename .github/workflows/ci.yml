@@ -118,7 +118,12 @@ jobs:
       # A green check is a green suite over the real binary,
       # on a runner that had nothing an hour ago.
       - name: Build, format, vet, tests and slop gate
-        run: make check
+        run: |
+          snapshot_root="${TMPDIR:-/tmp}"
+          find "$snapshot_root" -maxdepth 1 -type d -name 'roca-read-only-snapshot-*' | sort > before-snapshots.txt
+          make check
+          find "$snapshot_root" -maxdepth 1 -type d -name 'roca-read-only-snapshot-*' | sort > after-snapshots.txt
+          diff -u before-snapshots.txt after-snapshots.txt
 
       # The core stays a CGO-free cross-compile. Native embedding payloads are
       # built on their own runners; this job still proves the Windows
