@@ -68,6 +68,70 @@ func TestClientCleanEOFBeforeReadyWakesWaiters(t *testing.T) {
 	}
 }
 
+func TestClientReplyBeforeEOF(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		reply string
+		want  string
+		err   string
+	}{
+		{"result", `{"kind":"result","stage":"query","id":1,"result":{"fresh":true}}` + "\n", `{"fresh":true}`, ""},
+		{"query error", `{"kind":"error","stage":"query","id":1,"error":"query refused"}` + "\n", "", "query refused"},
+		{"no reply", "", "", "unexpected EOF"},
+		{"other query", `{"kind":"result","stage":"query","id":2,"result":{}}` + "\n", "", "unexpected EOF"},
+	} {
+		// Both select cases are ready; exercise either choice repeatedly.
+		for attempt := range 20 {
+			t.Run(fmt.Sprintf("%s/%d", test.name, attempt), func(t *testing.T) {
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer cancel()
+				clientEnd, serverEnd := net.Pipe()
+				defer serverEnd.Close()
+				conn := &replyBeforeWriteReturns{Conn: clientEnd, ctx: ctx}
+				client := NewClient(conn, nil)
+				defer client.Close()
+				conn.decoded = client.failed
+				go func() {
+					defer serverEnd.Close()
+					_, _ = fmt.Fprintln(serverEnd, `{"kind":"result","stage":"prewarm"}`)
+					if _, err := bufio.NewReader(serverEnd).ReadBytes('\n'); err != nil {
+						return
+					}
+					_, _ = io.WriteString(serverEnd, test.reply)
+				}()
+				if err := client.WaitReady(ctx); err != nil {
+					t.Fatal(err)
+				}
+				raw, err := client.Query(ctx, Request{Query: "harbor lantern", K: 3})
+				if test.err != "" {
+					if err == nil || err.Error() != test.err {
+						t.Fatalf("Query error = %v, want %q", err, test.err)
+					}
+				} else if err != nil || string(raw) != test.want {
+					t.Fatalf("Query = %s, %v; want %s", raw, err, test.want)
+				}
+			})
+		}
+	}
+}
+
+// Let the decoder finish before Query starts waiting for its reply, as can
+// happen when a resident sends an answer and immediately closes the connection.
+type replyBeforeWriteReturns struct {
+	net.Conn
+	ctx     context.Context
+	decoded <-chan struct{}
+}
+
+func (c *replyBeforeWriteReturns) Write(p []byte) (int, error) {
+	n, err := c.Conn.Write(p)
+	select {
+	case <-c.decoded:
+	case <-c.ctx.Done():
+	}
+	return n, err
+}
+
 func TestQueryOnceUnavailableWithoutBinaryOrListener(t *testing.T) {
 	dir, err := os.MkdirTemp("/tmp", "rv-u-")
 	if err != nil {
