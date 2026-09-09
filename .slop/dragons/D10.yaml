@@ -2,7 +2,7 @@ schema: 1
 id: D10
 status: removed
 category: adjacent_feature
-title: "Call-history dual-write runtime removed; legacy schema cleanup pending"
+title: "Call history lives only in JSONL"
 created_at: 2026-09-08
 incident:
   intent: >
@@ -19,10 +19,12 @@ incident:
   cost: "1,399 lines + 702 test lines; payload stored at least twice plus extracted SQL columns"
 rule: >
   JSONL is the only audit destination. TestCostAuditDestination executes the
-  CLI and observes one JSONL record per exec and zero ops audit growth;
+  CLI and observes one JSONL record per exec and absent ops audit tables;
   make audit-test with ROCA_AUDIT_PUBLISHED_BIN compares the published binary with the branch.
-  S1 removes the persistence/parity/backfill runtime. Dormant legacy tables
-  remain until S2's separately validated storage-removal migration for #353.
+  Ops schema 5 drops historical audit tables and their indexes. Migration DDL
+  and absence assertions are historical references, not runtime writers.
+  The paired cost lab verifies custody recovery and allocated storage reclaimed
+  by VACUUM on a synthetic copy; no automatic production VACUUM is performed.
 forbid:
   paths:
     - "internal/distribution/callhistory/**"

@@ -674,13 +674,14 @@ installed executable whose checksum changed outside the installer.
 
 A plugin bundled with the binary asks for no consent and resolves no source:
 [installation and update](lifecycle.md#install) place it from the release
-artefact itself, verify the same checksums, and write the same manifest. Because
-nothing but its packaged files changes between versions, it is refreshed inside
-the directory it already occupies, so the database it owns is never unlinked
-from a process that holds it open. An update applies the plugin's own schema to
-that database before the manifest records the new version, so an interrupted
-upgrade is retried by the next run instead of being reported as done; every
-declaration it replays is additive and leaves the existing rows in place.
+artefact itself, verify the same checksums, and write the same manifest. It
+refreshes packaged files inside the directory it already occupies, so the
+database it owns is never unlinked from a process that holds it open. An update
+applies the plugin's own schema to that database before the manifest records
+the new version, so an interrupted
+upgrade is retried by the next run instead of being reported as done. Schema
+declarations are idempotent but may explicitly delete retired data; see
+[Operations](operations.md) for the audit-history deletion and recovery contract.
 
 Each bundled database also describes itself. It carries its own schema and index
 version, the state of every named custody migration it hosts, the source batches
@@ -808,7 +809,7 @@ database remain readable; the manifest migration does not move data. It owns an
 accent-insensitive `memories_fts` index over its own memories, rebuilt on every
 schema apply so a database that predates the index answers for the rows it
 already held. See [Operations](operations.md) for call-history storage and the
-legacy ops-history transition.
+bounded JSONL recovery contract.
 
 DATA-2 also prepares a second, hidden memory route in that same custodial
 database. `memory_records` holds the multiset union of ops, core, and harvested
