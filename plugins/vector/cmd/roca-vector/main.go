@@ -627,7 +627,7 @@ func (env *environment) startBackgroundSetup() error {
 	if readOnly() {
 		return nil
 	}
-	if _, err := model.Existing(coreDataDir(env.dbPath), model.DefaultManifest()); err == nil {
+	if _, err := model.Existing(coreDataDir(env.dbPath), model.DefaultManifest(), true); err == nil {
 		return nil
 	}
 	state, err := env.resolveStateDir()

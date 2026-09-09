@@ -1,8 +1,8 @@
 schema: 1
 id: D6
-status: accepted
+status: removed
 category: adjacent_feature
-title: "The embedding model is SHA-256 hashed twice per ordinary CLI query"
+title: "Repeated verification of an unchanged embedding model"
 created_at: 2026-09-08
 incident:
   intent: >
@@ -15,12 +15,16 @@ incident:
   source: >
     INFORME-SLOP-ADYACENTE.md §3 D6 and §6 item 5; PR #237; companion of #335
     (D5); issue #350.
-  cost: "196 lines + 186 test lines in download.go; 1.9 GB hashed per ordinary CLI query"
+  cost: "Published lab: startup reads about 1.9 GB; direct hot companion about 958 MB; core hot shortcut zero. Same default federation and five evidence rows in each comparison."
 rule: >
   Verify at download or replace. At open, compare file identity (size, mtime,
   inode or a stored digest of those) and only rehash when identity changed.
 forbid:
   paths: []
-  symbols:
-    - "validModelFile"
-  strings: []
+  symbols: []
+  strings:
+    - 'plugins/vector/**/download.go::verifyFile(path, manifest.SHA256, manifest.Bytes)'
+cost_test: >
+  TestCostModelVerification observes download, unchanged open and replacement
+  reads through lab-only instrumentation. docs/d6-model-evidence.md owns the
+  published-versus-branch default-query comparison with result equality.
