@@ -53,9 +53,7 @@ type Options struct {
 	QueryTimeoutSet bool
 	// DisableMissingReferentAsk is the opt-out escape hatch for asking the
 	// operator to name a referent the question left generic instead of letting
-	// the model guess one. Its zero value keeps the ask enabled, and it is its
-	// own switch: an installation that wants the guess back does not thereby
-	// lose the signature gate it never asked to turn off.
+	// the model guess one. Its zero value keeps the ask enabled.
 	DisableMissingReferentAsk bool
 	// PluginDir is the installation's ~/.roca/plugins directory. Empty disables
 	// plugin discovery, which keeps embedded and explicitly selected databases

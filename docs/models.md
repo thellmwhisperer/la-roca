@@ -89,7 +89,7 @@ probe_ms   = 3000
 timeout_ms = 5000
 
 [features]
-# The two model-facing switches are enabled by default and each one is its own
+# The two playground switches are enabled by default and each one is its own
 # escape hatch. Every runtime-default-off experimental switch is documented with the
 # subsystem it gates: plugins, roca_ops and cron in docs/plugins.md,
 # artifact_refresh and release_redirects in docs/lifecycle.md. A switch that
@@ -430,10 +430,7 @@ rules under [Update](lifecycle.md#update).
 
 ## What happens in the playground
 
-Core `roca query` is deterministic: it checks only empty input and the
-1000-character limit. Phrases such as `system prompt` are searchable even
-with `features.strict_input = true`; prompt defenses belong to the
-model-invoking playground described below.
+For core `roca query` input validation, see [Queries](queries.md).
 
 1. The question is checked before any model is called: it must contain text and
    stay within a deliberately generous 1000-character cap, the same on the CLI
