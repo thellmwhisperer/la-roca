@@ -36,7 +36,10 @@ nobody answered has not consented to a download.
 `vector-registry.json`: plugin, database, declared tables, embedded chunks,
 candidate chunks, sidecar size, last write, state, lock status, and a
 `compact_recommended` flag. Embedded counts report live indexed chunks;
-candidate counts follow the declared chunking policy. Either count can be
+candidate counts are stored by a completed full indexing pass under the declared
+chunking policy. Status uses that exact count only while its source generation
+and reader contract still match; it never reads or chunks source text. Legacy,
+partial, and changed sources have unknown candidate counts until a full pass. Either count can be
 unknown (`null`), never an estimate or invented zero. Sidecar size and last
 write include its SQLite WAL and shared-memory files when present.
 
@@ -245,7 +248,7 @@ roca vector ingest --delta
 roca vector ingest --delta --reembed
 ```
 
-A full delta sweeps every table and prose column declared by installed plugin
+A full delta covers every table and prose column declared by installed plugin
 manifests. The bundled corpus declares session titles/projects, memory content,
 human/agent exchanges, and thinking text; ops declares operational memory
 content. Raw tool data, call telemetry, and other undeclared columns stay
@@ -261,9 +264,16 @@ duplicate chunks. A partially rebuilt sidecar can contain multiple chunk
 generations; queries search all of them while re-embedding continues. Progress
 prints counts, rate, and ETA at batch boundaries.
 
-The worker fingerprints each database (including its SQLite WAL) through
-`pkg/incrementality` and skips the row sweep when both source and declaration
-are unchanged. When a sweep is needed, existing chunk fingerprints decide
+An ordinary full delta first compares source file identity, size, modification
+and change times (including the WAL) with the completed sidecar's stored
+generation. When that marker, the declaration, model, and progress metadata
+match, it skips source hashing and the row sweep. Otherwise, the worker hashes
+the database and WAL through `pkg/incrementality`; a matching fingerprint can
+still avoid the sweep. `roca vector ingest --delta --verify` bypasses the cheap
+check and hashes the source even when its marker matches. SQLite
+connection-local `data_version` counters are not persisted generation evidence.
+`--source` and `--reembed` also bypass the cheap check and perform their sweep.
+When a sweep is needed, existing chunk fingerprints decide
 added, updated, and unchanged work; a desired-versus-stored fingerprint diff
 garbage-collects chunks and embeddings whose source disappeared. Optional
 manifest chunking hints override the kernel defaults without giving plugins
