@@ -9,7 +9,6 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/playground"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
-	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacron"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
@@ -80,45 +79,37 @@ func (env *cliEnv) preparePlayground(paths config.Paths) error {
 	if !fileExists(paths.DB) && file.Layout.Serving != config.LayoutCutover {
 		return logfile.Typed(fmt.Errorf("no Roca database exists at %s; run `roca init` before this command", paths.DB), logfile.ErrorNotInitialized)
 	}
-	if env.forceReadOnly || config.ReadOnly(os.Getenv(config.EnvReadOnly)) {
-		return nil
-	}
 	root := filepath.Join(paths.Home, config.DirOwn, "plugins")
-	hub := datasplit.HubOptions{
-		CoreDatabase: paths.DB,
-		SnapshotDir:  filepath.Join(paths.Backups, "data-split"),
-		LockPath:     logfile.New(filepath.Dir(paths.DB)).LockPath(),
-	}
-	ops, err := rocaops.Ensure(root, pluginExecutableDir(paths), env.build.Version)
-	if err != nil {
-		return err
-	}
-	hub.OpsDatabase = filepath.Join(ops.Directory, rocaops.DatabaseFilename)
-	corpus, err := rocacorpus.Ensure(root, pluginExecutableDir(paths), env.build.Version)
-	if err != nil {
-		return err
-	}
-	hub.CorpusDatabase = filepath.Join(corpus.Directory, rocacorpus.DatabaseFilename)
-	if err := env.refreshVectorRegistry(); err != nil {
-		env.warnVectorRegistryRefresh(err)
+	if !env.forceReadOnly && !config.ReadOnly(os.Getenv(config.EnvReadOnly)) {
+		for _, ensure := range []func() error{
+			func() error {
+				_, err := rocaops.Ensure(root, pluginExecutableDir(paths), env.build.Version)
+				return err
+			},
+			func() error {
+				_, err := rocacorpus.Ensure(root, pluginExecutableDir(paths), env.build.Version)
+				return err
+			},
+		} {
+			if err := ensure(); err != nil {
+				return err
+			}
+		}
+		if err := env.refreshVectorRegistry(); err != nil {
+			env.warnVectorRegistryRefresh(err)
+		}
 	}
 	if file.Layout.Serving == config.LayoutLegacyServing || !fileExists(paths.DB) {
 		return nil
 	}
-	cron, err := rocacron.Ensure(root, pluginExecutableDir(paths), env.build.Version)
+	ready, err := datasplit.HubCutoverEligible(context.Background(), migrationHubOptions(paths))
 	if err != nil {
-		return fmt.Errorf("install bundled cron plugin for DATA SPLIT: %w", err)
+		return fmt.Errorf("inspect DATA SPLIT readiness; run `roca migrate`: %w", err)
 	}
-	hub.CronDatabase = filepath.Join(cron.Directory, rocacron.DatabaseFilename)
-	_, prepareErr := datasplit.PrepareHub(context.Background(), hub)
-	if prepareErr != nil {
-		if rollbackErr := config.SetServingLayout(paths.Config, config.LayoutLegacyServing); rollbackErr != nil {
-			return errors.Join(prepareErr,
-				fmt.Errorf("roll back the DATA SPLIT serving marker: %w", rollbackErr))
-		}
-		return fmt.Errorf("prepare the federation hub; serving marker returned to legacy-serving: %w",
-			prepareErr)
+	if !ready {
+		return fmt.Errorf("DATA SPLIT custody is unfinished; run `roca migrate`")
 	}
+
 	return nil
 }
 

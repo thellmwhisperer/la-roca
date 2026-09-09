@@ -11,9 +11,8 @@ The migration to that shape is incremental. The current release has
 manifest-backed `roca-corpus` and `roca-ops` domains, plus a separate
 `roca-cron` journey store that still uses its legacy descriptor. One atomic
 `layout.serving` marker selects `legacy-serving`, `shadow-equal`, or `cutover`.
-Before either federated route opens against an existing core database, the
-internal cutover coordinator completes and verifies the ops, corpus, and cron
-custody imports from frozen snapshots. That preparation has no public command.
+Custody preparation and readiness checks follow the
+[explicit migration contract](operations.md#explicit-data-split-migration).
 DATA-3 refuses cutover unless its reproducible custody reconciliation is exactly
 100% green; the detailed count, hash, provenance, and occurrence contract is
 owned by the [bundled `roca-corpus` plugin](plugins.md#the-bundled-roca-corpus-plugin).

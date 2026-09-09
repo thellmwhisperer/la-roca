@@ -36,6 +36,10 @@ claims:
     contract:
       file: features/distribution/cli.feature
       item: "Doctor report is a privacy-safe pasteable snapshot"
+  internal/distribution/cli/migrate.go:
+    contract:
+      file: features/distribution/cli.feature
+      item: "Help lists every command with one honest line each"
   internal/distribution/cli/playground.go:
     contract:
       file: features/distribution/cli.feature

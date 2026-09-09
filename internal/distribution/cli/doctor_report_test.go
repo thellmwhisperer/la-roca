@@ -260,7 +260,7 @@ func setupFederatedSupportHome(t *testing.T, home string) string {
 	dbPath, options := setupFederationSupportSources(t, home)
 	digest := strings.Repeat("a", 64)
 	recordData23SupportMigrations(t, options, digest)
-	recordData4RunParity(t, options, digest)
+	recordData4SupportMigrations(t, options, digest)
 	writeVectorSupportFixture(t, home)
 	return dbPath
 }
@@ -301,24 +301,18 @@ func recordData23SupportMigrations(t *testing.T, options datasplit.HubOptions, d
 	}
 }
 
-func recordData4RunParity(t *testing.T, options datasplit.HubOptions, digest string) {
+func recordData4SupportMigrations(t *testing.T, options datasplit.HubOptions, digest string) {
 	t.Helper()
-	cron := openLayoutDatabase(t, options.CronDatabase)
-	defer cron.Close()
-	if _, err := cron.Exec(`INSERT INTO plugin_migrations
-		(migration, destination_table, migration_state)
-		VALUES ('data4-legacy-runs', 'legacy_runs', 'batch-in-progress');
-		INSERT INTO legacy_runs (canonical_digest, payload) VALUES (?, '{"id":1,"name":"synthetic-run"}');
-		INSERT INTO migration_batches
-		(migration, batch_id, destination_table, source_database, source_table,
-		 row_count, canonical_digest, high_water_mark)
-		VALUES ('data4-legacy-runs', 'data4-runs-1', 'legacy_runs', 'core', 'runs', 1, ?, '1');
-		INSERT INTO custody_memberships
-		(migration, source_database, source_table, source_key, destination_table,
-		 destination_key, canonical_digest, batch_id)
-		VALUES ('data4-legacy-runs', 'core', 'runs', '1', 'legacy_runs', ?, ?, 'data4-runs-1')`,
-		digest, digest, digest, digest); err != nil {
-		t.Fatal(err)
+	for path, migrations := range map[string]map[string]string{
+		options.CronDatabase:   {"data4-legacy-runs": "legacy_runs", "data4-legacy-run-logs": "legacy_run_logs"},
+		options.OpsDatabase:    {"data4-legacy-records": "legacy_records"},
+		options.CorpusDatabase: {"data4-legacy-flow-patterns": "legacy_flow_patterns"},
+	} {
+		db := openLayoutDatabase(t, path)
+		recordVerifiedMigrations(t, db, digest, migrations)
+		if err := db.Close(); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 

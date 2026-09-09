@@ -9,9 +9,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thellmwhisperer/la-roca/data"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacron"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
-	"github.com/thellmwhisperer/la-roca/internal/store"
 	_ "modernc.org/sqlite"
 )
 
@@ -38,7 +40,7 @@ func TestCutoverCLIHasNoFileBackedKernelDependency(t *testing.T) {
 	}
 }
 
-func TestShadowCLIOrchestratesCustodyBeforeComparingTheHub(t *testing.T) {
+func TestShadowCLIComparesTheHubAfterExplicitMigration(t *testing.T) {
 	t.Setenv("ROCA_MODELS_ORDER", "claude")
 	t.Setenv("PATH", t.TempDir())
 	home := t.TempDir()
@@ -47,27 +49,13 @@ func TestShadowCLIOrchestratesCustodyBeforeComparingTheHub(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(corePath), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	core, err := store.Open(corePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.ApplySchema(t.Context(), core); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := core.SQL().Exec(`INSERT INTO memories
-		(id, layer, content, origin) VALUES (29, 'project', 'Synthetic shadow custody marker', 'agent')`); err != nil {
-		t.Fatal(err)
-	}
-	if err := core.Close(); err != nil {
-		t.Fatal(err)
-	}
+	seedLayoutMemory(t, corePath, "Synthetic shadow custody marker")
 	if err := os.WriteFile(filepath.Join(filepath.Dir(corePath), "config.toml"),
 		[]byte("[layout]\nserving = \"shadow-equal\"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	env := &cliEnv{dbPath: corePath, out: io.Discard, errOut: io.Discard,
-		build: Build{Version: "v-test", Commit: "fixture"}}
+	env := migratedCLIEnv(t, corePath)
 	svc, _, err := env.openService()
 	if err != nil {
 		t.Fatal(err)
@@ -147,4 +135,79 @@ func openLayoutDatabase(t *testing.T, path string) *sql.DB {
 		t.Fatal(err)
 	}
 	return db
+}
+
+func TestCutoverCLIRejectsUnfinishedDestinationCustody(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	corePath := filepath.Join(home, "roca.db")
+	seedLayoutMemory(t, corePath, "cutover readiness marker")
+	env := migratedCLIEnv(t, corePath)
+	paths, err := env.resolvePaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.Config, []byte("[layout]\nserving = \"cutover\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	snapshots := filepath.Join(paths.Backups, "data-split")
+	if err := os.Rename(snapshots, snapshots+"-offline"); err != nil {
+		t.Fatal(err)
+	}
+	for _, probe := range []struct{ plugin, database, migration string }{
+		{rocaops.Name, rocaops.DatabaseFilename, "data2-memory-custody"},
+		{rocacorpus.Name, rocacorpus.DatabaseFilename, "corpus-archive-reconciliation-v1"},
+		{rocaops.Name, rocaops.DatabaseFilename, "data4-legacy-records"},
+		{rocacorpus.Name, rocacorpus.DatabaseFilename, "data4-legacy-flow-patterns"},
+		{rocacron.Name, rocacron.DatabaseFilename, "data4-legacy-runs"},
+		{rocacron.Name, rocacron.DatabaseFilename, "data4-legacy-run-logs"},
+	} {
+		t.Run(probe.plugin, func(t *testing.T) {
+			db := openLayoutDatabase(t, filepath.Join(home, ".roca", "plugins", probe.plugin, probe.database))
+			defer db.Close()
+			if _, err := db.Exec(`UPDATE plugin_migrations SET migration_state = 'batch-in-progress' WHERE migration = ?`, probe.migration); err != nil {
+				t.Fatal(err)
+			}
+			for _, readOnly := range []bool{false, true} {
+				env.forceReadOnly = readOnly
+				svc, _, err := env.openService()
+				if svc != nil {
+					svc.Close()
+				}
+				if err == nil || !strings.Contains(err.Error(), "roca migrate") {
+					t.Fatalf("unfinished custody readOnly=%t: %v", readOnly, err)
+				}
+			}
+			if _, err := db.Exec(`UPDATE plugin_migrations SET migration_state = 'verified' WHERE migration = ?`, probe.migration); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+	env.forceReadOnly = false
+	svc, _, err := env.openService()
+	if err != nil {
+		t.Fatalf("verified open without frozen snapshots: %v", err)
+	}
+	if err := svc.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func seedLayoutMemory(t *testing.T, path, content string) {
+	t.Helper()
+	core := openLayoutDatabase(t, path)
+	defer core.Close()
+	if _, err := core.Exec(data.Schema+`INSERT INTO memories(id, layer, content, origin) VALUES(29, 'project', ?, 'agent')`, content); err != nil {
+		t.Fatal(err)
+	}
+
+}
+
+func migratedCLIEnv(t *testing.T, corePath string) *cliEnv {
+	t.Helper()
+	env := &cliEnv{dbPath: corePath, out: io.Discard, errOut: io.Discard, build: Build{Version: "v-test", Commit: "fixture"}}
+	if code, err := executeWithEnv(env, []string{"--db-path", corePath, "migrate"}, nil); err != nil || code != 0 {
+		t.Fatalf("explicit migration: code=%d err=%v", code, err)
+	}
+	return env
 }
