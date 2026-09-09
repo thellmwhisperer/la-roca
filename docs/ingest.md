@@ -245,6 +245,26 @@ envelope and reconciliation continues for its history exchanges. The
 exact-payload uniqueness guard remains enforced; this collision alone does not
 make the history file fail. Other refresh errors still fail the write.
 
+Ingest repairs inherited Codex session keys that differ only in the last
+character from the stored 36-character `codex_thread_id`, reuniting them under
+that exact source thread ID. Each donor must have a nonempty
+`codex_rollout_path`; a common stem alone is insufficient. An existing exact-ID
+session must also be Codex, and any thread or rollout identity it records must
+agree. Conflicts roll back the repair and fail ingest. Repair runs before
+unchanged-source skipping, even without available source files; dry-run neither
+performs nor checks the repair.
+
+The repair preserves child row IDs, payloads and errors, including thinking and
+memory references. Session-level tools remain session-level; numbered children
+keep their exchange relationships, with collisions assigned unused numbers.
+Later history writes reserve numbers already held by tools or thinking blocks
+so unmatched children do not acquire an unrelated prompt. Shared source keys
+retain the canonical binding without deduplicating historical child content.
+An empty fossil rollout reread preserves stored session-level calls. Parsers,
+reading versions and harvest cursors are unchanged. See the
+[identity reproduction](codex-identity-evidence.md) for the published comparison
+and regression coverage.
+
 When Codex's state database names a model or provider for the legacy session,
 that provenance is retained on its recovered exchanges. The history format does
 not record answers or per-exchange usage. Its session-wide `tokens_used` value
