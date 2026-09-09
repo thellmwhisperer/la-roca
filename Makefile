@@ -155,6 +155,12 @@ migrate-test: build ## Measure D2 against published and branch binaries on one l
 	@test -x "$(ROCA_PUBLISHED_BIN)" || { echo "set ROCA_PUBLISHED_BIN to a published binary" >&2; exit 1; }
 	ROCA_BIN="$(CURDIR)/$(BIN)" ROCA_PUBLISHED_BIN="$(ROCA_PUBLISHED_BIN)" go test -tags acceptance ./test/acceptance -run '^TestCostMigrate$$' -count=1 -v
 
+# D3's paired baseline is opt-in; the branch cost runs in ordinary acceptance.
+ROCA_FTS_PUBLISHED_BIN ?=
+.PHONY: fts-test
+fts-test: build ## Measure qualified FTS on a synthetic lab, optionally against v1.84.0
+	ROCA_BIN="$(CURDIR)/$(BIN)" ROCA_FTS_PUBLISHED_BIN="$(ROCA_FTS_PUBLISHED_BIN)" go test -tags acceptance ./test/acceptance -run '^TestCostQualifiedFTSCLI$$' -count=1 -v
+
 # D1's historical kill is deliberately absent from the ordinary Go suite.
 ROCA_SNAPSHOT_PUBLISHED_BIN ?=
 .PHONY: snapshot-evidence
