@@ -120,8 +120,7 @@ type legacyImporter struct {
 
 // ImportLegacyOrphans copies only ratified DATA-4 tables from an immutable
 // source snapshot. It never changes the serving route or the source database.
-// No CLI or MCP verb reaches it: the split's cutover orchestration owns that
-// wiring, so until then only Go callers and this package's tests invoke it.
+// The explicit migrate command reaches it through the cutover coordinator.
 func ImportLegacyOrphans(ctx context.Context, options LegacyOptions) (LegacyReport, error) {
 	return importLegacyOrphans(ctx, options, defaultBatchSize, nil)
 }
@@ -205,6 +204,41 @@ func importLegacyOrphans(ctx context.Context, options LegacyOptions, batchSize i
 			return report, err
 		}
 	}
+	// Publish completion only after every table and destination has reconciled.
+	// Interrupted publication resumes by checking each already sealed ledger row.
+	seen := map[string]bool{}
+	for _, plan := range legacyPlans {
+		if seen[plan.migration] {
+			continue
+		}
+		seen[plan.migration] = true
+		db := destinations[plan.destination]
+		ready, err := migrationledger.MigrationCutoverEligible(ctx, db, plan.migration)
+		if err != nil {
+			return report, err
+		}
+		if ready {
+			continue
+		}
+		digest := sha256.New()
+		batches := 0
+		for _, table := range report.Tables {
+			if table.DestinationTable == plan.destinationTable {
+				fmt.Fprintf(digest, "%s:%s\n", table.SourceTable, table.CanonicalDigest)
+				batches += table.BatchCount
+			}
+		}
+		verification := hex.EncodeToString(digest.Sum(nil))
+		if batches == 0 {
+			err = migrationledger.VerifyMigrationEmpty(ctx, db, plan.migration, verification)
+		} else {
+			err = migrationledger.VerifyMigration(ctx, db, plan.migration, verification)
+		}
+		if err != nil {
+			return report, err
+		}
+	}
+
 	sort.Slice(report.Tables, func(i, j int) bool {
 		return report.Tables[i].SourceTable < report.Tables[j].SourceTable
 	})

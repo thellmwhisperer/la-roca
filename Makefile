@@ -149,3 +149,8 @@ playground-evidence: build ## Compare extraction against an explicit v1.82.6 bin
 .PHONY: playground-integration
 playground-integration: build
 	ROCA_BIN=$(BIN) ROCA_PLAYGROUND_INTEGRATION=1 go test -tags acceptance ./test/acceptance -run '^TestPlaygroundPinnedReleaseIntegration$$' -count=1 -v
+
+.PHONY: migrate-test
+migrate-test: build ## Measure D2 against published and branch binaries on one lab
+	@test -x "$(ROCA_PUBLISHED_BIN)" || { echo "set ROCA_PUBLISHED_BIN to a published binary" >&2; exit 1; }
+	ROCA_BIN="$(CURDIR)/$(BIN)" ROCA_PUBLISHED_BIN="$(ROCA_PUBLISHED_BIN)" go test -tags acceptance ./test/acceptance -run '^TestCostMigrate$$' -count=1 -v

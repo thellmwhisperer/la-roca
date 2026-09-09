@@ -41,6 +41,11 @@ func TestLegacyOrphansResumeIntoExplicitQuarantineWithoutChangingJourneys(t *tes
 	if !errors.Is(err, interrupted) {
 		t.Fatalf("interrupted import = %v", err)
 	}
+	if ready, err := LegacyCutoverEligible(context.Background(), HubOptions{
+		OpsDatabase: options.OpsDatabase, CorpusDatabase: options.CorpusDatabase, CronDatabase: options.CronDatabase,
+	}); err != nil || ready {
+		t.Fatalf("interrupted DATA-4 readiness = %t, err=%v", ready, err)
+	}
 	cron = openDatabase(t, options.CronDatabase)
 	assertCount(t, cron, "migration_batches", 1)
 	assertCount(t, cron, "legacy_runs", 2)
@@ -114,8 +119,8 @@ func TestLegacyOrphansResumeIntoExplicitQuarantineWithoutChangingJourneys(t *tes
 			if err != nil {
 				t.Fatal(err)
 			}
-			if state.State != migrationledger.StateBatchInProgress {
-				t.Fatalf("shadow destination migration %q state = %q, want batch-in-progress", name, state.State)
+			if state.State != migrationledger.StateVerified {
+				t.Fatalf("shadow destination migration %q state = %q, want verified", name, state.State)
 			}
 		}
 	}

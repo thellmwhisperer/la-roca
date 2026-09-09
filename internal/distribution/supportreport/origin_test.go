@@ -195,19 +195,19 @@ func TestCollectDoesNotStallOnLockedStore(t *testing.T) {
 	if !core.Present || core.Readable {
 		t.Fatalf("locked core store = %+v", core)
 	}
-	if snapshot.Federation.CutoverEligible != nil || snapshot.Federation.Mode != FederationUnknown {
+	if snapshot.Federation.CutoverEligible == nil || *snapshot.Federation.CutoverEligible || snapshot.Federation.Mode != FederationUnknown {
 		t.Fatalf("locked eligibility = %v, mode = %q", snapshot.Federation.CutoverEligible,
 			snapshot.Federation.Mode)
 	}
-	if rendered := Render(snapshot); !strings.Contains(rendered, "cutover_eligible: unknown") {
-		t.Fatalf("locked report omitted unknown eligibility:\n%s", rendered)
+	if rendered := Render(snapshot); !strings.Contains(rendered, "cutover_eligible: false") {
+		t.Fatalf("locked core must not obscure unfinished destination custody:\n%s", rendered)
 	}
 	raw, err := json.Marshal(snapshot)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(raw), `"cutover_eligible":null`) {
-		t.Fatalf("locked JSON eligibility was not null: %s", raw)
+	if !strings.Contains(string(raw), `"cutover_eligible":false`) {
+		t.Fatalf("locked JSON eligibility was not false: %s", raw)
 	}
 	if snapshot.Ingest.LastIngestAt != ObservationUnreadable {
 		t.Fatalf("locked ingest observation = %q", snapshot.Ingest.LastIngestAt)

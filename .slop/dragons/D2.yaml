@@ -1,6 +1,6 @@
 schema: 1
 id: D2
-status: accepted
+status: removed
 category: adjacent_feature
 title: "PrepareHub and MaterializeCurrent rerun a finished migration on every open"
 created_at: 2026-09-08
@@ -17,11 +17,12 @@ incident:
   source: >
     INFORME-SLOP-ADYACENTE.md §3 D2 and §6 item 2; PRs #125/#133/#135
     (owner-ratified DATA SPLIT), #144, #250; issue #347.
-  cost: "5,109 lines + 2,370 test lines; 2 × (C + L) bytes hashed per eligible open"
+  cost: "about 5k implementation lines + 2k test lines; 2 × (C + L) bytes hashed per eligible open"
 rule: >
   An explicit resumable migrate verb owns hashing, integrity checks and
   materialization. When the ledger says verified, the open path reads corpus
-  and ops directly.
+  and ops directly. Verified reads are bounded by the schema, independent
+  of source rows; two lab sizes must stay within five percent bytes read.
 forbid:
   paths: []
   symbols:
