@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"database/sql"
 	"os"
 	"path/filepath"
@@ -162,18 +163,17 @@ func TestDoctorReportDoesNotAppendOpsAudit(t *testing.T) {
 	isolateRuntimeDirs(t, home)
 	dbPath := setupFreshSupportHome(t, home)
 	opsPath := filepath.Join(home, ".roca", "plugins", rocaops.Name, rocaops.DatabaseFilename)
-	ops := openLayoutDatabase(t, opsPath)
-	defer ops.Close()
-	var before, after int
-	if err := ops.QueryRow("SELECT COUNT(*) FROM call_history").Scan(&before); err != nil {
+	before, err := os.ReadFile(opsPath)
+	if err != nil {
 		t.Fatal(err)
 	}
 	runRoot(t, contractBuild(), "doctor", "--report", "--db-path", dbPath)
-	if err := ops.QueryRow("SELECT COUNT(*) FROM call_history").Scan(&after); err != nil {
+	after, err := os.ReadFile(opsPath)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if after != before {
-		t.Fatalf("report appended ops audit rows: before=%d after=%d", before, after)
+	if !bytes.Equal(before, after) {
+		t.Fatal("support report changed the ops database")
 	}
 }
 

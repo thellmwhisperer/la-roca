@@ -15,7 +15,6 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/playground"
 	"io"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -76,13 +75,8 @@ func newServer(svc *service.Service, build Build, resident *residentVector) *mcp
 
 	dbPath := svc.DB().Path()
 	dataDir := svc.DataDir()
-	opsDatabase := ""
-	if pluginDir := svc.PluginDir(); pluginDir != "" && !svc.ReadOnly() {
-		opsDatabase = filepath.Join(pluginDir, rocaops.Name, rocaops.DatabaseFilename)
-	}
-	audit := logfile.NewWithOps(dataDir, opsDatabase)
+	audit := logfile.New(dataDir)
 	_ = audit.Prepare()
-	_ = audit.BackfillIfNeeded()
 	manifest, err := rocaops.Manifest(build.Version)
 	if err != nil {
 		panic(fmt.Sprintf("invalid bundled ops manifest: %v", err))
@@ -211,11 +205,8 @@ func auditCalls(audit *logfile.Writer, warnings io.Writer) mcp.Middleware {
 					fmt.Fprintf(warnings, "warning: MCP calls are not being written to the audit log: %v\n", appendErr)
 				})
 			}
-			// The ID is named to the caller because the record that carries it
-			// exists. Only the JSONL line answers that question: a durable sink
-			// that refused is a second copy missing, never a reason to hand back a
-			// different tool result.
-			if !logfile.FileAppendFailed(appendErr) && call.CorrelationID != "" {
+			// Name the correlation ID only when its JSONL record was written.
+			if appendErr == nil && call.CorrelationID != "" {
 				if err != nil {
 					err = fmt.Errorf("%w (correlation_id: %s)", err, call.CorrelationID)
 				} else {

@@ -21,7 +21,7 @@
         "questions": [
           "What did agents write or hand off?",
           "Which operational decisions, questions, reviews, or issues exist?",
-          "Which CLI or MCP calls ran or failed?"
+          "Which historical CLI or MCP calls were retained before JSONL-only auditing?"
         ],
         "tables": [
           {
@@ -47,18 +47,18 @@
           },
           {
             "name": "call_history",
-            "description": "Durable redacted CLI and MCP call history retained by ops independently of corpus and cron.",
-            "questions": ["Which CLI or MCP calls ran or failed?"],
+            "description": "Dormant historical CLI and MCP call history pending removal; current call history lives only in JSONL.",
+            "questions": ["Which historical CLI or MCP calls were retained before JSONL-only auditing?"],
             "columns": ["id", "timestamp", "stream", "source", "operation", "args", "ok", "error", "error_type", "duration_ms", "correlation_id", "question", "sql", "raw_sql", "sql_provider", "sql_model", "row_count", "degraded", "fallback_reason", "retry_reason", "queryplan", "provider_note", "path", "retried", "retried_sql", "retry_type", "model_sql", "model_sql_present", "first_model_sql", "sql_provider_latency_ms", "sql_inference_ms", "sql_retry_provider_latency_ms", "sql_retry_inference_ms", "execution_ms", "interpretation_provider", "interpretation_model", "interpretation_ms", "source_file", "source_line", "record_digest", "record_json", "created_at"]
           },
           {
             "name": "call_history_segments",
-            "description": "Checksummed retained JSONL segments already imported into durable call history.",
+            "description": "Dormant import bookkeeping for historical JSONL segments; no new segments are imported.",
             "columns": ["source_file", "stream", "content_digest", "byte_size", "line_count", "parsed_count", "malformed_count", "imported_at"]
           },
           {
             "name": "call_history_state",
-            "description": "The parity marker that gates switching doctor from JSONL to durable ops reads.",
+            "description": "Dormant historical parity marker; doctor reads call history only from JSONL.",
             "columns": ["singleton", "parity_verified", "malformed_lines", "unreadable_files", "checked_at"]
           },
           {
