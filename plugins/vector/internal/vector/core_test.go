@@ -1,6 +1,7 @@
 package vector
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -8,7 +9,9 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -51,7 +54,7 @@ func TestCoreCLIWalksEverySourceThroughRocaExec(t *testing.T) {
 		}
 		return json.Marshal(map[string]any{"rows": rows})
 	}
-	core := CoreCLI{Executable: "/synthetic/roca", DBPath: "/synthetic/roca.db", Run: runner}
+	core := CoreCLI{Executable: "/synthetic/roca", DBPath: "/synthetic/roca.db", readRequest: readerFixture(runner)}
 	var sources []sourceRow
 	if err := core.WalkSources(context.Background(), "", func(source sourceRow) error {
 		sources = append(sources, source)
@@ -135,7 +138,7 @@ func TestCoreCLIPaginatesEmptyTimestampsAndCarriesProjectContext(t *testing.T) {
 		return fixtureRunner(ctx, executable, args...)
 	}
 	seen := map[string]bool{}
-	core := CoreCLI{Executable: "roca", Run: runner}
+	core := CoreCLI{Executable: "roca", readRequest: readerFixture(runner)}
 	if err := core.WalkSources(context.Background(), "memories", func(row sourceRow) error {
 		seen[row.text] = true
 		if row.project != "Wellbeing project" || row.header() != "[Wellbeing project] " {
@@ -145,7 +148,7 @@ func TestCoreCLIPaginatesEmptyTimestampsAndCarriesProjectContext(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if len(seen) != walkPageSize+1 || queries != 2 {
+	if len(seen) != walkPageSize+1 || queries != 1 {
 		t.Fatalf("empty-timestamp walk returned %d unique rows in %d queries", len(seen), queries)
 	}
 }
@@ -171,7 +174,7 @@ func TestCoreCLIWalkSourcesMergesFamiliesNewestFirst(t *testing.T) {
 		}
 		return json.Marshal(map[string]any{"rows": rows})
 	}
-	core := CoreCLI{Executable: "/synthetic/roca", Run: runner}
+	core := CoreCLI{Executable: "/synthetic/roca", readRequest: readerFixture(runner)}
 	var kinds []string
 	if err := core.WalkSources(context.Background(), "", func(source sourceRow) error {
 		kinds = append(kinds, source.kind)
@@ -196,7 +199,7 @@ func TestCoreCLIThinkingHeaderFallsBackToSessionProject(t *testing.T) {
 			position_in_session REAL, full_text TEXT);
 		INSERT INTO sessions VALUES ('s1','', '{"project_name":"Wellbeing project"}', '2026-03-18');
 		INSERT INTO thinking_blocks VALUES (1,'s1',1,0.5,'private reflection');`)
-	core := CoreCLI{Executable: "roca", Run: sqliteExecRunner(t, map[string]string{corpusSchema: dbPath})}
+	core := CoreCLI{Executable: "roca", readRequest: readerFixture(sqliteExecRunner(t, map[string]string{corpusSchema: dbPath}))}
 	var rows []sourceRow
 	if err := core.WalkSources(context.Background(), "thinking_blocks", func(row sourceRow) error {
 		rows = append(rows, row)
@@ -211,14 +214,14 @@ func TestCoreCLIThinkingHeaderFallsBackToSessionProject(t *testing.T) {
 
 func TestCoreCLIResolvesDatabaseScopeThroughRoca(t *testing.T) {
 	core := CoreCLI{Executable: "/synthetic/roca", DBPath: "/synthetic/roca.db",
-		Run: func(_ context.Context, executable string, args ...string) ([]byte, error) {
+		readRequest: readerFixture(func(_ context.Context, executable string, args ...string) ([]byte, error) {
 			if executable != "/synthetic/roca" || !slices.Equal(args, []string{
 				"--json", "--db-path", "/synthetic/roca.db", "_database-scope", "--databases", "all",
 			}) {
 				t.Fatalf("database scope command = %q %q", executable, args)
 			}
 			return []byte(`{"databases":["core","corpus"],"selected":[{"source":"core","database":"core"},{"source":"plugin:roca-corpus","database":"corpus"}],"omitted_databases":["plugin:extra"],"warnings":["attachment limit"]}`), nil
-		}}
+		})}
 	scope, err := core.ResolveDatabaseScope(context.Background(), "all")
 	if err != nil {
 		t.Fatal(err)
@@ -290,7 +293,7 @@ func TestSessionEmbeddingTextKeepsOnlyHumanContent(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			row, _, err := decodeSession(map[string]any{
+			row, err := decodeSession(map[string]any{
 				"session_id": "synthetic-session", "title": test.title, "project": test.project,
 				"project_name": test.projectName,
 				"metadata":     `{"source_exchange_fingerprints":["` + hash + `"],"default":true}`,
@@ -314,14 +317,14 @@ func TestCoreCLIResolvesSessionWithHumanProjectName(t *testing.T) {
 	var statement string
 	var commandArgs []string
 	want := sourceRow{kind: "sessions", text: "Synthetic canvas\nSynthetic orchard"}
-	core := CoreCLI{Executable: "roca", Run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+	core := CoreCLI{Executable: "roca", readRequest: readerFixture(func(_ context.Context, _ string, args ...string) ([]byte, error) {
 		commandArgs = slices.Clone(args)
 		statement = args[len(args)-1]
 		return json.Marshal(map[string]any{"rows": []map[string]any{{
 			"title":        "Synthetic canvas",
 			"project_name": "Synthetic orchard",
 		}}})
-	}}
+	})}
 	text, err := core.ResolveSource(context.Background(), "sessions", locator{
 		SessionID: "session-design", Identity: want.identity(),
 	})
@@ -343,12 +346,12 @@ func TestCoreCLIResolvesSessionWithHumanProjectName(t *testing.T) {
 func TestCoreCLIResolvesLiveTextAndQuotesStoredLocators(t *testing.T) {
 	var statement string
 	want := sourceRow{kind: "exchanges", text: "current answer"}
-	core := CoreCLI{Executable: "roca", Run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+	core := CoreCLI{Executable: "roca", readRequest: readerFixture(func(_ context.Context, _ string, args ...string) ([]byte, error) {
 		statement = args[len(args)-1]
 		return json.Marshal(map[string]any{"rows": []map[string]any{
 			{"text": "previous answer"}, {"text": "current answer"},
 		}})
-	}}
+	})}
 	text, err := core.ResolveSource(context.Background(), "exchanges", locator{
 		SessionID: "operator's-session", Ordinal: 7, HasOrdinal: true, Identity: want.identity(),
 	})
@@ -370,12 +373,12 @@ func TestCoreCLIResolvesDistinctMemoriesSharingALocator(t *testing.T) {
 	want := sourceRow{kind: "memories", text: "first memory", layer: "discovery",
 		origin: "agent", createdAt: "2026-08-17"}
 	var statement string
-	core := CoreCLI{Executable: "roca", Run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+	core := CoreCLI{Executable: "roca", readRequest: readerFixture(func(_ context.Context, _ string, args ...string) ([]byte, error) {
 		statement = args[len(args)-1]
 		return json.Marshal(map[string]any{"rows": []map[string]any{
 			{"text": "first memory"}, {"text": "second memory"},
 		}})
-	}}
+	})}
 	text, err := core.ResolveSource(context.Background(), "memories", locator{
 		SessionID: "shared-session", Ordinal: 2, HasOrdinal: true, Layer: want.layer,
 		Origin: want.origin, CreatedAt: want.createdAt, Identity: want.identity(),
@@ -394,12 +397,12 @@ func TestCoreCLIResolvesDistinctMemoriesSharingALocator(t *testing.T) {
 func TestCoreCLIResolvesDistinctThinkingBlocksSharingALocator(t *testing.T) {
 	want := sourceRow{kind: "thinking_blocks", text: "first reasoning"}
 	var statement string
-	core := CoreCLI{Executable: "roca", Run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+	core := CoreCLI{Executable: "roca", readRequest: readerFixture(func(_ context.Context, _ string, args ...string) ([]byte, error) {
 		statement = args[len(args)-1]
 		return json.Marshal(map[string]any{"rows": []map[string]any{
 			{"text": "first reasoning"}, {"text": "second reasoning"},
 		}})
-	}}
+	})}
 	text, err := core.ResolveSource(context.Background(), "thinking_blocks", locator{
 		SessionID: "shared-session", Ordinal: 2, HasOrdinal: true,
 		Position: "0.5", Identity: want.identity(),
@@ -417,20 +420,17 @@ func TestCoreCLIResolvesDistinctThinkingBlocksSharingALocator(t *testing.T) {
 
 func TestLargeCoreIdentifiersRemainExactAcrossJSON(t *testing.T) {
 	const identifier int64 = 1152921504606846988
-	core := CoreCLI{Executable: "roca", Run: func(_ context.Context, _ string, _ ...string) ([]byte, error) {
+	core := CoreCLI{Executable: "roca", readRequest: readerFixture(func(_ context.Context, _ string, _ ...string) ([]byte, error) {
 		return []byte(`{"rows":[{"id":1152921504606846988,"content":"large id","source_session":"","source_sequence":null,"source_agent":"synthetic","metadata":"{}","layer":"discovery","origin":"agent","created_at":"2026-08-14"}]}`), nil
-	}}
+	})}
 	page := corePages()[0]
-	rows, err := core.query(context.Background(), page.query("0"))
+	rows, err := core.query(context.Background(), page.query)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, next, err := page.decode(rows[0])
-	if err != nil {
-		t.Fatal(err)
-	}
-	if next != joinCursor("2026-08-14", fmt.Sprint(identifier)) {
-		t.Fatalf("large id cursor = %s, want %s", next, joinCursor("2026-08-14", fmt.Sprint(identifier)))
+	got, err := integer(rows[0], "id")
+	if err != nil || got != identifier {
+		t.Fatalf("large id = %d, want %d: %v", got, identifier, err)
 	}
 }
 
@@ -459,5 +459,73 @@ done
 	}
 	if rows, err := core.query(context.Background(), "SELECT 42 AS answer"); err != nil || len(rows) != 1 {
 		t.Fatalf("read-only query = %+v, %v", rows, err)
+	}
+}
+
+type CommandRunner func(context.Context, string, ...string) ([]byte, error)
+
+func fixtureRequestArgs(core CoreCLI, request map[string]any) []string {
+	args := []string{"--json"}
+	if core.DBPath != "" {
+		args = append(args, "--db-path", core.DBPath)
+	}
+	if request["scope"] == true {
+		args = append(args, "_database-scope")
+		if databases, _ := request["databases"].(string); databases != "" {
+			args = append(args, "--databases", databases)
+		}
+		return args
+	}
+	args = append(args, "exec")
+	if timeout, ok := request["timeout_ms"]; ok {
+		args = append(args, "--timeout-ms", fmt.Sprint(timeout))
+	} else if request["cursor"] != nil {
+		args = append(args, "--timeout-ms", "0")
+	}
+	return append(args, "--max-chars", strconv.Itoa(64<<20), stringValue(request["sql"]))
+}
+
+func readerFixture(run CommandRunner) func(context.Context, CoreCLI, map[string]any, any) error {
+	var mu sync.Mutex
+	cursors := map[string][]map[string]any{}
+	return func(ctx context.Context, core CoreCLI, request map[string]any, result any) error {
+		mu.Lock()
+		defer mu.Unlock()
+		cursor, _ := request["cursor"].(string)
+		var raw []byte
+		if cursor == "" || request["sql"] != nil {
+			var err error
+			raw, err = run(ctx, core.Executable, fixtureRequestArgs(core, request)...)
+			if err != nil {
+				return err
+			}
+		}
+		decode := func(raw []byte, result any) error {
+			decoder := json.NewDecoder(bytes.NewReader(raw))
+			decoder.UseNumber()
+			return decoder.Decode(result)
+		}
+		if cursor == "" {
+			return decode(raw, result)
+		}
+		if request["sql"] != nil {
+			var rows execResult
+			if err := decode(raw, &rows); err != nil {
+				return err
+			}
+			cursors[cursor] = rows.Rows
+		}
+		rows, ok := cursors[cursor]
+		if !ok {
+			return fmt.Errorf("unknown fixture cursor %s", cursor)
+		}
+		n := min(len(rows), walkPageSize)
+		*(result.(*execResult)) = execResult{Rows: rows[:n]}
+		if n < walkPageSize {
+			delete(cursors, cursor)
+		} else {
+			cursors[cursor] = rows[n:]
+		}
+		return nil
 	}
 }

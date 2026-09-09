@@ -108,10 +108,6 @@ func TestDATA2MovesEveryMemoryIdentityIntoVerifiedOpsShadowCustody(t *testing.T)
 	}
 
 	beforeSnapshots := snapshotCount(t, fixture.snapshots)
-	missingSnapshot := report.SnapshotPaths[coreMemorySource]
-	if err := os.Remove(missingSnapshot); err != nil {
-		t.Fatal(err)
-	}
 	second, err := MigrateMemoryCustody(t.Context(), options)
 	if err != nil {
 		t.Fatal(err)
@@ -120,9 +116,6 @@ func TestDATA2MovesEveryMemoryIdentityIntoVerifiedOpsShadowCustody(t *testing.T)
 		second.PhysicalRecords != report.PhysicalRecords || snapshotCount(t, fixture.snapshots) != beforeSnapshots {
 		t.Fatalf("idempotent rerun = %+v; snapshots before=%d after=%d",
 			second, beforeSnapshots, snapshotCount(t, fixture.snapshots))
-	}
-	if _, err := os.Stat(missingSnapshot); err != nil {
-		t.Fatalf("verified rerun did not republish %s: %v", missingSnapshot, err)
 	}
 }
 
@@ -249,9 +242,10 @@ func TestDATA2VerifiesAVirginHomeWithNothingToCarry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if populated.State != migrationledger.StateVerified || populated.Memberships != 1 ||
-		populated.PhysicalRecords != 1 || populated.FTSRecords != 1 {
-		t.Fatalf("populated after an empty verification = %+v", populated)
+	if populated.State != migrationledger.StateVerifiedEmpty || populated.Memberships != 0 ||
+		populated.PhysicalRecords != 0 || populated.FTSRecords != 0 ||
+		populated.VerificationDigest != report.VerificationDigest {
+		t.Fatalf("verified empty population changed = %+v", populated)
 	}
 }
 
@@ -282,8 +276,8 @@ func TestDATA2VerifiesEmptyMemoriesBesideAnUnrelatedPluginBatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	carried := carryCustody(t, fixture)
-	if carried.State != migrationledger.StateVerified || carried.Memberships != 1 {
-		t.Fatalf("memories carried beside an unrelated batch = %+v", carried)
+	if carried.State != migrationledger.StateVerifiedEmpty || carried.Memberships != 0 {
+		t.Fatalf("verified empty population reopened beside an unrelated batch = %+v", carried)
 	}
 }
 
@@ -563,4 +557,33 @@ func snapshotCount(t *testing.T, directory string) int {
 		t.Fatal(err)
 	}
 	return len(entries)
+}
+
+func TestDATA2VerifiedCustodyRejectsMissingSnapshot(t *testing.T) {
+	for _, empty := range []bool{false, true} {
+		t.Run(fmt.Sprint(empty), func(t *testing.T) {
+			fixture := smallCustodyFixture(t)
+			if empty {
+				fixture = newCustodyFixture(t)
+				insertFixtureMemories(t, fixture.core, false, nil)
+				insertFixtureMemories(t, fixture.corpus, true, nil)
+				insertOpsMemories(t, fixture.ops, 0)
+			}
+			report := carryCustody(t, fixture)
+			path := report.SnapshotPaths["core"]
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+			_, err := MigrateMemoryCustody(t.Context(), MemoryCustodyOptions{
+				CorePath: fixture.core, CorpusPath: fixture.corpus, OpsPath: fixture.ops,
+				SnapshotDir: fixture.snapshots,
+			})
+			if err == nil || !strings.Contains(err.Error(), "verified core memory snapshot is missing") {
+				t.Fatalf("missing verified snapshot: %v", err)
+			}
+			if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("missing snapshot was recreated: %v", err)
+			}
+		})
+	}
 }

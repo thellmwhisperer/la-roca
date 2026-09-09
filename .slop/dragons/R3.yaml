@@ -1,0 +1,17 @@
+schema: 1
+id: R3
+status: accepted
+category: adjacent_feature
+title: "D11 cross envelope retains descriptive SQL"
+created_at: 2026-09-09
+incident:
+  intent: "Correct what the cleanup wave added, dismantle nothing else."
+  what_was_built: "internal/distribution/cli/commands.go gatherCross concatenates rows in Go but still constructs the SQL envelope description. cross_issue354_test.go pins that envelope."
+  justifying_sentence: "Accepted to preserve the existing public envelope. This is descriptive SQL, not an executed query. Removing or relabeling the field needs its own interface change; do not restore the temporary SQLite round trip."
+  source: "https://github.com/thellmwhisperer/la-roca/issues/385, residue R3"
+  cost: "About 15 lines build a description proportional to origins times projected columns; zero SQLite connections for the gather."
+rule: "Accepted to preserve the existing public envelope. This is descriptive SQL, not an executed query. Removing or relabeling the field needs its own interface change; do not restore the temporary SQLite round trip."
+forbid:
+  paths: []
+  symbols: []
+  strings: []
