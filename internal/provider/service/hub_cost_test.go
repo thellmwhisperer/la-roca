@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 	"github.com/thellmwhisperer/la-roca/internal/provider/query"
 )
 
@@ -16,6 +17,13 @@ import (
 func TestCostHubFTS(t *testing.T) {
 	fixture := newHubFixture(t)
 	seedHubCoreMemory(t, fixture.plugins, 101, "Synthetic quartz memory")
+	ops := openSQLite(t, filepath.Join(fixture.plugins, rocaops.Name, rocaops.DatabaseFilename))
+	if _, err := ops.Exec(`INSERT INTO memories(layer, content, origin) VALUES ('project', 'quartz operational memory', 'agent')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := ops.Close(); err != nil {
+		t.Fatal(err)
+	}
 	db := openSQLite(t, filepath.Join(fixture.plugins, rocacorpus.Name, rocacorpus.DatabaseFilename))
 	_, err := db.Exec(`INSERT INTO sessions(session_id, source_agent, title) VALUES ('lab', 'fixture', 'quartz');
  WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<10000)
@@ -30,13 +38,17 @@ func TestCostHubFTS(t *testing.T) {
 	}
 	svc := openHubService(t, fixture, LayoutCutover, nil)
 	for _, tc := range []struct {
-		table string
-		count int
+		schema string
+		table  string
+		count  int
 	}{
-		{"exchanges_fts", 10000}, {"thinking_fts", 1}, {"sessions_fts", 1},
+		{"plugin_roca_corpus", "exchanges_fts", 10000},
+		{"plugin_roca_corpus", "thinking_fts", 1},
+		{"plugin_roca_corpus", "sessions_fts", 1},
+		{"plugin_roca_ops", "memories_fts", 1},
 	} {
 		t.Run(tc.table, func(t *testing.T) {
-			stmt := fmt.Sprintf("SELECT COUNT(*) AS n FROM plugin_roca_corpus.%s WHERE %s MATCH 'quartz'", tc.table, tc.table)
+			stmt := fmt.Sprintf("SELECT COUNT(*) AS n FROM %s.%s WHERE %s MATCH 'quartz'", tc.schema, tc.table, tc.table)
 			start := time.Now()
 			result, err := svc.Exec(t.Context(), ExecRequest{SQL: stmt})
 			elapsed := time.Since(start)
@@ -57,8 +69,8 @@ func TestCostHubFTS(t *testing.T) {
 				t.Fatalf("qualified FTS took %s; budget 200 ms", elapsed)
 			}
 			t.Logf("qualified FTS: %s; temporary FTS objects: %d", elapsed, objects)
-			_, err = svc.Exec(t.Context(), ExecRequest{SQL: strings.Replace(stmt, "plugin_roca_corpus.", "", 1)})
-			if err == nil || !strings.Contains(err.Error(), "plugin_roca_corpus."+tc.table) {
+			_, err = svc.Exec(t.Context(), ExecRequest{SQL: strings.Replace(stmt, tc.schema+".", "", 1)})
+			if err == nil || !strings.Contains(err.Error(), tc.schema+"."+tc.table) {
 				t.Fatalf("unqualified suggestion: %v", err)
 			}
 		})

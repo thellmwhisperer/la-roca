@@ -49,7 +49,10 @@ func TestCostQualifiedFTSCLI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dir := filepath.Join(root, ".tmp", "fts-evidence")
+	dir := os.Getenv("ROCA_FTS_EVIDENCE_DIR")
+	if dir == "" {
+		dir = filepath.Join(root, ".tmp", "fts-evidence")
+	}
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -91,5 +94,18 @@ func TestCostQualifiedFTSCLI(t *testing.T) {
 			t.Fatalf("published binary did not reproduce D3: %s", elapsed)
 		}
 		t.Logf("%s qualified FTS: %s", run.label, elapsed)
+	}
+	output, code := m.runUnder(t, nil, "exec", "SELECT COUNT(*) FROM exchanges_fts WHERE exchanges_fts MATCH 'quartz'", "--json")
+	fmt.Fprintf(&transcript, "branch unqualified FTS (exit %d):\n%s\n", code, output)
+	if code == 0 || !strings.Contains(output, "plugin_roca_corpus.exchanges_fts") {
+		t.Fatalf("unqualified FTS must suggest its owner: %s", output)
+	}
+	if err := os.WriteFile(filepath.Join(filepath.Dir(core), "config.toml"), []byte("[layout]\nserving = \"shadow-equal\"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	output, code = m.runUnder(t, nil, "exec", "SELECT 1", "--json")
+	fmt.Fprintf(&transcript, "branch retired shadow-equal layout (exit %d):\n%s\n", code, output)
+	if code == 0 || !strings.Contains(output, "shadow-equal validation is retired") {
+		t.Fatalf("retired layout must explain the serving choice: %s", output)
 	}
 }

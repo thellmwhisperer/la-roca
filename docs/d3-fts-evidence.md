@@ -16,15 +16,17 @@ go test ./internal/provider/service -run '^TestCostHubFTS$' -count=1 -v
 
 The paired test rejects a published baseline that meets the 200 ms budget and
 a branch that misses it. Its transcript is retained at
-`.tmp/fts-evidence/comparison.txt`; the published binary is opt-in and pinned,
-while the branch regression runs in ordinary acceptance.
+`.tmp/fts-evidence/comparison.txt` (`branch.txt` for a branch-only run); override
+the directory with `ROCA_FTS_EVIDENCE_DIR`. The published binary is opt-in and
+pinned, while the branch regression runs in ordinary acceptance. The CLI test
+also checks the qualified suggestion for unqualified FTS SQL and the explicit
+serving-choice error for the retired `shadow-equal` marker.
 
-The service test separately exercises qualified corpus MATCH queries on 10k
-synthetic exchanges and observes the actual connection's `sqlite_temp_master`.
-It measured about 5–6 ms per query with zero temporary FTS objects. It also
+The service test separately exercises qualified corpus and ops MATCH queries
+on a lab with 10k synthetic exchanges and observes the actual connection's
+`sqlite_temp_master`. The initial corpus run measured about 5–6 ms per query
+with zero temporary FTS objects. It also
 checks the qualified suggestion for unqualified SQL, historical memory IDs,
 and that internal compatibility search creates no temporary FTS tables.
-The remaining compatibility objects are views forwarding SQLite's FTS handle,
-including its bm25 rank, to the persistent owning index. Rank statistics now
-come from that index's population. Shadow comparison is retired as described
-in [migration operations](operations.md#explicit-data-split-migration).
+[Migration operations](operations.md#explicit-data-split-migration) owns the
+compatibility ranking behavior and shadow retirement contract.
