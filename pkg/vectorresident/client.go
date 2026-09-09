@@ -224,10 +224,16 @@ func (c *Client) Query(ctx context.Context, in Request) (json.RawMessage, error)
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case <-c.failed:
-		c.stateMu.Lock()
-		err := c.failure
-		c.stateMu.Unlock()
-		return nil, err
+		// The decoder may have delivered this query's reply before observing
+		// the disconnect. Keep that reply even when both channels are ready.
+		select {
+		case response = <-responseCh:
+		default:
+			c.stateMu.Lock()
+			err := c.failure
+			c.stateMu.Unlock()
+			return nil, err
+		}
 	case response = <-responseCh:
 	}
 	if response.Kind == "error" || response.Error != "" {
