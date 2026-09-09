@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/thellmwhisperer/la-roca-vector/internal/engine"
@@ -287,53 +288,56 @@ func (c *delayedScanCorpus) WalkSources(ctx context.Context, sourceKind string, 
 }
 
 func TestEmbeddingSchedulerAllowsAProgressingUnchangedScan(t *testing.T) {
-	rows := make([]sourceRow, 5)
-	for index := range rows {
-		rows[index] = sourceRow{kind: "memories", sourceID: fmt.Sprint(index), text: fmt.Sprintf("unchanged %d", index)}
-	}
-	path := t.TempDir() + "/vector.db"
-	base := &recordingEmbedder{}
-	initial := Index{Corpus: &memoryCorpus{sources: rows}, VectorPath: path, Model: DefaultModel,
-		Embedder: base, BatchSize: 1}
-	if _, err := initial.Ingest(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	scheduler := newEmbeddingScheduler(ctx, base, 1)
-	scheduler.stallAfter = 100 * time.Millisecond
-	rescan := initial
-	rescan.Corpus = &delayedScanCorpus{memoryCorpus: &memoryCorpus{sources: rows}, delay: 40 * time.Millisecond}
-	rescan.Embedder = scheduledEmbedder{base: base, id: 0, scheduler: scheduler}
-	var progress atomic.Int64
-	rescan.liveness = func() {
-		progress.Add(1)
-		scheduler.heartbeat()
-	}
-	type ingestResult struct {
-		delta Delta
-		err   error
-	}
-	done := make(chan ingestResult, 1)
-	go func() {
-		delta, err := rescan.Ingest(ctx)
-		done <- ingestResult{delta: delta, err: err}
-		scheduler.finished <- 0
-	}()
-	runErr := scheduler.run()
-	if runErr != nil {
-		cancel()
-	}
-	result := <-done
-	if runErr != nil || result.err != nil {
-		t.Fatalf("progressing unchanged scan failed: scheduler=%v ingest=%v", runErr, result.err)
-	}
-	if result.delta.Unchanged != len(rows) {
-		t.Fatalf("unchanged scan = %+v, want %d unchanged", result.delta, len(rows))
-	}
-	if progress.Load() <= int64(len(rows)*4) {
-		t.Fatalf("liveness updates = %d, want scan and reconciliation progress", progress.Load())
-	}
+	// Virtual time preserves the heartbeat/stall ordering regardless of runner load.
+	synctest.Test(t, func(t *testing.T) {
+		rows := make([]sourceRow, 5)
+		for index := range rows {
+			rows[index] = sourceRow{kind: "memories", sourceID: fmt.Sprint(index), text: fmt.Sprintf("unchanged %d", index)}
+		}
+		path := t.TempDir() + "/vector.db"
+		base := &recordingEmbedder{}
+		initial := Index{Corpus: &memoryCorpus{sources: rows}, VectorPath: path, Model: DefaultModel,
+			Embedder: base, BatchSize: 1}
+		if _, err := initial.Ingest(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		scheduler := newEmbeddingScheduler(ctx, base, 1)
+		scheduler.stallAfter = 100 * time.Millisecond
+		rescan := initial
+		rescan.Corpus = &delayedScanCorpus{memoryCorpus: &memoryCorpus{sources: rows}, delay: 40 * time.Millisecond}
+		rescan.Embedder = scheduledEmbedder{base: base, id: 0, scheduler: scheduler}
+		var progress atomic.Int64
+		rescan.liveness = func() {
+			progress.Add(1)
+			scheduler.heartbeat()
+		}
+		type ingestResult struct {
+			delta Delta
+			err   error
+		}
+		done := make(chan ingestResult, 1)
+		go func() {
+			delta, err := rescan.Ingest(ctx)
+			done <- ingestResult{delta: delta, err: err}
+			scheduler.finished <- 0
+		}()
+		runErr := scheduler.run()
+		if runErr != nil {
+			cancel()
+		}
+		result := <-done
+		if runErr != nil || result.err != nil {
+			t.Fatalf("progressing unchanged scan failed: scheduler=%v ingest=%v", runErr, result.err)
+		}
+		if result.delta.Unchanged != len(rows) {
+			t.Fatalf("unchanged scan = %+v, want %d unchanged", result.delta, len(rows))
+		}
+		if progress.Load() <= int64(len(rows)*4) {
+			t.Fatalf("liveness updates = %d, want scan and reconciliation progress", progress.Load())
+		}
+	})
 }
 
 func TestEmbeddingSchedulerEmbedsReadyWorkWithoutWaitingForeverForAPeer(t *testing.T) {
