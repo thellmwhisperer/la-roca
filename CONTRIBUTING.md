@@ -96,6 +96,11 @@ The ordinary acceptance suite runs the branch regression without requiring a
 published binary; the delivery test command runs the paired target when
 `ROCA_PUBLISHED_BIN` is set.
 
+`make fts-test ROCA_FTS_PUBLISHED_BIN=<pinned-v1.84.0-binary>` builds and runs
+the qualified FTS comparison. Without that environment variable it checks only
+the branch. [D3 FTS evidence](docs/d3-fts-evidence.md) owns the lab procedure,
+cost assertions, and transcript locations.
+
 `make snapshot-evidence ROCA_SNAPSHOT_PUBLISHED_BIN=<absolute-pinned-v1.82.3-binary>`
 runs the historical D1 kill only with the `snapshot_evidence` build tag and an
 explicit executable. The lab is synthetic, capped at 4 MiB, and its directories
