@@ -96,6 +96,17 @@ The ordinary acceptance suite runs the branch regression without requiring a
 published binary; the delivery test command runs the paired target when
 `ROCA_PUBLISHED_BIN` is set.
 
+`ROCA_FTS_PUBLISHED_BIN=<pinned-v1.84.0-binary> go test -tags acceptance ./test/acceptance -run '^TestCostQualifiedFTSCLI$' -count=1 -v`
+compares published and branch qualified FTS on one synthetic migrated lab
+(30k exchanges, about 90 MB text), requires the published binary to miss the
+200 ms budget and the branch to meet it, and retains the transcript under
+`.tmp/fts-evidence/`. See [D3 FTS evidence](docs/d3-fts-evidence.md).
+`make fts-test ROCA_FTS_PUBLISHED_BIN=<pinned-v1.84.0-binary>` builds and runs
+the same comparison. Without that
+environment variable the test checks only the branch. `TestCostHubFTS` separately
+observes `sqlite_temp_master`: qualified queries create zero temporary FTS
+objects; internal legacy searches create only forwarding views, never FTS tables.
+
 `make snapshot-evidence ROCA_SNAPSHOT_PUBLISHED_BIN=<absolute-pinned-v1.82.3-binary>`
 runs the historical D1 kill only with the `snapshot_evidence` build tag and an
 explicit executable. The lab is synthetic, capped at 4 MiB, and its directories

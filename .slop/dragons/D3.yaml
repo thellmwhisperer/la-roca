@@ -1,6 +1,6 @@
 schema: 1
 id: D3
-status: accepted
+status: removed
 category: adjacent_feature
 title: "Four compatibility FTS indexes rebuilt per service instance"
 created_at: 2026-09-08
@@ -23,7 +23,17 @@ rule: >
   validation purpose is over.
 forbid:
   paths: []
-  symbols: []
+  symbols:
+    - "buildHubSearch"
+    - "needsHubSearch"
   strings:
     - "CREATE VIRTUAL TABLE temp.exchanges_fts"
     - "CREATE VIRTUAL TABLE temp.memories_fts"
+    - "CREATE VIRTUAL TABLE temp.thinking_fts"
+    - "CREATE VIRTUAL TABLE temp.sessions_fts"
+cost_test: >
+  go test ./internal/provider/service -run TestCostHubFTS -count=1 checks
+  qualified MATCH results in under 200 ms on 10k synthetic exchanges and
+  zero temporary FTS objects, then legacy search identity with zero temporary
+  FTS tables. TestCostQualifiedFTSCLI in test/acceptance compares the branch
+  and optional pinned v1.84.0 binary on one migrated lab (30k exchanges, about 90 MB text).

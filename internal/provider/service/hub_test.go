@@ -1,19 +1,15 @@
 package service
 
 import (
-	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
-	"github.com/thellmwhisperer/la-roca/internal/provider/query"
 	"github.com/thellmwhisperer/la-roca/internal/store"
 	"github.com/thellmwhisperer/la-roca/internal/store/search"
 	_ "modernc.org/sqlite"
@@ -36,7 +32,11 @@ func TestCutoverServesLegacyCoreReadsFromTheHubWithoutOpeningRocaDB(t *testing.T
 func TestCutoverPreservesLegacyFTSIdentityAndRankShape(t *testing.T) {
 	fixture := newHubFixture(t)
 	seedHubCoreMemory(t, fixture.plugins, 101, "Quartz quartz synthetic observatory")
-	result := executeHubSQL(t, openHubService(t, fixture, LayoutCutover, nil), hubFTSStatement)
+	svc := openHubService(t, fixture, LayoutCutover, nil)
+	if err := svc.ensureHubSearchViews(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	result := executeHubSQL(t, svc, hubFTSStatement)
 	if result.RowCount != 1 || fmt.Sprint(result.Rows[0]["id"]) != "101" ||
 		result.Rows[0]["rank"] == nil {
 		t.Fatalf("hub FTS result = %+v", result)
@@ -194,28 +194,6 @@ func TestLayerRegistryOwnerSurvivesRocaOpsActivation(t *testing.T) {
 	}
 }
 
-func TestShadowReadsTheStableLayerRegistry(t *testing.T) {
-	fixture := newHubFixture(t)
-	seedHubCoreMemory(t, fixture.plugins, 10, "Synthetic shadow layer marker")
-	seedLegacyCore(t, fixture, nil)
-	registering := openHubService(t, fixture, LayoutShadowEqual, nil)
-	if _, err := registering.AddLayer(t.Context(), "knowledge"); err != nil {
-		t.Fatal(err)
-	}
-	if err := registering.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	var rollback error
-	shadow := openHubService(t, fixture, LayoutShadowEqual, func(options *Options) {
-		options.RollbackLayout = func(reason error) error { rollback = reason; return nil }
-	})
-	read := executeHubSQL(t, shadow, "SELECT name FROM layers WHERE name = 'knowledge'")
-	if read.RowCount != 1 || read.Rows[0]["name"] != "knowledge" || rollback != nil {
-		t.Fatalf("shadow layer registry read = %+v, rollback = %v", read, rollback)
-	}
-}
-
 func TestCutoverHubLoadsTheDurableCustomLayerRegistry(t *testing.T) {
 	fixture := newHubFixture(t)
 	seedHubCoreMemory(t, fixture.plugins, 8, "Synthetic custom layer marker")
@@ -250,28 +228,6 @@ func TestCutoverHubLoadsTheDurableCustomLayerRegistry(t *testing.T) {
 	}
 }
 
-func TestShadowMismatchServesLegacyAndRollsBackTheMarker(t *testing.T) {
-	fixture := newHubFixture(t)
-	seedHubCoreMemory(t, fixture.plugins, 9, "Synthetic mismatching hub row")
-	seedLegacyCore(t, fixture, func(core *store.DB) {
-		if _, err := core.SQL().Exec(`INSERT INTO memories
-			(id, layer, content, origin) VALUES (9, 'project', 'Synthetic legacy answer', 'agent')`); err != nil {
-			t.Fatal(err)
-		}
-	})
-
-	var rollback, evidence error
-	svc := openHubService(t, fixture, LayoutShadowEqual, func(options *Options) {
-		options.RollbackLayout = func(reason error) error { rollback = reason; return nil }
-		options.RecordShadowMismatch = func(reason error) { evidence = reason }
-	})
-	result := executeHubSQL(t, svc, `SELECT id, content FROM memories LIMIT 5`)
-	if result.Rows[0]["content"] != "Synthetic legacy answer" || rollback == nil || evidence == nil ||
-		!strings.Contains(rollback.Error(), "shadow") {
-		t.Fatalf("result = %+v, rollback = %v, evidence = %v", result, rollback, evidence)
-	}
-}
-
 func TestCutoverReopenFailureRollsBackTheMarker(t *testing.T) {
 	fixture := newHubFixture(t)
 	seedHubCoreMemory(t, fixture.plugins, 15, "Synthetic reopen marker")
@@ -294,101 +250,6 @@ func TestCutoverReopenFailureRollsBackTheMarker(t *testing.T) {
 	}
 }
 
-func TestShadowFTSRankingIsExactlyEqualBeforeCutover(t *testing.T) {
-	fixture := newHubFixture(t)
-	memories := []hubMemory{
-		{101, "Quartz orchard launch plan for the synthetic Alder team."},
-		{102, "Quartz orchard duplicate beacon with invented content."},
-		{103, "Quartz orchard duplicate beacon with invented content."},
-		{104, "Quartz quartz quartz orchard ranking beacon for a fictional observatory."},
-	}
-	for _, memory := range memories {
-		seedHubCoreMemory(t, fixture.plugins, memory.id, memory.content)
-	}
-	seedLegacyMemories(t, fixture, memories)
-
-	var rollback error
-	svc := openHubService(t, fixture, LayoutShadowEqual, func(options *Options) {
-		options.RollbackLayout = func(reason error) error { rollback = reason; return nil }
-	})
-	result := executeHubSQL(t, svc, hubFTSStatement)
-	if result.RowCount != len(memories) || rollback != nil {
-		t.Fatalf("shadow ranking rows = %+v, rollback = %v", result.Rows, rollback)
-	}
-}
-
-func TestHubSearchRetriesAfterTheBuildingRequestIsCanceled(t *testing.T) {
-	fixture := newHubFixture(t)
-	seedHubCoreMemory(t, fixture.plugins, 105, "Synthetic quartz retry marker")
-	svc := openHubService(t, fixture, LayoutCutover, nil)
-
-	canceled, cancel := context.WithCancel(t.Context())
-	cancel()
-	if err := svc.ensureHubSearch(canceled); !errors.Is(err, context.Canceled) {
-		t.Fatalf("canceled index build = %v", err)
-	}
-	result := executeHubSQL(t, svc, hubFTSStatement)
-	if result.RowCount != 1 || fmt.Sprint(result.Rows[0]["id"]) != "105" {
-		t.Fatalf("retried hub search = %+v", result)
-	}
-}
-
-func TestSearchFailureRollsBackTheMarkerAndServesLegacy(t *testing.T) {
-	cases := []struct {
-		name                 string
-		layout               ReadLayout
-		id                   int64
-		expectRollbackReason string
-		checkServingLayout   bool
-		checkLegacyOpened    bool
-	}{
-		{
-			name:   "shadow search serves legacy when the hub index is unavailable",
-			layout: LayoutShadowEqual,
-			id:     106,
-		},
-		{
-			name:                 "cutover search failure rolls back the marker and serves legacy",
-			layout:               LayoutCutover,
-			id:                   107,
-			expectRollbackReason: "cutover hub search failed",
-			checkServingLayout:   true,
-			checkLegacyOpened:    true,
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			fixture := newHubFixture(t)
-			seedHubCoreMemory(t, fixture.plugins, tc.id, "Synthetic quartz hub marker")
-			seedLegacyMemories(t, fixture, []hubMemory{{tc.id, "Synthetic quartz legacy marker"}})
-			var rollback error
-			svc := openHubService(t, fixture, tc.layout, func(options *Options) {
-				options.RollbackLayout = func(reason error) error { rollback = reason; return nil }
-			})
-			if err := svc.hub.Close(); err != nil {
-				t.Fatal(err)
-			}
-			_, rows, _, _, _, err := svc.SearchByTerm(t.Context(), query.Plan{
-				Term: "quartz", Limit: 10,
-			}, "", DefaultMaxChars, false, PluginRoute{IncludeCore: true})
-			if err != nil || len(rows) != 1 || rows[0]["text"] != "Synthetic quartz legacy marker" || rollback == nil {
-				t.Fatalf("fallback rows = %+v, error = %v, rollback = %v", rows, err, rollback)
-			}
-			if tc.expectRollbackReason != "" && !strings.Contains(rollback.Error(), tc.expectRollbackReason) {
-				t.Fatalf("rollback reason = %q, want substring %q", rollback.Error(), tc.expectRollbackReason)
-			}
-			if tc.checkServingLayout && svc.servingLayout() != LayoutLegacyServing {
-				t.Fatalf("serving layout after rollback = %q", svc.servingLayout())
-			}
-			if tc.checkLegacyOpened {
-				if _, err := os.Stat(fixture.corePath); err != nil {
-					t.Fatalf("rollback did not open the legacy database: %v", err)
-				}
-			}
-		})
-	}
-}
-
 func TestInitUnderCutoverReportsTheServedDatabaseWithoutWritingTheHub(t *testing.T) {
 	fixture := newHubFixture(t)
 	seedHubCoreMemory(t, fixture.plugins, 108, "Synthetic quartz init marker")
@@ -402,28 +263,6 @@ func TestInitUnderCutoverReportsTheServedDatabaseWithoutWritingTheHub(t *testing
 	}
 	if _, err := os.Stat(fixture.corePath); !os.IsNotExist(err) {
 		t.Fatalf("init under cutover touched roca.db: %v", err)
-	}
-}
-
-func TestShadowRollbackReleasesTheLayoutLockBeforePersistence(t *testing.T) {
-	svc := &Service{readLayout: LayoutShadowEqual}
-	observed := make(chan ReadLayout, 1)
-	svc.opts.RollbackLayout = func(error) error {
-		observed <- svc.servingLayout()
-		return nil
-	}
-	done := make(chan struct{})
-	go func() {
-		svc.rollbackShadow(errors.New("synthetic mismatch"))
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("shadow rollback held the layout lock during persistence")
-	}
-	if layout := <-observed; layout != LayoutLegacyServing {
-		t.Fatalf("layout observed during persistence = %q", layout)
 	}
 }
 

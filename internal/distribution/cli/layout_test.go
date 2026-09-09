@@ -2,7 +2,6 @@ package cli
 
 import (
 	"database/sql"
-	"github.com/thellmwhisperer/la-roca/internal/provider/query"
 	"io"
 	"os"
 	"path/filepath"
@@ -13,7 +12,6 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacron"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
-	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 	_ "modernc.org/sqlite"
 )
 
@@ -40,91 +38,23 @@ func TestCutoverCLIHasNoFileBackedKernelDependency(t *testing.T) {
 	}
 }
 
-func TestShadowCLIComparesTheHubAfterExplicitMigration(t *testing.T) {
-	t.Setenv("ROCA_MODELS_ORDER", "claude")
-	t.Setenv("PATH", t.TempDir())
+func TestShadowCLIRequiresAnExplicitServingChoice(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	corePath := filepath.Join(home, "selected", "roca.db")
-	if err := os.MkdirAll(filepath.Dir(corePath), 0o700); err != nil {
+	corePath := filepath.Join(home, "roca.db")
+	seedLayoutMemory(t, corePath, "Synthetic retired layout marker")
+	if err := os.WriteFile(filepath.Join(home, "config.toml"),
+		[]byte("[layout]\nserving = \"shadow-equal\"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	seedLayoutMemory(t, corePath, "Synthetic shadow custody marker")
-	if err := os.WriteFile(filepath.Join(filepath.Dir(corePath), "config.toml"),
-		[]byte("[layout]\nserving = \"shadow-equal\"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	env := migratedCLIEnv(t, corePath)
+	env := &cliEnv{dbPath: corePath, out: io.Discard, errOut: io.Discard,
+		build: Build{Version: "v-test", Commit: "fixture"}}
 	svc, _, err := env.openService()
-	if err != nil {
-		t.Fatal(err)
+	if svc != nil {
+		svc.Close()
 	}
-	// Deterministic search exercises compatibility reads without model inference.
-	runSearch := func() ([]map[string]any, error) {
-		_, rows, _, _, _, err := svc.SearchByTerm(t.Context(), query.Plan{Template: query.TemplateSearchByTerm, Term: "shadow+custody+marker"}, "", service.DefaultMaxChars, true, service.PluginRoute{IncludeCore: true})
-		return rows, err
-	}
-	result, err := runSearch()
-	if err != nil || len(result) != 1 {
-		t.Fatalf("shadow result = %+v, err = %v", result, err)
-	}
-	initialMarker, err := os.ReadFile(filepath.Join(filepath.Dir(corePath), "config.toml"))
-	if err != nil || string(initialMarker) != "[layout]\nserving = \"shadow-equal\"\n" {
-		t.Fatalf("equal reads rolled back the marker = %q, err = %v", initialMarker, err)
-	}
-
-	opsPath := filepath.Join(home, ".roca", "plugins", rocaops.Name, rocaops.DatabaseFilename)
-	ops := openLayoutDatabase(t, opsPath)
-	var memberships int
-	if err := ops.QueryRow(`SELECT COUNT(*) FROM memory_compatibility
-		WHERE source_database = 'core' AND id = 29`).Scan(&memberships); err != nil {
-		t.Fatal(err)
-	}
-	if memberships != 1 {
-		t.Fatalf("core memory memberships = %d, want 1", memberships)
-	}
-	if _, err := ops.Exec(`UPDATE memory_records SET content = 'Synthetic divergent hub row'
-		WHERE id = (SELECT physical_id FROM memory_compatibility
-			WHERE source_database = 'core' AND id = 29)`); err != nil {
-		t.Fatal(err)
-	}
-	result, err = runSearch()
-	if err != nil || len(result) != 1 || result[0]["text"] != "Synthetic shadow custody marker" {
-		t.Fatalf("legacy rollback answer = %+v, err = %v", result, err)
-	}
-	if err := ops.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := svc.Close(); err != nil {
-		t.Fatal(err)
-	}
-	marker, err := os.ReadFile(filepath.Join(filepath.Dir(corePath), "config.toml"))
-	if err != nil || string(marker) != "[layout]\nserving = \"legacy-serving\"\n" {
-		t.Fatalf("rolled-back marker = %q, err = %v", marker, err)
-	}
-
-	legacy, _, err := env.openService()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer legacy.Close()
-	stored, err := legacy.Store(t.Context(), service.StoreRequest{
-		Layer:      "handoff",
-		Content:    "Synthetic post-rollback destination write\nbranch: fixture\ndone: recorded\nstate: stored\nnext: continue\n",
-		Authorship: service.Authorship{Agent: "claude", Model: "sonnet", Surface: service.SurfaceCLI},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	verification := openLayoutDatabase(t, opsPath)
-	defer verification.Close()
-	var storedContent string
-	if err := verification.QueryRow("SELECT content FROM memories WHERE id = ?", stored.ID).Scan(&storedContent); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(storedContent, "Synthetic post-rollback destination write") {
-		t.Fatalf("post-rollback write = %q", storedContent)
+	if err == nil || !strings.Contains(err.Error(), "shadow-equal validation is retired") {
+		t.Fatalf("retired layout: %v", err)
 	}
 }
 
