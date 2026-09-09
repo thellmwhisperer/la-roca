@@ -233,19 +233,20 @@ func TestTargetedSessionDeltaIsObservableAndIdempotentThroughCLI(t *testing.T) {
 
 	core := filepath.Join(t.TempDir(), "roca")
 	coreScript := `#!/bin/sh
-for argument do statement="$argument"; done
+while IFS= read -r statement; do
 case "$statement" in
   *SUM*plugin_roca_corpus.sessions*)
-    printf '%s\n' '{"rows":[{"total":1}]}'
+    printf '%s\n' '{"result":{"rows":[{"total":1}]}}'
     ;;
   *plugin_roca_corpus.sessions*)
-    printf '%s\n' '{"rows":[{"session_id":"session-clean","title":"Public health research {\"source_exchange_fingerprints\":[\"0123456789abcdef0123456789abcdef\"],\"enabled\":true}","project_name":"health-project"}]}'
+    printf '%s\n' '{"result":{"rows":[{"session_id":"session-clean","title":"Public health research {\"source_exchange_fingerprints\":[\"0123456789abcdef0123456789abcdef\"],\"enabled\":true}","project_name":"health-project"}]}}'
     ;;
   *)
     printf '%s\n' "unexpected non-session query: $statement" >&2
     exit 2
     ;;
 esac
+done
 `
 	if err := os.WriteFile(core, []byte(coreScript), 0o700); err != nil {
 		t.Fatal(err)
