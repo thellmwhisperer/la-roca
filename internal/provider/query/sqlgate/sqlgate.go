@@ -53,10 +53,9 @@ const MaxLimit = 1000
 // tables and compatibility view stay shadow-only until the atomic federation
 // cutover selects them.
 //
-// `call_history_segments` and `call_history_state` close the list: they record
-// which retained call segment the ops backfill already read and whether its
-// parity check passed, which is the backfill's own bookkeeping and never a call
-// anyone made.
+// `call_history_segments` and `call_history_state` are dormant bookkeeping
+// from the removed ops backfill and parity gate. Keep them hidden until the
+// storage-removal migration drops them; they are never calls anyone made.
 //
 // Exact-dedup runs and remaps are owner-gated maintenance evidence. Typed ID
 // resolution can read them, but generated SQL must not treat them as a domain.

@@ -5,7 +5,6 @@ package acceptance
 import (
 	"bufio"
 	"crypto/sha256"
-	"database/sql"
 	"fmt"
 	"io/fs"
 	"os"
@@ -28,11 +27,6 @@ func (w *distributionWorld) updateAgainstUnreachableRelease() error {
 		return err
 	}
 	w.state["updateLogRecords"] = records
-	durableRecords, err := durableExecutionRecords(w.home)
-	if err != nil {
-		return err
-	}
-	w.state["updateDurableRecords"] = durableRecords
 	w.last = w.run("update", "--api", "http://127.0.0.1:1", "--repo", "synthetic/unreachable", "--binary", w.installed)
 	return nil
 }
@@ -59,13 +53,6 @@ func (w *distributionWorld) failedUpdateChangesNothing() error {
 	if before := w.state["updateLogRecords"].(int); records != before+1 {
 		return fmt.Errorf("failed update added %d audit records, want 1", records-before)
 	}
-	durableRecords, err := durableExecutionRecords(w.home)
-	if err != nil {
-		return err
-	}
-	if before := w.state["updateDurableRecords"].(int); durableRecords != before+1 {
-		return fmt.Errorf("failed update added %d durable audit records, want 1", durableRecords-before)
-	}
 	return nil
 }
 
@@ -82,9 +69,6 @@ func fingerprintHome(home string) (map[string]string, error) {
 			return nil
 		}
 		relative, _ := filepath.Rel(home, path)
-		if relative == filepath.Join(".roca", "plugins", "roca-ops", "roca-ops.db") {
-			return nil
-		}
 		body, err := os.ReadFile(path)
 		if err != nil {
 			return err
@@ -94,20 +78,6 @@ func fingerprintHome(home string) (map[string]string, error) {
 		return nil
 	})
 	return result, err
-}
-
-func durableExecutionRecords(home string) (int, error) {
-	path := filepath.Join(home, ".roca", "plugins", "roca-ops", "roca-ops.db")
-	database, err := sql.Open("sqlite", "file:"+path+"?mode=ro&_pragma=busy_timeout(5000)")
-	if err != nil {
-		return 0, err
-	}
-	defer database.Close()
-	var total int
-	if err := database.QueryRow(`SELECT COUNT(*) FROM call_history WHERE stream = 'executions'`).Scan(&total); err != nil {
-		return 0, err
-	}
-	return total, nil
 }
 
 func executionLogRecords(home string) (int, error) {
