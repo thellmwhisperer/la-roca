@@ -157,6 +157,10 @@ func (w *writer) sessionWithPolicy(ctx context.Context, session parsers.Session,
 	if session.ID == "" {
 		return counts, nil
 	}
+	if session.SourceAgent == "codex" && len(session.Exchanges) == 0 &&
+		len(session.Thinking) == 0 && len(session.OrphanedTools) == 0 {
+		session.OrphanedTools = nil
+	}
 
 	current, exists, err := w.currentSession(ctx, session.ID)
 	if err != nil {
@@ -611,6 +615,7 @@ const (
 
 type exchangeMatcher struct {
 	byNumber     map[int]storedExchange
+	childNumbers map[int]bool
 	byTimestamps map[timestampPair][]storedExchange
 	byContent    map[[sha256.Size]byte][]storedExchange
 	byHuman      map[string][]storedExchange
@@ -627,6 +632,7 @@ func (w *writer) exchangeMatcher(ctx context.Context, sessionID string,
 	historyNumbers map[int]bool) (*exchangeMatcher, error) {
 	m := &exchangeMatcher{
 		byNumber:     map[int]storedExchange{},
+		childNumbers: map[int]bool{},
 		byTimestamps: map[timestampPair][]storedExchange{},
 		byContent:    map[[sha256.Size]byte][]storedExchange{},
 		byHuman:      map[string][]storedExchange{},
@@ -658,12 +664,28 @@ func (w *writer) exchangeMatcher(ctx context.Context, sessionID string,
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("read the exchange anchors of %s: %w", sessionID, err)
 	}
+	children, err := queryRows(ctx, w.tx, `
+		SELECT exchange_number FROM tool_uses WHERE session_id = ? AND exchange_number IS NOT NULL
+		UNION SELECT exchange_number FROM thinking_blocks WHERE session_id = ? AND exchange_number IS NOT NULL`,
+		sessionID, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("read the child exchange numbers of %s: %w", sessionID, err)
+	}
+	for _, child := range children {
+		if number, ok := child.number("exchange_number"); ok {
+			n := int(number)
+			m.childNumbers[n] = true
+			if n >= m.nextNumber {
+				m.nextNumber = n + 1
+			}
+		}
+	}
 	return m, nil
 }
 
 func (m *exchangeMatcher) occupied(number int) bool {
 	_, exists := m.byNumber[number]
-	return exists
+	return exists || m.childNumbers[number]
 }
 
 func (m *exchangeMatcher) occupy(id int64, number int, exchange parsers.Exchange,

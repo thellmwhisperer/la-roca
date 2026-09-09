@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/store/exactdedup"
+	"github.com/thellmwhisperer/la-roca/pkg/parsers"
 )
 
 func TestCodexStemSplitIdentity(t *testing.T) {
@@ -70,12 +72,18 @@ func TestCodexStemSplitIdentity(t *testing.T) {
 			if countRows(t, db.SQL(), "sessions") != before {
 				t.Fatal("dry-run changed identity")
 			}
-			for pass := 0; pass < 2; pass++ {
+			for pass := 0; pass < 4; pass++ {
+				if pass == 2 {
+					exec(t, db.SQL(), `UPDATE ingest_file_state SET fingerprint='outdated-reading'`)
+				}
 				result, err := Run(ctx, db, registry(t), Options{Roots: roots})
 				if err != nil || result.Errors != 0 {
 					t.Fatalf("ingest: %+v %v", result, err)
 				}
-				if result.FilesRead != 0 {
+				if pass == 2 && result.FilesRead == 0 {
+					t.Fatal("invalidated fingerprint did not reread the fossil")
+				}
+				if pass != 2 && result.FilesRead != 0 {
 					t.Fatal("repair reread unchanged history or rollout")
 				}
 				for query, want := range map[string]int{
@@ -89,6 +97,60 @@ func TestCodexStemSplitIdentity(t *testing.T) {
 				} {
 					if got := countRows(t, db.SQL(), query); got != want {
 						t.Errorf("%s = %d, want %d", query, got, want)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestCodexIdentityReservesChildNumbersOnLaterWrites(t *testing.T) {
+	for _, sourceIDs := range []bool{false, true} {
+		t.Run(fmt.Sprint("source IDs=", sourceIDs), func(t *testing.T) {
+			db := rocaDatabase(t)
+			ctx := t.Context()
+			fixture, err := os.ReadFile("testdata/codex-stem-split.sql")
+			if err != nil {
+				t.Fatal(err)
+			}
+			exec(t, db.SQL(), string(fixture))
+			exec(t, db.SQL(), `INSERT INTO tool_uses(session_id,exchange_number,tool_name,had_error,error_message)
+			 VALUES('019aba72-aa57-7d93-a12c-b6e65c0dca60',7,'numbered synthetic call',1,'numbered failure');
+			 INSERT INTO thinking_blocks(session_id,exchange_number,full_text)
+			 VALUES('019aba72-aa57-7d93-a12c-b6e65c0dca60',8,'unmatched reasoning')`)
+			if err := reconcileCodexSessionIDs(ctx, db); err != nil {
+				t.Fatal(err)
+			}
+			session := parsers.Session{
+				ID: "019aba72-aa57-7d93-a12c-b6e65c0dca6b", SourceAgent: "codex",
+				HistoryFallback: true,
+				Exchanges: []parsers.Exchange{
+					{Number: 7, HumanText: "Later prompt 7"},
+					{Number: 8, HumanText: "Later prompt 8"},
+				},
+			}
+			if sourceIDs {
+				for i := range session.Exchanges {
+					session.Exchanges[i].SourceID = fmt.Sprint("later-prompt-", i)
+				}
+			}
+			for pass := 0; pass < 2; pass++ {
+				if err := db.Write(ctx, func(tx *sql.Tx) error {
+					_, err := WriteSessions(ctx, tx, []parsers.Session{session})
+					return err
+				}); err != nil {
+					t.Fatal(err)
+				}
+				for query, want := range map[string]int{
+					"sessions": 2, "exchanges": 8, "tool_uses": 49, "thinking_blocks": 1,
+					"exchanges WHERE exchange_number IN (7,8)":                                               0,
+					"exchanges WHERE exchange_number=9 AND human_text='Later prompt 7'":                      1,
+					"exchanges WHERE exchange_number=10 AND human_text='Later prompt 8'":                     1,
+					"tool_uses WHERE exchange_number=7 AND had_error=1 AND error_message='numbered failure'": 1,
+					"thinking_blocks WHERE exchange_number=8 AND full_text='unmatched reasoning'":            1,
+				} {
+					if got := countRows(t, db.SQL(), query); got != want {
+						t.Errorf("%s=%d want %d", query, got, want)
 					}
 				}
 			}
