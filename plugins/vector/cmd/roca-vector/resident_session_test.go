@@ -64,7 +64,7 @@ func TestResidentQueryDuringModelDownloadReturnsNotices(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, missing := model.Existing(root, model.DefaultManifest())
+	_, missing := model.Existing(root, model.DefaultManifest(), true)
 	if !errors.Is(missing, model.ErrNotDownloaded) {
 		t.Fatalf("missing model = %v", missing)
 	}

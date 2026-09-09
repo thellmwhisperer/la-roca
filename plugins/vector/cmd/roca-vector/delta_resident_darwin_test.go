@@ -150,7 +150,7 @@ func TestDeltaIngestTerminatesWhileResidentHoldsAccelerator(t *testing.T) {
 	if labData == "" {
 		t.Skip("set ROCA_VECTOR_LAB_DATA_DIR to run the native concurrency regression")
 	}
-	sourceModel, err := model.Existing(labData, model.DefaultManifest())
+	sourceModel, err := model.Existing(labData, model.DefaultManifest(), true)
 	if err != nil {
 		t.Skip(err.Error())
 	}
