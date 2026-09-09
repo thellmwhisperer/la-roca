@@ -314,6 +314,11 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 	}
 	result.Before = before
 	result.After = before
+	if !opts.DryRun {
+		if err := reconcileCodexSessionIDs(ctx, db); err != nil {
+			return result, err
+		}
+	}
 
 	for _, target := range plan.Targets {
 		source := normalizedSource(target.SourceAgent)

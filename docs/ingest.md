@@ -245,6 +245,13 @@ envelope and reconciliation continues for its history exchanges. The
 exact-payload uniqueness guard remains enforced; this collision alone does not
 make the history file fail. Other refresh errors still fail the write.
 
+An inherited set of stem-derived session keys with the same stored Codex thread
+and rollout identity is reunited under the exact source thread ID on ingest,
+even when the files are unchanged. Child rows and their errors are retained;
+session-level tools remain session-level. Conflicting rollout identities fail
+without a partial repair. See the [identity reproduction](codex-identity-evidence.md)
+for the published control and regression contract.
+
 When Codex's state database names a model or provider for the legacy session,
 that provenance is retained on its recovered exchanges. The history format does
 not record answers or per-exchange usage. Its session-wide `tokens_used` value
