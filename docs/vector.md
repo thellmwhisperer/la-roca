@@ -151,6 +151,10 @@ indexing and queries. The pinned bytes are served from La Roca's `models-v1`
 GitHub release, whose release lane verifies the upstream source before
 publication.
 
+The [model verification contract](d6-model-evidence.md#d6-model-verification)
+defines when later opens can reuse verification, what invalidates it, and how
+read-only opens and filesystems without receipt support behave.
+
 The [init flow](lifecycle.md#initialize) owns first-run consent and ordering. If
 semantic search is enabled there, no separate vector command is needed.
 `roca vector install` performs the same download and build only when you turn it

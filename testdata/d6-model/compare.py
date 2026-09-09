@@ -15,14 +15,19 @@ import time
 parser = argparse.ArgumentParser(description=__doc__)
 for option in ('published-core', 'published-vector', 'branch-core', 'branch-vector', 'model', 'lab'):
     parser.add_argument('--' + option, required=True, type=Path)
+parser.add_argument('--evidence-dir', type=Path,
+                    help='Store transcripts and counters separately from the disposable lab')
 args = parser.parse_args()
 for name, path in vars(args).items():
-    setattr(args, name, path.resolve())
+    if path is not None:
+        setattr(args, name, path.resolve())
 root = Path(__file__).resolve().parents[2]
 lab = args.lab.resolve()
 assert root / '.tmp' in lab.parents, 'lab must be below the project .tmp directory'
 assert not lab.exists(), 'use a fresh lab directory; existing evidence is preserved'
 lab.mkdir(parents=True, mode=0o700)
+evidence = args.evidence_dir or lab
+evidence.mkdir(parents=True, exist_ok=True)
 os.chdir(lab)
 home = lab / 'home'
 data = home / '.roca'
@@ -45,8 +50,8 @@ base.update(HOME=str(home), ROCA_DB_PATH=str(data / 'roca.db'), ROCA_READ_ONLY='
 def run(binary, argv, env, name):
     process = subprocess.run([str(binary.resolve()), *argv], env=env,
                              capture_output=True, text=True, timeout=180)
-    (lab / (name + '.stdout')).write_text(process.stdout)
-    (lab / (name + '.stderr')).write_text(process.stderr)
+    (evidence / (name + '.stdout')).write_text(process.stdout)
+    (evidence / (name + '.stderr')).write_text(process.stderr)
     assert process.returncode == 0, (name, process.stderr)
     return process
 
@@ -122,8 +127,8 @@ for label, core, vector in [('published', args.published_core, args.published_ve
     fresh = model.with_suffix('.replacement')
     shutil.copyfile(model, fresh)
     fresh.replace(model)
-    startup = lab / (label + '-startup.counter')
-    log = open(lab / (label + '-resident.log'), 'w')
+    startup = evidence / (label + '-startup.counter')
+    log = open(evidence / (label + '-resident.log'), 'w')
     resident = subprocess.Popen([str(installed), '_resident', '--listen', 's.sock', '--idle', '60s'],
                                 env=dict(env, ROCA_D6_COUNTER=str(startup)), stdout=log, stderr=log)
     connection = socket.socket(socket.AF_UNIX)
@@ -147,7 +152,7 @@ for label, core, vector in [('published', args.published_core, args.published_ve
         row = {'startup_bytes': startup_bytes}
         for route, binary, argv in [('direct', installed, ['query']), ('core', core, ['vector', 'query']),
                                     ('fallback', installed, ['query'])]:
-            counted = lab / (label + '-' + route + '.counter')
+            counted = evidence / (label + '-' + route + '.counter')
             query_env = dict(env, ROCA_D6_COUNTER=str(counted))
             if route == 'fallback':
                 refused = lab / 'refused-socket'
@@ -161,7 +166,7 @@ for label, core, vector in [('published', args.published_core, args.published_ve
             assert {r['database'] for r in result['results']} == {'ops', 'corpus'}, result
             row[route] = {'bytes': counter(counted), 'result': normalize(result), 'stderr': process.stderr}
         assert counter(startup) == startup_bytes, 'resident reread model during hot queries'
-        resident_log = (lab / (label + '-resident.log')).read_text()
+        resident_log = (evidence / (label + '-resident.log')).read_text()
         assert resident_log.count('answered query in') == 2, 'query used fallback or a different resident'
         assert row['direct']['result'] == row['core']['result'] == row['fallback']['result'], 'route equality failed'
         results[label] = row
@@ -182,5 +187,5 @@ assert results['published']['fallback']['bytes'] == 2 * model_size
 assert results['branch']['fallback']['bytes'] == 0
 results['binaries'] = {name: hashlib.sha256(getattr(args, name).read_bytes()).hexdigest()
                        for name in ('published_core', 'published_vector', 'branch_core', 'branch_vector')}
-(lab / 'comparison.json').write_text(json.dumps(results, indent=2))
+(evidence / 'comparison.json').write_text(json.dumps(results, indent=2))
 print('PASS: same databases, rows, scores, notices and errors; startup 2 -> 1 full reads; direct hot 1 -> 0; core hot 0 -> 0; local fallback 2 -> 0')

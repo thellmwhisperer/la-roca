@@ -11,7 +11,8 @@ The verified download keeps its inode and receipt across the install rename.
 Verification locks the open inode, checks identity before and after hashing,
 and publishes the receipt only after a successful checksum. Concurrent opens
 reuse that receipt. Read-only callers can reuse an existing receipt but never
-publish one; without a valid receipt they verify the checksum on each open. Filesystems that cannot store extended attributes and
+publish one; without a valid receipt they verify the checksum on each open.
+Filesystems that cannot store extended attributes and
 platforms without this implementation continue to verify fully; their shortcut
 cost is unmeasured. This is a local integrity cache, not protection against an
 owner deliberately forging attributes or restoring both content metadata and
@@ -22,9 +23,12 @@ a receipt. No ledger, cleanup process or resident-lifecycle change is added.
 `make -C plugins/vector check` runs the ordinary invalidation tests. On Darwin,
 `TestCostModelVerification` also compiles the lab-only read interceptor and runs
 an isolated subprocess. The fixture requires one payload read on download,
-zero on repeated `Existing`/`Ensure`, and exactly one after replacing the inode.
-It rejects corrupt same-size replacement, mtime/size changes, missing files and
-a changed checksum. Against the pre-change model owner, the cost fixture fails:
+zero on repeated `Existing`/`Ensure`, and one on each read-only open after
+replacing the inode without a receipt. The first subsequent writable open
+verifies once and publishes the receipt; repeated opens then read zero payload
+bytes. `TestVerificationInvalidatesChangedFile` separately rejects corrupt
+same-size replacement, changed content with a new mtime, size changes, missing
+files and a changed checksum. Against the pre-change model owner, the cost fixture fails:
 repeated unchanged calls reread four payloads instead of zero.
 
 The opt-in native comparison requires the published v1.84.8 Darwin arm64 core
@@ -44,8 +48,11 @@ and runs the same default query without a database filter. Both versions use
 the same lab home and sidecars. The harness requires evidence from both prepared
 sidecars, `vector_executed=true`, and exact equality of database lists, rows,
 ranking, scores, notices and errors. It removes only timing and build metadata
-from comparison. Binary digests and raw outputs stay in the lab's
-`comparison.json` and companion files.
+from comparison. Binary digests and raw outputs default to the lab's
+`comparison.json` and companion files. When invoked directly,
+`testdata/d6-model/compare.py --evidence-dir <evidence-directory>` stores those
+artifacts, counters and resident logs in the specified directory while keeping
+the synthetic home and sidecars in the lab.
 
 The counter interposes successful model `read`/`pread` calls, including cache
 hits, on the path used by Go's checksum reader. Each process owns a counter so
@@ -63,7 +70,7 @@ Published v1.84.8 versus the branch on the synthetic Darwin lab:
 | Route | Published model bytes read | Branch model bytes read | Paired result |
 | --- | ---: | ---: | --- |
 | Startup after replacement | about 1.9 GB (two full passes) | about 958 MB (one pass) | The subsequent default queries return the same evidence |
-| Hot direct companion | about 958 MB (one pass) | 0 | Same four declared databases and five evidence rows, from both prepared sidecars |
+| Hot direct companion | about 958 MB (one pass) | 0 | Same declared databases and evidence rows, from both prepared sidecars |
 | Hot core shortcut | 0 | 0 | Same databases, rows, scores, notices and errors |
 | Separate local fallback | about 1.9 GB (two passes) | 0 after prior verification | Same default federation and evidence |
 
