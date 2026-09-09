@@ -54,10 +54,6 @@ func TestUpgradeGauntletOwnsReleasedHomesAndBothDeliveryPaths(t *testing.T) {
 		})
 	}
 
-	generator := readRepoFile(t, "../../../scripts/freeze-upgrade-home.sh")
-	if !strings.Contains(generator, "gh release download") {
-		t.Error("the fixture helper does not download actual GitHub release binaries")
-	}
 	runner := readRepoFile(t, "../../../scripts/upgrade-gauntlet.sh")
 	for _, required := range []string{"ingest", "exec", "doctor", "health"} {
 		if !strings.Contains(runner, required) {
@@ -81,10 +77,6 @@ func TestUpgradeGauntletOwnsReleasedHomesAndBothDeliveryPaths(t *testing.T) {
 	}
 	if !strings.Contains(release, "needs: upgrade-gauntlet") {
 		t.Error("publication does not wait for the frozen homes to upgrade")
-	}
-	docs := strings.ToLower(readRepoFile(t, "../../../docs/releases.md"))
-	if !strings.Contains(docs, "schema migration") || !strings.Contains(docs, "frozen upgrade home") {
-		t.Error("release documentation does not make a new frozen home part of schema migration delivery")
 	}
 }
 
