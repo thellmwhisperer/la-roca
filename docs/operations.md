@@ -289,14 +289,15 @@ counts.
 
 Import only the retained execution and MCP segments for a chosen UTC date into
 scratch SQLite. Python 3's standard library is sufficient. Choose an unused
-scratch database path; this recipe creates its `audit` table and refuses to
-append to an existing table. It reads the logs without modifying them and
-includes rotated segments. Malformed JSON aborts the import transaction.
+scratch database path; this recipe creates it with operator-only permissions
+(mode `0600`) and refuses any existing path. It reads the logs without modifying
+them and includes rotated segments. Malformed JSON aborts the import transaction.
 
 ```sh
 python3 - "$HOME/.roca/logs" 2026-09-09 "${TMPDIR:-/tmp}/roca-audit.sqlite" <<'PY'
-import json, pathlib, sqlite3, sys
+import json, os, pathlib, sqlite3, sys
 logs, day, scratch = sys.argv[1:]
+os.close(os.open(scratch, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
 with sqlite3.connect(scratch) as db:
     db.execute("CREATE TABLE audit (record TEXT NOT NULL CHECK(json_valid(record)))")
     for stream in ("executions", "mcp-audit"):
