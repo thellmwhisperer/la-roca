@@ -280,7 +280,11 @@ manifest chunking hints override the kernel defaults without giving plugins
 executable generation code. Source sweeps use one read-only core helper per operation. Each table's
 SELECT passes the existing schema, function and visibility gate once, then
 keeps a SQLite cursor open and streams pages of at most 500 rows. Scope and
-neighbour text requests share that helper. The cursor bounds each response
+neighbour text requests share that helper. Each cursor owns a separate read
+connection and its attachments, so interleaved source sweeps do not accumulate
+each other's on-demand databases against one connection's attachment limit.
+Closing a cursor releases its connection and attachments; helper shutdown
+closes all remaining cursors. The cursor bounds each response
 instead of imposing the interactive SQL row cap on the whole sweep. A page
 has a two-minute deadline; a stalled helper and its process group are killed
 and reaped so the worker can fail cleanly and a later pass can resume.

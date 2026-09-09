@@ -47,3 +47,13 @@ cap for ordinary SELECT requests. `TestRunCommandCancellationKillsAndReapsItsPro
 checks cancellation, page deadlines and worker command draining with real
 subprocesses. The cursor preserves the gate's table/function restrictions;
 each source table is queried and sorted once for the sweep.
+
+`TestExecReaderIndependentIngestAttachments` in
+`internal/provider/service/exec_cursor_test.go` interleaves two source-sweep
+jobs across nine on-demand databases with two resident databases in both
+serving layouts. It checks page continuity, per-job cursor and connection
+cleanup, and the absence of leftover on-demand attachments.
+`TestExecReaderCutoverConnections` checks compatibility reads, rejection of
+writes, helper cleanup and the absence of a core database in cutover mode.
+The [vector guide](vector.md#index-declared-databases) owns the cursor attachment
+lifetime.

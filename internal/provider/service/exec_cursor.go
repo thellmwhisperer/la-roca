@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"database/sql"
-	"slices"
 
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 )
@@ -19,28 +18,17 @@ type ExecCursor struct {
 }
 
 type ExecReader struct {
-	service    *Service
-	connection *sql.Conn
-	attached   []string
-	onDemand   []string
-	active     int
+	service *Service
+	cursors map[*ExecCursor]struct{}
 }
 
 func (s *Service) NewExecReader() *ExecReader {
-	return &ExecReader{service: s}
+	return &ExecReader{service: s, cursors: make(map[*ExecCursor]struct{})}
 }
 
 func (r *ExecReader) Close() {
-	if r.connection != nil {
-		closeQueryConnection(r.connection, append(r.attached, r.onDemand...))
-		r.connection = nil
-	}
-}
-
-func (r *ExecReader) releaseAttachments() {
-	if r.active == 0 && r.connection != nil {
-		plugin.Detach(context.Background(), r.connection, r.onDemand)
-		r.onDemand = nil
+	for cursor := range r.cursors {
+		cursor.Close()
 	}
 }
 
@@ -54,34 +42,67 @@ func (r *ExecReader) OpenExecCursor(ctx context.Context, sql string, maxChars in
 }
 
 func (r *ExecReader) open(ctx context.Context, statement string, maxChars int, databases []plugin.Database) (*ExecCursor, error) {
-	if r.connection == nil {
-		var err error
-		r.connection, r.attached, err = r.service.openQueryConnection(ctx)
-		if err != nil {
-			return nil, typedExecError(err)
-		}
+	// A cursor owns its connection and attachments. Independent source sweeps
+	// may interleave in the same helper without accumulating each other's seats.
+	connection, attached, release, err := r.openConnection(ctx)
+	if err != nil {
+		return nil, typedExecError(err)
 	}
 	var onDemand []plugin.Database
 	for _, database := range databases {
-		if database.Semantic.Attachment != plugin.AttachmentResident && !slices.Contains(r.onDemand, database.Schema) {
+		if database.Semantic.Attachment != plugin.AttachmentResident {
 			onDemand = append(onDemand, database)
 		}
 	}
-	additional, err := plugin.Attach(ctx, r.connection, onDemand)
-	r.onDemand = append(r.onDemand, additional...)
+	additional, err := plugin.Attach(ctx, connection, onDemand)
+	attached = append(attached, additional...)
 	if err != nil {
-		r.releaseAttachments()
+		closeQueryConnection(connection, attached)
+		release()
 		return nil, typedExecError(err)
 	}
-	rows, err := r.connection.QueryContext(ctx, statement)
+	rows, err := connection.QueryContext(ctx, statement)
 	if err != nil {
-		r.releaseAttachments()
+		closeQueryConnection(connection, attached)
+		release()
 		return nil, typedExecError(err)
 	}
-	r.active++
-	close := func() { r.active--; r.releaseAttachments() }
-	return &ExecCursor{rows: rows, close: close, maxChars: TextBudget(maxChars),
-		databases: databases, statement: statement}, nil
+	cursor := &ExecCursor{rows: rows, maxChars: TextBudget(maxChars),
+		databases: databases, statement: statement}
+	cursor.close = func() {
+		closeQueryConnection(connection, attached)
+		release()
+		delete(r.cursors, cursor)
+	}
+	r.cursors[cursor] = struct{}{}
+	return cursor, nil
+}
+
+func (r *ExecReader) openConnection(ctx context.Context) (*sql.Conn, []string, func(), error) {
+	if r.service.db != r.service.hubDB {
+		connection, attached, err := r.service.openQueryConnection(ctx)
+		return connection, attached, func() {}, err
+	}
+	hub, err := plugin.OpenHub(ctx, r.service.resident)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	ops := databaseForVerb(r.service.resident, StoreVerb, rocaOpsPluginName)
+	corpus := databaseForVerb(r.service.resident, IngestVerb, rocaCorpusPluginName)
+	if err := installHubCompatibility(ctx, hub.DB, ops.Schema, corpus.Schema); err != nil {
+		hub.Close()
+		return nil, nil, nil, err
+	}
+	if _, err := hub.ExecContext(ctx, "PRAGMA query_only = ON"); err != nil {
+		hub.Close()
+		return nil, nil, nil, err
+	}
+	connection, err := hub.Conn(ctx)
+	if err != nil {
+		hub.Close()
+		return nil, nil, nil, err
+	}
+	return connection, nil, func() { hub.Close() }, nil
 }
 
 func (r *ExecReader) Exec(ctx context.Context, req ExecRequest) (ExecResult, error) {
@@ -128,6 +149,9 @@ func (c *ExecCursor) readPage(limit int) ([]string, []map[string]any, error) {
 }
 
 func (c *ExecCursor) Close() {
-	c.rows.Close()
-	c.close()
+	if c.close != nil {
+		c.rows.Close()
+		c.close()
+		c.close = nil
+	}
 }
