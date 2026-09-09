@@ -48,8 +48,11 @@ Preparation progress received by an MCP or CLI client goes to its standard
 error, leaving result output untouched. The detached resident appends its own
 stdout and stderr to `<data-directory>/logs/vector-resident.log`. If connecting
 or starting the resident fails, serve emits a notice on stderr and keeps the core
-tools available without `roca_vector_query`. A lost connection fails that
-session's vector calls; a new MCP session can start or connect to a resident.
+tools available without `roca_vector_query`. If an MCP or CLI client receives a
+query's result or query error immediately before a disconnect, it preserves that
+reply. A disconnect without a reply for that query remains an error. Subsequent
+vector calls on the disconnected MCP session fail; a new MCP session can start
+or connect to a resident.
 
 If the CLI cannot establish a ready resident connection, it uses its in-process
 query path, which may load the model for that invocation. After establishing
