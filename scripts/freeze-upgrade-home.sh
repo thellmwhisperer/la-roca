@@ -91,8 +91,51 @@ cat > "$archive_root/origin.json" <<JSON
   "sha256": "$actual_sha"
 }
 JSON
+# Historical ops audit rows can contain generation HOME paths even after logs
+# are removed. Normalize only this synthetic fixture, including free-page copies.
 archive="$stage/$requested.tar.gz"
-COPYFILE_DISABLE=1 tar -C "$archive_root" -czf "$archive" .
+python3 - "$archive_root" "$home" "$archive" <<'PY_NORMALIZE'
+import json, pathlib, sqlite3, subprocess, sys, tarfile
+root, home = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+prefixes = (str(home.resolve()), str(home))
+def normalize(text):
+    for prefix in prefixes:
+        text = text.replace(prefix, "~")
+    return text
+for path in root.rglob("*"):
+    if not path.is_file():
+        continue
+    if path.suffix == ".db":
+        with sqlite3.connect(path) as db:
+            # table_list excludes virtual/shadow tables; ordinary FTS triggers
+            # maintain their indexes if a source value needs normalization.
+            tables = [r[1] for r in db.execute("PRAGMA table_list")
+                      if r[2] == "table" and not r[1].startswith("sqlite_")]
+            quote = lambda name: '"' + name.replace('"', '""') + '"'
+            for table in tables:
+                for col in db.execute(f"PRAGMA table_info({quote(table)})").fetchall():
+                    column = quote(col[1])
+                    for prefix in prefixes:
+                        where = f"typeof({column})='text' AND instr({column}, ?) > 0"
+                        if db.execute(f"SELECT count(*) FROM {quote(table)} WHERE {where}", (prefix,)).fetchone()[0]:
+                            db.execute(f"UPDATE {quote(table)} SET {column}=replace({column}, ?, '~') WHERE {where}",
+                                       (prefix, prefix))
+        db.close()
+    elif path.suffix in (".json", ".toml", ".md"):
+        path.write_text(normalize(path.read_text()))
+subprocess.run(["go", "run", "scripts/freeze-upgrade-vacuum.go",
+                *(str(p) for p in root.rglob("*.db"))], check=True)
+origin = root / "origin.json"
+metadata = json.loads(origin.read_text())
+metadata["normalization"] = "Synthetic generation HOME prefixes replaced with ~; SQLite free pages vacuumed."
+origin.write_text(json.dumps(metadata, indent=2) + "\n")
+def owner(info):
+    info.uid = info.gid = 0
+    info.uname = info.gname = "root"
+    return info
+with tarfile.open(sys.argv[3], "w:gz") as archive:
+    archive.add(root, arcname=".", filter=owner)
+PY_NORMALIZE
 mkdir -p "$(dirname "$destination")"
 mv -f "$archive" "$destination"
 

@@ -5,7 +5,6 @@ package acceptance
 import (
 	"bufio"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -27,6 +26,9 @@ func TestCostAuditDestination(t *testing.T) {
 		t.Fatal(err)
 	}
 	published := os.Getenv("ROCA_AUDIT_PUBLISHED_BIN")
+	if published != "" {
+		t.Run("storage-upgrade", func(t *testing.T) { checkAuditStorageUpgrade(t, branch, published) })
+	}
 	for _, label := range []string{"branch", "published"} {
 		if label == "published" && published == "" {
 			continue
@@ -64,21 +66,8 @@ func TestCostAuditDestination(t *testing.T) {
 				t.Fatalf("prepare installed schema: code=%d %s", code, output)
 			}
 			opsPath := filepath.Join(m.home, ".roca", "plugins", "roca-ops", "roca-ops.db")
-			db, err := sql.Open("sqlite", opsPath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, err = db.Exec(`INSERT INTO call_history
-				(id,timestamp,stream,source,operation,args,ok,duration_ms,row_count,
-				retried,retried_sql,model_sql_present,source_file,source_line,record_digest,record_json)
-				VALUES ('synthetic-old-audit','2026-08-01T00:00:00Z','executions','cli',
-				'exec','[]',1,0,0,0,0,0,'synthetic-expired.jsonl',1,'synthetic','{}')`)
-			db.Close()
-			if err != nil {
-				t.Fatal(err)
-			}
 			for _, query := range []string{"SELECT 353 AS synthetic_audit", "DELETE FROM plugin_roca_ops.memories"} {
-				before, rows := auditRecords(t, m.home), auditRows(t, opsPath)
+				before, rows := auditRecords(t, m.home), auditRows(t, opsPath, label == "branch")
 				digests := durableDigests(t, m.home)
 				output, code := m.runUnder(t, nil, "exec", query, "--json")
 				ok := strings.HasPrefix(query, "SELECT")
@@ -112,7 +101,7 @@ func TestCostAuditDestination(t *testing.T) {
 				if record.Command != "exec" || !reflect.DeepEqual(record.Args, []string{query}) || record.OK != ok || (!ok && record.Error == "") {
 					t.Fatalf("wrong execution record: %+v", record)
 				}
-				growth := auditRows(t, opsPath) - rows
+				growth := auditRows(t, opsPath, label == "branch") - rows
 				wantGrowth := 0
 				if label == "published" {
 					wantGrowth = 1
@@ -132,13 +121,20 @@ func TestCostAuditDestination(t *testing.T) {
 	}
 }
 
-func auditRows(t *testing.T, path string) int {
+func auditRows(t *testing.T, path string, absent bool) int {
 	t.Helper()
 	db, err := bundledplugin.OpenDatabase(path, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	if absent {
+		var count int
+		if err := db.QueryRow("SELECT count(*) FROM sqlite_master WHERE name GLOB '*call_history*'").Scan(&count); err != nil || count != 0 {
+			t.Fatalf("audit schema objects=%d, err=%v; want absent", count, err)
+		}
+		return 0
+	}
 	var count int
 	if err := db.QueryRow("SELECT count(*) FROM call_history").Scan(&count); err != nil {
 		t.Fatal(err)
@@ -182,7 +178,7 @@ func checkAuditDoctor(t *testing.T, m *world, opsPath string) {
 	if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
 		t.Fatal(err)
 	}
-	before, rows := durableDigests(t, m.home), auditRows(t, opsPath)
+	before, rows := durableDigests(t, m.home), auditRows(t, opsPath, true)
 	output, code := m.runUnder(t, nil, "doctor", "--json")
 	if code != 0 || !strings.Contains(output, "qf_synthetic") {
 		t.Fatalf("doctor did not read JSONL: code=%d %s", code, output)
@@ -193,7 +189,7 @@ func checkAuditDoctor(t *testing.T, m *world, opsPath string) {
 	if err := json.Unmarshal([]byte(output), &report); err != nil || report.Failures.Count != 1 {
 		t.Fatalf("doctor query failure count: %+v, err=%v", report, err)
 	}
-	if auditRows(t, opsPath) != rows || !reflect.DeepEqual(before, durableDigests(t, m.home)) {
+	if auditRows(t, opsPath, true) != rows || !reflect.DeepEqual(before, durableDigests(t, m.home)) {
 		t.Fatal("doctor mutated ops or backfilled retained JSONL")
 	}
 	audit := auditRecords(t, m.home)

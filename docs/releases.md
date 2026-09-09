@@ -85,8 +85,9 @@ The steps are the same either way:
    the only list of frozen homes, and the helper refuses a version it does not
    already name.
 2. Run `scripts/freeze-upgrade-home.sh vX.Y.Z` and commit its single `tar.gz`
-   fixture, which holds the byte-exact synthetic database, config, prompt, and
-   `origin.json`.
+   fixture, which freezes the synthetic database, config, prompt, and
+   `origin.json`. The helper normalizes generation HOME prefixes to `~` in
+   synthetic text values and VACUUMs only fixture databases before freezing.
 3. Run `make upgrade-gauntlet` for every committed home, or
    `make upgrade-gauntlet UPGRADE_HOME=vX.Y.Z` for the new one alone.
 

@@ -130,11 +130,12 @@ The support report writes no audit record because its read-only contract
 includes observability. An append failure emits a warning without changing
 the command or tool result. Query result rows are never logged.
 
-The legacy ops history tables are dormant: this release neither writes nor
-backfills them, and doctor does not read them. Their schema and old rows remain
-until the separate #353 storage-removal migration. They are not a complete
-archive or a recovery promise. Recovery from JSONL covers only the same-day
-files that still exist; expired or previously rotated-away records are gone.
+Ops schema version 5 deletes the legacy audit tables, their rows, and owned
+indexes during the normal bundled-plugin upgrade. There is no database audit
+archive or automatic VACUUM. Deleted ops rows cannot be recovered by reverting
+the binary. Recovery from JSONL covers only the same-day files that still exist;
+expired or previously rotated-away records are gone. Use the scratch import
+below to query retained records without restoring an ops audit destination.
 
 ## Streams and contents
 
