@@ -41,14 +41,13 @@ const (
 // explicit: callers keep the verified VACUUM copies beside their other Roca
 // backups, never in a process-global temporary directory.
 type MemoryCustodyOptions struct {
-	CorePath               string
-	CorpusPath             string
-	OpsPath                string
-	SnapshotDir            string
-	LockPath               string
-	BatchSize              int
-	AfterBatch             func(MemoryBatch) error
-	ReuseVerifiedSnapshots bool
+	CorePath    string
+	CorpusPath  string
+	OpsPath     string
+	SnapshotDir string
+	LockPath    string
+	BatchSize   int
+	AfterBatch  func(MemoryBatch) error
 }
 
 type MemoryBatch struct {
@@ -201,7 +200,7 @@ func MigrateMemoryCustody(ctx context.Context, options MemoryCustodyOptions) (Me
 		{name: corpusMemorySource, path: options.CorpusPath},
 	}
 	if state.State == migrationledger.StateVerified ||
-		(state.State == migrationledger.StateVerifiedEmpty && options.ReuseVerifiedSnapshots) {
+		state.State == migrationledger.StateVerifiedEmpty {
 		report, err := inspectMemoryCustody(ctx, ops, state, options.SnapshotDir, plugin)
 		if err != nil {
 			return MemoryCustodyReport{}, err
@@ -217,19 +216,13 @@ func MigrateMemoryCustody(ctx context.Context, options MemoryCustodyOptions) (Me
 			case !errors.Is(statErr, os.ErrNotExist):
 				return MemoryCustodyReport{}, fmt.Errorf("inspect %s memory snapshot: %w", source.name, statErr)
 			}
-			if options.ReuseVerifiedSnapshots {
-				return MemoryCustodyReport{}, fmt.Errorf("the verified %s memory snapshot is missing: %w", source.name, statErr)
-			}
-			if err := snapshotMemories(ctx, source, path); err != nil {
-				return MemoryCustodyReport{}, err
-			}
+			return MemoryCustodyReport{}, fmt.Errorf("the verified %s memory snapshot is missing: %w", source.name, statErr)
 		}
 		return report, nil
 	}
-	if state.State != migrationledger.StatePrepared && state.State != migrationledger.StateBatchInProgress &&
-		state.State != migrationledger.StateVerifiedEmpty {
+	if state.State != migrationledger.StatePrepared && state.State != migrationledger.StateBatchInProgress {
 		return MemoryCustodyReport{}, fmt.Errorf(
-			"ops memory custody is %q, want prepared, batch-in-progress, or verified-empty", state.State)
+			"ops memory custody is %q, want prepared or batch-in-progress", state.State)
 	}
 
 	snapshots := make([]string, 0, len(sources))
@@ -352,9 +345,8 @@ func pendingMemories(source string, rows []memoryRow,
 
 // recordMemoryVerification separates the two verified outcomes: a population
 // that carried memories reaches the terminal verified state, while a home whose
-// three sources were all empty reaches verified-empty. Low-level callers can
-// reopen that empty population; ReuseVerifiedSnapshots instead preserves the
-// frozen inputs needed to resume the remaining custody stages.
+// three sources were all empty reaches verified-empty. Both are terminal and
+// preserve the frozen inputs needed to resume the remaining custody stages.
 //
 // The two are told apart by this migration's own membership count rather than by
 // any batch the ops ledger holds, so a batch some other rung commits into the
