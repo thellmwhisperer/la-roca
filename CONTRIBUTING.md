@@ -101,6 +101,8 @@ latency tests live in `plugins/vector/internal/vector/status_issue336_test.go`:
 they require a completed nonempty indexing pass and an actual query result
 before judging latency in the process doing the work. They do not claim to
 measure native model residency or bytes read. There are no expected-fail costs.
+See [D7 batch indexing evidence](docs/d7-batch-evidence.md) for the isolated
+published-versus-branch transaction counts and timings.
 
 `make e2e-smoke` isolates the real-binary operator path in a disposable `HOME`
 and covers init, ingest, query, plugin install, and plugin update. It is also
