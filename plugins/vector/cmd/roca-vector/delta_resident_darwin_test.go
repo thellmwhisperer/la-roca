@@ -34,37 +34,44 @@ func TestMain(m *testing.M) {
 }
 
 func runE2ECore(args []string) bool {
-	for _, argument := range args {
-		if argument == "_database-scope" {
-			_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
-				"databases": []string{"records"},
-				"selected":  []map[string]string{{"source": "plugin:fixture/records", "database": "records"}},
-			})
-			return true
-		}
-	}
-	if !containsArgument(args, "exec") {
+	if !containsArgument(args, "_vector-reader") {
 		return false
 	}
-	statement := args[len(args)-1]
-	rows := []map[string]any{}
-	switch {
-	case strings.Contains(statement, "COUNT(*) AS n"):
-		rows = append(rows, map[string]any{"n": 1})
-	case strings.Contains(statement, "SUM("):
-		rows = append(rows, map[string]any{"total": 1})
-	case strings.Contains(statement, `FROM "plugin_fixture"."records"`):
-		body := strings.TrimSpace(os.Getenv("ROCA_VECTOR_E2E_BODY"))
-		if body == "" {
-			body = "accelerator concurrency regression"
+	decoder, encoder := json.NewDecoder(os.Stdin), json.NewEncoder(os.Stdout)
+	for {
+		var request struct {
+			SQL   string `json:"sql"`
+			Scope bool   `json:"scope"`
 		}
-		rows = append(rows, map[string]any{
-			"source_id": "record-1", "body": body,
-			"context_title": "", "context_project": "", "context_time": "record-1",
-		})
+		if err := decoder.Decode(&request); err != nil {
+			return true
+		}
+		if request.Scope {
+			_ = encoder.Encode(map[string]any{"result": map[string]any{
+				"databases": []string{"records"},
+				"selected":  []map[string]string{{"source": "plugin:fixture/records", "database": "records"}},
+			}})
+			continue
+		}
+		statement := request.SQL
+		rows := []map[string]any{}
+		switch {
+		case strings.Contains(statement, "COUNT(*) AS n"):
+			rows = append(rows, map[string]any{"n": 1})
+		case strings.Contains(statement, "SUM("):
+			rows = append(rows, map[string]any{"total": 1})
+		case strings.Contains(statement, `FROM "plugin_fixture"."records"`):
+			body := strings.TrimSpace(os.Getenv("ROCA_VECTOR_E2E_BODY"))
+			if body == "" {
+				body = "accelerator concurrency regression"
+			}
+			rows = append(rows, map[string]any{
+				"source_id": "record-1", "body": body,
+				"context_title": "", "context_project": "", "context_time": "record-1",
+			})
+		}
+		_ = encoder.Encode(map[string]any{"result": map[string]any{"rows": rows}})
 	}
-	_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"rows": rows})
-	return true
 }
 
 func createOwnedSource(path, extraSQL string) error {

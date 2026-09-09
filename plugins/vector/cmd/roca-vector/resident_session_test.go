@@ -47,7 +47,7 @@ func TestResidentQueryDuringModelDownloadReturnsNotices(t *testing.T) {
 	}
 	t.Setenv("ROCA_VECTOR_PLUGIN_ROOT", plugins)
 	script := filepath.Join(root, "roca")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf '%s' '{\"databases\":[\"records\"],\"selected\":[{\"source\":\"plugin:fixture/records\",\"database\":\"records\"}]}'\n"), 0o700); err != nil {
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nwhile IFS= read -r request; do printf '%s\\n' '{\"result\":{\"databases\":[\"records\"],\"selected\":[{\"source\":\"plugin:fixture/records\",\"database\":\"records\"}]}}'; done\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("ROCA_VECTOR_ROCA_BINARY", script)
@@ -149,7 +149,11 @@ func TestResidentSessionRefreshesRegistryWithoutRewarming(t *testing.T) {
 	writeRegistry("old")
 	script := filepath.Join(root, "roca")
 	body := `#!/bin/sh
+while IFS= read -r request; do
+printf '{"result":'
 cat "$ROCA_VECTOR_PLUGIN_ROOT/scope.json"
+printf '}\n'
+done
 `
 	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
 		t.Fatal(err)

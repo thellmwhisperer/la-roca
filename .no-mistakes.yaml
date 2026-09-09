@@ -1,7 +1,7 @@
 commands:
   lint: make fmt && make vet && make slop
   test: >-
-    python3 scripts/public-text-test.py && make test playground-test fts-test audit-test &&
+    python3 scripts/public-text-test.py && make test playground-test fts-test audit-test vector-reader-test &&
     if [ -n "${ROCA_PUBLISHED_BIN:-}" ]; then make migrate-test; fi &&
     if [ -n "${ROCA_SNAPSHOT_PUBLISHED_BIN:-}" ]; then make snapshot-evidence; fi
 document:
