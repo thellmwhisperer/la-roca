@@ -53,7 +53,6 @@ func Migrate(ctx context.Context, options HubOptions) (HubReport, error) {
 	report.Memory, err = rocaops.MigrateMemoryCustody(ctx, rocaops.MemoryCustodyOptions{
 		CorePath: options.CoreDatabase, CorpusPath: options.CorpusDatabase,
 		OpsPath: options.OpsDatabase, SnapshotDir: options.SnapshotDir, LockPath: options.LockPath,
-		ReuseVerifiedSnapshots: true,
 	})
 	if err != nil {
 		return report, fmt.Errorf("prepare DATA-2 memory custody: %w", err)

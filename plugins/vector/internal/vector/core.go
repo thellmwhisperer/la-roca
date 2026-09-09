@@ -1,7 +1,6 @@
 package vector
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -11,20 +10,16 @@ import (
 	"time"
 )
 
-const coreFieldBudget = 64 << 20
-
 // ingestPageTimeout bounds a source page; a stalled reader process is killed
 // and reaped even when the SQL statement spans the full source sweep.
 var ingestPageTimeout = 2 * time.Minute
 
-type CommandRunner func(context.Context, string, ...string) ([]byte, error)
-
 // CoreCLI reads through one read-only core helper per operation, preserving
 // the core SQL gate, database routing and source visibility.
 type CoreCLI struct {
-	Executable string
-	DBPath     string
-	Run        CommandRunner
+	Executable  string
+	DBPath      string
+	readRequest func(context.Context, CoreCLI, map[string]any, any) error
 }
 
 type DatabaseScope struct {
@@ -44,10 +39,9 @@ type execResult struct {
 }
 
 type corePage struct {
-	kind    string
-	initial string
-	query   func(string) string
-	decode  func(map[string]any) (sourceRow, string, error)
+	kind   string
+	query  string
+	decode func(map[string]any) (sourceRow, error)
 }
 
 const (
@@ -75,7 +69,7 @@ func (c CoreCLI) WalkSources(ctx context.Context, sourceKind string, visit func(
 		if sourceKind != "" && source.kind != sourceKind {
 			continue
 		}
-		iterator := &corePageIterator{core: c, page: source, cursor: source.initial}
+		iterator := &corePageIterator{core: c, page: source}
 		if err := iterator.advance(ctx); err != nil {
 			return err
 		}
@@ -104,14 +98,13 @@ func (c CoreCLI) WalkSources(ctx context.Context, sourceKind string, visit func(
 }
 
 type corePageIterator struct {
-	streamCursor string
-	core         CoreCLI
-	page         corePage
-	cursor       string
-	rows         []sourceRow
-	index        int
-	done         bool
-	current      *sourceRow
+	cursor  string
+	core    CoreCLI
+	page    corePage
+	rows    []sourceRow
+	index   int
+	done    bool
+	current *sourceRow
 }
 
 func (i *corePageIterator) advance(ctx context.Context) error {
@@ -126,7 +119,7 @@ func (i *corePageIterator) advance(ctx context.Context) error {
 			i.current = nil
 			return nil
 		}
-		values, err := i.core.queryIngestCursor(ctx, i.page.query(i.cursor), &i.streamCursor)
+		values, err := i.core.queryIngestCursor(ctx, i.page.query, &i.cursor)
 		if err != nil {
 			return fmt.Errorf("read core %s: %w", i.page.kind, err)
 		}
@@ -134,11 +127,10 @@ func (i *corePageIterator) advance(ctx context.Context) error {
 		i.rows = i.rows[:0]
 		i.index = 0
 		for _, value := range values {
-			row, next, err := i.page.decode(value)
+			row, err := i.page.decode(value)
 			if err != nil {
 				return fmt.Errorf("decode core %s: %w", i.page.kind, err)
 			}
-			i.cursor = next
 			i.rows = append(i.rows, expandDecoded(row, value)...)
 		}
 	}
@@ -184,87 +176,41 @@ func (c CoreCLI) CountChunks(ctx context.Context, sourceKind string) (int64, err
 }
 
 func (c CoreCLI) ResolveDatabaseScope(ctx context.Context, databases string) (DatabaseScope, error) {
-	if c.Run == nil {
-		var result DatabaseScope
-		err := c.read(ctx, map[string]any{"scope": true, "databases": databases}, &result)
-		return result, err
-	}
-	if strings.TrimSpace(c.Executable) == "" {
-		return DatabaseScope{}, fmt.Errorf("roca executable is required")
-	}
-	args := []string{"--json"}
-	if c.DBPath != "" {
-		args = append(args, "--db-path", c.DBPath)
-	}
-	args = append(args, "_database-scope")
-	if strings.TrimSpace(databases) != "" {
-		args = append(args, "--databases", databases)
-	}
-	run := c.Run
-	raw, err := run(ctx, c.Executable, args...)
-	if err != nil {
-		return DatabaseScope{}, err
-	}
 	var result DatabaseScope
-	if err := json.Unmarshal(raw, &result); err != nil {
-		return DatabaseScope{}, fmt.Errorf("decode roca database scope: %w", err)
-	}
-	if result.Databases == nil {
-		result.Databases = []string{}
-	}
-	if result.Selected == nil {
-		result.Selected = []DatabaseSelection{}
-	}
-	return result, nil
+	err := c.read(ctx, map[string]any{"scope": true, "databases": databases}, &result)
+	return result, err
 }
-
-const (
-	newestTimeCursor = "9999-12-31 23:59:59"
-	newestIDCursor   = "9223372036854775807"
-)
 
 func corePages() []corePage {
 	return []corePage{
 		{
-			kind: "memories", initial: joinCursor(newestTimeCursor, newestIDCursor),
-			query: func(cursor string) string {
-				ts, id := splitCursor(cursor)
-				return fmt.Sprintf(`SELECT id,content,COALESCE(source_session,'') AS source_session,
+			kind: "memories",
+			query: fmt.Sprintf(`SELECT id,content,COALESCE(source_session,'') AS source_session,
 					source_sequence,COALESCE(source_agent,'') AS source_agent,
 					COALESCE(metadata,'{}') AS metadata,COALESCE(layer,'') AS layer,
 					COALESCE(origin,'') AS origin,COALESCE(project,'') AS project,
 					COALESCE(created_at,'') AS created_at
 					FROM %s WHERE COALESCE(content,'') <> ''
-					AND (COALESCE(created_at,'') < %s OR (COALESCE(created_at,'') = %s AND id < %s))
-					ORDER BY COALESCE(created_at,'') DESC, id DESC LIMIT %d`,
-					corpusTable("memories"), sqlLiteral(ts), sqlLiteral(ts), id, walkPageSize)
-			},
+					ORDER BY COALESCE(created_at,'') DESC, id DESC`,
+				corpusTable("memories")),
 			decode: decodeMemory,
 		},
 		{
-			kind: "exchanges", initial: joinCursor(newestTimeCursor, newestIDCursor),
-			query: func(cursor string) string {
-				ts, id := splitCursor(cursor)
-				return fmt.Sprintf(`SELECT e.id,COALESCE(e.session_id,'') AS session_id,e.exchange_number,
+			kind: "exchanges",
+			query: fmt.Sprintf(`SELECT e.id,COALESCE(e.session_id,'') AS session_id,e.exchange_number,
 					COALESCE(e.human_text,'') AS human_text,COALESCE(e.agent_text,'') AS agent_text,
 					COALESCE(e.human_timestamp, e.agent_timestamp, s.started_at, '') AS occurred_at,
 					COALESCE(s.title,'') AS context_title, COALESCE(%s,'') AS context_project
 					FROM %s e LEFT JOIN %s s ON s.session_id = e.session_id
 					WHERE (COALESCE(e.human_text,'') <> '' OR COALESCE(e.agent_text,'') <> '')
-					AND (COALESCE(e.human_timestamp, e.agent_timestamp, s.started_at, '') < %s
-					OR (COALESCE(e.human_timestamp, e.agent_timestamp, s.started_at, '') = %s AND e.id < %s))
-					ORDER BY occurred_at DESC, e.id DESC LIMIT %d`,
-					strings.ReplaceAll(sessionProjectName, "metadata", "s.metadata"),
-					corpusTable("exchanges"), corpusTable("sessions"),
-					sqlLiteral(ts), sqlLiteral(ts), id, walkPageSize)
-			},
+					ORDER BY occurred_at DESC, e.id DESC`,
+				strings.ReplaceAll(sessionProjectName, "metadata", "s.metadata"),
+				corpusTable("exchanges"), corpusTable("sessions")),
 			decode: decodeExchange,
 		},
 		{
-			kind: "thinking_blocks", initial: joinCursor(newestTimeCursor, newestIDCursor),
-			query: func(cursor string) string {
-				ts, id := splitCursor(cursor)
-				return fmt.Sprintf(`WITH ordered_thinking AS (
+			kind: "thinking_blocks",
+			query: fmt.Sprintf(`WITH ordered_thinking AS (
 					SELECT t.id,COALESCE(t.session_id,'') AS session_id,t.exchange_number,
 						t.position_in_session,COALESCE(t.full_text,'') AS text,
 						COALESCE(s.title,'') AS context_title, COALESCE(%s,'') AS context_project,
@@ -274,46 +220,24 @@ func corePages() []corePage {
 					LEFT JOIN %s AS s ON s.session_id=t.session_id
 					WHERE COALESCE(t.full_text,'') <> ''
 				) SELECT * FROM ordered_thinking
-				WHERE occurred_at < %s OR (occurred_at = %s AND id < %s)
-				ORDER BY occurred_at DESC,id DESC LIMIT %d`,
-					strings.ReplaceAll(sessionProjectName, "metadata", "s.metadata"),
-					corpusTable("thinking_blocks"), corpusTable("exchanges"), corpusTable("sessions"),
-					sqlLiteral(ts), sqlLiteral(ts), id, walkPageSize)
-			},
+				ORDER BY occurred_at DESC,id DESC`,
+				strings.ReplaceAll(sessionProjectName, "metadata", "s.metadata"),
+				corpusTable("thinking_blocks"), corpusTable("exchanges"), corpusTable("sessions")),
 			decode: decodeThinking,
 		},
 		{
-			kind: "sessions", initial: joinCursor(newestTimeCursor, "~"),
-			query: func(cursor string) string {
-				ts, id := splitCursor(cursor)
-				return fmt.Sprintf(`SELECT session_id,COALESCE(title,'') AS title,
+			kind: "sessions",
+			query: fmt.Sprintf(`SELECT session_id,COALESCE(title,'') AS title,
 					%s AS project_name, COALESCE(started_at,'') AS occurred_at FROM %s
 					WHERE (COALESCE(title,'') <> '' OR %s <> '')
-					AND (COALESCE(started_at,'') < %s OR (COALESCE(started_at,'') = %s AND session_id < %s))
-					ORDER BY COALESCE(started_at,'') DESC, session_id DESC LIMIT %d`,
-					sessionProjectName, corpusTable("sessions"), sessionProjectName,
-					sqlLiteral(ts), sqlLiteral(ts), sqlLiteral(id), walkPageSize)
-			},
+					ORDER BY COALESCE(started_at,'') DESC, session_id DESC`,
+				sessionProjectName, corpusTable("sessions"), sessionProjectName),
 			decode: decodeSession,
 		},
 	}
 }
 
-func splitCursor(cursor string) (string, string) {
-	ts, id, ok := strings.Cut(cursor, "|")
-	if !ok {
-		return newestTimeCursor, newestIDCursor
-	}
-	return ts, id
-}
-
-func joinCursor(ts, id string) string { return ts + "|" + id }
-
-func decodeMemory(values map[string]any) (sourceRow, string, error) {
-	id, err := integer(values, "id")
-	if err != nil {
-		return sourceRow{}, "", err
-	}
+func decodeMemory(values map[string]any) (sourceRow, error) {
 	row := sourceRow{kind: "memories", text: stringValue(values["content"]),
 		sessionID: stringValue(values["source_session"]), layer: stringValue(values["layer"]),
 		origin: stringValue(values["origin"]), createdAt: stringValue(values["created_at"]),
@@ -327,26 +251,18 @@ func decodeMemory(values map[string]any) (sourceRow, string, error) {
 	if row.cronSource == "" {
 		row.cronSource = stringValue(values["source_agent"])
 	}
-	return row, joinCursor(row.occurredAt, strconv.FormatInt(id, 10)), nil
+	return row, nil
 }
 
-func decodeExchange(values map[string]any) (sourceRow, string, error) {
-	id, err := integer(values, "id")
-	if err != nil {
-		return sourceRow{}, "", err
-	}
+func decodeExchange(values map[string]any) (sourceRow, error) {
 	row := sourceRow{kind: "exchanges", sessionID: stringValue(values["session_id"]),
 		text: stringValue(values["text"]), title: stringValue(values["context_title"]),
 		project: stringValue(values["context_project"]), occurredAt: stringValue(values["occurred_at"])}
 	row.ordinal, row.hasOrdinal = nullableInteger(values["exchange_number"])
-	return row, joinCursor(row.occurredAt, strconv.FormatInt(id, 10)), nil
+	return row, nil
 }
 
-func decodeThinking(values map[string]any) (sourceRow, string, error) {
-	id, err := integer(values, "id")
-	if err != nil {
-		return sourceRow{}, "", err
-	}
+func decodeThinking(values map[string]any) (sourceRow, error) {
 	row := sourceRow{kind: "thinking_blocks", sessionID: stringValue(values["session_id"]),
 		text: stringValue(values["text"]), title: stringValue(values["context_title"]),
 		project: stringValue(values["context_project"]), occurredAt: stringValue(values["occurred_at"])}
@@ -354,20 +270,20 @@ func decodeThinking(values map[string]any) (sourceRow, string, error) {
 	if position, ok := nullableFloat(values["position_in_session"]); ok {
 		row.position = strconv.FormatFloat(position, 'g', -1, 64)
 	}
-	return row, joinCursor(row.occurredAt, strconv.FormatInt(id, 10)), nil
+	return row, nil
 }
 
-func decodeSession(values map[string]any) (sourceRow, string, error) {
+func decodeSession(values map[string]any) (sourceRow, error) {
 	id := stringValue(values["session_id"])
 	if id == "" {
-		return sourceRow{}, "", fmt.Errorf("session_id is empty")
+		return sourceRow{}, fmt.Errorf("session_id is empty")
 	}
 	title := stringValue(values["title"])
 	project := stringValue(values["project_name"])
 	text := sessionEmbeddingText(title, project)
 	occurred := stringValue(values["occurred_at"])
 	return sourceRow{kind: "sessions", sessionID: id, text: text, title: cleanSessionField(title),
-		project: cleanSessionField(project), occurredAt: occurred}, joinCursor(occurred, id), nil
+		project: cleanSessionField(project), occurredAt: occurred}, nil
 }
 
 func expandDecoded(row sourceRow, values map[string]any) []sourceRow {
@@ -614,39 +530,13 @@ func (c CoreCLI) queryIngest(ctx context.Context, statement string) ([]map[strin
 }
 
 func (c CoreCLI) queryPage(ctx context.Context, statement, timeout string) ([]map[string]any, error) {
-	if c.Run == nil {
-		request := map[string]any{"sql": statement}
-		if timeout != "" {
-			request["timeout_ms"], _ = strconv.Atoi(timeout)
-		}
-		var result execResult
-		err := c.read(ctx, request, &result)
-		return result.Rows, err
-	}
-	if strings.TrimSpace(c.Executable) == "" {
-		return nil, fmt.Errorf("roca executable is required")
-	}
-	args := []string{"--json"}
-	if c.DBPath != "" {
-		args = append(args, "--db-path", c.DBPath)
-	}
-	args = append(args, "exec")
+	request := map[string]any{"sql": statement}
 	if timeout != "" {
-		args = append(args, "--timeout-ms", timeout)
-	}
-	args = append(args, "--max-chars", strconv.Itoa(coreFieldBudget), statement)
-	run := c.Run
-	raw, err := run(ctx, c.Executable, args...)
-	if err != nil {
-		return nil, err
+		request["timeout_ms"], _ = strconv.Atoi(timeout)
 	}
 	var result execResult
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	if err := decoder.Decode(&result); err != nil {
-		return nil, fmt.Errorf("decode roca exec response: %w", err)
-	}
-	return result.Rows, nil
+	err := c.read(ctx, request, &result)
+	return result.Rows, err
 }
 
 func sqlLiteral(value string) string {

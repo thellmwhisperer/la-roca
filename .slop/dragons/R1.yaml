@@ -1,0 +1,17 @@
+schema: 1
+id: R1
+status: accepted
+category: adjacent_feature
+title: "D2 opening still counts memories"
+created_at: 2026-09-09
+incident:
+  intent: "Correct what the cleanup wave added, dismantle nothing else."
+  what_was_built: "internal/provider/service/hub.go open path still executes SELECT COUNT(*) FROM memories."
+  justifying_sentence: "Accepted for a separate opening-cost correction as issue #385 requests. The migration rerun remains removed; this count does not justify restoring PrepareHub or MaterializeCurrent."
+  source: "https://github.com/thellmwhisperer/la-roca/issues/385, residue R1"
+  cost: "One COUNT statement per hub open; bytes and seconds on production are not measured."
+rule: "Accepted for a separate opening-cost correction as issue #385 requests. The migration rerun remains removed; this count does not justify restoring PrepareHub or MaterializeCurrent."
+forbid:
+  paths: []
+  symbols: []
+  strings: []

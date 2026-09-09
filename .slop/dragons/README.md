@@ -1,6 +1,6 @@
 # Adjacent-feature dragons
 
-One YAML record per recorded adjacent feature from the 2026-09-08 dive.
+One YAML record per recorded adjacent feature or accepted follow-up residue.
 The shape matches [slopslint#4](https://github.com/thellmwhisperer/slopslint/issues/4):
 `category: adjacent_feature`, `status: removed|accepted`, and the incident
 fields (`intent`, `what_was_built`, `justifying_sentence`, `source`, `cost`),
@@ -28,6 +28,6 @@ Mark `removed` only when the forbid is absent from the tree being checked.
 [CONTRIBUTING.md](../../CONTRIBUTING.md#build-and-test) owns cost-check
 mechanics, including the separate synthetic vector tests.
 
-Each record cites `INFORME-SLOP-ADYACENTE.md` (dive of 2026-09-08) by
-section or suspicion. For D-series records, section 3 describes the dragon;
-section 6 is the dismantling order.
+D-series records cite `INFORME-SLOP-ADYACENTE.md` (dive of 2026-09-08):
+section 3 describes the dragon; section 6 is the dismantling order.
+R-series records cite the follow-up issue and its residue heading.

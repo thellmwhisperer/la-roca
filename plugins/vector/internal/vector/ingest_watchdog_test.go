@@ -12,10 +12,10 @@ func TestQueryIngestDoesNotWaitForeverWhenTheChildNeverReturns(t *testing.T) {
 	previous := ingestPageTimeout
 	ingestPageTimeout = 40 * time.Millisecond
 	t.Cleanup(func() { ingestPageTimeout = previous })
-	core := CoreCLI{Executable: "roca", Run: func(ctx context.Context, _ string, _ ...string) ([]byte, error) {
+	core := CoreCLI{Executable: "roca", readRequest: readerFixture(func(ctx context.Context, _ string, _ ...string) ([]byte, error) {
 		<-ctx.Done()
 		return nil, ctx.Err()
-	}}
+	})}
 	done := make(chan error, 1)
 	go func() {
 		_, err := core.queryIngest(context.Background(), "SELECT 1 AS n")

@@ -1,0 +1,17 @@
+schema: 1
+id: R6
+status: accepted
+category: adjacent_feature
+title: "D10 storage and D1 historical evidence residues"
+created_at: 2026-09-09
+incident:
+  intent: "Correct what the cleanup wave added, dismantle nothing else."
+  what_was_built: "D10 schema.sql now drops the three old audit tables; its cost lab checks synthetic VACUUM reclamation. D1 retains explicit published-binary evidence outside ordinary tests and historical cleanup guidance."
+  justifying_sentence: "Accepted as explicit historical and operational residue. D10 runtime dual writing and D1 query-time copies remain removed under their existing forbids. Lab VACUUM proves reclamation without authorizing production VACUUM, and historical evidence must keep a pinned explicit binary."
+  source: "https://github.com/thellmwhisperer/la-roca/issues/385, residue R6"
+  cost: "Old allocated pages require explicit reclamation; live storage and RSS were not measured. Historical comparisons run only on synthetic homes."
+rule: "Accepted as explicit historical and operational residue. D10 runtime dual writing and D1 query-time copies remain removed under their existing forbids. Lab VACUUM proves reclamation without authorizing production VACUUM, and historical evidence must keep a pinned explicit binary."
+forbid:
+  paths: []
+  symbols: []
+  strings: []

@@ -1,0 +1,17 @@
+schema: 1
+id: R5
+status: accepted
+category: adjacent_feature
+title: "S1 retained playground boundary residue"
+created_at: 2026-09-09
+incident:
+  intent: "Correct what the cleanup wave added, dismantle nothing else."
+  what_was_built: "internal/provider/query/prompt.go still owns prompt/schema helpers after the answering implementation moved to the optional playground executable. Core retains CLI and MCP adapters and plugin installation metadata."
+  justifying_sentence: "Accepted for the separate S1 boundary completion requested by issue #385. The existing S1 removal forbids stay enforced. Do not move answering-model inference back into core or broaden this reader correction into a provider redesign."
+  source: "https://github.com/thellmwhisperer/la-roca/issues/385, residue R5"
+  cost: "The retained prompt file is about 500 lines; byte and timing costs of the remaining boundary are not measured."
+rule: "Accepted for the separate S1 boundary completion requested by issue #385. The existing S1 removal forbids stay enforced. Do not move answering-model inference back into core or broaden this reader correction into a provider redesign."
+forbid:
+  paths: []
+  symbols: []
+  strings: []
