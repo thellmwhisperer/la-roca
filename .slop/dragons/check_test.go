@@ -82,6 +82,20 @@ func check(root string) error {
 				return err
 			}
 			for _, needle := range needles {
+				// A scoped string uses prefix**suffix::text; ** crosses directories.
+				if pattern, text, scoped := strings.Cut(needle, "::"); scoped {
+					prefix, suffix, wildcard := strings.Cut(pattern, "**")
+					if !wildcard {
+						return fmt.Errorf("%s: scoped string requires **", dragon.ID)
+					}
+					if !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, suffix) {
+						continue
+					}
+					if text == "" {
+						return fmt.Errorf("%s: empty scoped string", dragon.ID)
+					}
+					needle = text
+				}
 				if bytes.Contains(body, []byte(needle)) {
 					return fmt.Errorf("%s: forbidden content in %s", dragon.ID, name)
 				}
@@ -155,5 +169,53 @@ func TestGateScopeAndRemovedForbid(t *testing.T) {
 	write(forbidden, "package probe")
 	if err := check(root); err == nil {
 		t.Fatal("S3 package reintroduction passed")
+	}
+}
+
+func TestScopedPublishedBinaryForbid(t *testing.T) {
+	root := t.TempDir()
+	cmd := exec.Command("git", "init", "-q", root)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v %s", err, out)
+	}
+	raw, err := os.ReadFile("D1.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".slop/dragons"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".slop/dragons/D1.yaml"), raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	var d1 record
+	if err := yaml.Unmarshal(raw, &d1); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range d1.Forbid.Strings {
+		_, text, scoped := strings.Cut(entry, "::")
+		if !scoped {
+			t.Fatal("D1 published lookup forbid must be scoped")
+		}
+		for _, name := range []string{"internal/probe.go", "internal/nested/probe_test.go"} {
+			file := filepath.Join(root, name)
+			if err := os.MkdirAll(filepath.Dir(file), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(file, []byte(text), 0600); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command("git", "add", name)
+			cmd.Dir = root
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("git add: %v %s", err, out)
+			}
+			if err := check(root); (err != nil) != strings.HasSuffix(name, "_test.go") {
+				t.Fatalf("scope %s: %v", name, err)
+			}
+			if err := os.WriteFile(file, nil, 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
 }
