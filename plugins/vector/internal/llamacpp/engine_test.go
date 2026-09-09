@@ -14,7 +14,7 @@ func TestOpenWithZeroGPULayersReportsCPU(t *testing.T) {
 	if dataDir == "" {
 		t.Skip("set ROCA_VECTOR_LAB_DATA_DIR to run the native backend regression")
 	}
-	modelPath, err := model.Existing(dataDir, model.DefaultManifest())
+	modelPath, err := model.Existing(dataDir, model.DefaultManifest(), false)
 	if err != nil {
 		t.Skip(err.Error())
 	}

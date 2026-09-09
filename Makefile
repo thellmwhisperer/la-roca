@@ -178,3 +178,13 @@ snapshot-evidence: ## Compare D1 killed readers using an explicit v1.82.3 binary
 	@ROCA_SNAPSHOT_PUBLISHED_BIN="$(ROCA_SNAPSHOT_PUBLISHED_BIN)" go test -tags snapshot_evidence ./internal/distribution/cli -run '^TestPublishedBinaryKillLeavesReadOnlySnapshotOrphans$$' -count=1 -v > .tmp/snapshot-evidence/published.txt 2>&1 || { cat .tmp/snapshot-evidence/published.txt; exit 1; }
 	@go test ./internal/store -run '^TestOpenReadOnlyKillLeavesNoDirectory$$' -count=1 -v > .tmp/snapshot-evidence/branch.txt 2>&1 || { cat .tmp/snapshot-evidence/branch.txt; exit 1; }
 	@cat .tmp/snapshot-evidence/published.txt .tmp/snapshot-evidence/branch.txt
+
+# D6 native evidence runs only on an explicit lab model and published controls.
+.PHONY: model-verification-test
+model-verification-test:
+	@test -n "$(ROCA_D6_MODEL)" -a -n "$(ROCA_D6_PUBLISHED_CORE)" -a -n "$(ROCA_D6_PUBLISHED_VECTOR)"
+	go build -o .tmp/d6-core ./cmd/roca
+	$(MAKE) -C plugins/vector build-native BIN=../../.tmp/d6-vector
+	python3 testdata/d6-model/compare.py --branch-core .tmp/d6-core --branch-vector .tmp/d6-vector \
+		--published-core "$(ROCA_D6_PUBLISHED_CORE)" --published-vector "$(ROCA_D6_PUBLISHED_VECTOR)" \
+		--model "$(ROCA_D6_MODEL)" --lab ".tmp/d6-compare-$$$$"

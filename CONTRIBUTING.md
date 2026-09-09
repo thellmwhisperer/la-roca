@@ -131,6 +131,9 @@ latency tests live in `plugins/vector/internal/vector/status_issue336_test.go`:
 they require a completed nonempty indexing pass and an actual query result
 before judging latency in the process doing the work. They do not claim to
 measure native model residency or bytes read. There are no expected-fail costs.
+See [D6 model verification evidence](docs/d6-model-evidence.md) for the model
+identity invalidation contract, replacement cost fixture, and paired native
+default-query comparison.
 See [D7 batch indexing evidence](docs/d7-batch-evidence.md) for the isolated
 published-versus-branch transaction counts and timings.
 See [D8/D9 source generation evidence](docs/d8-d9-evidence.md) for unchanged-pass

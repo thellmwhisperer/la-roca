@@ -261,7 +261,7 @@ func (n *Native) pull(ctx context.Context, requestedModel string) error {
 
 func (n *Native) modelPath(ctx context.Context) (string, error) {
 	if n.ReadOnly {
-		return model.Existing(n.DataDir, model.DefaultManifest())
+		return model.Existing(n.DataDir, model.DefaultManifest(), false)
 	}
 	return model.Ensure(ctx, n.DataDir, model.DefaultManifest(), n.Events)
 }
