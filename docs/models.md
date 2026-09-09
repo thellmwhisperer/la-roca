@@ -430,6 +430,11 @@ rules under [Update](lifecycle.md#update).
 
 ## What happens in the playground
 
+Core `roca query` is deterministic: it checks only empty input and the
+1000-character limit. Phrases such as `system prompt` are searchable even
+with `features.strict_input = true`; prompt defenses belong to the
+model-invoking playground described below.
+
 1. The question is checked before any model is called: it must contain text and
    stay within a deliberately generous 1000-character cap, the same on the CLI
    and over MCP. It is then read for the known jailbreak, role-hijack,

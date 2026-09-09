@@ -1,0 +1,25 @@
+schema: 1
+id: D12
+status: removed
+category: adjacent_feature
+title: "Prompt attack signatures rejected deterministic search terms"
+created_at: 2026-09-09
+incident:
+  intent: "Search stored evidence without invoking an answering model."
+  what_was_built: >
+    Sixteen prompt attack regular expressions rejected searchable phrases
+    such as system prompt before the deterministic search ran.
+  justifying_sentence: "Avoid sending recognizable jailbreak payloads to a model"
+  source: >
+    INFORME-SLOP-ADYACENTE.md section 3 D12; issue #354; the original query
+    brief excluded these filters and the later search became model-free.
+  cost: "Sixteen compiled signatures and up to sixteen regex matches per search; false rejections."
+rule: >
+  Validate only empty input and Unicode character length on deterministic
+  search. Model-invoking plugins own prompt defenses.
+  TestCostCrossAndDeterministicQuestionDependencies forbids the regex dependency;
+  TestQueryFindsSystemPromptWithStrictInputEnabled pins a successful lab search.
+forbid:
+  symbols:
+    - "hostileQuestionPatterns"
+    - "ErrQuestionRejected"

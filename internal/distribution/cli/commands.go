@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,7 +33,6 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/store/exactdedup"
 	"github.com/thellmwhisperer/la-roca/internal/store/search"
 	"golang.org/x/term"
-	_ "modernc.org/sqlite"
 )
 
 func versionCommand(env *cliEnv) *cobra.Command {
@@ -1320,24 +1318,47 @@ type crossResult struct {
 }
 
 func gatherCross(ctx context.Context, build Build, sets []crossResult) (service.ExecResult, error) {
-	database, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		return service.ExecResult{}, fmt.Errorf("open cross result database: %w", err)
-	}
-	database.SetMaxOpenConns(1)
-	defer database.Close()
-	for _, set := range sets {
-		if err := loadCrossTable(ctx, database, set); err != nil {
-			return service.ExecResult{}, err
-		}
+	if err := ctx.Err(); err != nil {
+		return service.ExecResult{}, err
 	}
 	columns := crossUnionColumns(sets)
 	selects := make([]string, 0, len(sets))
+	var resultRows []map[string]any
 	for _, set := range sets {
 		present := map[string]bool{"origin": true}
+		seen := map[string]bool{"origin": true}
 		for _, column := range crossColumns(set.result) {
+			folded := strings.Map(func(r rune) rune {
+				if r >= 'A' && r <= 'Z' {
+					return r + ('a' - 'A')
+				}
+				return r
+			}, column)
+			if seen[folded] {
+				return service.ExecResult{}, fmt.Errorf("cross SELECT returned duplicate or reserved column %q", column)
+			}
+			seen[folded] = true
 			present[column] = true
 		}
+		for _, source := range set.result.Rows {
+			if err := ctx.Err(); err != nil {
+				return service.ExecResult{}, err
+			}
+			row := make(map[string]any, len(columns))
+			for _, column := range columns {
+				var value any
+				if present[column] {
+					value = source[column]
+				}
+				if text, ok := value.(string); ok && !jsonid.IdentityName(column) {
+					value = service.Truncate(text, service.DefaultMaxChars, "")
+				}
+				row[column] = jsonid.Cell(column, value)
+			}
+			row["origin"] = set.origin
+			resultRows = append(resultRows, row)
+		}
+		// Retain the envelope's SQL description without executing it.
 		projection := make([]string, 0, len(columns))
 		for _, column := range columns {
 			if present[column] {
@@ -1350,21 +1371,6 @@ func gatherCross(ctx context.Context, build Build, sets []crossResult) (service.
 			" FROM "+quoteIdentifier("r_"+set.origin))
 	}
 	outer := strings.Join(selects, " UNION ALL ")
-	rows, err := database.QueryContext(ctx, outer)
-	if err != nil {
-		shapes := make([]string, 0, len(sets))
-		for _, set := range sets {
-			shapes = append(shapes, fmt.Sprintf("%s(%s)", set.origin,
-				strings.Join(crossColumns(set.result), ",")))
-		}
-		return service.ExecResult{}, fmt.Errorf("gather cross results %s: %w",
-			strings.Join(shapes, ", "), err)
-	}
-	defer rows.Close()
-	columns, resultRows, err := service.ScanRows(rows, service.DefaultMaxChars, "")
-	if err != nil {
-		return service.ExecResult{}, err
-	}
 	return service.ExecResult{SQL: outer, Columns: columns, Rows: resultRows,
 		RowCount: len(resultRows), MaxChars: service.DefaultMaxChars,
 		Version: build.Version, SourceSHA: build.Commit}, nil
@@ -1384,39 +1390,6 @@ func crossUnionColumns(sets []crossResult) []string {
 	return columns
 }
 
-func loadCrossTable(ctx context.Context, database *sql.DB, set crossResult) error {
-	seen := map[string]bool{"origin": true}
-	definitions := []string{quoteIdentifier("origin") + " TEXT NOT NULL"}
-	columns := crossColumns(set.result)
-	for _, column := range columns {
-		if seen[column] {
-			return fmt.Errorf("cross SELECT returned duplicate or reserved column %q", column)
-		}
-		seen[column] = true
-		definitions = append(definitions, quoteIdentifier(column))
-	}
-	table := quoteIdentifier("r_" + set.origin)
-	if _, err := database.ExecContext(ctx, "CREATE TABLE "+table+" ("+strings.Join(definitions, ",")+")"); err != nil {
-		return fmt.Errorf("create cross table for %s: %w", set.origin, err)
-	}
-	placeholders := make([]string, len(columns)+1)
-	for index := range placeholders {
-		placeholders[index] = "?"
-	}
-	insert := "INSERT INTO " + table + " VALUES (" + strings.Join(placeholders, ",") + ")"
-	for _, row := range set.result.Rows {
-		values := make([]any, 1, len(columns)+1)
-		values[0] = set.origin
-		for _, column := range columns {
-			values = append(values, sqliteValue(row[column]))
-		}
-		if _, err := database.ExecContext(ctx, insert, values...); err != nil {
-			return fmt.Errorf("load cross result for %s: %w", set.origin, err)
-		}
-	}
-	return nil
-}
-
 func crossColumns(result service.ExecResult) []string {
 	if len(result.Columns) > 0 {
 		return result.Columns
@@ -1433,24 +1406,6 @@ func crossColumns(result service.ExecResult) []string {
 	}
 	slices.Sort(columns)
 	return columns
-}
-
-func sqliteValue(value any) any {
-	switch typed := value.(type) {
-	case nil, string, []byte, int64, float64, bool:
-		return typed
-	case jsonid.Decimal:
-		return string(typed)
-	case json.Number:
-		if integer, err := typed.Int64(); err == nil {
-			return integer
-		}
-		if decimal, err := typed.Float64(); err == nil {
-			return decimal
-		}
-	}
-	encoded, _ := json.Marshal(value)
-	return string(encoded)
 }
 
 func quoteIdentifier(identifier string) string {
