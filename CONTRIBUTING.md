@@ -93,14 +93,16 @@ migrate, checking that migrated exchanges remain readable. Linux uses process
 read accounting; macOS requires `clang` for read instrumentation and measures
 time separately without instrumentation. It never measures the live federation.
 The ordinary acceptance suite runs the branch regression without requiring a
-published binary; the paired target is also required by the delivery test command.
+published binary; the delivery test command runs the paired target when
+`ROCA_PUBLISHED_BIN` is set.
 
 `make snapshot-evidence ROCA_SNAPSHOT_PUBLISHED_BIN=<absolute-pinned-v1.82.3-binary>`
 runs the historical D1 kill only with the `snapshot_evidence` build tag and an
 explicit executable. The lab is synthetic, capped at 4 MiB, and its directories
 (including the asserted orphan) are removed by test cleanup. The paired
 published/branch transcripts are retained as `.tmp/snapshot-evidence/published.txt`
-and `branch.txt`. This is a delivery evidence step; `make test` keeps only the
+and `branch.txt`. The delivery test command runs this evidence step when
+`ROCA_SNAPSHOT_PUBLISHED_BIN` is set; `make test` keeps only the
 branch killed-reader regression and never selects a published executable.
 
 The D1 acceptance denies temporary copies throughout the read-only operation

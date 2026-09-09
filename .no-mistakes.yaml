@@ -1,6 +1,9 @@
 commands:
   lint: make fmt && make vet && make slop
-  test: python3 scripts/public-text-test.py && make test playground-test migrate-test snapshot-evidence
+  test: >-
+    python3 scripts/public-text-test.py && make test playground-test &&
+    if [ -n "${ROCA_PUBLISHED_BIN:-}" ]; then make migrate-test; fi &&
+    if [ -n "${ROCA_SNAPSHOT_PUBLISHED_BIN:-}" ]; then make snapshot-evidence; fi
 document:
   instructions: |
     Follow CONTRIBUTING.md#public-text. Before writing the proposed PR body,
