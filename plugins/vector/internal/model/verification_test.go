@@ -29,7 +29,7 @@ func TestVerificationInvalidatesChangedFile(t *testing.T) {
 				t.Fatal(err)
 			}
 			for range 2 {
-				if got, err := Existing(root, manifest); err != nil || got != path {
+				if got, err := Existing(root, manifest, true); err != nil || got != path {
 					t.Fatalf("existing: %q %v", got, err)
 				}
 				if got, err := Ensure(context.Background(), root, manifest, nil); err != nil || got != path {
@@ -85,9 +85,46 @@ func TestVerificationInvalidatesChangedFile(t *testing.T) {
 				}
 				return
 			}
-			if _, err := Existing(root, manifest); err == nil {
+			if _, err := Existing(root, manifest, true); err == nil {
 				t.Fatal("accepted changed model")
 			}
 		})
+	}
+}
+
+func TestExistingReadOnlyVerifiesWithoutPublishingReceipt(t *testing.T) {
+	payload := []byte("synthetic verified model")
+	sum := sha256.Sum256(payload)
+	manifest := Manifest{ID: "fixture", SHA256: hex.EncodeToString(sum[:]), Bytes: int64(len(payload)), URL: "https://example.invalid/model"}
+	root := t.TempDir()
+	path := FilePath(root, manifest)
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, payload, 0600); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	for range 2 {
+		if got, err := Existing(root, manifest, false); err != nil || got != path {
+			t.Fatalf("read-only existing: %q %v", got, err)
+		}
+		if receipt := readVerification(file); receipt != "" {
+			t.Fatalf("read-only verification published receipt: %q", receipt)
+		}
+	}
+	payload[0] ^= 1
+	if err := os.WriteFile(path, payload, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Existing(root, manifest, false); err == nil {
+		t.Fatal("read-only verification accepted corrupt model")
+	}
+	if receipt := readVerification(file); receipt != "" {
+		t.Fatalf("failed read-only verification published receipt: %q", receipt)
 	}
 }

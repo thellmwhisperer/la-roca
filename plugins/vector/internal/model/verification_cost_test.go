@@ -85,7 +85,7 @@ func costModelVerification(t *testing.T) {
 	}
 	check("download", uint64(len(payload)))
 	for range 2 {
-		if got, err := Existing(root, manifest); err != nil || got != path {
+		if got, err := Existing(root, manifest, true); err != nil || got != path {
 			t.Fatalf("existing: %s %v", got, err)
 		}
 		if got, err := Ensure(context.Background(), root, manifest, nil); err != nil || got != path {
@@ -100,7 +100,13 @@ func costModelVerification(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 2 {
-		if got, err := Existing(root, manifest); err != nil || got != path {
+		if got, err := Existing(root, manifest, false); err != nil || got != path {
+			t.Fatalf("read-only existing: %s %v", got, err)
+		}
+		check("read-only replacement", uint64(len(payload)))
+	}
+	for range 2 {
+		if got, err := Existing(root, manifest, true); err != nil || got != path {
 			t.Fatalf("replace existing: %s %v", got, err)
 		}
 		if got, err := Ensure(context.Background(), root, manifest, nil); err != nil || got != path {

@@ -10,7 +10,8 @@ The verified download keeps its inode and receipt across the install rename.
 
 Verification locks the open inode, checks identity before and after hashing,
 and publishes the receipt only after a successful checksum. Concurrent opens
-reuse that receipt. Filesystems that cannot store extended attributes and
+reuse that receipt. Read-only callers can reuse an existing receipt but never
+publish one; without a valid receipt they verify the checksum on each open. Filesystems that cannot store extended attributes and
 platforms without this implementation continue to verify fully; their shortcut
 cost is unmeasured. This is a local integrity cache, not protection against an
 owner deliberately forging attributes or restoring both content metadata and
@@ -37,7 +38,8 @@ make model-verification-test \
 ```
 
 The target builds the branch binaries and creates a fresh synthetic home below
-`.tmp/`. It seeds navigation examples in corpus and ops, installs both sidecars,
+`.tmp/`. Lab processes run from that directory with short relative socket paths.
+It seeds navigation examples in corpus and ops, installs both sidecars,
 and runs the same default query without a database filter. Both versions use
 the same lab home and sidecars. The harness requires evidence from both prepared
 sidecars, `vector_executed=true`, and exact equality of database lists, rows,

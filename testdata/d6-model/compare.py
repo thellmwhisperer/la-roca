@@ -16,11 +16,14 @@ parser = argparse.ArgumentParser(description=__doc__)
 for option in ('published-core', 'published-vector', 'branch-core', 'branch-vector', 'model', 'lab'):
     parser.add_argument('--' + option, required=True, type=Path)
 args = parser.parse_args()
+for name, path in vars(args).items():
+    setattr(args, name, path.resolve())
 root = Path(__file__).resolve().parents[2]
 lab = args.lab.resolve()
 assert root / '.tmp' in lab.parents, 'lab must be below the project .tmp directory'
 assert not lab.exists(), 'use a fresh lab directory; existing evidence is preserved'
 lab.mkdir(parents=True, mode=0o700)
+os.chdir(lab)
 home = lab / 'home'
 data = home / '.roca'
 data.mkdir(parents=True)
@@ -35,9 +38,8 @@ bindir = lab / 'bin'
 bindir.mkdir()
 base.update(HOME=str(home), ROCA_DB_PATH=str(data / 'roca.db'), ROCA_READ_ONLY='0',
             ROCA_VECTOR_STATE_DIR=str(lab / 'state'), ROCA_VECTOR_PLUGIN_ROOT=str(data / 'plugins'),
-            ROCA_VECTOR_RESIDENT_SOCKET=str(lab / 's.sock'), ROCA_PREFIX=str(bindir),
+            ROCA_VECTOR_RESIDENT_SOCKET='s.sock', ROCA_PREFIX=str(bindir),
             PATH=str(bindir) + os.pathsep + base['PATH'])
-assert len(base['ROCA_VECTOR_RESIDENT_SOCKET']) < 100, 'lab socket path is too long'
 
 
 def run(binary, argv, env, name):
@@ -122,7 +124,7 @@ for label, core, vector in [('published', args.published_core, args.published_ve
     fresh.replace(model)
     startup = lab / (label + '-startup.counter')
     log = open(lab / (label + '-resident.log'), 'w')
-    resident = subprocess.Popen([str(installed), '_resident', '--listen', str(lab / 's.sock'), '--idle', '60s'],
+    resident = subprocess.Popen([str(installed), '_resident', '--listen', 's.sock', '--idle', '60s'],
                                 env=dict(env, ROCA_D6_COUNTER=str(startup)), stdout=log, stderr=log)
     connection = socket.socket(socket.AF_UNIX)
     connection.settimeout(60)
@@ -130,7 +132,7 @@ for label, core, vector in [('published', args.published_core, args.published_ve
         deadline = time.monotonic() + 60
         while True:
             try:
-                connection.connect(str(lab / 's.sock'))
+                connection.connect('s.sock')
                 break
             except (FileNotFoundError, ConnectionRefusedError):
                 assert resident.poll() is None, 'resident exited'
@@ -151,7 +153,7 @@ for label, core, vector in [('published', args.published_core, args.published_ve
                 refused = lab / 'refused-socket'
                 refused.mkdir(exist_ok=True)
                 refused.chmod(0o755)
-                query_env['ROCA_VECTOR_RESIDENT_SOCKET'] = str(refused / 's.sock')
+                query_env['ROCA_VECTOR_RESIDENT_SOCKET'] = 'refused-socket/s.sock'
             process = run(binary, argv + ['How does a compass help navigate?', '10', '--json'],
                           query_env, label + '-' + route)
             result = json.loads(process.stdout)
