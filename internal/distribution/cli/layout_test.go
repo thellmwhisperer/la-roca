@@ -9,10 +9,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thellmwhisperer/la-roca/data"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacron"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
-	"github.com/thellmwhisperer/la-roca/internal/store"
 	_ "modernc.org/sqlite"
 )
 
@@ -48,30 +49,13 @@ func TestShadowCLIComparesTheHubAfterExplicitMigration(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(corePath), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	core, err := store.Open(corePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.ApplySchema(t.Context(), core); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := core.SQL().Exec(`INSERT INTO memories
-		(id, layer, content, origin) VALUES (29, 'project', 'Synthetic shadow custody marker', 'agent')`); err != nil {
-		t.Fatal(err)
-	}
-	if err := core.Close(); err != nil {
-		t.Fatal(err)
-	}
+	seedLayoutMemory(t, corePath, "Synthetic shadow custody marker")
 	if err := os.WriteFile(filepath.Join(filepath.Dir(corePath), "config.toml"),
 		[]byte("[layout]\nserving = \"shadow-equal\"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	env := &cliEnv{dbPath: corePath, out: io.Discard, errOut: io.Discard,
-		build: Build{Version: "v-test", Commit: "fixture"}}
-	if code, err := executeWithEnv(env, []string{"--db-path", corePath, "migrate"}, nil); err != nil || code != 0 {
-		t.Fatalf("explicit migration: code=%d err=%v", code, err)
-	}
+	env := migratedCLIEnv(t, corePath)
 	svc, _, err := env.openService()
 	if err != nil {
 		t.Fatal(err)
@@ -157,25 +141,8 @@ func TestCutoverCLIRejectsUnfinishedDestinationCustody(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	corePath := filepath.Join(home, "roca.db")
-	core, err := store.Open(corePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.ApplySchema(t.Context(), core); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := core.SQL().Exec(`INSERT INTO memories(layer, content, origin)
-		VALUES ('project', 'cutover readiness marker', 'agent')`); err != nil {
-		t.Fatal(err)
-	}
-	if err := core.Close(); err != nil {
-		t.Fatal(err)
-	}
-	env := &cliEnv{dbPath: corePath, out: io.Discard, errOut: io.Discard,
-		build: Build{Version: "v-test", Commit: "fixture"}}
-	if code, err := executeWithEnv(env, []string{"--db-path", corePath, "migrate"}, nil); err != nil || code != 0 {
-		t.Fatalf("explicit migration: code=%d err=%v", code, err)
-	}
+	seedLayoutMemory(t, corePath, "cutover readiness marker")
+	env := migratedCLIEnv(t, corePath)
 	paths, err := env.resolvePaths()
 	if err != nil {
 		t.Fatal(err)
@@ -190,6 +157,10 @@ func TestCutoverCLIRejectsUnfinishedDestinationCustody(t *testing.T) {
 	for _, probe := range []struct{ plugin, database, migration string }{
 		{rocaops.Name, rocaops.DatabaseFilename, "data2-memory-custody"},
 		{rocacorpus.Name, rocacorpus.DatabaseFilename, "corpus-archive-reconciliation-v1"},
+		{rocaops.Name, rocaops.DatabaseFilename, "data4-legacy-records"},
+		{rocacorpus.Name, rocacorpus.DatabaseFilename, "data4-legacy-flow-patterns"},
+		{rocacron.Name, rocacron.DatabaseFilename, "data4-legacy-runs"},
+		{rocacron.Name, rocacron.DatabaseFilename, "data4-legacy-run-logs"},
 	} {
 		t.Run(probe.plugin, func(t *testing.T) {
 			db := openLayoutDatabase(t, filepath.Join(home, ".roca", "plugins", probe.plugin, probe.database))
@@ -220,4 +191,23 @@ func TestCutoverCLIRejectsUnfinishedDestinationCustody(t *testing.T) {
 	if err := svc.Close(); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func seedLayoutMemory(t *testing.T, path, content string) {
+	t.Helper()
+	core := openLayoutDatabase(t, path)
+	defer core.Close()
+	if _, err := core.Exec(data.Schema+`INSERT INTO memories(id, layer, content, origin) VALUES(29, 'project', ?, 'agent')`, content); err != nil {
+		t.Fatal(err)
+	}
+
+}
+
+func migratedCLIEnv(t *testing.T, corePath string) *cliEnv {
+	t.Helper()
+	env := &cliEnv{dbPath: corePath, out: io.Discard, errOut: io.Discard, build: Build{Version: "v-test", Commit: "fixture"}}
+	if code, err := executeWithEnv(env, []string{"--db-path", corePath, "migrate"}, nil); err != nil || code != 0 {
+		t.Fatalf("explicit migration: code=%d err=%v", code, err)
+	}
+	return env
 }

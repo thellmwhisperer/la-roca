@@ -21,7 +21,8 @@ incident:
 rule: >
   An explicit resumable migrate verb owns hashing, integrity checks and
   materialization. When the ledger says verified, the open path reads corpus
-  and ops directly.
+  and ops directly. Verified reads are bounded by the schema, independent
+  of source rows; two lab sizes must stay within five percent bytes read.
 forbid:
   paths: []
   symbols:

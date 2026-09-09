@@ -233,7 +233,7 @@ func TestPlaygroundDelegatesWithoutOpeningFederation(t *testing.T) {
 	}
 }
 
-func TestPlaygroundPreparesCutoverCustodyBeforeDelegating(t *testing.T) {
+func TestPlaygroundRequiresExplicitMigrationBeforeDelegating(t *testing.T) {
 	for _, verb := range []string{"playground", "explore"} {
 		t.Run(verb, func(t *testing.T) {
 			home := t.TempDir()
@@ -255,6 +255,18 @@ func TestPlaygroundPreparesCutoverCustodyBeforeDelegating(t *testing.T) {
 			installPlaygroundFixture(t, home, "printf 'delegated\\n'\n")
 			var out strings.Builder
 			env := hermeticCLIEnv(&cliEnv{build: Build{Version: "test"}, out: &out, errOut: &out})
+			for _, readOnly := range []bool{false, true} {
+				env.forceReadOnly = readOnly
+				_, err := executeWithEnv(env, []string{verb, "fixture"}, strings.NewReader(""))
+				if err == nil || !strings.Contains(err.Error(), "roca migrate") || strings.Contains(out.String(), "delegated") {
+					t.Fatalf("unfinished custody delegated: readOnly=%t err=%v output=%q", readOnly, err, out.String())
+				}
+			}
+			env.forceReadOnly = false
+			if code, err := executeWithEnv(env, []string{"migrate"}, nil); code != 0 || err != nil {
+				t.Fatalf("migrate: code=%d err=%v", code, err)
+			}
+			out.Reset()
 			code, err := executeWithEnv(env, []string{verb, "fixture"}, strings.NewReader(""))
 			if code != 0 || err != nil || out.String() != "delegated\n" {
 				t.Fatalf("code=%d err=%v output=%q", code, err, out.String())

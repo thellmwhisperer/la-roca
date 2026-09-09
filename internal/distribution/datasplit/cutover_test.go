@@ -33,7 +33,24 @@ func TestMigrateRunsEveryShadowCustodyMigrationBeforeCutover(t *testing.T) {
 	if _, err := Migrate(t.Context(), options); err != nil {
 		t.Fatal(err)
 	}
+	// Older DATA-4 imports have receipts but no published verification state.
+	cron := openCutoverDatabase(t, options.CronDatabase)
+	if _, err := cron.Exec(`UPDATE plugin_migrations SET migration_state = 'batch-in-progress', verification_digest = '' WHERE migration = 'data4-legacy-runs'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := cron.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if ready, err := HubCutoverEligible(t.Context(), options); err != nil || ready {
+		t.Fatalf("unsealed DATA-4 readiness = %t, err=%v", ready, err)
+	}
+	if report, err := Migrate(t.Context(), options); err != nil || !report.Ready {
+		t.Fatalf("resume unsealed DATA-4 = %+v, err=%v", report, err)
+	}
 	if err := os.Rename(options.SnapshotDir, options.SnapshotDir+"-offline"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(options.CoreDatabase, options.CoreDatabase+"-offline"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Migrate(t.Context(), options); err != nil {

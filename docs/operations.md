@@ -398,7 +398,11 @@ layout directly and never migrate it as a side effect of opening the service.
 
 The D2 cost regression is `TestCostMigrate` in the acceptance suite. With
 `ROCA_PUBLISHED_BIN` pointing to the published executable, it records both
-`published.json` and `branch.json` under `.tmp/migrate-evidence`, against the
-same synthetic verified home. It measures logical process reads (including
-cache hits), requires less than 1 MB and 100 ms, and takes the snapshots offline
+published and branch measurements under `.tmp/migrate-evidence` for two
+synthetic verified homes, including legacy DATA-4 rows. It measures logical
+process reads (including cache hits), requires branch reads within five percent
+across the two sizes and opens under 100 ms, and takes the snapshots offline
 before repeating both SELECT and migrate. It never measures the live federation.
+The [migrate command](../internal/distribution/cli/migrate.go) records DATA-4
+completion in the destination ledger after reconciliation;
+ordinary opens read these fixed entries and never recount legacy source tables.

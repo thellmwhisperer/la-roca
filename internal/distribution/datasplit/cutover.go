@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/thellmwhisperer/la-roca/internal/distribution/bundledplugin"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/corpusarchive"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/migrationledger"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 )
 
@@ -121,9 +121,6 @@ func HubCutoverEligible(ctx context.Context, options HubOptions,
 func inspectHubEligibility(ctx context.Context, options HubOptions,
 	timeout ...time.Duration) (hubEligibility, error) {
 	var eligibility hubEligibility
-	if err := validateHubDatabases(ctx, options, timeout...); err != nil {
-		return eligibility, err
-	}
 	var err error
 	eligibility.memory, err = rocaops.MemoryCustodyCutoverEligible(
 		ctx, options.OpsDatabase, timeout...)
@@ -135,39 +132,11 @@ func inspectHubEligibility(ctx context.Context, options HubOptions,
 	if err != nil {
 		return eligibility, fmt.Errorf("inspect DATA-3 readiness: %w", err)
 	}
-	eligibility.legacy, err = legacyCutoverEligible(ctx, options, timeout...)
+	eligibility.legacy, err = LegacyCutoverEligible(ctx, options, timeout...)
 	if err != nil {
 		return eligibility, fmt.Errorf("inspect DATA-4 readiness: %w", err)
 	}
 	return eligibility, nil
-}
-
-func validateHubDatabases(ctx context.Context, options HubOptions,
-	timeout ...time.Duration) error {
-	for _, database := range []struct {
-		name string
-		path string
-	}{
-		{name: "core", path: options.CoreDatabase},
-		{name: "ops", path: options.OpsDatabase},
-		{name: "corpus", path: options.CorpusDatabase},
-		{name: "cron", path: options.CronDatabase},
-	} {
-		db, err := bundledplugin.OpenDatabase(database.path, true, timeout...)
-		if err != nil {
-			return fmt.Errorf("open DATA-6 %s database: %w", database.name, err)
-		}
-		var schemaVersion int
-		err = db.QueryRowContext(ctx, "PRAGMA schema_version").Scan(&schemaVersion)
-		closeErr := db.Close()
-		if err != nil {
-			return fmt.Errorf("read DATA-6 %s database: %w", database.name, err)
-		}
-		if closeErr != nil {
-			return fmt.Errorf("close DATA-6 %s database: %w", database.name, closeErr)
-		}
-	}
-	return nil
 }
 
 func (eligibility hubEligibility) ready() bool {
@@ -196,57 +165,27 @@ func (options HubOptions) validDatabases() error {
 	return nil
 }
 
-func legacyCutoverEligible(ctx context.Context, options HubOptions,
+// LegacyCutoverEligible reads only the four DATA-4 destination ledger entries.
+// Reconciliation and source inventory belong to the explicit migration.
+func LegacyCutoverEligible(ctx context.Context, options HubOptions,
 	timeout ...time.Duration) (bool, error) {
-	source, err := bundledplugin.OpenDatabase(
-		options.CoreDatabase, true, timeout...)
-	if err != nil {
-		return false, err
-	}
-	defer source.Close()
-	undisposed, present, err := inspectSourceInventory(ctx, source)
-	if err != nil || len(undisposed) != 0 {
-		return false, err
-	}
-	if present["messages"] {
-		count, err := tableCount(ctx, source, "messages")
-		if err != nil || count != 0 {
-			return false, err
-		}
-	}
 	destinations, err := openDestinations(LegacyOptions{
-		SourceClone: options.CoreDatabase, CronDatabase: options.CronDatabase,
-		OpsDatabase: options.OpsDatabase, CorpusDatabase: options.CorpusDatabase,
+		CronDatabase: options.CronDatabase, OpsDatabase: options.OpsDatabase,
+		CorpusDatabase: options.CorpusDatabase,
 	}, true, timeout...)
 	if err != nil {
 		return false, err
 	}
 	defer closeDatabases(destinations)
+	seen := map[string]bool{}
 	for _, plan := range legacyPlans {
-		if !present[plan.sourceTable] {
+		if seen[plan.migration] {
 			continue
 		}
-		expected, err := tableCount(ctx, source, plan.sourceTable)
-		if err != nil {
+		seen[plan.migration] = true
+		ready, err := migrationledger.MigrationCutoverEligible(ctx, destinations[plan.destination], plan.migration)
+		if err != nil || !ready {
 			return false, err
-		}
-		var batches, rows, memberships int
-		db := destinations[plan.destination]
-		if db == nil {
-			return false, fmt.Errorf("DATA-4 destination %q is not open", plan.destination)
-		}
-		if err := db.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(row_count), 0)
-			FROM migration_batches WHERE migration = ? AND source_database = 'core' AND source_table = ?`,
-			plan.migration, plan.sourceTable).Scan(&batches, &rows); err != nil {
-			return false, err
-		}
-		if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM custody_memberships
-			WHERE migration = ? AND source_database = 'core' AND source_table = ?`,
-			plan.migration, plan.sourceTable).Scan(&memberships); err != nil {
-			return false, err
-		}
-		if batches == 0 || rows != expected || memberships != expected {
-			return false, nil
 		}
 	}
 	return true, nil

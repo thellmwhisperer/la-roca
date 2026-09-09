@@ -35,14 +35,7 @@ func migrateCommand(env *cliEnv) *cobra.Command {
 					return err
 				}
 			}
-			report, err := datasplit.Migrate(cmd.Context(), datasplit.HubOptions{
-				CoreDatabase:   paths.DB,
-				OpsDatabase:    filepath.Join(root, rocaops.Name, rocaops.DatabaseFilename),
-				CorpusDatabase: filepath.Join(root, rocacorpus.Name, rocacorpus.DatabaseFilename),
-				CronDatabase:   filepath.Join(root, rocacron.Name, rocacron.DatabaseFilename),
-				SnapshotDir:    filepath.Join(paths.Backups, "data-split"),
-				LockPath:       logfile.New(filepath.Dir(paths.DB)).LockPath(),
-			})
+			report, err := datasplit.Migrate(cmd.Context(), migrationHubOptions(paths))
 			if err != nil {
 				return err
 			}
@@ -52,5 +45,17 @@ func migrateCommand(env *cliEnv) *cobra.Command {
 			env.print("migration: verified")
 			return nil
 		},
+	}
+}
+
+func migrationHubOptions(paths config.Paths) datasplit.HubOptions {
+	root := pluginRoot(paths)
+	return datasplit.HubOptions{
+		CoreDatabase:   paths.DB,
+		OpsDatabase:    filepath.Join(root, rocaops.Name, rocaops.DatabaseFilename),
+		CorpusDatabase: filepath.Join(root, rocacorpus.Name, rocacorpus.DatabaseFilename),
+		CronDatabase:   filepath.Join(root, rocacron.Name, rocacron.DatabaseFilename),
+		SnapshotDir:    filepath.Join(paths.Backups, "data-split"),
+		LockPath:       logfile.New(filepath.Dir(paths.DB)).LockPath(),
 	}
 }

@@ -3,6 +3,8 @@
 package acceptance
 
 import (
+	"context"
+	"database/sql"
 	"encoding/binary"
 	"encoding/json"
 	"os"
@@ -13,13 +15,40 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thellmwhisperer/la-roca/internal/store"
+	"github.com/thellmwhisperer/la-roca/data"
+	_ "modernc.org/sqlite"
 )
 
 // TestCostMigrate measures only a synthetic home. The optional published binary
 // runs against the same verified lab before the branch; neither sees real data.
 func TestCostMigrate(t *testing.T) {
-	m := aWorldIn(t, "migrate-cost")
+	var costs, publishedCosts []migrateCost
+	for _, fixture := range []struct {
+		name string
+		rows int
+	}{{"small", 10}, {"large", 10000}} {
+		t.Run(fixture.name, func(t *testing.T) {
+			branch, published := migrateFixtureCost(t, fixture.name, fixture.rows)
+			costs = append(costs, branch)
+			publishedCosts = append(publishedCosts, published)
+		})
+	}
+	if len(costs) != 2 {
+		t.Fatal("both lab sizes must complete")
+	}
+	if os.Getenv("ROCA_PUBLISHED_BIN") != "" {
+		if float64(publishedCosts[1].BytesRead) <= float64(publishedCosts[0].BytesRead)*1.05 || publishedCosts[1].BytesRead <= costs[1].BytesRead {
+			t.Fatal("published baseline did not reproduce size-dependent open reads")
+		}
+	}
+	small, large := float64(costs[0].BytesRead), float64(costs[1].BytesRead)
+	if large < small*0.95 || large > small*1.05 {
+		t.Fatalf("D2: verified open reads grew with lab size: small=%.0f large=%.0f; tolerance 5%%", small, large)
+	}
+}
+
+func migrateFixtureCost(t *testing.T, label string, rows int) (migrateCost, migrateCost) {
+	m := aWorldIn(t, "migrate-cost-"+label)
 	root, err := acceptanceRoot()
 	if err != nil {
 		t.Fatal(err)
@@ -28,26 +57,38 @@ func TestCostMigrate(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0700); err != nil {
 		t.Fatal(err)
 	}
-	db, err := store.Open(dbPath)
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.ApplySchema(t.Context(), db); err != nil {
+	if _, err := db.ExecContext(t.Context(), data.Schema); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.SQL().Exec(`INSERT INTO memories(layer,content,origin) VALUES('project','synthetic migration marker','agent');
- INSERT INTO sessions(session_id,source_agent,title) VALUES('synthetic-session','fixture','migration cost')`); err != nil {
+	if _, err := db.Exec(`INSERT INTO memories(layer,content,origin) VALUES('project','synthetic migration marker','agent');
+ INSERT INTO sessions(session_id,source_agent,title) VALUES('synthetic-session','fixture','migration cost');
+ CREATE TABLE garden_messages(id INTEGER PRIMARY KEY,content TEXT)`); err != nil {
 		t.Fatal(err)
 	}
-	tx, err := db.SQL().Begin()
+	tx, err := db.Begin()
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 128; i++ {
-		if _, err := tx.Exec(`INSERT INTO exchanges(session_id,exchange_number,agent_text) VALUES('synthetic-session',?,?)`, i, strings.Repeat("synthetic migration cost ", 3000)); err != nil {
+	for i := 0; i < rows; i++ {
+		if _, err := tx.Exec(`INSERT INTO garden_messages(id,content) VALUES(?,?)`, i, strings.Repeat("synthetic legacy cost ", 50)); err != nil {
 			t.Fatal(err)
 		}
 	}
+	exchanges := 10
+	if rows > 10 {
+		exchanges = 128
+	}
+	if _, err := tx.Exec(`WITH RECURSIVE sequence(n) AS (
+  VALUES(0) UNION ALL SELECT n+1 FROM sequence WHERE n+1 < ?
+ ) INSERT INTO exchanges(session_id,exchange_number,agent_text)
+ SELECT 'synthetic-session',n,? FROM sequence`, exchanges, strings.Repeat("synthetic migration cost ", 3000)); err != nil {
+		t.Fatal(err)
+	}
+
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
@@ -63,10 +104,10 @@ func TestCostMigrate(t *testing.T) {
 		t.Fatal(err)
 	}
 	branch := m.binary
-	measure := func(label string) migrateCost {
+	measure := func(binaryLabel string) migrateCost {
 		// Warm installer version checks outside the measured ordinary open.
 		if output, code := m.runUnder(t, nil, "exec", "SELECT 1"); code != 0 {
-			t.Fatalf("warm %s: %s", label, output)
+			t.Fatalf("warm %s: %s", binaryLabel, output)
 		}
 		result := measureMigrateExec(t, m, root)
 		evidence, err := json.MarshalIndent(result, "", "  ")
@@ -77,18 +118,16 @@ func TestCostMigrate(t *testing.T) {
 		if err := os.MkdirAll(dir, 0700); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(dir, label+".json"), evidence, 0600); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, label+"-"+binaryLabel+".json"), evidence, 0600); err != nil {
 			t.Fatal(err)
 		}
-		t.Logf("%s: %s", label, evidence)
+		t.Logf("%s: %s", binaryLabel, evidence)
 		return result
 	}
+	var before migrateCost
 	if published := os.Getenv("ROCA_PUBLISHED_BIN"); published != "" {
 		m.binary = published
-		before := measure("published")
-		if before.BytesRead < 1000000 {
-			t.Fatal("published baseline did not reproduce source reads")
-		}
+		before = measure("published")
 	}
 	m.binary = branch
 	after := measure("branch")
@@ -102,9 +141,10 @@ func TestCostMigrate(t *testing.T) {
 			t.Fatalf("without frozen sources: %v: %s", args, output)
 		}
 	}
-	if after.BytesRead >= 1000000 || after.ElapsedNS >= int64(100*time.Millisecond) {
-		t.Fatalf("D2: ordinary exec read %d bytes in %s; budgets are <1 MB and <100 ms", after.BytesRead, time.Duration(after.ElapsedNS))
+	if after.ElapsedNS >= int64(100*time.Millisecond) {
+		t.Fatalf("D2: ordinary exec took %s; budget is <100 ms", time.Duration(after.ElapsedNS))
 	}
+	return after, before
 }
 
 type migrateCost struct {
@@ -148,7 +188,13 @@ func measureMigrateExec(t *testing.T, m *world, root string) migrateCost {
 		t.Fatalf("missing process read counter: %v", err)
 	}
 	// Timing is a separate uninstrumented execution: tracing adds its own writes.
-	elapsed, err := runTimed(t, m, 10*time.Second, "exec", "SELECT 1")
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	timed := exec.CommandContext(ctx, m.binaryPath(), "exec", "SELECT 1")
+	timed.Env = m.environment()
+	started := time.Now()
+	_, err = timed.Output()
+	elapsed := time.Since(started)
 	if err != nil {
 		t.Fatal(err)
 	}
