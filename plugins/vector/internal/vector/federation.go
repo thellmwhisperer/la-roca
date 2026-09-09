@@ -1023,12 +1023,6 @@ type DeclaredCorpus struct {
 	Database vectorDatabase
 }
 
-type declaredCursor struct {
-	time  string
-	id    string
-	valid bool
-}
-
 func (d DeclaredCorpus) CountChunks(ctx context.Context, sourceKind string) (int64, error) {
 	ctx, closeReader := withCoreReader(ctx)
 	defer closeReader()
@@ -1115,15 +1109,14 @@ func (d DeclaredCorpus) WalkSources(ctx context.Context, sourceKind string,
 }
 
 type declaredTableIterator struct {
-	streamCursor string
-	corpus       DeclaredCorpus
-	table        vectorTable
-	catalog      map[string]map[string]bool
-	cursor       declaredCursor
-	rows         []sourceRow
-	index        int
-	done         bool
-	current      *sourceRow
+	cursor  string
+	corpus  DeclaredCorpus
+	table   vectorTable
+	catalog map[string]map[string]bool
+	rows    []sourceRow
+	index   int
+	done    bool
+	current *sourceRow
 }
 
 func (i *declaredTableIterator) advance(ctx context.Context) error {
@@ -1138,7 +1131,7 @@ func (i *declaredTableIterator) advance(ctx context.Context) error {
 			i.current = nil
 			return nil
 		}
-		values, err := i.corpus.Core.queryIngestCursor(ctx, i.corpus.pageQuery(i.table, i.cursor, i.catalog), &i.streamCursor)
+		values, err := i.corpus.Core.queryIngestCursor(ctx, i.corpus.sourceQuery(i.table, i.catalog), &i.cursor)
 		if err != nil {
 			return fmt.Errorf("read declared surface %s/%s: %w", i.corpus.Database.owner(), i.table.Name, err)
 		}
@@ -1151,7 +1144,6 @@ func (i *declaredTableIterator) advance(ctx context.Context) error {
 				continue
 			}
 			occurredAt := stringValue(value["context_time"])
-			i.cursor = declaredCursor{time: occurredAt, id: id, valid: true}
 			row := sourceRow{kind: i.table.Name, sourceID: id,
 				fingerprintVersion: i.table.embeddingContractFingerprint(),
 				title:              stringValue(value["context_title"]),
@@ -1342,25 +1334,19 @@ func (d DeclaredCorpus) CountSources(ctx context.Context, sourceKind string) (in
 	return total, nil
 }
 
-func (d DeclaredCorpus) pageQuery(table vectorTable, cursor declaredCursor,
+func (d DeclaredCorpus) sourceQuery(table vectorTable,
 	catalog map[string]map[string]bool) string {
-	contextSQL, join, timeSQL := d.contextSQL(table, catalog)
-	bound := ""
-	if cursor.valid {
-		bound = fmt.Sprintf(" AND (%s<%s OR (%s=%s AND CAST(src.%s AS TEXT)<%s))",
-			timeSQL, sqlLiteral(cursor.time), timeSQL, sqlLiteral(cursor.time),
-			quoteIdentifier(table.IDColumn), sqlLiteral(cursor.id))
-	}
+	contextSQL, join := d.contextSQL(table, catalog)
 	return fmt.Sprintf(`SELECT CAST(src.%s AS TEXT) AS source_id%s%s FROM %s.%s src%s
-		WHERE %s%s
-		ORDER BY context_time DESC, source_id DESC LIMIT %d`,
+		WHERE %s
+		ORDER BY context_time DESC, source_id DESC`,
 		quoteIdentifier(table.IDColumn), declaredColumnSelect("src", table.TextColumns), contextSQL,
 		quoteIdentifier(d.Database.Alias), quoteIdentifier(table.Name), join,
-		declaredSourcePredicate("src", table), bound, walkPageSize)
+		declaredSourcePredicate("src", table))
 }
 
 func (d DeclaredCorpus) contextSQL(table vectorTable,
-	catalog map[string]map[string]bool) (string, string, string) {
+	catalog map[string]map[string]bool) (string, string) {
 	alias := quoteIdentifier(d.Database.Alias)
 	columns := catalog[table.Name]
 	timeColumns := qualifiedColumns("src", table.TimeColumns)
@@ -1380,7 +1366,7 @@ func (d DeclaredCorpus) contextSQL(table vectorTable,
 	title, project := "''", "''"
 	if d.Database.Plugin != "roca-corpus" && d.Database.Plugin != "roca-ops" {
 		return fmt.Sprintf(", %s AS context_title, %s AS context_project, %s AS context_time",
-			title, project, timeExpression), join, timeExpression
+			title, project, timeExpression), join
 	}
 	switch table.Name {
 	case "sessions":
@@ -1418,7 +1404,7 @@ func (d DeclaredCorpus) contextSQL(table vectorTable,
 		}
 	}
 	return fmt.Sprintf(", %s AS context_title, %s AS context_project, %s AS context_time",
-		title, project, timeExpression), join, timeExpression
+		title, project, timeExpression), join
 }
 
 func qualifiedColumns(alias string, columns []string) []string {

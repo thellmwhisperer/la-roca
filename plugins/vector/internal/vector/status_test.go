@@ -306,7 +306,7 @@ func TestReportVectorizationCountsDeclaredChunksExactly(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	federation, err := LoadFederation(CoreCLI{Executable: "fixture", Run: sqliteExecRunner(t, map[string]string{"corpus": path})}, root, DefaultModel, "test", &recordingEmbedder{}, nil)
+	federation, err := LoadFederation(CoreCLI{Executable: "fixture", readRequest: readerFixture(sqliteExecRunner(t, map[string]string{"corpus": path}))}, root, DefaultModel, "test", &recordingEmbedder{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

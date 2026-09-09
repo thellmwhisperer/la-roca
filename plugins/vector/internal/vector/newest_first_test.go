@@ -37,7 +37,7 @@ func TestDeclaredCorpusPagesNewestFirst(t *testing.T) {
 	if _, err := db.Exec(`INSERT INTO records VALUES ('9','numeric recent','2027-01-01T00:00:00Z'),('10','numeric old','2024-01-01T00:00:00Z')`); err != nil {
 		t.Fatal(err)
 	}
-	corpus := DeclaredCorpus{Core: CoreCLI{Executable: "sqlite-fixture", Run: sqliteRunner(db)},
+	corpus := DeclaredCorpus{Core: CoreCLI{Executable: "sqlite-fixture", readRequest: readerFixture(sqliteRunner(db))},
 		Database: vectorDatabase{Plugin: "fixture", Database: "records", Alias: "main",
 			Tables: []vectorTable{{Name: "records", IDColumn: "id", TextColumns: []string{"body"},
 				TimeColumns: []string{"occurred_at"}}}}}
@@ -75,7 +75,7 @@ func TestDeclaredCorpusFallsBackToDeclaredIDWithoutChronologicalColumns(t *testi
 			t.Fatal(err)
 		}
 	}
-	corpus := DeclaredCorpus{Core: CoreCLI{Executable: "sqlite-fixture", Run: sqliteRunner(db)},
+	corpus := DeclaredCorpus{Core: CoreCLI{Executable: "sqlite-fixture", readRequest: readerFixture(sqliteRunner(db))},
 		Database: vectorDatabase{Plugin: "fixture", Database: "records", Alias: "main",
 			Tables: []vectorTable{{Name: "sessions", IDColumn: "session_id", TextColumns: []string{"title"}}}}}
 	var rows []sourceRow
@@ -116,7 +116,7 @@ func TestDeclaredCorpusLimitsUnboundedStatementsToIngestReads(t *testing.T) {
 		return base(ctx, executable, args...)
 	}
 	table := vectorTable{Name: "records", IDColumn: "id", TextColumns: []string{"body"}}
-	corpus := DeclaredCorpus{Core: CoreCLI{Executable: "sqlite-fixture", Run: runner},
+	corpus := DeclaredCorpus{Core: CoreCLI{Executable: "sqlite-fixture", readRequest: readerFixture(runner)},
 		Database: vectorDatabase{Plugin: "fixture", Database: "records", Alias: "main",
 			Tables: []vectorTable{table}}}
 	wantTimeout = "0"
@@ -176,7 +176,7 @@ func TestDeclaredSweepPagesALargeExchangesTableWithinStatementBudget(t *testing.
 		}
 		return base(ctx, executable, args...)
 	}
-	corpus := DeclaredCorpus{Core: CoreCLI{Executable: "sqlite-fixture", Run: runner},
+	corpus := DeclaredCorpus{Core: CoreCLI{Executable: "sqlite-fixture", readRequest: readerFixture(runner)},
 		Database: vectorDatabase{Plugin: "roca-corpus", Database: "corpus", Alias: "main",
 			Tables: []vectorTable{
 				{Name: "sessions", IDColumn: "session_id", TextColumns: []string{"title"},

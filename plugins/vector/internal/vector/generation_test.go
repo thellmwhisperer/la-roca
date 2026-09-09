@@ -32,7 +32,7 @@ func TestDeclaredWalkEmitsPerColumnChunkIdentity(t *testing.T) {
 		},
 	}}})
 	runner := sqliteExecRunner(t, map[string]string{"plugin_roca_corpus": dbPath})
-	federation, err := LoadFederation(CoreCLI{Executable: "roca", Run: runner}, root,
+	federation, err := LoadFederation(CoreCLI{Executable: "roca", readRequest: readerFixture(runner)}, root,
 		DefaultModel, "v-test", &recordingEmbedder{}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -162,9 +162,9 @@ func TestDeclaredPagesNewestFirst(t *testing.T) {
 		t.Fatal(err)
 	}
 	corpus := DeclaredCorpus{
-		Core: CoreCLI{Executable: "roca", Run: sqliteExecRunner(t, map[string]string{
+		Core: CoreCLI{Executable: "roca", readRequest: readerFixture(sqliteExecRunner(t, map[string]string{
 			"plugin_roca_ops": dbPath,
-		})},
+		}))},
 		Database: vectorDatabase{Plugin: "roca-ops", Database: "ops", Alias: "plugin_roca_ops",
 			Tables: []vectorTable{{Name: "memories", IDColumn: "id", TextColumns: []string{"content"},
 				TimeColumns: []string{"created_at"}, Columns: []string{"id", "content", "project", "created_at"}}}},

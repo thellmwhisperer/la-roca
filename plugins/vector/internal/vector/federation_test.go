@@ -21,9 +21,9 @@ func TestFederationReportsSchedulerStallInsteadOfWorkerCancellation(t *testing.T
 	previous := embeddingStallTimeout
 	embeddingStallTimeout = 50 * time.Millisecond
 	t.Cleanup(func() { embeddingStallTimeout = previous })
-	federation.Core.Run = func(ctx context.Context, _ string, _ ...string) ([]byte, error) {
+	federation.Core.readRequest = func(ctx context.Context, _ CoreCLI, _ map[string]any, _ any) error {
 		<-ctx.Done()
-		return nil, ctx.Err()
+		return ctx.Err()
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -206,7 +206,7 @@ func TestFederatedWorkerReusesLegacyMonolithEmbeddingsBeforeRetiringIt(t *testin
 		"plugin_roca_corpus": corpusPath,
 		"plugin_roca_ops":    opsPath,
 	})
-	federation, err := LoadFederation(CoreCLI{Executable: "roca", Run: runner}, root,
+	federation, err := LoadFederation(CoreCLI{Executable: "roca", readRequest: readerFixture(runner)}, root,
 		DefaultModel, "v-migration", embedder, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -284,8 +284,8 @@ func TestLegacySeedReembedsWhenContextChangesEmbeddingInput(t *testing.T) {
 	}
 	embedder.inputs = nil
 
-	federation, err := LoadFederation(CoreCLI{Executable: "roca", Run: sqliteExecRunner(t,
-		map[string]string{"plugin_roca_ops": dbPath})}, root, DefaultModel, "v-test", embedder, nil)
+	federation, err := LoadFederation(CoreCLI{Executable: "roca", readRequest: readerFixture(sqliteExecRunner(t,
+		map[string]string{"plugin_roca_ops": dbPath}))}, root, DefaultModel, "v-test", embedder, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -464,10 +464,17 @@ func TestFederationQueryUsesTheCoreRuntimeInventory(t *testing.T) {
 	if _, err := federation.Ingest(context.Background(), ""); err != nil {
 		t.Fatal(err)
 	}
-	federation.Core.Run = databaseScopeRunner(federation.Core.Run, []DatabaseSelection{
+	previousRead := federation.Core.readRequest
+	scopeRead := readerFixture(databaseScopeRunner(nil, []DatabaseSelection{
 		{Source: "core", Database: "core"},
 		{Source: "plugin:roca-corpus", Database: "corpus"},
-	})
+	}))
+	federation.Core.readRequest = func(ctx context.Context, core CoreCLI, request map[string]any, result any) error {
+		if request["scope"] == true {
+			return scopeRead(ctx, core, request, result)
+		}
+		return previousRead(ctx, core, request, result)
+	}
 	result, err := federation.Query(context.Background(), "remembered decision", 10, "all")
 	if err != nil {
 		t.Fatal(err)
@@ -491,7 +498,7 @@ func TestResolveSourcesAlignsUnionArmsAcrossChunkGenerations(t *testing.T) {
 		INSERT INTO articles VALUES ('article-new','New policy title','new-policy giraffe unique');
 		INSERT INTO notes VALUES ('note-old','old-policy zebra unique');`)
 	declared := DeclaredCorpus{
-		Core: CoreCLI{Executable: "roca", Run: sqliteExecRunner(t, map[string]string{"plugin_roca_corpus": dbPath})},
+		Core: CoreCLI{Executable: "roca", readRequest: readerFixture(sqliteExecRunner(t, map[string]string{"plugin_roca_corpus": dbPath}))},
 		Database: vectorDatabase{Plugin: "roca-corpus", Database: "corpus", Alias: "plugin_roca_corpus",
 			Tables: []vectorTable{
 				{Name: "articles", IDColumn: "id", TextColumns: []string{"title", "body"}},
@@ -538,7 +545,7 @@ func TestMixedChunkPolicySidecarStaysQueryable(t *testing.T) {
 		{Source: "plugin:roca-corpus", Database: "corpus"},
 	})
 	embedder := &recordingEmbedder{}
-	federation, err := LoadFederation(CoreCLI{Executable: "roca", Run: runner}, root,
+	federation, err := LoadFederation(CoreCLI{Executable: "roca", readRequest: readerFixture(runner)}, root,
 		DefaultModel, "v-test", embedder, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -600,7 +607,7 @@ func TestFederationQueryFansOutDuplicateCanonicalNamesBySource(t *testing.T) {
 		{Source: "plugin:fixture-first", Database: "shared"},
 		{Source: "plugin:fixture-second", Database: "shared"},
 	})
-	federation, err := LoadFederation(CoreCLI{Executable: "roca", Run: runner}, root,
+	federation, err := LoadFederation(CoreCLI{Executable: "roca", readRequest: readerFixture(runner)}, root,
 		DefaultModel, "v-test", &recordingEmbedder{}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -735,8 +742,8 @@ func TestFederationSealsEmptySidecarWithDimensions(t *testing.T) {
 		Tables: []vectorTable{{Name: "entries", IDColumn: "id", TextColumns: []string{"body"}, TimeColumns: []string{"id"}}},
 	}}})
 	embedder := &recordingEmbedder{}
-	federation, err := LoadFederation(CoreCLI{Executable: "roca", Run: sqliteExecRunner(t,
-		map[string]string{"fixture_empty": databasePath})}, root, DefaultModel, "v-empty", embedder, nil)
+	federation, err := LoadFederation(CoreCLI{Executable: "roca", readRequest: readerFixture(sqliteExecRunner(t,
+		map[string]string{"fixture_empty": databasePath}))}, root, DefaultModel, "v-empty", embedder, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -808,7 +815,7 @@ func federationFixture(t *testing.T) (Federation, string, string, *recordingEmbe
 		{Source: "plugin:roca-cron", Database: "cron"},
 	})
 	embedder := &recordingEmbedder{}
-	federation, err := LoadFederation(CoreCLI{Executable: "roca", Run: runner}, root,
+	federation, err := LoadFederation(CoreCLI{Executable: "roca", readRequest: readerFixture(runner)}, root,
 		DefaultModel, "v-test", embedder, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -1160,10 +1167,10 @@ func TestProgressTreatsLegacySidecarIdentityAsUnknown(t *testing.T) {
 func TestHistoryProgressPlacesADeadlineWhenTheCallerDidNot(t *testing.T) {
 	var gotDeadline bool
 	federation := Federation{
-		Core: CoreCLI{Executable: "roca", Run: func(ctx context.Context, _ string, _ ...string) ([]byte, error) {
+		Core: CoreCLI{Executable: "roca", readRequest: readerFixture(func(ctx context.Context, _ string, _ ...string) ([]byte, error) {
 			_, gotDeadline = ctx.Deadline()
 			return nil, context.Canceled
-		}},
+		})},
 		databases: []vectorDatabase{{
 			Plugin: "fixture", Database: "records", Alias: "main",
 			Path:   filepath.Join(t.TempDir(), "missing.db"),
@@ -1181,11 +1188,11 @@ func TestHistoryProgressPlacesADeadlineWhenTheCallerDidNot(t *testing.T) {
 func TestHistoryProgressReturnsWhenTheCountIsCancelled(t *testing.T) {
 	started := make(chan struct{})
 	federation := Federation{
-		Core: CoreCLI{Executable: "roca", Run: func(ctx context.Context, _ string, _ ...string) ([]byte, error) {
+		Core: CoreCLI{Executable: "roca", readRequest: readerFixture(func(ctx context.Context, _ string, _ ...string) ([]byte, error) {
 			close(started)
 			<-ctx.Done()
 			return nil, ctx.Err()
-		}},
+		})},
 		databases: []vectorDatabase{{
 			Plugin: "fixture", Database: "records", Alias: "main",
 			Path:   filepath.Join(t.TempDir(), "missing.db"),
