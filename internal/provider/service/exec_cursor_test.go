@@ -1,12 +1,14 @@
 package service
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
@@ -14,7 +16,18 @@ import (
 )
 
 func TestExecReaderIndependentIngestAttachments(t *testing.T) {
+	for _, layout := range []ReadLayout{LayoutLegacyServing, LayoutCutover} {
+		t.Run(string(layout), func(t *testing.T) {
+			testExecReaderIndependentIngestAttachments(t, layout)
+		})
+	}
+}
+
+func testExecReaderIndependentIngestAttachments(t *testing.T, layout ReadLayout) {
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
 	options := residentTestOptions(t)
+	options.ReadLayout = layout
 	options.CorpusEnabled, options.PluginsEnabled = true, true
 	if _, err := rocacorpus.Ensure(options.PluginDir, filepath.Join(filepath.Dir(options.DBPath), "bin"), "test"); err != nil {
 		t.Fatal(err)
@@ -62,7 +75,7 @@ func TestExecReaderIndependentIngestAttachments(t *testing.T) {
 	defer reader.Close()
 	var jobs [2][]*ExecCursor
 	for n := range 9 {
-		cursor, err := reader.OpenExecCursor(t.Context(), fmt.Sprintf("SELECT id FROM lab%d.memories ORDER BY id", n), 1000)
+		cursor, err := reader.OpenExecCursor(ctx, fmt.Sprintf("SELECT id FROM lab%d.memories ORDER BY id", n), 1000)
 		if err != nil {
 			t.Fatalf("open independent source %d: %v", n, err)
 		}
@@ -89,18 +102,63 @@ func TestExecReaderIndependentIngestAttachments(t *testing.T) {
 		if job == 0 {
 			want = len(jobs[1])
 		}
+		if got := len(reader.cursors); got != want {
+			t.Fatalf("job %d retained cursors: %d, want=%d", job, got, want)
+		}
+		if layout == LayoutCutover {
+			want = 0
+		}
 		if got := pool.Stats().InUse; got != want {
 			t.Fatalf("job %d retained connections: in use=%d, want=%d", job, got, want)
 		}
-		connection, attached, err := svc.openQueryConnection(t.Context())
+		connection, attached, err := svc.openQueryConnection(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
 		var count int
-		err = connection.QueryRowContext(t.Context(), "SELECT count(*) FROM pragma_database_list WHERE name NOT IN ('main','temp')").Scan(&count)
+		err = connection.QueryRowContext(ctx, "SELECT count(*) FROM pragma_database_list WHERE name NOT IN ('main','temp')").Scan(&count)
 		closeQueryConnection(connection, attached)
 		if err != nil || count != 2 || count > plugin.MaxAttached {
 			t.Fatalf("job %d left foreign attachments: %d: %v", job, count, err)
 		}
+	}
+}
+
+func TestExecReaderCutoverConnections(t *testing.T) {
+	fixture := newHubFixture(t)
+	seedHubCoreMemory(t, fixture.plugins, 42, "Synthetic cursor marker")
+	svc := openHubService(t, fixture, LayoutCutover, nil)
+	reader := svc.NewExecReader()
+	defer reader.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	cursor, err := reader.open(ctx, "SELECT id, content FROM memories", 1000, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := cursor.ReadPage()
+	if err != nil || len(rows) != 1 || fmt.Sprint(rows[0]["id"]) != "42" {
+		t.Fatalf("compatibility cursor: %v: %v", rows, err)
+	}
+	connection, attached, release, err := reader.openConnection(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		closeQueryConnection(connection, attached)
+		release()
+	}()
+	if _, err := connection.ExecContext(ctx, "CREATE TABLE forbidden_write(id INTEGER)"); err == nil {
+		t.Fatal("cursor connection accepted a write")
+	}
+	if _, err := reader.OpenExecCursor(ctx, "DELETE FROM memories", 1000); err == nil {
+		t.Fatal("cursor bypassed the SELECT gate")
+	}
+	reader.Close()
+	if len(reader.cursors) != 0 {
+		t.Fatal("reader close retained cursors")
+	}
+	if _, err := os.Stat(fixture.corePath); !os.IsNotExist(err) {
+		t.Fatalf("cutover cursor touched roca.db: %v", err)
 	}
 }

@@ -44,7 +44,7 @@ func (r *ExecReader) OpenExecCursor(ctx context.Context, sql string, maxChars in
 func (r *ExecReader) open(ctx context.Context, statement string, maxChars int, databases []plugin.Database) (*ExecCursor, error) {
 	// A cursor owns its connection and attachments. Independent source sweeps
 	// may interleave in the same helper without accumulating each other's seats.
-	connection, attached, err := r.service.openQueryConnection(ctx)
+	connection, attached, release, err := r.openConnection(ctx)
 	if err != nil {
 		return nil, typedExecError(err)
 	}
@@ -58,21 +58,51 @@ func (r *ExecReader) open(ctx context.Context, statement string, maxChars int, d
 	attached = append(attached, additional...)
 	if err != nil {
 		closeQueryConnection(connection, attached)
+		release()
 		return nil, typedExecError(err)
 	}
 	rows, err := connection.QueryContext(ctx, statement)
 	if err != nil {
 		closeQueryConnection(connection, attached)
+		release()
 		return nil, typedExecError(err)
 	}
 	cursor := &ExecCursor{rows: rows, maxChars: TextBudget(maxChars),
 		databases: databases, statement: statement}
 	cursor.close = func() {
 		closeQueryConnection(connection, attached)
+		release()
 		delete(r.cursors, cursor)
 	}
 	r.cursors[cursor] = struct{}{}
 	return cursor, nil
+}
+
+func (r *ExecReader) openConnection(ctx context.Context) (*sql.Conn, []string, func(), error) {
+	if r.service.db != r.service.hubDB {
+		connection, attached, err := r.service.openQueryConnection(ctx)
+		return connection, attached, func() {}, err
+	}
+	hub, err := plugin.OpenHub(ctx, r.service.resident)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	ops := databaseForVerb(r.service.resident, StoreVerb, rocaOpsPluginName)
+	corpus := databaseForVerb(r.service.resident, IngestVerb, rocaCorpusPluginName)
+	if err := installHubCompatibility(ctx, hub.DB, ops.Schema, corpus.Schema); err != nil {
+		hub.Close()
+		return nil, nil, nil, err
+	}
+	if _, err := hub.ExecContext(ctx, "PRAGMA query_only = ON"); err != nil {
+		hub.Close()
+		return nil, nil, nil, err
+	}
+	connection, err := hub.Conn(ctx)
+	if err != nil {
+		hub.Close()
+		return nil, nil, nil, err
+	}
+	return connection, nil, func() { hub.Close() }, nil
 }
 
 func (r *ExecReader) Exec(ctx context.Context, req ExecRequest) (ExecResult, error) {
