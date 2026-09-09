@@ -13,17 +13,9 @@ and history cursors, leaves the siblings untouched on published v1.84.8. The
 historical operation that originally minted the suffixes is not established by
 this experiment. Neither the current parser nor the current writer creates them.
 
-`internal/ingest/codex_identity.go` reconciles that inherited identity before
-unchanged-source skipping. It requires matching stored source identity and a
-rollout path, not just a common stem. Children move within one transaction; their
-row IDs, payloads, failures and session-level orphan status remain. Numbered
-children keep their original exchange relationships, with collisions assigned
-unused numbers. Shared source keys retain the canonical binding without deleting
-other historical child rows. Conflicting rollout identities fail and roll back.
-All sibling envelopes are retired before the final metadata union is written,
-so an intermediate envelope cannot collide with a later sibling's exact guard.
-Dry-run leaves the corpus untouched. This does not change the Codex parsers or
-their reading versions, and it does not deduplicate child content.
+The [ingest guide](ingest.md#codex-legacy-history) owns the repair's identity,
+preservation and failure contract. The implementation lives in
+`internal/ingest/codex_identity.go`.
 
 ## Reproduce the published comparison
 
@@ -53,9 +45,12 @@ No performance improvement is claimed.
 
 `TestCodexStemSplitIdentity` also covers a pre-existing exact session, a third
 sibling whose envelope would collide during a partial merge, unchanged-file
-skipping and dry-run. `TestCodexIdentityReferencesAndConflict` covers numbered
-orphan isolation, thinking and memory references, exact-payload guards and atomic
-rollback. The existing Codex history and orphan recovery tests remain applicable.
+skipping, an invalidated fingerprint that rereads the fossil, and dry-run.
+`TestCodexIdentityReservesChildNumbersOnLaterWrites` checks later history writes
+with and without source IDs. `TestCodexIdentityReferencesAndConflict` covers
+numbered orphan isolation, thinking and memory references, exact-payload guards
+and atomic rollback. The existing Codex history and orphan recovery tests remain
+applicable.
 
 ## Historical lab copy
 
@@ -69,7 +64,7 @@ the declared executable fixture above separately checks history, fossil rollout
 and watermarks through the published parser.
 
 Published v1.84.8 left the two siblings unchanged. The branch produced the exact
-source session with the same six exchanges and 48 session-level tools. Across
+source session with the same exchanges and session-level tools. Across
 the entire copied corpus, the logical thread set, all child row counts, row IDs,
 payload digests, exchange ownership relationships, tool failure count and stored
 file errors were equal before and after. File-state rows were unchanged. Physical
