@@ -125,7 +125,9 @@ func (r row) has(key string) bool {
 }
 
 // queryRows reads a whole result set by column name.
-func queryRows(ctx context.Context, db *sql.DB, statement string, args ...any) ([]row, error) {
+func queryRows(ctx context.Context, db interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}, statement string, args ...any) ([]row, error) {
 	rows, err := db.QueryContext(ctx, statement, args...)
 	if err != nil {
 		return nil, err
