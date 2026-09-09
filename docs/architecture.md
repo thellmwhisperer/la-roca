@@ -10,15 +10,15 @@ database.
 The migration to that shape is incremental. The current release has
 manifest-backed `roca-corpus` and `roca-ops` domains, plus a separate
 `roca-cron` journey store that still uses its legacy descriptor. One atomic
-`layout.serving` marker selects `legacy-serving`, `shadow-equal`, or `cutover`.
+`layout.serving` marker selects `legacy-serving` or `cutover`.
 Custody preparation and readiness checks follow the
 [explicit migration contract](operations.md#explicit-data-split-migration).
 DATA-3 refuses cutover unless its reproducible custody reconciliation is exactly
 100% green; the detailed count, hash, provenance, and occurrence contract is
 owned by the [bundled `roca-corpus` plugin](plugins.md#the-bundled-roca-corpus-plugin).
-Shadow mode serves the legacy answer and returns the marker to legacy on any
-row difference. Cutover uses temporary compatibility views and indexes over
-the read-only plugin attachments; it does not open `roca.db`. That file remains
+The retired `shadow-equal` marker requires an explicit serving choice.
+Cutover uses compatibility views over persistent plugin indexes and read-only
+attachments; it does not open `roca.db`. That file remains
 in place as the reversible legacy route until the separate retirement step.
 
 ## Runtime map

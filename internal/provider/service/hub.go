@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 	"github.com/thellmwhisperer/la-roca/internal/store"
@@ -89,27 +88,17 @@ func installHubCompatibility(ctx context.Context, db *sql.DB, opsSchema, corpusS
 	return nil
 }
 
-func (s *Service) ensureHubSearch(ctx context.Context) error {
+// Compatibility views forward SQLite's FTS handle, so MATCH and bm25 still run
+// in the owning database. Only internal legacy search needs these names.
+func (s *Service) ensureHubSearchViews(ctx context.Context) (resultErr error) {
 	if s.hub == nil {
 		return nil
 	}
 	s.hubSearchMu.Lock()
 	defer s.hubSearchMu.Unlock()
-	if s.hubSearchReady || s.hubSearchFailure != nil {
-		return s.hubSearchFailure
+	if s.hubSearchReady {
+		return nil
 	}
-	err := s.buildHubSearch(ctx)
-	if err != nil {
-		if ctx.Err() == nil {
-			s.hubSearchFailure = err
-		}
-		return err
-	}
-	s.hubSearchReady = true
-	return nil
-}
-
-func (s *Service) buildHubSearch(ctx context.Context) (resultErr error) {
 	connection, err := s.hub.Conn(ctx)
 	if err != nil {
 		return err
@@ -119,63 +108,30 @@ func (s *Service) buildHubSearch(ctx context.Context) (resultErr error) {
 		return err
 	}
 	defer func() {
-		if _, err := connection.ExecContext(context.WithoutCancel(ctx), "PRAGMA query_only = ON"); err != nil {
-			resultErr = errors.Join(resultErr, fmt.Errorf("restore the federation hub read fence: %w", err))
-		}
+		_, err := connection.ExecContext(context.WithoutCancel(ctx), "PRAGMA query_only = ON")
+		resultErr = errors.Join(resultErr, err)
 	}()
-
-	transaction, err := connection.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
+	ops := quoteSchema(databaseForVerb(s.resident, StoreVerb, rocaOpsPluginName).Schema)
+	corpus := quoteSchema(databaseForVerb(s.resident, IngestVerb, rocaCorpusPluginName).Schema)
 	statements := []string{
-		`CREATE VIRTUAL TABLE temp.memories_fts USING fts5(content,
-				 content='memories', content_rowid='id', tokenize='unicode61 remove_diacritics 2')`,
-		`CREATE VIRTUAL TABLE temp.exchanges_fts USING fts5(human_text, agent_text,
-			 content='exchanges', content_rowid='id', tokenize='unicode61 remove_diacritics 2')`,
-		`CREATE VIRTUAL TABLE temp.thinking_fts USING fts5(full_text,
-			 content='thinking_blocks', content_rowid='id', tokenize='unicode61 remove_diacritics 2')`,
-		`CREATE TEMP TABLE hub_session_fts_content
-			 (rowid INTEGER PRIMARY KEY, title TEXT, project TEXT)`,
-		`INSERT INTO hub_session_fts_content(rowid, title, project)
-			 SELECT rowid, title, project FROM ` + quoteSchema(s.corpusSchema()) + `.sessions`,
-		`CREATE VIRTUAL TABLE temp.sessions_fts USING fts5(title, project,
-			 content='hub_session_fts_content', content_rowid='rowid',
-			 tokenize='unicode61 remove_diacritics 2')`,
-		`INSERT INTO memories_fts(memories_fts) VALUES ('rebuild')`,
-		`INSERT INTO exchanges_fts(exchanges_fts) VALUES ('rebuild')`,
-		`INSERT INTO thinking_fts(thinking_fts) VALUES ('rebuild')`,
-		`INSERT INTO sessions_fts(sessions_fts) VALUES ('rebuild')`,
-		`CREATE TEMP TABLE search_state
-			 (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT)`,
-		`INSERT INTO search_state(key, value) VALUES
-				 ('lexical_index', 'built'), ('lexical_tokenizer', 'unicode61-remove-diacritics-2')`,
+		`CREATE TEMP VIEW IF NOT EXISTS memories_fts AS SELECT c.id AS rowid, f.content,
+			f.memory_records_fts AS memories_fts, f.rank
+		 FROM ` + ops + `.memory_records_fts AS f
+		 JOIN ` + ops + `.memory_compatibility AS c ON c.physical_id = f.rowid
+		 WHERE c.source_database = 'core'`,
+		`CREATE TEMP VIEW IF NOT EXISTS exchanges_fts AS SELECT rowid, human_text, agent_text,
+			exchanges_fts, rank FROM ` + corpus + `.exchanges_fts`,
+		`CREATE TEMP VIEW IF NOT EXISTS thinking_fts AS SELECT rowid, full_text, thinking_fts, rank
+		 FROM ` + corpus + `.thinking_fts`,
+		`CREATE TEMP VIEW IF NOT EXISTS sessions_fts AS SELECT rowid, title, project, sessions_fts, rank
+		 FROM ` + corpus + `.sessions_fts`,
+		`CREATE TEMP VIEW IF NOT EXISTS search_state AS SELECT 'lexical_index' AS key, 'built' AS value`,
 	}
 	for _, statement := range statements {
-		if _, err := transaction.ExecContext(ctx, statement); err != nil {
-			_ = transaction.Rollback()
-			return fmt.Errorf("build the in-memory compatibility index: %w", err)
+		if _, err := connection.ExecContext(ctx, statement); err != nil {
+			return err
 		}
 	}
-	if err := transaction.Commit(); err != nil {
-		return fmt.Errorf("publish the in-memory compatibility index: %w", err)
-	}
+	s.hubSearchReady = true
 	return nil
-}
-
-func (s *Service) corpusSchema() string {
-	if database := databaseForVerb(s.resident, IngestVerb, rocaCorpusPluginName); database != nil {
-		return database.Schema
-	}
-	return "plugin_roca_corpus"
-}
-
-func needsHubSearch(statement string) bool {
-	lower := strings.ToLower(statement)
-	for _, table := range []string{"memories_fts", "exchanges_fts", "thinking_fts", "sessions_fts"} {
-		if strings.Contains(lower, table) {
-			return true
-		}
-	}
-	return false
 }

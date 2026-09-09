@@ -398,7 +398,10 @@ verified, another run returns without opening frozen snapshots, hashing,
 checking integrity or materializing rows. Backups remain in place.
 Read-only mode refuses migration.
 
-Run it before selecting `shadow-equal` or `cutover` in `[layout].serving`.
+Run it before selecting `cutover` in `[layout].serving`.
+`shadow-equal` has finished its validation purpose and is retired: an existing
+marker returns a serving-choice error. Choose `legacy-serving` to retain legacy
+reads, or run `roca migrate` and select `cutover` to read the verified plugins.
 The command preserves that selection. With an existing core database, ordinary
 service opens in either layout check destination readiness and report
 `run roca migrate` if required custody is unfinished, including in read-only
@@ -408,6 +411,13 @@ read fixed destination ledger entries, without reading frozen sources or doing
 row-count, hash, integrity-check or materialization work. Older DATA-4 imports
 with batch receipts but no completion seals also require this explicit step. See [plugin custody](plugins.md) for reconciliation and storage-upgrade
 rules.
+
+In cutover, qualified FTS queries use persistent plugin indexes directly.
+Internal legacy search uses column and identifier views, preserving historical
+memory IDs and forwarding SQLite's MATCH/bm25 handle without rebuilding
+temporary indexes. Ranks now reflect the owning persistent index's population.
+Explicit SQL follows the
+[table qualification rule](queries.md#table-names-in-authored-sql).
 
 [Build and test](../CONTRIBUTING.md#build-and-test) owns the synthetic D2 cost
 regression and published-versus-branch evidence procedure.
