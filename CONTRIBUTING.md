@@ -112,11 +112,9 @@ runs the paired comparison when that explicit variable is set. No live home or
 installed `roca` is selected. The paired run also measures deletion and VACUUM reclamation on a synthetic lab copy.
 
 `make vector-reader-test ROCA_READER_PUBLISHED_BIN=<pinned-v1.84.1-binary>`
-compares the published page protocol and the streaming vector reader on a
-synthetic lab. Historical comparison requires that explicit published binary.
-Ordinary tests check reader results, SQL limits and one helper per operation
-on a smaller lab, without a timing comparison.
-[D4 reader evidence](docs/d4-reader-evidence.md) owns the fixture and measurements.
+runs the opt-in comparison described in
+[D4 reader evidence](docs/d4-reader-evidence.md), which owns the fixture,
+published-binary requirement, measurements and ordinary regression coverage.
 
 `make snapshot-evidence ROCA_SNAPSHOT_PUBLISHED_BIN=<absolute-pinned-v1.82.3-binary>`
 runs the historical D1 kill only with the `snapshot_evidence` build tag and an
