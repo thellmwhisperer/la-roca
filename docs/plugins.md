@@ -699,11 +699,8 @@ of reshaping them into an active surface. Bumping one of those versions is a
 schema change a released database has to adopt, so it owes what
 [releases](releases.md#schema-migration-definition-of-done) requires of one.
 
-The DATA SPLIT orphan import has no command, MCP tool, or make target. Only the
-internal DATA-6 cutover coordinator in
-`internal/distribution/datasplit/cutover.go` runs it, so it remains an internal
-stage of the split rather than an operator surface. What follows is what it
-does.
+The DATA SPLIT orphan import is the DATA-4 stage of
+[explicit migration](operations.md#explicit-data-split-migration).
 
 The import reads a verified core snapshot in read-only mode. It keeps old
 `runs` and `run_logs` as legacy cron payloads; the garden coordination tables,
@@ -720,9 +717,10 @@ import refuses to start at all while the snapshot still holds a table nobody
 disposed of, and it refuses before writing anything when a table it would
 quarantine still holds a row whose identity columns are NULL or blank, because a
 row it cannot address is a row it cannot prove it carried over. Each
-checksummed batch is replay-safe, and the plugin databases deliberately remain
-in shadow migration state until the whole split is independently verified for
-cutover.
+checksummed batch is replay-safe. After every table and destination reconciles,
+the importer seals each of its four destination migrations as `verified` or
+`verified-empty`; interrupted seal publication resumes from the recorded state.
+The whole split is eligible only when DATA-2 and DATA-3 are also verified.
 
 Removing La Roca itself removes the installed packages and asks separately
 before it touches those archives: see [Uninstall](lifecycle.md#uninstall).
@@ -762,7 +760,10 @@ surface, and the served tables above keep answering exactly as before until the
 atomic cutover. Each family is a named custody migration of its own,
 `corpus-archive-<family>`, because a migration owns exactly one destination.
 The five family migrations retain their table-level archive seal, and cutover
-additionally requires the versioned DATA-3 reconciliation seal.
+additionally requires the versioned DATA-3 reconciliation seal. Upgrading old
+payload-bearing version tables to digest-only storage invalidates that
+reconciliation seal so current rows can be materialized and reconciled through
+[explicit migration](operations.md#explicit-data-split-migration).
 
 `roca compact` rewrites an existing corpus database onto that one-row law and
 VACUUMs. Current session, exchange, thinking, and tool rows stay. Once those
@@ -826,20 +827,19 @@ prompts and the SQL gate during shadow mode, so the served `memories`/
 `memories_fts` route and source databases remain untouched until the atomic
 cutover.
 
-The DATA-6 cutover coordinator in `internal/distribution/datasplit/cutover.go`
-is DATA-2's sole runtime caller, the way DATA-1 shipped the ledger with only
-`Prepare` wired: no installer and no command invokes the copy directly. Sources
-are free to move between an interrupted run and its resume. A row whose payload
-changed is carried forward as a further version of the same legacy ID rather
-than refused, a row that disappeared keeps the membership its batch truthfully
+DATA-2 runs through the
+[explicit migration coordinator](operations.md#explicit-data-split-migration).
+Until memory custody verifies, sources are free to move between an interrupted
+run and its resume. A row whose payload changed is carried forward as a further
+version of the same legacy ID rather than refused, a row that disappeared keeps the membership its batch truthfully
 recorded, and both are reported as drift events; membership counts are verified
 against what the committed batches recorded, not against the live source. A
 home whose three sources are all empty verifies as `verified-empty` rather than
-`verified`: nothing was carried, so the migration stays open and a later run
-still carries whatever the sources hold by then, while the home counts as
-cutover-ready because there is nothing left to carry. Each source's frozen copy
-is named once per migration generation and published by renaming a validated
-sibling copy over it, so retries replace their own snapshot instead of
+`verified`; both states count as cutover-ready. The low-level memory importer
+can reopen an empty migration unless `ReuseVerifiedSnapshots` is set. The
+coordinator sets it so later custody stages reuse the same frozen inputs even
+when memory custody was empty. Each source's frozen copy is named once per
+migration generation and published by renaming a validated sibling copy over it, so retries replace their own snapshot instead of
 accumulating a full database per attempt, a failed replacement leaves the
 previously verified copy intact, and no reader sees a half-written database.
 

@@ -315,6 +315,17 @@ func applyStorageLaw(ctx context.Context, path string, dropArchive bool) (bool, 
 		if err := prepareSlimVersionObservedAt(ctx, tx); err != nil {
 			return false, err
 		}
+		ledgerPresent, err := tableExists(tx, "plugin_migrations")
+		if err != nil {
+			return false, err
+		}
+		if ledgerPresent {
+			if _, err := tx.ExecContext(ctx, `UPDATE plugin_migrations SET migration_state = 'prepared',
+				verification_digest = NULL, verified_at = NULL, updated_at = datetime('now')
+				WHERE migration = 'corpus-archive-reconciliation-v1'`); err != nil {
+				return false, fmt.Errorf("invalidate current corpus reconciliation: %w", err)
+			}
+		}
 	}
 	for _, statement := range statements {
 		if _, err := tx.ExecContext(ctx, statement); err != nil {
@@ -490,7 +501,7 @@ func snapshotMigrationSeals(path string) ([]migrationSeal, error) {
 		return nil, err
 	}
 	rows, err := db.Query(`SELECT migration, COALESCE(verification_digest, ''), migration_state
-		FROM plugin_migrations`)
+		FROM plugin_migrations WHERE migration <> 'corpus-archive-reconciliation-v1'`)
 	if err != nil {
 		return nil, err
 	}

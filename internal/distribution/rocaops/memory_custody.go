@@ -41,13 +41,14 @@ const (
 // explicit: callers keep the verified VACUUM copies beside their other Roca
 // backups, never in a process-global temporary directory.
 type MemoryCustodyOptions struct {
-	CorePath    string
-	CorpusPath  string
-	OpsPath     string
-	SnapshotDir string
-	LockPath    string
-	BatchSize   int
-	AfterBatch  func(MemoryBatch) error
+	CorePath               string
+	CorpusPath             string
+	OpsPath                string
+	SnapshotDir            string
+	LockPath               string
+	BatchSize              int
+	AfterBatch             func(MemoryBatch) error
+	ReuseVerifiedSnapshots bool
 }
 
 type MemoryBatch struct {
@@ -161,11 +162,6 @@ func MemoryCustodyWriterFenced(ctx context.Context, opsPath string) (fenced bool
 // ops' hidden DATA-2 tables. The currently served memories and FTS tables are
 // never selected as a destination, so a completed shadow migration cannot
 // change an answer before cutover.
-//
-// DATA-2 deliberately ships this engine and its frozen-home proof with no
-// caller: nothing in the installer or the CLI invokes it, exactly as DATA-1
-// shipped the ledger with only Prepare wired. Choosing when a real home runs
-// the copy, and serving the result, belongs to the DATA-6 cutover rung.
 func MigrateMemoryCustody(ctx context.Context, options MemoryCustodyOptions) (MemoryCustodyReport, error) {
 	if err := options.valid(); err != nil {
 		return MemoryCustodyReport{}, err
@@ -204,7 +200,8 @@ func MigrateMemoryCustody(ctx context.Context, options MemoryCustodyOptions) (Me
 		{name: coreMemorySource, path: options.CorePath},
 		{name: corpusMemorySource, path: options.CorpusPath},
 	}
-	if state.State == migrationledger.StateVerified {
+	if state.State == migrationledger.StateVerified ||
+		(state.State == migrationledger.StateVerifiedEmpty && options.ReuseVerifiedSnapshots) {
 		report, err := inspectMemoryCustody(ctx, ops, state, options.SnapshotDir, plugin)
 		if err != nil {
 			return MemoryCustodyReport{}, err
@@ -219,6 +216,9 @@ func MigrateMemoryCustody(ctx context.Context, options MemoryCustodyOptions) (Me
 				return MemoryCustodyReport{}, fmt.Errorf("%s memory snapshot is not a regular file", source.name)
 			case !errors.Is(statErr, os.ErrNotExist):
 				return MemoryCustodyReport{}, fmt.Errorf("inspect %s memory snapshot: %w", source.name, statErr)
+			}
+			if options.ReuseVerifiedSnapshots {
+				return MemoryCustodyReport{}, fmt.Errorf("the verified %s memory snapshot is missing: %w", source.name, statErr)
 			}
 			if err := snapshotMemories(ctx, source, path); err != nil {
 				return MemoryCustodyReport{}, err
@@ -352,8 +352,9 @@ func pendingMemories(source string, rows []memoryRow,
 
 // recordMemoryVerification separates the two verified outcomes: a population
 // that carried memories reaches the terminal verified state, while a home whose
-// three sources were all empty reaches verified-empty, which stays open so the
-// rows it may hold later are still carried instead of silently skipped.
+// three sources were all empty reaches verified-empty. Low-level callers can
+// reopen that empty population; ReuseVerifiedSnapshots instead preserves the
+// frozen inputs needed to resume the remaining custody stages.
 //
 // The two are told apart by this migration's own membership count rather than by
 // any batch the ops ledger holds, so a batch some other rung commits into the

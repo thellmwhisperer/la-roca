@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/corpusarchive"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/datasplit"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/plugininstall"
@@ -212,7 +213,7 @@ func rootCommand(env *cliEnv) *cobra.Command {
 	root.PersistentFlags().BoolVar(&env.forceReadOnly, "read-only", false,
 		"refuse database, audit, and reconciliation writes")
 	commands := []*cobra.Command{
-		versionCommand(env), initCommand(env), playgroundPluginCommand(env, "explore"), schemaCommand(env),
+		versionCommand(env), initCommand(env), migrateCommand(env), playgroundPluginCommand(env, "explore"), schemaCommand(env),
 		indexCommand(env), doctorCommand(env), dedupCommand(env), compactCommand(env), memoryCommand(env), layersCommand(env),
 		healthCommand(env), databaseScopeCommand(env),
 		mcpCommand(env), skillCommand(env), hooksCommand(env),
@@ -261,7 +262,7 @@ func rootCommand(env *cliEnv) *cobra.Command {
 
 func publicCommand(name string) bool {
 	switch name {
-	case "init", "query", "playground", "explore", "store", "pill", "handoff", "ingest", "model", "doctor", "update", "uninstall", "plugin", "plugins", "hooks", "cron", "layers", "remote":
+	case "init", "migrate", "query", "playground", "explore", "store", "pill", "handoff", "ingest", "model", "doctor", "update", "uninstall", "plugin", "plugins", "hooks", "cron", "layers", "remote":
 		return true
 	default:
 		return false
@@ -824,28 +825,38 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 		ingestProgress = env.liveIngest.update
 	}
 	readLayout := service.ReadLayout(file.Layout.Serving)
-	opsDatabase, corpusDatabase := "", ""
+	opsDatabase := ""
 	if pluginDir != "" {
 		opsDatabase = filepath.Join(pluginDir, rocaops.Name, rocaops.DatabaseFilename)
-		corpusDatabase = filepath.Join(pluginDir, rocacorpus.Name, rocacorpus.DatabaseFilename)
 	}
-	if !readOnly && !env.skipBundledLifecycle && readLayout != service.LayoutLegacyServing && fileExists(paths.DB) {
-		if _, err := rocacron.Ensure(pluginDir, pluginExecutableDir(paths), env.build.Version); err != nil {
-			return nil, fmt.Errorf("install bundled cron plugin for DATA SPLIT: %w", err)
+	if readLayout != service.LayoutLegacyServing && fileExists(paths.DB) {
+		ready, err := rocaops.MemoryCustodyCutoverEligible(context.Background(), opsDatabase)
+		if err != nil {
+			return nil, fmt.Errorf("inspect DATA-2 readiness; run `roca migrate`: %w", err)
 		}
-		_, prepareErr := datasplit.PrepareHub(context.Background(), datasplit.HubOptions{
-			CoreDatabase: paths.DB, OpsDatabase: opsDatabase, CorpusDatabase: corpusDatabase,
-			CronDatabase: filepath.Join(pluginDir, rocacron.Name, rocacron.DatabaseFilename),
-			SnapshotDir:  filepath.Join(paths.Backups, "data-split"),
-			LockPath:     logfile.New(filepath.Dir(paths.DB)).LockPath(),
-		})
-		if prepareErr != nil {
-			if rollbackErr := config.SetServingLayout(paths.Config, config.LayoutLegacyServing); rollbackErr != nil {
-				return nil, errors.Join(prepareErr,
-					fmt.Errorf("roll back the DATA SPLIT serving marker: %w", rollbackErr))
+		if !ready {
+			return nil, fmt.Errorf("DATA-2 memory custody is unfinished; run `roca migrate`")
+		}
+		if !env.omitCorpus {
+			ready, err = corpusarchive.CutoverEligible(context.Background(),
+				filepath.Join(pluginDir, rocacorpus.Name, rocacorpus.DatabaseFilename))
+			if err != nil {
+				return nil, fmt.Errorf("inspect DATA-3 readiness; run `roca migrate`: %w", err)
 			}
-			return nil, fmt.Errorf("prepare the federation hub; serving marker returned to legacy-serving: %w",
-				prepareErr)
+			if !ready {
+				return nil, fmt.Errorf("DATA-3 corpus custody is unfinished; run `roca migrate`")
+			}
+			ready, err = datasplit.LegacyCutoverEligible(context.Background(), datasplit.HubOptions{
+				OpsDatabase:    opsDatabase,
+				CorpusDatabase: filepath.Join(pluginDir, rocacorpus.Name, rocacorpus.DatabaseFilename),
+				CronDatabase:   filepath.Join(pluginDir, rocacron.Name, rocacron.DatabaseFilename),
+			})
+			if err != nil {
+				return nil, fmt.Errorf("inspect DATA-4 readiness; run `roca migrate`: %w", err)
+			}
+			if !ready {
+				return nil, fmt.Errorf("DATA-4 legacy custody is unfinished; run `roca migrate`")
+			}
 		}
 	}
 	writerFenced := false
