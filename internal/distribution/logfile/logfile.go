@@ -2,10 +2,7 @@
 package logfile
 
 import (
-	"bytes"
-	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/thellmwhisperer/la-roca/internal/distribution/callhistory"
 	"github.com/thellmwhisperer/la-roca/internal/securefile"
 )
 
@@ -33,7 +29,6 @@ const (
 
 type Writer struct {
 	dir          string
-	opsDatabase  string
 	now          func() time.Time
 	maxFileBytes int64
 	maxFiles     int
@@ -43,7 +38,6 @@ type Writer struct {
 // tool call. Query-only fields stay empty for other calls, while row_count is
 // always present so consumers never have to infer whether zero was omitted.
 type CallRecord struct {
-	CallID        string    `json:"call_id,omitempty"`
 	Timestamp     time.Time `json:"timestamp"`
 	Source        string    `json:"source"`
 	Args          any       `json:"args"`
@@ -168,98 +162,42 @@ func (w *Writer) append(stream string, record any, createDir bool) error {
 		return fmt.Errorf("encode the %s log record: %d bytes exceeds the %d-byte record cap",
 			stream, len(line)+1, w.maxFileBytes)
 	}
-	sourceLine := 0
-	// Only the two call streams carry a durable twin, and only an installation
-	// that has the ops database needs the line that identifies it. Everything
-	// else must not pay a second full read of the segment to learn a number
-	// nobody consumes.
-	durable := (stream == Executions || stream == MCPAudit) &&
-		callhistory.Available(w.opsDatabase)
-	var historyErr error
-	fileErr := func() error {
-		if createDir {
-			if err := w.Prepare(); err != nil {
-				return err
-			}
+	if createDir {
+		if err := w.Prepare(); err != nil {
+			return err
 		}
-		release, err := securefile.LockExisting(w.LockPath())
-		if err != nil {
-			return fmt.Errorf("lock the log directory: %w", err)
-		}
-		defer release()
-		if info, err := os.Stat(w.dir); err != nil || !info.IsDir() {
-			if err == nil {
-				err = fmt.Errorf("not a directory")
-			}
-			return fmt.Errorf("open the log directory: %w", err)
-		}
-		rotating, err := w.needsRotation(path, int64(len(line)+1))
-		if err != nil {
-			return fmt.Errorf("inspect the %s log for rotation: %w", stream, err)
-		}
-		if rotating && durable {
-			historyErr = w.backfillLocked(context.Background())
-		}
-		if err := w.rotate(path, int64(len(line)+1)); err != nil {
-			return fmt.Errorf("rotate the %s log: %w", stream, err)
-		}
-		if durable {
-			sourceLine, err = nextSourceLine(path)
-			if err != nil {
-				return fmt.Errorf("inspect the %s log: %w", stream, err)
-			}
-			line, err = withCallID(stream, filepath.Base(path), sourceLine, line)
-			if err != nil {
-				return fmt.Errorf("identify the %s log record: %w", stream, err)
-			}
-			if int64(len(line)+1) > w.maxFileBytes {
-				return fmt.Errorf("encode the %s log record: %d bytes exceeds the %d-byte record cap",
-					stream, len(line)+1, w.maxFileBytes)
-			}
-		}
-		file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
-		if err != nil {
-			return fmt.Errorf("open the %s log: %w", stream, err)
-		}
-		_, writeErr := file.Write(append(line, '\n'))
-		closeErr := file.Close()
-		if writeErr != nil {
-			return fmt.Errorf("append the %s log: %w", stream, writeErr)
-		}
-		if closeErr != nil {
-			return fmt.Errorf("close the %s log: %w", stream, closeErr)
-		}
-		// The record is written and closed, so the append succeeded. Rotation is
-		// housekeeping after the fact: a file that could not be removed is not a
-		// reason to tell the caller its trace was not written.
-		w.prune(stream, now)
-		return nil
-	}()
-	databaseErr := errors.Join(historyErr,
-		w.persistCall(stream, filepath.Base(path), sourceLine, line))
-	return combineLogErrors(fileErr, databaseErr)
-}
-
-func nextSourceLine(path string) (int, error) {
-	raw, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return 1, nil
 	}
+	release, err := securefile.LockExisting(w.LockPath())
 	if err != nil {
-		return 0, err
+		return fmt.Errorf("lock the log directory: %w", err)
 	}
-	return bytes.Count(raw, []byte{'\n'}) + 1, nil
-}
-
-func (w *Writer) needsRotation(path string, incoming int64) (bool, error) {
-	info, err := os.Stat(path)
-	if os.IsNotExist(err) {
-		return false, nil
+	defer release()
+	if info, err := os.Stat(w.dir); err != nil || !info.IsDir() {
+		if err == nil {
+			err = fmt.Errorf("not a directory")
+		}
+		return fmt.Errorf("open the log directory: %w", err)
 	}
+	if err := w.rotate(path, int64(len(line)+1)); err != nil {
+		return fmt.Errorf("rotate the %s log: %w", stream, err)
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
-		return false, err
+		return fmt.Errorf("open the %s log: %w", stream, err)
 	}
-	return info.Size() != 0 && info.Size()+incoming > w.maxFileBytes, nil
+	_, writeErr := file.Write(append(line, '\n'))
+	closeErr := file.Close()
+	if writeErr != nil {
+		return fmt.Errorf("append the %s log: %w", stream, writeErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close the %s log: %w", stream, closeErr)
+	}
+	// The record is written and closed, so the append succeeded. Rotation is
+	// housekeeping after the fact: a file that could not be removed is not a
+	// reason to tell the caller its trace was not written.
+	w.prune(stream, now)
+	return nil
 }
 
 func (w *Writer) rotate(path string, incoming int64) error {
