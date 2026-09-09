@@ -138,12 +138,8 @@ help:
 playground-test: ## Test local playground argv, absence, audit and custody contracts
 	go test ./internal/distribution/cli -run '^Test(Playground|OpenForPlugin)' -count=1
 
-.PHONY: audit-test audit-evidence
-audit-test: build ## Observe one audit record per exec on a synthetic home
-	ROCA_BIN="$(CURDIR)/$(BIN)" ROCA_AUDIT_PUBLISHED_BIN= go test -tags acceptance ./test/acceptance -run '^TestCostAuditDestination$$' -count=1 -v
-
-audit-evidence: build ## Compare JSONL-only audit writes with an explicit published binary
-	@test -n "$(ROCA_AUDIT_PUBLISHED_BIN)" || (echo "ROCA_AUDIT_PUBLISHED_BIN is required"; exit 1)
+.PHONY: audit-test
+audit-test: build ## Observe audit writes, optionally comparing an explicit published binary
 	ROCA_BIN="$(CURDIR)/$(BIN)" ROCA_AUDIT_PUBLISHED_BIN="$(ROCA_AUDIT_PUBLISHED_BIN)" go test -tags acceptance ./test/acceptance -run '^TestCostAuditDestination$$' -count=1 -v
 
 # Optional extraction evidence uses an explicitly supplied published binary.

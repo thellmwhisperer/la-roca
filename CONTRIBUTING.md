@@ -103,12 +103,12 @@ cost assertions, and transcript locations.
 
 `make audit-test` executes the CLI in a synthetic home and asserts one JSONL
 record per successful or rejected `exec`, no growth of dormant ops history,
-and JSONL-only doctor reads. `make audit-evidence
+and JSONL-only doctor reads. `make audit-test
 ROCA_AUDIT_PUBLISHED_BIN=<absolute-published-binary>` requires the published
 control to reproduce the second ops write, then upgrades a separate synthetic
 home to the branch. It prints both versions, SHA-256 digests, and observed
 record counts; retain its output with delivery evidence. The delivery gate
-runs the paired target when that explicit variable is set. No live home or
+runs the paired comparison when that explicit variable is set. No live home or
 installed `roca` is selected. Storage removal and VACUUM proof are S2 of #353.
 
 `make snapshot-evidence ROCA_SNAPSHOT_PUBLISHED_BIN=<absolute-pinned-v1.82.3-binary>`

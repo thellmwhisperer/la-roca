@@ -20,7 +20,7 @@ incident:
 rule: >
   JSONL is the only audit destination. TestCostAuditDestination executes the
   CLI and observes one JSONL record per exec and zero ops audit growth;
-  make audit-evidence compares an explicit published binary with the branch.
+  make audit-test with ROCA_AUDIT_PUBLISHED_BIN compares the published binary with the branch.
   S1 removes the persistence/parity/backfill runtime. Dormant legacy tables
   remain until S2's separately validated storage-removal migration for #353.
 forbid:
