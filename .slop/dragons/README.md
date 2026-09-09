@@ -12,6 +12,10 @@ string is present in the tree fails the gate. `accepted` records are
 documented and still in the product; later wave tickets flip them to
 `removed` only when the forbid is actually gone.
 
+`forbid.strings` may use `prefix**suffix::text` to restrict a literal to
+matching paths; `**` crosses directory boundaries (D1 scopes published-binary
+lookups to internal test files). Unscoped literals keep their global scope.
+
 The gate uses the existing Go YAML decoder, including quoted escapes and inline
 lists. Every removed record must have a non-empty forbid. It scans Git-tracked
 files in the source/fixture roots declared once in `check_test.go`, including
