@@ -2,15 +2,18 @@ package cli
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
-	"go/parser"
-	"go/token"
+	"os"
+	"os/exec"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/jsonid"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
+	"modernc.org/sqlite"
 )
 
 func TestCrossConcatenationEnvelopeAndValues(t *testing.T) {
@@ -79,24 +82,38 @@ func TestCrossConcatenationEnvelopeAndValues(t *testing.T) {
 	}
 }
 
-// Cost is structural: gathering must not import a SQL driver/connection, and
-// deterministic input validation must not compile or run regular expressions.
-func TestCostCrossAndDeterministicQuestionDependencies(t *testing.T) {
-	for file, forbidden := range map[string][]string{
-		"commands.go":                      {"database/sql", "sqlite"},
-		"../../provider/query/question.go": {"regexp"},
-	} {
-		source, err := parser.ParseFile(token.NewFileSet(), file, nil, parser.ImportsOnly)
+func TestCostCrossNoSQLiteConnections(t *testing.T) {
+	if os.Getenv("ROCA_TEST_CROSS_CONNECTIONS") != "1" {
+		binary, err := os.Executable()
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, dependency := range source.Imports {
-			for _, name := range forbidden {
-				if strings.Contains(dependency.Path.Value, name) {
-					t.Errorf("%s reintroduced dependency %s", file, dependency.Path.Value)
-				}
-			}
+		cmd := exec.CommandContext(t.Context(), binary, "-test.run=^TestCostCrossNoSQLiteConnections$")
+		cmd.Env = append(os.Environ(), "ROCA_TEST_CROSS_CONNECTIONS=1")
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("connection cost check: %v\n%s", err, output)
 		}
+		return
+	}
+	var connections atomic.Int64
+	sqlite.RegisterConnectionHook(func(sqlite.ExecQuerierContext, string) error {
+		connections.Add(1)
+		return nil
+	})
+	database, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if err := database.PingContext(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := connections.Swap(0); got != 1 {
+		t.Fatalf("connection observer counted %d opens, want 1", got)
+	}
+	t.Run("gather", TestCrossConcatenationEnvelopeAndValues)
+	if got := connections.Load(); got != 0 {
+		t.Fatalf("gather opened %d SQLite connections, want 0", got)
 	}
 }
 

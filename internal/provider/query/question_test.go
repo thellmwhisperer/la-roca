@@ -3,6 +3,7 @@ package query_test
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/thellmwhisperer/la-roca/internal/provider/query"
 )
@@ -58,5 +59,30 @@ func TestDeterministicQuestionAcceptsPromptContent(t *testing.T) {
 		if err := query.ValidateQuestion(question); err != nil {
 			t.Errorf("searchable content %q was rejected: %v", question, err)
 		}
+	}
+}
+
+func TestCostDeterministicQuestionValidation(t *testing.T) {
+	question := strings.Repeat("ordinary search text ", 45)
+	shape := testing.Benchmark(func(b *testing.B) {
+		for b.Loop() {
+			if strings.TrimSpace(question) == "" || utf8.RuneCountInString(question) > query.MaxQuestionChars {
+				b.Fatal("invalid cost fixture")
+			}
+		}
+	})
+	validation := testing.Benchmark(func(b *testing.B) {
+		for b.Loop() {
+			if err := query.ValidateQuestion(question); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	t.Logf("shape check: %s; validation: %s", shape, validation)
+	if validation.AllocsPerOp() != 0 {
+		t.Errorf("validation allocated %d times per question, want 0", validation.AllocsPerOp())
+	}
+	if validation.NsPerOp() > 8*shape.NsPerOp() {
+		t.Errorf("validation cost %d ns exceeds 8x shape check %d ns", validation.NsPerOp(), shape.NsPerOp())
 	}
 }
