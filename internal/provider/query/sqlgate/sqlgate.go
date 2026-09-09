@@ -13,8 +13,9 @@
 //     Writes, ATTACH, PRAGMA and functions outside the list are denied by the
 //     callback, so a DELETE does not slip through merely because prepare would
 //     succeed on a query_only connection.
-//   - LIMIT: imposed on the original text with the same numeric-literal
-//     guarantee as before, including both SQLite forms and a trailing comment.
+//   - LIMIT: Validate imposes it on the original text, including both SQLite
+//     forms and a trailing comment. ValidateCursor leaves row bounds to its
+//     consumer; see that method's contract.
 //
 // The verdict messages are contract surface and the acceptance suite quotes
 // them literally.
@@ -31,7 +32,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/data"
 )
 
-// MaxLimit is the cap the gate guarantees.
+// MaxLimit is the total row cap enforced by Validate, not ValidateCursor.
 const MaxLimit = 1000
 
 // invisibleTables are the ones that exist in the schema but are not queryable:

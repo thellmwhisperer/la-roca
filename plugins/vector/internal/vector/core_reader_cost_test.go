@@ -173,11 +173,13 @@ SELECT 'lab',i,'synthetic reader text ' || i,'2026-01-01' FROM n;`)
 					if err != nil || delta.Added < count {
 						t.Fatalf("full ingest: %+v: %v", delta, err)
 					}
+					fmt.Fprintf(&transcript, "branch ingest result: %d chunks added\n", delta.Added)
 				} else {
 					result, err := federation.Query(context.Background(), "synthetic reader", 3, "corpus")
 					if err != nil || len(result.Results) != 3 {
 						t.Fatalf("query: %+v: %v", result, err)
 					}
+					fmt.Fprintf(&transcript, "branch query result: %d neighbours returned\n", len(result.Results))
 				}
 				starts, err := os.ReadFile(accounting)
 				if err != nil {
@@ -190,7 +192,10 @@ SELECT 'lab',i,'synthetic reader text ' || i,'2026-01-01' FROM n;`)
 			}
 		}
 	}
-	dir := filepath.Join(root, ".tmp", "d4-evidence")
+	dir := os.Getenv("ROCA_READER_EVIDENCE_DIR")
+	if dir == "" {
+		dir = filepath.Join(root, ".tmp", "d4-evidence")
+	}
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)
 	}

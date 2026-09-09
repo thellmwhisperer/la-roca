@@ -30,9 +30,8 @@ const (
 	defaultBatchSize    = 64
 	walkPageSize        = 500
 	vectorStorageSchema = "vector-v2"
-	// maxUnresolvedCandidates bounds a query against an index the corpus has moved
-	// under. Each resolution is one `roca exec` process, so a wholly stale index
-	// would otherwise spend one process per candidate to answer nothing.
+	// maxUnresolvedCandidates bounds futile source lookups when the corpus has
+	// moved under the index, even though lookups now share the query's reader.
 	maxUnresolvedCandidates = 32
 )
 
