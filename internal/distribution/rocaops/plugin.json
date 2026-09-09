@@ -10,18 +10,17 @@
       "alias": "plugin_roca_ops",
       "attachment": "resident",
       "custody": true,
-      "retention": "The ops plugin retains operational memory and redacted call history until its own explicit policy expires them; it never prunes corpus or cron."
+      "retention": "The ops plugin retains operational memory until its own explicit policy expires them; it never prunes corpus or cron."
     }
   ],
   "semantic": {
     "databases": [
       {
         "database": "ops",
-        "description": "Durable operational memories and redacted CLI and MCP call history.",
+        "description": "Durable operational memories.",
         "questions": [
           "What did agents write or hand off?",
-          "Which operational decisions, questions, reviews, or issues exist?",
-          "Which historical CLI or MCP calls were retained before JSONL-only auditing?"
+          "Which operational decisions, questions, reviews, or issues exist?"
         ],
         "tables": [
           {
@@ -44,22 +43,6 @@
             "name": "legacy_records",
             "description": "Quarantined agent-coordination and query-teaching records retained without pretending they are active v1 surfaces.",
             "columns": ["canonical_digest", "record_type", "payload"]
-          },
-          {
-            "name": "call_history",
-            "description": "Dormant historical CLI and MCP call history pending removal; current call history lives only in JSONL.",
-            "questions": ["Which historical CLI or MCP calls were retained before JSONL-only auditing?"],
-            "columns": ["id", "timestamp", "stream", "source", "operation", "args", "ok", "error", "error_type", "duration_ms", "correlation_id", "question", "sql", "raw_sql", "sql_provider", "sql_model", "row_count", "degraded", "fallback_reason", "retry_reason", "queryplan", "provider_note", "path", "retried", "retried_sql", "retry_type", "model_sql", "model_sql_present", "first_model_sql", "sql_provider_latency_ms", "sql_inference_ms", "sql_retry_provider_latency_ms", "sql_retry_inference_ms", "execution_ms", "interpretation_provider", "interpretation_model", "interpretation_ms", "source_file", "source_line", "record_digest", "record_json", "created_at"]
-          },
-          {
-            "name": "call_history_segments",
-            "description": "Dormant import bookkeeping for historical JSONL segments; no new segments are imported.",
-            "columns": ["source_file", "stream", "content_digest", "byte_size", "line_count", "parsed_count", "malformed_count", "imported_at"]
-          },
-          {
-            "name": "call_history_state",
-            "description": "Dormant historical parity marker; doctor reads call history only from JSONL.",
-            "columns": ["singleton", "parity_verified", "malformed_lines", "unreadable_files", "checked_at"]
           },
           {
             "name": "plugin_schema",
