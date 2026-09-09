@@ -1,6 +1,6 @@
 schema: 1
 id: D11
-status: accepted
+status: removed
 category: adjacent_feature
 title: "remote cross copies Go results into in-memory SQLite to concatenate them"
 created_at: 2026-09-08
@@ -21,9 +21,12 @@ incident:
 rule: >
   Concatenate result lists in origin order, add origin, fill missing columns;
   keep types and the envelope. Do not open a SQLite connection on that path.
+  TestCostCrossNoSQLiteConnections observes zero SQLite connections while running
+  the gather regressions, with a real connection as a positive control in an
+  isolated subprocess; existing remote fixtures pin ordering and exact IDs.
 forbid:
   paths: []
   symbols:
     - "loadCrossTable"
-    - "gatherCross"
+    - "sqliteValue"
   strings: []
