@@ -162,7 +162,7 @@ migrate-test: build ## Measure D2 against published and branch binaries on one l
 # D3's paired baseline is opt-in; the branch cost runs in ordinary acceptance.
 ROCA_FTS_PUBLISHED_BIN ?=
 .PHONY: vector-reader-test
-vector-reader-test: ## Measure D4 on a synthetic lab, optionally against v1.84.1
+vector-reader-test: ## Measure D4 on a synthetic lab; requires explicit v1.84.1 binary
 	CGO_ENABLED=0 go -C plugins/vector test ./internal/vector -run '^TestCostCoreReader$$' -count=1 -v
 
 .PHONY: fts-test

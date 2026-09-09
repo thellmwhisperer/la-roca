@@ -138,10 +138,10 @@ func TestQueryExpandedResolvesSessionSnippetsFromTheCatalog(t *testing.T) {
 		Plugin: "roca-corpus", Database: "corpus", Alias: "plugin_roca_corpus", Source: "plugin:roca-corpus",
 	}}})
 	embedder := &liftEmbedder{}
-	federation, err := LoadFederation(CoreCLI{Executable: "roca", Run: databaseScopeRunner(
+	federation, err := LoadFederation(CoreCLI{Executable: "roca", readRequest: readerFixture(databaseScopeRunner(
 		sqliteExecRunner(t, map[string]string{"plugin_roca_corpus": corpusPath}),
 		[]DatabaseSelection{{Source: "plugin:roca-corpus", Database: "corpus"}},
-	)}, root, DefaultModel, "v-sessions", embedder, nil)
+	))}, root, DefaultModel, "v-sessions", embedder, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,19 +177,16 @@ func TestQueryExpandedBatchesDeclaredSourceResolution(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	run := federation.Core.Run
+	run := federation.Core.readRequest
 	resolutionCalls := 0
-	federation.Core.Run = func(ctx context.Context, executable string, args ...string) ([]byte, error) {
-		for _, arg := range args {
-			if arg == "exec" {
-				resolutionCalls++
-				if resolutionCalls > len(ExpandedQueries("batch")) {
-					return nil, fmt.Errorf("source resolution process budget exceeded")
-				}
-				break
+	federation.Core.readRequest = func(ctx context.Context, core CoreCLI, request map[string]any, result any) error {
+		if request["sql"] != nil {
+			resolutionCalls++
+			if resolutionCalls > len(ExpandedQueries("batch")) {
+				return fmt.Errorf("source resolution process budget exceeded")
 			}
 		}
-		return run(ctx, executable, args...)
+		return run(ctx, core, request, result)
 	}
 
 	result, err := federation.QueryExpanded(context.Background(), "batch", 10, "corpus", 0)

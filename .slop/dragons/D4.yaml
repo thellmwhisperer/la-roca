@@ -28,10 +28,5 @@ forbid:
   strings:
     - 'plugins/vector/**/core.go::run = runCommand'
 cost_test: >
-  CGO_ENABLED=0 go test ./internal/vector -run TestCostCoreReader -count=1
-  from plugins/vector scans all declared source families on 30k synthetic
-  exchanges and resolves neighbour texts: at most one actual helper launch,
-  at least 5x faster than the former 500-row process path on the same lab.
-  It also runs full Federation.Ingest and Query without a test-owned reader
-  context and requires one helper each. ROCA_READER_PUBLISHED_BIN adds the
-  pinned v1.84.1 comparison; no live federation is measured.
+  See docs/d4-reader-evidence.md for the opt-in published-binary comparison
+  and the ordinary reader-operation regression.
