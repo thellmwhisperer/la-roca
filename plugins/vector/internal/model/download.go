@@ -43,7 +43,7 @@ func Existing(dataDir string, manifest Manifest) (string, error) {
 		return "", err
 	}
 	path := FilePath(dataDir, manifest)
-	if !validModelFile(path, manifest) {
+	if !verifiedModelFile(path, manifest) {
 		return "", ErrNotDownloaded
 	}
 	return path, nil
@@ -54,7 +54,7 @@ func Ensure(ctx context.Context, dataDir string, manifest Manifest, sink engine.
 		return "", err
 	}
 	path := FilePath(dataDir, manifest)
-	if validModelFile(path, manifest) {
+	if verifiedModelFile(path, manifest) {
 		emit(sink, engine.Result("download", "embedding model: ready"))
 		return path, nil
 	}
@@ -66,7 +66,7 @@ func Ensure(ctx context.Context, dataDir string, manifest Manifest, sink engine.
 		return "", fmt.Errorf("lock the embedding model download: %w", err)
 	}
 	defer release()
-	if validModelFile(path, manifest) {
+	if verifiedModelFile(path, manifest) {
 		emit(sink, engine.Result("download", "embedding model: ready"))
 		return path, nil
 	}
@@ -102,10 +102,8 @@ func validateManifest(manifest Manifest) error {
 	return nil
 }
 
-func validModelFile(path string, manifest Manifest) bool {
-	current, err := os.Stat(path)
-	return err == nil && current.Size() == manifest.Bytes &&
-		verifyFile(path, manifest.SHA256, manifest.Bytes) == nil
+func verifiedModelFile(path string, manifest Manifest) bool {
+	return verifyModelFile(path, manifest.SHA256, manifest.Bytes, true) == nil
 }
 
 func download(ctx context.Context, manifest Manifest, partial string, sink engine.Sink) error {
@@ -169,17 +167,30 @@ func download(ctx context.Context, manifest Manifest, partial string, sink engin
 }
 
 func verifyFile(path, wantSHA string, wantBytes int64) error {
+	return verifyModelFile(path, wantSHA, wantBytes, false)
+}
+
+func verifyModelFile(path, wantSHA string, wantBytes int64, reuse bool) error {
 	file, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("read the embedding model: %w", err)
 	}
 	defer file.Close()
+	unlock, err := lockVerification(file)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	info, err := file.Stat()
 	if err != nil {
 		return err
 	}
-	if info.Size() != wantBytes {
+	if !info.Mode().IsRegular() || info.Size() != wantBytes {
 		return fmt.Errorf("the embedding model is %d bytes, want %d", info.Size(), wantBytes)
+	}
+	identity := verifiedIdentity(info, wantSHA)
+	if reuse && identity != "" && readVerification(file) == identity {
+		return nil
 	}
 	digest := sha256.New()
 	if _, err := io.Copy(digest, file); err != nil {
@@ -189,6 +200,13 @@ func verifyFile(path, wantSHA string, wantBytes int64) error {
 	if got != wantSHA {
 		return fmt.Errorf("the embedding model did not match its pinned checksum")
 	}
+	after, err := file.Stat()
+	if err != nil || !os.SameFile(info, after) || after.Size() != info.Size() || !after.ModTime().Equal(info.ModTime()) {
+		return fmt.Errorf("the embedding model changed during verification")
+	}
+	// Metadata is an optimization; unsupported or read-only filesystems retain
+	// full verification. The receipt stays with this inode across install rename.
+	writeVerification(file, identity)
 	return nil
 }
 
