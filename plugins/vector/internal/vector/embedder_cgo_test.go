@@ -5,6 +5,7 @@ package vector
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -41,6 +42,71 @@ func (e *blockingEngine) Embed(string) ([]float32, int, error) {
 }
 
 func (e *blockingEngine) Close() {}
+
+type nativeEngineFunc func(string) ([]float32, int, error)
+
+func (f nativeEngineFunc) Embed(text string) ([]float32, int, error) { return f(text) }
+func (nativeEngineFunc) Close()                                      {}
+
+func TestNativeEmbedBatchWatchdog(t *testing.T) {
+	previous := nativeCallTimeout
+	nativeCallTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { nativeCallTimeout = previous })
+	for _, tc := range []struct {
+		name     string
+		stall    bool
+		deadline time.Duration
+		wantErr  error
+	}{
+		{name: "progressing batch exceeds operation timeout"},
+		{name: "later operation stalls", stall: true, wantErr: errNativeTrapped},
+		{name: "caller deadline bounds batch", deadline: 80 * time.Millisecond, wantErr: context.DeadlineExceeded},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			release := make(chan struct{})
+			defer close(release)
+			var calls atomic.Int32
+			native := &Native{engine: nativeEngineFunc(func(string) ([]float32, int, error) {
+				if calls.Add(1) == 2 && tc.stall {
+					<-release
+				}
+				time.Sleep(10 * time.Millisecond)
+				return []float32{1, 0}, 1, nil
+			})}
+			trapped := make(chan string, 1)
+			EnableWorkerRestartOnNativeTrap(native, func(element string) error {
+				trapped <- element
+				return nil
+			})
+			ctx := context.Background()
+			if tc.deadline > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, tc.deadline)
+				defer cancel()
+			}
+			input := slices.Repeat([]string{"later"}, 64)
+			input[0] = "first"
+			vectors, err := native.Embed(ctx, DefaultModel, input)
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("Embed error = %v, want %v", err, tc.wantErr)
+			}
+			if tc.wantErr == nil {
+				if len(vectors) != len(input) || calls.Load() != int32(len(input)) {
+					t.Fatalf("vectors = %d, calls = %d, want %d", len(vectors), calls.Load(), len(input))
+				}
+			} else if vectors != nil || calls.Load() >= int32(len(input)) {
+				t.Fatalf("interrupted batch returned vectors or finished: vectors = %d, calls = %d", len(vectors), calls.Load())
+			}
+			if tc.stall {
+				if element := <-trapped; element != nativeElementIdentity(input[1]) {
+					t.Fatalf("trapped element = %s, want second input", element)
+				}
+			} else if err := native.TerminalError(); err != nil {
+				t.Fatalf("healthy engine marked trapped: %v", err)
+			}
+		})
+	}
+}
 
 func TestNativeEmbedFailsInsteadOfHanging(t *testing.T) {
 	previous := nativeCallTimeout

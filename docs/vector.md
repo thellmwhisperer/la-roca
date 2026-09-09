@@ -68,7 +68,8 @@ One worker line says whether a pass is running, its pid, backend (`cpu` or
 `metal`), and current database. Backend and database are unknown unless they
 can be attributed to that live worker. Its claim is run-scoped and bound to the
 process-start identity, so PID reuse cannot revive activity from an earlier
-run; a scheduled current database is cleared when its embedding call ends.
+run; a scheduled current database follows the
+[batch lifecycle](#index-declared-databases).
 Status never uses historical telemetry, waits for the model, or waits
 indefinitely for count work. Default output is bounded AXI; `--json` is the
 complete envelope; `help[]` names the next command. Registry or command errors
@@ -172,8 +173,11 @@ Engine telemetry records the selected backend and decision in
 `bulk build default`, or `indexing leaves the accelerator for live search`.
 An engine-level reason such as `accelerator init failed` takes precedence over
 the policy reason. Each native engine instance serializes model opens and
-embeddings. A caller waits no longer than ten minutes (or its earlier deadline).
-Once native work begins, a timeout asks llama.cpp to abort. Reaching the internal
+embeddings. Waiting for that engine is bounded by ten minutes. Once acquired,
+model opening and each individual embedding have separate ten-minute watchdogs;
+a progressing batch can take longer overall. The caller's earlier deadline or
+cancellation still bounds the whole call. Once native work begins, a timeout
+asks llama.cpp to abort. Reaching the internal
 cap marks the native engine as trapped: a one-shot command reports `semantic
 search stalled`, while a resident reports the terminal error before closing its
 transport. A resumable background worker instead cancels and reaps its active
@@ -255,7 +259,7 @@ columns exist. `--reembed` rebuilds a sidecar under that policy. It is
 resumable: interrupting and running it again continues, and it does not
 duplicate chunks. A partially rebuilt sidecar can contain multiple chunk
 generations; queries search all of them while re-embedding continues. Progress
-prints counts, rate, and ETA, newest rows first.
+prints counts, rate, and ETA at batch boundaries.
 
 The worker fingerprints each database (including its SQLite WAL) through
 `pkg/incrementality` and skips the row sweep when both source and declaration
@@ -271,9 +275,17 @@ bounded exec path with an explicit 30-second statement timeout, independent
 of the interactive query timeout; serving lookups keep the configured
 interactive query budget.
 
-Across declared databases, the scheduler waits one second to gather the newest
-ready work, then embeds what is available rather than waiting for a silent
-peer. Scanning, reconciliation, and embedding all count as progress. If none of
+Across declared databases, indexing uses batches of up to 64 chunks from one
+database, with a smaller final batch. Newest-first ordering compares the first
+chunk of each ready batch; chunks within a selected batch stay together. The
+scheduler waits one second to gather ready batches, then embeds what is
+available rather than waiting for a silent peer. Each batch commits its chunks,
+embeddings, and source progress in one transaction. An interrupted batch leaves
+that transaction uncommitted; a later pass reuses previously committed chunks
+whose fingerprints still match. Worker activity records the selected database
+before embedding each batch and clears it when that embedding call ends.
+
+Scanning, reconciliation, and embedding all count as progress. If none of
 them progresses for 30 minutes, the worker exits with `indexing stalled
 waiting for embedding work`; `worker.log` and `completion.json` retain the
 failure.
