@@ -59,7 +59,7 @@ func TestReportVectorizationReadsSidecarFactsAndNeverInventZero(t *testing.T) {
 	}
 	writeSidecarWithChunks(t, SidecarPath(opsPath), ops.owner(), 4, map[string]string{
 		"contract": ops.contractFingerprint(), "source_fingerprint": "sealed-ops",
-		sourceMarkerMetaKey: opsMarker,
+		sourceMarkerMetaKey: opsMarker, "completed_chunks": "1", "completed_generation": opsMarker,
 	})
 	activeDatabase := corpus.owner()
 	if err := updateWorkerActivity(state, "metal", &activeDatabase); err != nil {
@@ -113,8 +113,8 @@ func TestReportVectorizationReadsSidecarFactsAndNeverInventZero(t *testing.T) {
 	if corpusRow.EmbeddedChunks == nil || *corpusRow.EmbeddedChunks != 7 {
 		t.Fatalf("corpus embedded = %v, want 7", corpusRow.EmbeddedChunks)
 	}
-	if corpusRow.CandidateChunks == nil || *corpusRow.CandidateChunks != 3 {
-		t.Fatalf("corpus candidates = %v, want 3", corpusRow.CandidateChunks)
+	if corpusRow.CandidateChunks != nil {
+		t.Fatalf("unfinished corpus candidates = %v, want unknown", corpusRow.CandidateChunks)
 	}
 	if corpusRow.SidecarBytes == nil || *corpusRow.SidecarBytes <= 0 {
 		t.Fatalf("corpus sidecar bytes = %v", corpusRow.SidecarBytes)
@@ -189,7 +189,7 @@ func TestReportVectorizationReadsSidecarFactsAndNeverInventZero(t *testing.T) {
 	}
 }
 
-func TestReportVectorizationUnknownNeverBecomesZeroOnAHungSourceCount(t *testing.T) {
+func TestReportVectorizationUnknownNeverBecomesZeroWithoutACompletedCount(t *testing.T) {
 	root := t.TempDir()
 	corpus := vectorDatabase{
 		Plugin: "roca-corpus", Database: "corpus", Path: "roca-corpus.db", Alias: "corpus",
@@ -198,16 +198,6 @@ func TestReportVectorizationUnknownNeverBecomesZeroOnAHungSourceCount(t *testing
 	writeRegistry(t, root, vectorRegistry{Schema: 2, Databases: []vectorDatabase{corpus}})
 	writeSidecarWithChunks(t, SidecarPath(filepath.Join(root, corpus.Plugin, corpus.Path)),
 		corpus.owner(), 5, nil)
-
-	previous := candidateCountTimeout
-	candidateCountTimeout = 30 * time.Millisecond
-	t.Cleanup(func() { candidateCountTimeout = previous })
-	countDeclaredChunks = func(context.Context, vectorDatabase, string) (candidateChunkSnapshot, error) {
-		time.Sleep(200 * time.Millisecond)
-		zero := int64(0)
-		return candidateChunkSnapshot{Chunks: &zero, SourceMarker: "unreadable"}, nil
-	}
-	t.Cleanup(func() { countDeclaredChunks = readDeclaredChunkCount })
 
 	started := time.Now()
 	report, err := ReportVectorization(context.Background(), StatusRequest{PluginRoot: root})
@@ -316,6 +306,14 @@ func TestReportVectorizationCountsDeclaredChunksExactly(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	federation, err := LoadFederation(CoreCLI{Executable: "fixture", Run: sqliteExecRunner(t, map[string]string{"corpus": path})}, root, DefaultModel, "test", &recordingEmbedder{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := federation.Ingest(context.Background(), ""); err != nil {
+		t.Fatal(err)
+	}
+
 	report, err := ReportVectorization(context.Background(), StatusRequest{PluginRoot: root})
 	if err != nil {
 		t.Fatal(err)
@@ -343,44 +341,9 @@ func TestReportVectorizationHidesCandidateCountFromOlderSourceSnapshot(t *testin
 	initialMarker := marker
 	writeSidecarWithChunks(t, SidecarPath(path), database.owner(), 1, map[string]string{
 		"contract": database.contractFingerprint(), "source_fingerprint": "sealed",
-		sourceMarkerMetaKey: marker,
+		sourceMarkerMetaKey: marker, "completed_chunks": "1", "completed_generation": marker,
 	})
 
-	type countResult struct {
-		snapshot candidateChunkSnapshot
-		err      error
-	}
-	counted := make(chan countResult, 1)
-	release := make(chan struct{})
-	released := false
-	defer func() {
-		if !released {
-			close(release)
-		}
-	}()
-	countDeclaredChunks = func(ctx context.Context, database vectorDatabase, path string) (candidateChunkSnapshot, error) {
-		snapshot, err := readDeclaredChunkCount(ctx, database, path)
-		counted <- countResult{snapshot: snapshot, err: err}
-		<-release
-		return snapshot, err
-	}
-	t.Cleanup(func() { countDeclaredChunks = readDeclaredChunkCount })
-	type reportResult struct {
-		report Vectorization
-		err    error
-	}
-	reported := make(chan reportResult, 1)
-	go func() {
-		report, err := ReportVectorization(context.Background(), StatusRequest{PluginRoot: root})
-		reported <- reportResult{report: report, err: err}
-	}()
-	count := <-counted
-	if count.err != nil {
-		t.Fatal(count.err)
-	}
-	if count.snapshot.Chunks == nil || *count.snapshot.Chunks != 1 {
-		t.Fatalf("candidate snapshot = %+v, want 1", count.snapshot)
-	}
 	source := openTestSQLite(t, path)
 	if _, err := source.Exec(`INSERT INTO notes VALUES ('b','bravo')`); err != nil {
 		source.Close()
@@ -404,39 +367,13 @@ func TestReportVectorizationHidesCandidateCountFromOlderSourceSnapshot(t *testin
 	if marker == initialMarker {
 		t.Fatal("source marker did not change after the source commit")
 	}
-	sidecar := openTestSQLite(t, SidecarPath(path))
-	tx, err := sidecar.Begin()
+	report, err := ReportVectorization(context.Background(), StatusRequest{PluginRoot: root})
 	if err != nil {
-		sidecar.Close()
 		t.Fatal(err)
 	}
-	if _, err := tx.Exec(`INSERT INTO chunks(source_kind,source_id,text_column,chunk_index,fingerprint,locator)
-		VALUES('notes','id-1','body',0,'fp','loc-1')`); err != nil {
-		tx.Rollback()
-		sidecar.Close()
-		t.Fatal(err)
-	}
-	if _, err := tx.Exec(`INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)`, sourceMarkerMetaKey, marker); err != nil {
-		tx.Rollback()
-		sidecar.Close()
-		t.Fatal(err)
-	}
-	if err := tx.Commit(); err != nil {
-		sidecar.Close()
-		t.Fatal(err)
-	}
-	if err := sidecar.Close(); err != nil {
-		t.Fatal(err)
-	}
-	close(release)
-	released = true
-	result := <-reported
-	if result.err != nil {
-		t.Fatal(result.err)
-	}
-	row := result.report.Databases[0]
-	if row.State != StateComplete || row.EmbeddedChunks == nil || *row.EmbeddedChunks != 2 {
-		t.Fatalf("updated sidecar snapshot = %+v, want complete with 2 chunks", row)
+	row := report.Databases[0]
+	if row.State != StateOutdated {
+		t.Fatalf("changed source state = %s", row.State)
 	}
 	if row.CandidateChunks != nil {
 		t.Fatalf("older candidate snapshot was reported: %+v", row)
@@ -459,7 +396,7 @@ func TestReportVectorizationMarksChangedCompletedSourceOutdated(t *testing.T) {
 	}
 	writeSidecarWithChunks(t, SidecarPath(path), database.owner(), 1, map[string]string{
 		"contract": database.contractFingerprint(), "source_fingerprint": "sealed",
-		sourceMarkerMetaKey: marker,
+		sourceMarkerMetaKey: marker, "completed_chunks": "1", "completed_generation": marker,
 	})
 
 	report, err := ReportVectorization(context.Background(), StatusRequest{PluginRoot: root})
@@ -567,13 +504,23 @@ func TestReportVectorizationRejectsFileFactsFromOlderSidecarGeneration(t *testin
 	writer := openTestSQLite(t, sidecar)
 	t.Cleanup(func() { _ = writer.Close() })
 
-	previous := countDeclaredChunks
-	countDeclaredChunks = func(context.Context, vectorDatabase, string) (candidateChunkSnapshot, error) {
-		_, err := writer.Exec(`INSERT INTO chunks(source_kind,source_id,text_column,chunk_index,fingerprint,locator)
-			VALUES('notes','id-new','body',0,'fp-new','loc-new')`)
-		return candidateChunkSnapshot{}, err
+	previous := statVectorFile
+	calls := 0
+	statVectorFile = func(path string) (os.FileInfo, error) {
+		info, err := previous(path)
+		if path == sidecar+"-shm" {
+			calls++
+			if calls == 2 {
+				_, writeErr := writer.Exec(`INSERT INTO chunks(source_kind,source_id,text_column,chunk_index,fingerprint,locator)
+				VALUES('notes','id-new','body',0,'fp-new','loc-new')`)
+				if writeErr != nil {
+					t.Fatal(writeErr)
+				}
+			}
+		}
+		return info, err
 	}
-	t.Cleanup(func() { countDeclaredChunks = previous })
+	t.Cleanup(func() { statVectorFile = previous })
 
 	report, err := ReportVectorization(context.Background(), StatusRequest{PluginRoot: root})
 	if err != nil {
@@ -650,20 +597,20 @@ func TestSourceFileMarkerRejectsCheckpointGenerationMix(t *testing.T) {
 	}
 }
 
-func TestStableDatabaseIdentityRejectsAChangedSourceSnapshot(t *testing.T) {
+func TestVerifiedDatabaseIdentityRejectsAChangedSourceSnapshot(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "source.db")
 	if err := os.WriteFile(path, []byte("before"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	old := fingerprintVectorSource
-	fingerprintVectorSource = func(string, string) (string, error) {
+	old := hashVectorSource
+	hashVectorSource = func(string, string) (string, error) {
 		if err := os.WriteFile(path, []byte("after-state"), 0o600); err != nil {
 			return "", err
 		}
 		return "fingerprint", nil
 	}
-	t.Cleanup(func() { fingerprintVectorSource = old })
-	if _, _, err := stableDatabaseIdentity(path, "contract"); !errors.Is(err, errSourceChanged) {
+	t.Cleanup(func() { hashVectorSource = old })
+	if _, _, err := verifiedDatabaseIdentity(path, "contract"); !errors.Is(err, errSourceChanged) {
 		t.Fatalf("changed source identity error = %v, want %v", err, errSourceChanged)
 	}
 }

@@ -86,6 +86,7 @@ type Federation struct {
 	Notice         func(string)
 	Progress       func(IngestProgress)
 	Reembed        bool
+	Verify         bool
 	Events         engine.Sink
 	WorkerStateDir string
 	databases      []vectorDatabase
@@ -684,7 +685,24 @@ func (f Federation) Ingest(ctx context.Context, sourceKind string) (FederationDe
 			return FederationDelta{}, err
 		}
 		contract := database.contractFingerprint()
-		fingerprint, marker, err := stableDatabaseIdentity(databasePath, contract)
+		if sourceKind == "" && !f.Reembed && !f.Verify {
+			marker, markerErr := sourceFileMarker(databasePath)
+			if markerErr == nil {
+				delta, unchangedErr := unchangedSidecar(sidecar, database.owner(), f.Model, contract, sourceMarkerMetaKey, marker)
+				if unchangedErr == nil {
+					after, err := sourceFileMarker(databasePath)
+					if err == nil && after == marker {
+						result.add(database.owner(), delta)
+						continue
+					}
+					unchangedErr = errSidecarChanged
+				}
+				if !errors.Is(unchangedErr, errSidecarChanged) {
+					return FederationDelta{}, unchangedErr
+				}
+			}
+		}
+		fingerprint, marker, err := verifiedDatabaseIdentity(databasePath, contract)
 		if err != nil {
 			if preparationErr == nil {
 				preparationErr = fmt.Errorf("identify vector source %s: %w", database.owner(), err)
@@ -692,9 +710,9 @@ func (f Federation) Ingest(ctx context.Context, sourceKind string) (FederationDe
 			continue
 		}
 		if sourceKind == "" && !f.Reembed {
-			delta, unchangedErr := unchangedSidecar(sidecar, database.owner(), f.Model, contract, fingerprint)
+			delta, unchangedErr := unchangedSidecar(sidecar, database.owner(), f.Model, contract, "source_fingerprint", fingerprint)
 			if unchangedErr == nil {
-				if err := sealSidecar(sidecar, database.owner(), f.Model, f.BuildVersion, contract, fingerprint, marker); err != nil {
+				if err := sealSidecar(sidecar, database.owner(), f.Model, f.BuildVersion, contract, fingerprint, marker, delta); err != nil {
 					return FederationDelta{}, err
 				}
 				result.add(database.owner(), delta)
@@ -704,7 +722,7 @@ func (f Federation) Ingest(ctx context.Context, sourceKind string) (FederationDe
 				return FederationDelta{}, unchangedErr
 			}
 		}
-		if err := claimSidecar(sidecar, database.owner(), f.BuildVersion, contract, sourceKind == ""); err != nil {
+		if err := claimSidecar(sidecar, database.owner(), f.BuildVersion, contract); err != nil {
 			return FederationDelta{}, err
 		}
 		jobs = append(jobs, &ingestJob{database: database, reader: reader, sidecar: sidecar,
@@ -752,11 +770,14 @@ func (f Federation) Ingest(ctx context.Context, sourceKind string) (FederationDe
 		}
 		storedFingerprint, storedMarker := "", ""
 		if sourceKind == "" {
-			storedFingerprint = job.fingerprint
-			storedMarker = job.marker
+			after, err := sourceFileMarker(f.databasePath(job.database))
+			if err == nil && after == job.marker {
+				storedFingerprint = job.fingerprint
+				storedMarker = job.marker
+			}
 		}
 		if err := sealSidecar(job.sidecar, job.database.owner(), f.Model, f.BuildVersion,
-			job.contract, storedFingerprint, storedMarker); err != nil {
+			job.contract, storedFingerprint, storedMarker, job.delta); err != nil {
 			return FederationDelta{}, err
 		}
 		result.add(job.database.owner(), job.delta)
@@ -1495,17 +1516,17 @@ func (d DeclaredCorpus) hasTable(name string) bool {
 }
 
 var (
-	errSidecarChanged       = errors.New("sidecar source changed")
-	errSourceChanged        = errors.New("vector source changed while it was inspected")
-	fingerprintVectorSource = databaseFingerprint
+	errSidecarChanged = errors.New("sidecar source changed")
+	errSourceChanged  = errors.New("vector source changed while it was inspected")
+	hashVectorSource  = databaseFingerprint
 )
 
-func stableDatabaseIdentity(path, contract string) (string, string, error) {
+func verifiedDatabaseIdentity(path, contract string) (string, string, error) {
 	before, err := sourceFileMarker(path)
 	if err != nil {
 		return "", "", err
 	}
-	fingerprint, err := fingerprintVectorSource(path, contract)
+	fingerprint, err := hashVectorSource(path, contract)
 	if err != nil {
 		return "", "", err
 	}
@@ -1526,7 +1547,7 @@ func databaseFingerprint(path, contract string) (string, error) {
 	})
 }
 
-func unchangedSidecar(path, owner, model, contract, sourceFingerprint string) (Delta, error) {
+func unchangedSidecar(path, owner, model, contract, identityKey, identity string) (Delta, error) {
 	store, err := openSQLite(path, true)
 	if err != nil {
 		if os.IsNotExist(err) || strings.Contains(err.Error(), "unable to open database file") {
@@ -1535,9 +1556,9 @@ func unchangedSidecar(path, owner, model, contract, sourceFingerprint string) (D
 		return Delta{}, fmt.Errorf("inspect vector sidecar for %s: %w", owner, err)
 	}
 	defer store.Close()
-	metadata, err := readMetadata(store, "owner", "model", "dimensions", "contract", "source_fingerprint")
+	metadata, err := readMetadata(store, "owner", "model", "dimensions", "contract", identityKey)
 	if err != nil || metadata["owner"] != owner || metadata["model"] != model ||
-		metadata["contract"] != contract || metadata["source_fingerprint"] != sourceFingerprint {
+		metadata["contract"] != contract || identity == "" || metadata[identityKey] != identity {
 		return Delta{}, errSidecarChanged
 	}
 	if dimensions, _ := strconv.Atoi(metadata["dimensions"]); dimensions == 0 {
@@ -1552,6 +1573,18 @@ func unchangedSidecar(path, owner, model, contract, sourceFingerprint string) (D
 		return Delta{}, errSidecarChanged
 	}
 	var chunks, sources int
+	counts, countErr := readMetadata(store, "completed_chunks", "completed_sources", "completed_generation", sourceMarkerMetaKey)
+	if countErr == nil && counts["completed_generation"] != "" && counts["completed_generation"] == counts[sourceMarkerMetaKey] {
+		var err error
+		chunks, err = strconv.Atoi(counts["completed_chunks"])
+		sources, countErr = strconv.Atoi(counts["completed_sources"])
+		if err == nil && countErr == nil && chunks >= 0 && sources >= 0 {
+			return Delta{Unchanged: chunks, Chunks: chunks, Sources: sources}, nil
+		}
+	}
+	if identityKey == sourceMarkerMetaKey {
+		return Delta{}, errSidecarChanged
+	}
 	if err := store.QueryRow(`SELECT COUNT(*) FROM chunks`).Scan(&chunks); err != nil {
 		return Delta{}, errSidecarChanged
 	}
@@ -1655,7 +1688,7 @@ func InitOwnedSidecar(path, owner, model string) error {
 	return sealSidecar(path, owner, model, "", "", "", "")
 }
 
-func sealSidecar(path, owner, model, buildVersion, contract, sourceFingerprint, sourceMarker string) error {
+func sealSidecar(path, owner, model, buildVersion, contract, sourceFingerprint, sourceMarker string, completed ...Delta) error {
 	values := map[string]string{
 		"owner": owner, "model": model, "version": buildVersion, "contract": contract,
 	}
@@ -1664,6 +1697,11 @@ func sealSidecar(path, owner, model, buildVersion, contract, sourceFingerprint, 
 	}
 	if sourceMarker != "" {
 		values[sourceMarkerMetaKey] = sourceMarker
+		if len(completed) == 1 {
+			values["completed_generation"] = sourceMarker
+			values["completed_chunks"] = strconv.Itoa(completed[0].Chunks)
+			values["completed_sources"] = strconv.Itoa(completed[0].Sources)
+		}
 	}
 	return writeSidecarMeta(path, owner, values, nil)
 }
@@ -1673,11 +1711,8 @@ func sealSidecar(path, owner, model, buildVersion, contract, sourceFingerprint, 
 // disk then read as an absent index: the product looks empty when it is not.
 // The fingerprint of the source goes in the same breath, because an index that
 // has not finished must never claim to already match what it was built from.
-func claimSidecar(path, owner, buildVersion, contract string, full bool) error {
-	clear := []string{sourceMarkerMetaKey}
-	if full {
-		clear = append(clear, "source_fingerprint")
-	}
+func claimSidecar(path, owner, buildVersion, contract string) error {
+	clear := []string{sourceMarkerMetaKey, "completed_chunks", "completed_sources", "completed_generation", "source_fingerprint"}
 	return writeSidecarMeta(path, owner, map[string]string{
 		"owner": owner, "version": buildVersion, "contract": contract}, clear)
 }

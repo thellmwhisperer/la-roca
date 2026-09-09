@@ -37,7 +37,6 @@ const (
 )
 
 const sourceFingerprintFunction = "roca_vector_source_fingerprint"
-const declaredChunkCountFunction = "roca_vector_declared_chunks"
 const sourceProgressVersion = "source-v1"
 
 var sourceFingerprintRegistrationErr = sqlite.RegisterDeterministicScalarFunction(
@@ -50,43 +49,6 @@ var sourceFingerprintRegistrationErr = sqlite.RegisterDeterministicScalarFunctio
 		}
 		return incrementality.ContentFingerprint(fields...), nil
 	})
-
-var declaredChunkCountRegistrationErr = sqlite.RegisterDeterministicScalarFunction(
-	declaredChunkCountFunction, 3, func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
-		text := strings.TrimSpace(driverText(args[0]))
-		maxChars := driverInt(args[1])
-		overlap := driverInt(args[2])
-		if maxChars > 0 {
-			return int64(len(chunks(text, maxChars, overlap))), nil
-		}
-		return int64(len(tokenChunks(text, defaultChunkTokens, defaultOverlapTokens))), nil
-	})
-
-func driverText(value driver.Value) string {
-	switch typed := value.(type) {
-	case nil:
-		return ""
-	case string:
-		return typed
-	case []byte:
-		return string(typed)
-	default:
-		return fmt.Sprint(typed)
-	}
-}
-
-func driverInt(value driver.Value) int {
-	switch typed := value.(type) {
-	case int64:
-		return int(typed)
-	case int:
-		return typed
-	case float64:
-		return int(typed)
-	default:
-		return 0
-	}
-}
 
 type Index struct {
 	Corpus      Corpus
@@ -522,6 +484,7 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 			return Delta{}, err
 		}
 	}
+	report.Sources = summary.sources
 	report.Chunks = report.Added + report.Updated + report.Unchanged
 	return report, nil
 }
@@ -1070,10 +1033,7 @@ func readIndexState(db *sql.DB, liveness workLiveness) (map[string]storedChunk, 
 }
 
 func sqliteFunctionRegistrationError() error {
-	if sourceFingerprintRegistrationErr != nil {
-		return sourceFingerprintRegistrationErr
-	}
-	return declaredChunkCountRegistrationErr
+	return sourceFingerprintRegistrationErr
 }
 
 func resetIndex(db *sql.DB) error {
