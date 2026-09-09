@@ -830,11 +830,14 @@ version of the same legacy ID rather than refused, a row that disappeared keeps 
 recorded, and both are reported as drift events; membership counts are verified
 against what the committed batches recorded, not against the live source. A
 home whose three sources are all empty verifies as `verified-empty` rather than
-`verified`; both states count as cutover-ready. The low-level memory importer
-can reopen an empty migration unless `ReuseVerifiedSnapshots` is set. The
-coordinator sets it so later custody stages reuse the same frozen inputs even
-when memory custody was empty. Each source's frozen copy is named once per
-migration generation and published by renaming a validated sibling copy over it, so retries replace their own snapshot instead of
+`verified`; both states count as cutover-ready and are terminal for that
+migration generation for every caller. Reruns retain the same frozen source
+snapshots for later custody stages, including when memory custody was empty;
+they do not import memories added after verification. If a verified snapshot
+is missing, the importer reports an error rather than recreating it from the
+live source. Each source's frozen copy is named once per migration generation
+and published by renaming a validated sibling copy over it, so retries before
+verification replace their own snapshot instead of
 accumulating a full database per attempt, a failed replacement leaves the
 previously verified copy intact, and no reader sees a half-written database.
 
