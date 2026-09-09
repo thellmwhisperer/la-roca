@@ -48,6 +48,10 @@ Run `python3 scripts/public-text-test.py` for the synthetic acceptance/cost chec
 
 ## Build and test
 
+`make codex-identity-test ROCA_CODEX_PUBLISHED_BIN=<pinned-v1.84.8-binary>`
+runs the paired [Codex identity reproduction](docs/codex-identity-evidence.md)
+on an isolated declared corpus. The delivery gate runs it when that variable is set.
+
 ```sh
 make build
 make check

@@ -4,6 +4,7 @@ commands:
     python3 scripts/public-text-test.py && make test playground-test fts-test audit-test vector-reader-test &&
     if [ -n "${ROCA_PUBLISHED_BIN:-}" ]; then make migrate-test; fi &&
     if [ -n "${ROCA_SNAPSHOT_PUBLISHED_BIN:-}" ]; then make snapshot-evidence; fi &&
+    if [ -n "${ROCA_CODEX_PUBLISHED_BIN:-}" ]; then make codex-identity-test; fi &&
     if [ -n "${ROCA_D6_MODEL:-}" ]; then make model-verification-test; fi
 document:
   instructions: |
