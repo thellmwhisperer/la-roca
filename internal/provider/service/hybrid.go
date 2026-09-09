@@ -93,7 +93,7 @@ type searchSurface struct {
 // vector when a sidecar exists, RRF fusion, labeled evidence.
 func (s *Service) Search(ctx context.Context, req SearchRequest) (SearchResult, error) {
 	start := time.Now()
-	if err := query.ValidateQuestion(req.Question, !s.opts.DisableStrictInput); err != nil {
+	if err := query.ValidateQuestion(req.Question); err != nil {
 		return SearchResult{}, err
 	}
 	top := req.Top
