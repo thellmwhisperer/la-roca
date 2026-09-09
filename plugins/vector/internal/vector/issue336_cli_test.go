@@ -79,7 +79,7 @@ func TestIssue336CLICompactsStaleSidecarWithoutLosingResults(t *testing.T) {
 		return report.Databases[0]
 	}
 	before := status()
-	if valueOrZero(before.EmbeddedChunks) != 1 || valueOrZero(before.CandidateChunks) != 1 ||
+	if valueOrZero(before.EmbeddedChunks) != 1 || before.CandidateChunks != nil ||
 		before.IndexLock != IndexLockStale || !before.CompactRecommended {
 		t.Fatalf("sparse sidecar status: %+v", before)
 	}

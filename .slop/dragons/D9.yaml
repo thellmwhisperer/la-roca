@@ -1,6 +1,6 @@
 schema: 1
 id: D9
-status: accepted
+status: removed
 category: adjacent_feature
 title: "vector status re-chunks the corpus to report counts"
 created_at: 2026-09-08
@@ -20,6 +20,8 @@ rule: >
   Store the exact chunk count obtained while indexing with its source
   generation; status shows it while the generation holds, and unknown
   otherwise, never re-chunking.
+  Cost regression: TestCostUnchangedSourceAndStoredStatus and TestStatusDoesNotReadDeclaredText
+  in plugins/vector/internal/vector/generation_issue352_test.go.
 forbid:
   paths: []
   symbols:

@@ -1,6 +1,6 @@
 schema: 1
 id: D8
-status: accepted
+status: removed
 category: adjacent_feature
 title: "Unchanged vector pass hashes the whole SQLite file plus WAL"
 created_at: 2026-09-08
@@ -22,6 +22,8 @@ rule: >
   A cheap source marker (size, mtime, WAL size, data_version) exits the pass
   early; hash and chunk comparison only when the marker changed or on explicit
   --verify.
+  Cost regression: TestCostUnchangedSourceAndStoredStatus
+  in plugins/vector/internal/vector/generation_issue352_test.go.
 forbid:
   paths: []
   symbols:

@@ -36,7 +36,10 @@ nobody answered has not consented to a download.
 `vector-registry.json`: plugin, database, declared tables, embedded chunks,
 candidate chunks, sidecar size, last write, state, lock status, and a
 `compact_recommended` flag. Embedded counts report live indexed chunks;
-candidate counts follow the declared chunking policy. Either count can be
+candidate counts are stored by a completed full indexing pass under the declared
+chunking policy. Status uses that exact count only while its source generation
+and reader contract still match; it never reads or chunks source text. Legacy,
+partial, and changed sources have unknown candidate counts until a full pass. Either count can be
 unknown (`null`), never an estimate or invented zero. Sidecar size and last
 write include its SQLite WAL and shared-memory files when present.
 
@@ -295,6 +298,12 @@ For a non-default database:
 ```sh
 roca vector --db-path /path/to/roca.db ingest --delta
 ```
+
+Unchanged full passes compare source file identity, size, modification and change
+times (including the WAL) before reading source content. `roca vector ingest
+--delta --verify` bypasses this cheap check and hashes the source even when its
+marker matches. SQLite connection-local `data_version` counters are not used
+as persisted generation evidence.
 
 `ROCA_READ_ONLY` refuses `install`, `ingest --delta`, and `compact`.
 The companion always sets `ROCA_READ_ONLY=1` on its core CLI subprocesses for
