@@ -889,7 +889,6 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 		Commit:                    env.build.Commit,
 		QueryTimeout:              time.Duration(file.Query.TimeoutMS) * time.Millisecond,
 		QueryTimeoutSet:           file.Query.TimeoutSet,
-		DisableStrictInput:        !file.Features.StrictInput,
 		DisableMissingReferentAsk: !file.Features.AskMissingReferent,
 		PluginDir:                 pluginDir,
 		PluginsEnabled:            file.Features.Plugins,

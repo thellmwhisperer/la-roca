@@ -1,6 +1,6 @@
 schema: 1
 id: D12
-status: accepted
+status: removed
 category: adjacent_feature
 title: "Deterministic search rejects prompt-attack phrases before looking anything up"
 created_at: 2026-09-08
@@ -21,9 +21,13 @@ incident:
 rule: >
   On the deterministic search path check only empty and length; leave any
   prompt defence to surfaces that invoke a model.
+  TestCostDeterministicQuestionValidation requires zero allocations per valid
+  question and runtime within eight times a shape-only check on synthetic text;
+  TestQueryFindsSystemPromptWithStrictInputEnabled pins a successful lab search.
 forbid:
   paths: []
   symbols:
     - "hostileQuestionPatterns"
+    - "ErrQuestionRejected"
   strings:
     - "\\bsystem\\s+prompt\\b"

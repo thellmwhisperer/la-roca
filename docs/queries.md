@@ -14,8 +14,10 @@ plugin database, including ops). Vector coverage follows the
 [sidecar selection rules](vector.md#first-query). `--json` returns the complete
 machine envelope; see [Memory identifiers for clients](#memory-identifiers-for-clients)
 for its identifier encoding.
-Questions must contain text and have a generous 1000-character cap on both CLI
-and MCP query surfaces.
+Deterministic search checks only that questions contain text and stay within
+the 1000-character cap on both CLI and MCP query surfaces. Phrases such as
+`system prompt` are searchable even with `features.strict_input = true`;
+prompt defenses belong to the [model-invoking playground](models.md#what-happens-in-the-playground).
 
 `roca playground` is the human room: it compiles a question into one checked
 `SELECT`, `--sql-only` compiles without executing, and `--full` adds a prose
@@ -151,18 +153,20 @@ versions or envelopes are incompatible. A query refused by the remote gate or
 vector index keeps the ordinary command-failure exit 1 and message.
 
 Cross-machine comparison scatters one inner `SELECT` to the local installation
-and every named remote, loads those JSON result sets into a temporary SQLite
-database as `r_local`, `r_<name>` and so on, adds an `origin` column, and runs a
-generated `UNION ALL` outer `SELECT` there.
+and every named remote, then concatenates the returned result sets in Go:
+local rows first, followed by remotes in `--on` order, preserving row order
+within each origin. It adds an `origin` column, fills missing columns with
+nulls, and preserves value types, exact identifiers, and the existing text
+budget. Gathering opens no SQLite connection. The envelope retains its
+generated `UNION ALL` SQL description, but that description is not executed.
 
 See the README's [cross-machine example](../README.md#compare-rocks-across-machines).
 Pass comma-separated names to `--on`, such as `--on studio,laptop`, to compare
 several remotes in one call.
 
-The temporary database is exactly `:memory:`. Cross disables reconciliation
-and call-history writes for the run and opens the local stores read-only, so it
-writes to neither the local nor remote rocks. The data path is SQL and JSON
-only; it performs no inference.
+Cross disables reconciliation and call-history writes for the run and opens
+the local stores read-only, so it writes to neither the local nor remote rocks.
+The data path is SQL and JSON only; it performs no inference.
 
 ## One search, labeled evidence
 
