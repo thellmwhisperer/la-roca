@@ -345,13 +345,12 @@ roca vector query --databases corpus,ops "what did we decide" 10
 
 See the [shared resident lifecycle](mcp.md#1-roca-mcp-serve-the-mcp-over-stdio)
 for CLI model reuse, startup fallback, and compatibility after an update.
-Without `--databases`, vector queries skip sidecars whose main SQLite file is
-at least 1 GiB, with a notice naming each skipped database. This also applies to
-the vector leg of hybrid search and MCP vector queries; deterministic FTS/SQL
-coverage is unchanged. `--databases` accepts an explicit comma-list or `all`,
-using the same database selection rules as `roca query`. Either explicit form
-bypasses the size exclusion; the command searches selected databases with vector
-declarations and ready sidecars, including large ones.
+Without `--databases`, vector queries search every ready sidecar in the default
+database scope, regardless of file size. This also applies to the vector leg of
+hybrid search and MCP vector queries. `--databases` accepts an explicit
+comma-list or `all`, using the same database selection rules as `roca query`.
+Naming all the same databases explicitly searches the same sidecars as the
+default query.
 Same-model scores merge into one top-N. If selected sidecars use different
 models, results stay grouped per database with a notice because their scores
 are not comparable. Every hit carries database, table, and source id. `k` is
@@ -359,14 +358,12 @@ optional (default 10) and capped at 100.
 
 Query setup reads model and dimension metadata without loading every stored
 chunk's bookkeeping. Search and reranking still depend on the index size.
-Sidecar opens use a 100 ms SQLite busy timeout. If opening fails during setup,
-the database gets a "no ready vector sidecar" notice; if it fails during search,
-it gets a "busy" notice. Both skip that database's vector search, including for
-open errors unrelated to contention. Errors from the subsequent search still
-fail the vector query.
+Sidecar opens use a 100 ms SQLite busy timeout. An open failure during metadata
+setup or search fails the vector query with an error identifying the sidecar.
+Errors from the subsequent search also fail the vector query.
 
-A missing sidecar or unavailable embedding model emits a notice and leaves that
-database on its deterministic FTS/SQL route. A pending model download never
+A missing or unready sidecar or unavailable embedding model emits a notice and
+leaves that database on its deterministic FTS/SQL route. A pending model download never
 blocks a query: FTS answers immediately and the download continues in the
 background until a later query can join the vector leg. Databases without a
 vector declaration are still recognized routing targets and behave the same way.
