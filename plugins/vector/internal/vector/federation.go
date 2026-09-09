@@ -319,6 +319,8 @@ func (f Federation) QueryExpanded(ctx context.Context, text string, k int,
 
 func (f Federation) queryTexts(ctx context.Context, texts []string, k int, databaseList string,
 	minScore float64, trimToK bool) (FederatedQuery, error) {
+	ctx, closeReader := withCoreReader(ctx)
+	defer closeReader()
 	result := FederatedQuery{Databases: []string{}, Results: []Result{}, Notices: []string{}}
 	cleaned := make([]string, 0, len(texts))
 	seenText := map[string]bool{}
@@ -659,6 +661,8 @@ func containsString(values []string, candidate string) bool {
 }
 
 func (f Federation) Ingest(ctx context.Context, sourceKind string) (FederationDelta, error) {
+	ctx, closeReader := withCoreReader(ctx)
+	defer closeReader()
 	if f.Model == "" || f.Embedder == nil {
 		return FederationDelta{}, fmt.Errorf("embedding model and provider are required")
 	}
@@ -1043,6 +1047,8 @@ type declaredCursor struct {
 }
 
 func (d DeclaredCorpus) CountChunks(ctx context.Context, sourceKind string) (int64, error) {
+	ctx, closeReader := withCoreReader(ctx)
+	defer closeReader()
 	tables := d.Database.Tables
 	if sourceKind != "" {
 		table, ok := d.table(sourceKind)
@@ -1081,6 +1087,8 @@ func (d DeclaredCorpus) CountChunks(ctx context.Context, sourceKind string) (int
 
 func (d DeclaredCorpus) WalkSources(ctx context.Context, sourceKind string,
 	visit func(sourceRow) error) error {
+	ctx, closeReader := withCoreReader(ctx)
+	defer closeReader()
 	tables := d.Database.Tables
 	if sourceKind != "" {
 		table, ok := d.table(sourceKind)
@@ -1124,14 +1132,15 @@ func (d DeclaredCorpus) WalkSources(ctx context.Context, sourceKind string,
 }
 
 type declaredTableIterator struct {
-	corpus  DeclaredCorpus
-	table   vectorTable
-	catalog map[string]map[string]bool
-	cursor  declaredCursor
-	rows    []sourceRow
-	index   int
-	done    bool
-	current *sourceRow
+	streamCursor string
+	corpus       DeclaredCorpus
+	table        vectorTable
+	catalog      map[string]map[string]bool
+	cursor       declaredCursor
+	rows         []sourceRow
+	index        int
+	done         bool
+	current      *sourceRow
 }
 
 func (i *declaredTableIterator) advance(ctx context.Context) error {
@@ -1146,7 +1155,7 @@ func (i *declaredTableIterator) advance(ctx context.Context) error {
 			i.current = nil
 			return nil
 		}
-		values, err := i.corpus.Core.queryIngest(ctx, i.corpus.pageQuery(i.table, i.cursor, i.catalog))
+		values, err := i.corpus.Core.queryIngestCursor(ctx, i.corpus.pageQuery(i.table, i.cursor, i.catalog), &i.streamCursor)
 		if err != nil {
 			return fmt.Errorf("read declared surface %s/%s: %w", i.corpus.Database.owner(), i.table.Name, err)
 		}
@@ -1234,6 +1243,8 @@ func (d DeclaredCorpus) ResolveSource(ctx context.Context, kind string, where lo
 
 func (d DeclaredCorpus) ResolveSources(ctx context.Context,
 	lookups []sourceLookup) (map[string]string, error) {
+	ctx, closeReader := withCoreReader(ctx)
+	defer closeReader()
 	resolved := make(map[string]string, len(lookups))
 	idsByTable := make(map[string][]string)
 	seen := make(map[string]bool)
@@ -1332,7 +1343,7 @@ func (d DeclaredCorpus) CountSources(ctx context.Context, sourceKind string) (in
 		statement := fmt.Sprintf(`SELECT COUNT(*) AS n FROM %s.%s src WHERE %s`,
 			quoteIdentifier(d.Database.Alias), quoteIdentifier(table.Name),
 			declaredSourcePredicate("src", table))
-		rows, err := d.Core.queryWithTimeout(ctx, statement, countSourcesStatementTimeoutMS)
+		rows, err := d.Core.queryPage(ctx, statement, countSourcesStatementTimeoutMS)
 		if err != nil {
 			return 0, err
 		}

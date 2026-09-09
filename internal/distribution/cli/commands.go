@@ -702,6 +702,86 @@ func databaseScopeCommand(env *cliEnv) *cobra.Command {
 	return cmd
 }
 
+// vectorReaderCommand keeps the ordinary SELECT gate and database routing alive
+// across a vector operation. EOF closes the service; the parent owns cancellation.
+func vectorReaderCommand(env *cliEnv) *cobra.Command {
+	return &cobra.Command{
+		Use: "_vector-reader", Hidden: true, Args: cobra.NoArgs,
+		PreRun: func(*cobra.Command, []string) { env.forceReadOnly = true },
+		RunE: env.serviceRunE(func(cmd *cobra.Command, _ []string, svc *service.Service) error {
+			reader := svc.NewExecReader()
+			defer reader.Close()
+			cursors := map[string]*service.ExecCursor{}
+			defer func() {
+				for _, cursor := range cursors {
+					cursor.Close()
+				}
+			}()
+			decoder := json.NewDecoder(cmd.InOrStdin())
+			encoder := json.NewEncoder(env.out)
+			for {
+				var request struct {
+					SQL       string `json:"sql"`
+					Databases string `json:"databases"`
+					Scope     bool   `json:"scope"`
+					TimeoutMS *int   `json:"timeout_ms,omitempty"`
+					Cursor    string `json:"cursor,omitempty"`
+				}
+				if err := decoder.Decode(&request); err != nil {
+					if errors.Is(err, io.EOF) {
+						return nil
+					}
+					return err
+				}
+				var result any
+				var err error
+				if request.Scope {
+					var names []string
+					names, err = service.ParseDatabaseList(request.Databases)
+					if err == nil {
+						result, err = svc.ResolveDatabaseScope(cmd.Context(), names)
+					}
+				} else if request.Cursor != "" {
+					cursor := cursors[request.Cursor]
+					if cursor == nil {
+						cursor, err = reader.OpenExecCursor(cmd.Context(), request.SQL, 64<<20)
+						if err == nil {
+							cursors[request.Cursor] = cursor
+						}
+					}
+					if err == nil {
+						var rows []map[string]any
+						rows, err = cursor.ReadPage()
+						result = service.ExecResult{Rows: rows, RowCount: len(rows)}
+						if err != nil || len(rows) < 500 {
+							cursor.Close()
+							delete(cursors, request.Cursor)
+						}
+					}
+				} else {
+					req := service.ExecRequest{SQL: request.SQL, MaxChars: 64 << 20}
+					if request.TimeoutMS != nil {
+						req.TimeoutSet = true
+						req.Timeout = time.Duration(*request.TimeoutMS) * time.Millisecond
+					}
+					result, err = reader.Exec(cmd.Context(), req)
+				}
+				response := struct {
+					Result any    `json:"result,omitempty"`
+					Error  string `json:"error,omitempty"`
+				}{Result: result}
+				if err != nil {
+					response.Result = nil
+					response.Error = err.Error()
+				}
+				if err := encoder.Encode(response); err != nil {
+					return err
+				}
+			}
+		}),
+	}
+}
+
 func execCommand(env *cliEnv) *cobra.Command {
 	var req service.ExecRequest
 	timeoutMS := -1

@@ -30,9 +30,8 @@ const (
 	defaultBatchSize    = 64
 	walkPageSize        = 500
 	vectorStorageSchema = "vector-v2"
-	// maxUnresolvedCandidates bounds a query against an index the corpus has moved
-	// under. Each resolution is one `roca exec` process, so a wholly stale index
-	// would otherwise spend one process per candidate to answer nothing.
+	// maxUnresolvedCandidates bounds futile source lookups when the corpus has
+	// moved under the index, even though lookups now share the query's reader.
 	maxUnresolvedCandidates = 32
 )
 
@@ -227,6 +226,8 @@ func (i Index) IngestSource(ctx context.Context, sourceKind string) (Delta, erro
 }
 
 func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
+	ctx, closeReader := withCoreReader(ctx)
+	defer closeReader()
 	if err := i.validate(); err != nil {
 		return Delta{}, err
 	}
@@ -517,6 +518,8 @@ func (i Index) QueryExpanded(ctx context.Context, text string, k int, minScore f
 
 func (i Index) queryTexts(ctx context.Context, texts []string, k int,
 	minScore float64, trimToK bool) ([]Result, error) {
+	ctx, closeReader := withCoreReader(ctx)
+	defer closeReader()
 	if err := i.validate(); err != nil {
 		return nil, err
 	}

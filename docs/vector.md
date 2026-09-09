@@ -184,7 +184,7 @@ asks llama.cpp to abort. Reaching the internal
 cap marks the native engine as trapped: a one-shot command reports `semantic
 search stalled`, while a resident reports the terminal error before closing its
 transport. A resumable background worker instead cancels and reaps its active
-`roca exec` children, then restarts once for that exact embedding element. If the
+core reader children, then restarts once for that exact embedding element. If the
 same element traps again, the worker fails with its hashed element identity in
 `worker.log` and
 `completion.json` rather than restarting indefinitely. Linux uses CPU for both
@@ -277,10 +277,15 @@ When a sweep is needed, existing chunk fingerprints decide
 added, updated, and unchanged work; a desired-versus-stored fingerprint diff
 garbage-collects chunks and embeddings whose source disappeared. Optional
 manifest chunking hints override the kernel defaults without giving plugins
-executable generation code. Source sweeps are paged. Each page keeps its SQL
-statement gate unbounded for large histories, but the `roca exec` child has a
-two-minute process deadline; a timed-out child is terminated and reaped so the
-worker can fail cleanly and a later pass can resume. Source counts use the
+executable generation code. Source sweeps use one read-only core helper per operation. Each table's
+SELECT passes the existing schema, function and visibility gate once, then
+keeps a SQLite cursor open and streams pages of at most 500 rows. Scope and
+neighbour text requests share that helper. The cursor bounds each response
+instead of imposing the interactive SQL row cap on the whole sweep. A page
+has a two-minute deadline; a stalled helper and its process group are killed
+and reaped so the worker can fail cleanly and a later pass can resume.
+Independent resident query requests open fresh readers. See
+[D4 reader evidence](d4-reader-evidence.md) for the lab-only cost test. Source counts use the
 bounded exec path with an explicit 30-second statement timeout, independent
 of the interactive query timeout; serving lookups keep the configured
 interactive query budget.

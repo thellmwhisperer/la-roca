@@ -442,11 +442,13 @@ func TestCoreCLIEnforcesReadOnlySubprocesses(t *testing.T) {
 	script := filepath.Join(t.TempDir(), "roca")
 	body := `#!/bin/sh
 [ "$ROCA_READ_ONLY" = 1 ] || exit 42
-case "$2" in
-_database-scope) printf '%s' '{"databases":["corpus"],"selected":[]}' ;;
-exec) printf '%s' '{"rows":[{"answer":42}]}' ;;
-*) exit 43 ;;
+[ "$2" = _vector-reader ] || exit 43
+while IFS= read -r request; do
+case "$request" in
+*'"scope":true'*) printf '%s\n' '{"result":{"databases":["corpus"],"selected":[]}}' ;;
+*) printf '%s\n' '{"result":{"rows":[{"answer":42}]}}' ;;
 esac
+done
 `
 	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
 		t.Fatal(err)

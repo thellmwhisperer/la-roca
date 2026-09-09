@@ -13,8 +13,9 @@
 //     Writes, ATTACH, PRAGMA and functions outside the list are denied by the
 //     callback, so a DELETE does not slip through merely because prepare would
 //     succeed on a query_only connection.
-//   - LIMIT: imposed on the original text with the same numeric-literal
-//     guarantee as before, including both SQLite forms and a trailing comment.
+//   - LIMIT: Validate imposes it on the original text, including both SQLite
+//     forms and a trailing comment. ValidateCursor leaves row bounds to its
+//     consumer; see that method's contract.
 //
 // The verdict messages are contract surface and the acceptance suite quotes
 // them literally.
@@ -31,7 +32,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/data"
 )
 
-// MaxLimit is the cap the gate guarantees.
+// MaxLimit is the total row cap enforced by Validate, not ValidateCursor.
 const MaxLimit = 1000
 
 // invisibleTables are the ones that exist in the schema but are not queryable:
@@ -325,6 +326,17 @@ func (g *Gate) Close() error { return g.engine.close() }
 // going to run. The string it returns is the one to execute: it may carry the
 // LIMIT that was missing.
 func (g *Gate) Validate(stmt string) (string, error) {
+	return g.validate(stmt, true)
+}
+
+// ValidateCursor keeps SELECT, schema, function and visibility checks while
+// leaving the total row count to a cursor. Its consumer must bound each page;
+// the vector reader emits at most 500 rows per response.
+func (g *Gate) ValidateCursor(stmt string) (string, error) {
+	return g.validate(stmt, false)
+}
+
+func (g *Gate) validate(stmt string, limitRows bool) (string, error) {
 	if strings.IndexByte(stmt, 0) >= 0 {
 		return "", fmt.Errorf("SQL parse error: embedded NUL byte")
 	}
@@ -344,6 +356,9 @@ func (g *Gate) Validate(stmt string) (string, error) {
 	clean, err := enforceLimit(stmt)
 	if err != nil {
 		return "", err
+	}
+	if !limitRows {
+		clean = stmt
 	}
 	if err := g.engine.prepare(clean); err != nil {
 		return "", err

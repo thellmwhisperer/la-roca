@@ -204,7 +204,7 @@ func rootCommand(env *cliEnv) *cobra.Command {
 	commands := []*cobra.Command{
 		versionCommand(env), initCommand(env), migrateCommand(env), playgroundPluginCommand(env, "explore"), schemaCommand(env),
 		indexCommand(env), doctorCommand(env), dedupCommand(env), compactCommand(env), memoryCommand(env), layersCommand(env),
-		healthCommand(env), databaseScopeCommand(env),
+		healthCommand(env), databaseScopeCommand(env), vectorReaderCommand(env),
 		mcpCommand(env), skillCommand(env), hooksCommand(env),
 		playgroundPluginCommand(env, "login"), playgroundPluginCommand(env, "model"),
 		updateCommand(env), uninstallCommand(env),
