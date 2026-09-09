@@ -1,6 +1,6 @@
 schema: 1
 id: D7
-status: accepted
+status: removed
 category: adjacent_feature
 title: "Federation scheduler forces one embedding transaction per chunk"
 created_at: 2026-09-08
