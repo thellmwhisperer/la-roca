@@ -3,7 +3,8 @@
 `roca-vector` is the optional executable plugin for local semantic retrieval.
 Its implementation is a separate Go module and binary: core has no import of
 that module, built-in vector command, or index dependency. The plugin reads
-kernel-registered database surfaces through `roca exec --json` and keeps only
+kernel-registered database surfaces through one read-only core reader process
+per ingest or query operation, under the same SQL gate as `roca exec`, and keeps only
 embeddings, fingerprints, and stable source locators in adjacent
 database-owned sidecars. Source text is resolved live from core when a result
 is returned and is never copied into a sidecar. The plugin-owned `state/`
