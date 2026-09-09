@@ -111,6 +111,12 @@ record counts; retain its output with delivery evidence. The delivery gate
 runs the paired comparison when that explicit variable is set. No live home or
 installed `roca` is selected. The paired run also measures deletion and VACUUM reclamation on a synthetic lab copy.
 
+`make vector-reader-test ROCA_READER_PUBLISHED_BIN=<pinned-v1.84.1-binary>`
+compares the old page protocol and the streaming vector reader on a synthetic
+lab. Without the optional published binary it still checks process counts and
+the 5x speed budget against the branch's executable page path.
+[D4 reader evidence](docs/d4-reader-evidence.md) owns the fixture and measurements.
+
 `make snapshot-evidence ROCA_SNAPSHOT_PUBLISHED_BIN=<absolute-pinned-v1.82.3-binary>`
 runs the historical D1 kill only with the `snapshot_evidence` build tag and an
 explicit executable. The lab is synthetic, capped at 4 MiB, and its directories

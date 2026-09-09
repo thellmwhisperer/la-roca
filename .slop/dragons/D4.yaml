@@ -1,6 +1,6 @@
 schema: 1
 id: D4
-status: accepted
+status: removed
 category: adjacent_feature
 title: "Vector reader spawns a full roca process per 500-row page"
 created_at: 2026-09-08
@@ -24,5 +24,14 @@ rule: >
 forbid:
   paths: []
   symbols:
-    - "CoreCLI"
-  strings: []
+    - "queryWithTimeout"
+  strings:
+    - 'plugins/vector/**/core.go::run = runCommand'
+cost_test: >
+  CGO_ENABLED=0 go test ./internal/vector -run TestCostCoreReader -count=1
+  from plugins/vector scans all declared source families on 30k synthetic
+  exchanges and resolves neighbour texts: at most one actual helper launch,
+  at least 5x faster than the former 500-row process path on the same lab.
+  It also runs full Federation.Ingest and Query without a test-owned reader
+  context and requires one helper each. ROCA_READER_PUBLISHED_BIN adds the
+  pinned v1.84.1 comparison; no live federation is measured.

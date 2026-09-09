@@ -5,8 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
@@ -15,14 +13,14 @@ import (
 
 const coreFieldBudget = 64 << 20
 
-// ingestPageTimeout bounds one roca exec page even when the SQL gate is
-// unbounded (--timeout-ms 0), so CommandContext can kill a child that never returns.
+// ingestPageTimeout bounds a source page; a stalled reader process is killed
+// and reaped even when the SQL statement spans the full source sweep.
 var ingestPageTimeout = 2 * time.Minute
 
 type CommandRunner func(context.Context, string, ...string) ([]byte, error)
 
-// CoreCLI reads corpus rows only through La Roca's public, read-only process
-// boundary. The vector plugin never imports core packages or opens roca.db.
+// CoreCLI reads through one read-only core helper per operation, preserving
+// the core SQL gate, database routing and source visibility.
 type CoreCLI struct {
 	Executable string
 	DBPath     string
@@ -67,6 +65,8 @@ var (
 func corpusTable(name string) string { return corpusSchema + "." + name }
 
 func (c CoreCLI) WalkSources(ctx context.Context, sourceKind string, visit func(sourceRow) error) error {
+	ctx, closeReader := withCoreReader(ctx)
+	defer closeReader()
 	if err := validateSourceKind(sourceKind, nil); err != nil {
 		return err
 	}
@@ -104,13 +104,14 @@ func (c CoreCLI) WalkSources(ctx context.Context, sourceKind string, visit func(
 }
 
 type corePageIterator struct {
-	core    CoreCLI
-	page    corePage
-	cursor  string
-	rows    []sourceRow
-	index   int
-	done    bool
-	current *sourceRow
+	streamCursor string
+	core         CoreCLI
+	page         corePage
+	cursor       string
+	rows         []sourceRow
+	index        int
+	done         bool
+	current      *sourceRow
 }
 
 func (i *corePageIterator) advance(ctx context.Context) error {
@@ -125,7 +126,7 @@ func (i *corePageIterator) advance(ctx context.Context) error {
 			i.current = nil
 			return nil
 		}
-		values, err := i.core.queryIngest(ctx, i.page.query(i.cursor))
+		values, err := i.core.queryIngestCursor(ctx, i.page.query(i.cursor), &i.streamCursor)
 		if err != nil {
 			return fmt.Errorf("read core %s: %w", i.page.kind, err)
 		}
@@ -144,6 +145,8 @@ func (i *corePageIterator) advance(ctx context.Context) error {
 }
 
 func (c CoreCLI) CountChunks(ctx context.Context, sourceKind string) (int64, error) {
+	ctx, closeReader := withCoreReader(ctx)
+	defer closeReader()
 	if err := validateSourceKind(sourceKind, nil); err != nil {
 		return 0, err
 	}
@@ -181,6 +184,11 @@ func (c CoreCLI) CountChunks(ctx context.Context, sourceKind string) (int64, err
 }
 
 func (c CoreCLI) ResolveDatabaseScope(ctx context.Context, databases string) (DatabaseScope, error) {
+	if c.Run == nil {
+		var result DatabaseScope
+		err := c.read(ctx, map[string]any{"scope": true, "databases": databases}, &result)
+		return result, err
+	}
 	if strings.TrimSpace(c.Executable) == "" {
 		return DatabaseScope{}, fmt.Errorf("roca executable is required")
 	}
@@ -193,9 +201,6 @@ func (c CoreCLI) ResolveDatabaseScope(ctx context.Context, databases string) (Da
 		args = append(args, "--databases", databases)
 	}
 	run := c.Run
-	if run == nil {
-		run = runCommand
-	}
 	raw, err := run(ctx, c.Executable, args...)
 	if err != nil {
 		return DatabaseScope{}, err
@@ -599,16 +604,25 @@ func (c CoreCLI) resolveIdentity(ctx context.Context, kind string, where locator
 }
 
 func (c CoreCLI) query(ctx context.Context, statement string) ([]map[string]any, error) {
-	return c.queryWithTimeout(ctx, statement, "")
+	return c.queryPage(ctx, statement, "")
 }
 
 func (c CoreCLI) queryIngest(ctx context.Context, statement string) ([]map[string]any, error) {
 	ctx, cancel := boundContext(ctx, ingestPageTimeout)
 	defer cancel()
-	return c.queryWithTimeout(ctx, statement, "0")
+	return c.queryPage(ctx, statement, "0")
 }
 
-func (c CoreCLI) queryWithTimeout(ctx context.Context, statement, timeout string) ([]map[string]any, error) {
+func (c CoreCLI) queryPage(ctx context.Context, statement, timeout string) ([]map[string]any, error) {
+	if c.Run == nil {
+		request := map[string]any{"sql": statement}
+		if timeout != "" {
+			request["timeout_ms"], _ = strconv.Atoi(timeout)
+		}
+		var result execResult
+		err := c.read(ctx, request, &result)
+		return result.Rows, err
+	}
 	if strings.TrimSpace(c.Executable) == "" {
 		return nil, fmt.Errorf("roca executable is required")
 	}
@@ -622,9 +636,6 @@ func (c CoreCLI) queryWithTimeout(ctx context.Context, statement, timeout string
 	}
 	args = append(args, "--max-chars", strconv.Itoa(coreFieldBudget), statement)
 	run := c.Run
-	if run == nil {
-		run = runCommand
-	}
 	raw, err := run(ctx, c.Executable, args...)
 	if err != nil {
 		return nil, err
@@ -636,32 +647,6 @@ func (c CoreCLI) queryWithTimeout(ctx context.Context, statement, timeout string
 		return nil, fmt.Errorf("decode roca exec response: %w", err)
 	}
 	return result.Rows, nil
-}
-
-func runCommand(ctx context.Context, executable string, args ...string) ([]byte, error) {
-	finished, err := beginTrackedCommand(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer finished()
-	command := exec.CommandContext(ctx, executable, args...)
-	command.Env = append(os.Environ(), "ROCA_READ_ONLY=1")
-	configureCommandCancellation(command)
-	raw, err := command.Output()
-	if err == nil {
-		return raw, nil
-	}
-	message := ""
-	if exit, ok := err.(*exec.ExitError); ok {
-		message = strings.TrimSpace(string(exit.Stderr))
-	}
-	if len(message) > 4096 {
-		message = message[:4096] + "…"
-	}
-	if message != "" {
-		return nil, fmt.Errorf("roca exec: %w: %s", err, message)
-	}
-	return nil, fmt.Errorf("roca exec: %w", err)
 }
 
 func sqlLiteral(value string) string {
