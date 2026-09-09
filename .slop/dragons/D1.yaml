@@ -27,4 +27,8 @@ forbid:
   symbols:
     - "OpenReadOnlySnapshot"
     - "reapReadOnlySnapshots"
-  strings: []
+  # Published PATH lookup is forbidden in ordinary internal tests.
+  # Evidence also takes an explicit executable path.
+  strings:
+    - 'internal/**_test.go::exec.LookPath("roca")'
+    - 'internal/**_test.go::exec.Command("roca",'
