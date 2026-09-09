@@ -315,10 +315,16 @@ func applyStorageLaw(ctx context.Context, path string, dropArchive bool) (bool, 
 		if err := prepareSlimVersionObservedAt(ctx, tx); err != nil {
 			return false, err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE plugin_migrations SET migration_state = 'prepared',
-			verification_digest = NULL, verified_at = NULL, updated_at = datetime('now')
-			WHERE migration = 'corpus-archive-reconciliation-v1'`); err != nil {
-			return false, fmt.Errorf("invalidate current corpus reconciliation: %w", err)
+		ledgerPresent, err := tableExists(tx, "plugin_migrations")
+		if err != nil {
+			return false, err
+		}
+		if ledgerPresent {
+			if _, err := tx.ExecContext(ctx, `UPDATE plugin_migrations SET migration_state = 'prepared',
+				verification_digest = NULL, verified_at = NULL, updated_at = datetime('now')
+				WHERE migration = 'corpus-archive-reconciliation-v1'`); err != nil {
+				return false, fmt.Errorf("invalidate current corpus reconciliation: %w", err)
+			}
 		}
 	}
 	for _, statement := range statements {

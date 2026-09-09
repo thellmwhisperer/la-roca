@@ -93,8 +93,7 @@ migrate, checking that migrated exchanges remain readable. Linux uses process
 read accounting; macOS requires `clang` for read instrumentation and measures
 time separately without instrumentation. It never measures the live federation.
 The ordinary acceptance suite runs the branch regression without requiring a
-published binary; the paired target is also required by the no-mistakes test
-command.
+published binary; the paired target is also required by the delivery test command.
 
 The D1 acceptance denies temporary copies throughout the read-only operation
 and checks durable database digests, allowing SQLite SHM. Synthetic vector
