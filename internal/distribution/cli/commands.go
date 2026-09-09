@@ -709,6 +709,8 @@ func vectorReaderCommand(env *cliEnv) *cobra.Command {
 		Use: "_vector-reader", Hidden: true, Args: cobra.NoArgs,
 		PreRun: func(*cobra.Command, []string) { env.forceReadOnly = true },
 		RunE: env.serviceRunE(func(cmd *cobra.Command, _ []string, svc *service.Service) error {
+			reader := svc.NewExecReader()
+			defer reader.Close()
 			cursors := map[string]*service.ExecCursor{}
 			defer func() {
 				for _, cursor := range cursors {
@@ -742,7 +744,7 @@ func vectorReaderCommand(env *cliEnv) *cobra.Command {
 				} else if request.Cursor != "" {
 					cursor := cursors[request.Cursor]
 					if cursor == nil {
-						cursor, err = svc.OpenExecCursor(cmd.Context(), request.SQL, 64<<20)
+						cursor, err = reader.OpenExecCursor(cmd.Context(), request.SQL, 64<<20)
 						if err == nil {
 							cursors[request.Cursor] = cursor
 						}
@@ -762,7 +764,7 @@ func vectorReaderCommand(env *cliEnv) *cobra.Command {
 						req.TimeoutSet = true
 						req.Timeout = time.Duration(*request.TimeoutMS) * time.Millisecond
 					}
-					result, err = svc.Exec(cmd.Context(), req)
+					result, err = reader.Exec(cmd.Context(), req)
 				}
 				response := struct {
 					Result any    `json:"result,omitempty"`

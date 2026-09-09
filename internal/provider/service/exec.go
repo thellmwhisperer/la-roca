@@ -42,6 +42,10 @@ type ExecResult struct {
 // the database, and what does pass runs over a connection on which the engine
 // itself rejects any write.
 func (s *Service) Exec(ctx context.Context, req ExecRequest) (ExecResult, error) {
+	return s.exec(ctx, req, nil)
+}
+
+func (s *Service) exec(ctx context.Context, req ExecRequest, reader *ExecReader) (ExecResult, error) {
 	start := time.Now()
 	maxChars := TextBudget(req.MaxChars)
 	route, validated, err := s.prepareExec(ctx, req.SQL, false)
@@ -49,8 +53,14 @@ func (s *Service) Exec(ctx context.Context, req ExecRequest) (ExecResult, error)
 		return ExecResult{}, err
 	}
 	defer route.CloseOnDemand()
-	columns, rows, err := s.executeWithPluginsBudget(ctx, validated, "", maxChars, route.Databases,
-		execBudget{timeout: req.Timeout, set: req.TimeoutSet})
+	var columns []string
+	var rows []map[string]any
+	budget := execBudget{timeout: req.Timeout, set: req.TimeoutSet}
+	if reader != nil {
+		columns, rows, err = reader.execute(ctx, validated, maxChars, route.Databases, budget)
+	} else {
+		columns, rows, err = s.executeWithPluginsBudget(ctx, validated, "", maxChars, route.Databases, budget)
+	}
 	if err != nil {
 		return ExecResult{}, typedExecError(err)
 	}

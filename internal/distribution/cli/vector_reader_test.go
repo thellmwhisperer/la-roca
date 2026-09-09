@@ -1,7 +1,16 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 	"strings"
 	"testing"
 )
@@ -100,6 +109,96 @@ func TestVectorReaderKeepsGateScopeAndRecoversAfterRejectedRequests(t *testing.T
 			}
 			if index == 6 && result.Rows[0]["answer"] != float64(42) {
 				t.Fatalf("reader did not recover: %+v", result.Rows)
+			}
+		}
+	}
+}
+
+func TestVectorReaderInterleavesCutoverCursorsAndRequests(t *testing.T) {
+	home := t.TempDir()
+	isolateRuntimeDirs(t, home)
+	writeConfig(t, home, "[layout]\nserving = \"cutover\"\n")
+	setup := &cliEnv{dbPath: filepath.Join(home, ".roca", "roca.db"), out: io.Discard, errOut: io.Discard, build: contractBuild()}
+	svc, _, err := setup.openService()
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.Close()
+	if _, err := os.Stat(setup.dbPath); !os.IsNotExist(err) {
+		t.Fatalf("cutover fixture touched the legacy database: %v", err)
+	}
+	ops := openLayoutDatabase(t, filepath.Join(home, ".roca", "plugins", rocaops.Name, rocaops.DatabaseFilename))
+	if _, err := ops.Exec("INSERT INTO memories(layer, content, origin) VALUES('discovery', 'synthetic neighbour', 'agent')"); err != nil {
+		ops.Close()
+		t.Fatal(err)
+	}
+	ops.Close()
+	db := openLayoutDatabase(t, filepath.Join(home, ".roca", "plugins", rocacorpus.Name, rocacorpus.DatabaseFilename))
+	for _, statement := range []string{
+		`WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<1001)
+   INSERT INTO sessions(session_id, title) SELECT CAST(x AS TEXT), 'synthetic session ' || x FROM n`,
+		`INSERT INTO exchanges(session_id, exchange_number, human_text)
+   SELECT session_id, CAST(session_id AS INTEGER), 'synthetic exchange ' || session_id FROM sessions`,
+	} {
+		if _, err := db.Exec(statement); err != nil {
+			db.Close()
+			t.Fatal(err)
+		}
+	}
+	db.Close()
+	requests := []struct {
+		request   map[string]any
+		count     int
+		first     int
+		wantError bool
+	}{
+		{map[string]any{"cursor": "sessions", "sql": "SELECT CAST(session_id AS INTEGER) AS position FROM plugin_roca_corpus.sessions ORDER BY position"}, 500, 1, false},
+		{map[string]any{"cursor": "exchanges", "sql": "SELECT exchange_number AS position FROM plugin_roca_corpus.exchanges ORDER BY position"}, 500, 1, false},
+		{map[string]any{"sql": "SELECT content FROM plugin_roca_ops.memories WHERE content='synthetic neighbour'"}, 1, 0, false},
+		{map[string]any{"sql": "DELETE FROM plugin_roca_corpus.sessions"}, 0, 0, true},
+		{map[string]any{"cursor": "sessions"}, 500, 501, false},
+		{map[string]any{"cursor": "exchanges"}, 500, 501, false},
+		{map[string]any{"cursor": "sessions"}, 1, 1001, false},
+		{map[string]any{"cursor": "exchanges"}, 1, 1001, false},
+		{map[string]any{"sql": "WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<100000000) SELECT sum(x) FROM n", "timeout_ms": 1}, 0, 0, true},
+		{map[string]any{"sql": "SELECT COUNT(*) AS position FROM plugin_roca_corpus.sessions"}, 1, 1001, false},
+	}
+	var input, output strings.Builder
+	encoder := json.NewEncoder(&input)
+	for _, request := range requests {
+		if err := encoder.Encode(request.request); err != nil {
+			t.Fatal(err)
+		}
+	}
+	env := hermeticCLIEnv(&cliEnv{build: contractBuild(), out: &output, errOut: &output})
+	root := rootCommand(env)
+	root.SetArgs([]string{"_vector-reader"})
+	root.SetIn(strings.NewReader(input.String()))
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	if err := root.ExecuteContext(ctx); err != nil {
+		t.Fatal(err)
+	}
+	decoder := json.NewDecoder(strings.NewReader(output.String()))
+	for index, request := range requests {
+		var response struct {
+			Result struct {
+				Rows []map[string]any `json:"rows"`
+			} `json:"result"`
+			Error string `json:"error"`
+		}
+		if err := decoder.Decode(&response); err != nil {
+			t.Fatalf("response %d: %v", index, err)
+		}
+		if (response.Error != "") != request.wantError || len(response.Result.Rows) != request.count {
+			t.Fatalf("response %d: rows=%d error=%q", index, len(response.Result.Rows), response.Error)
+		}
+		for offset, row := range response.Result.Rows {
+			if request.first != 0 && fmt.Sprint(row["position"]) != fmt.Sprint(request.first+offset) {
+				t.Fatalf("response %d row %d: %v", index, offset, row)
+			}
+			if index == 2 && row["content"] != "synthetic neighbour" {
+				t.Fatalf("neighbour text: %v", row)
 			}
 		}
 	}
