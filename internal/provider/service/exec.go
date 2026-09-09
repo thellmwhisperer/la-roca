@@ -44,54 +44,72 @@ type ExecResult struct {
 func (s *Service) Exec(ctx context.Context, req ExecRequest) (ExecResult, error) {
 	start := time.Now()
 	maxChars := TextBudget(req.MaxChars)
-	if _, err := s.EnsureSchema(ctx); err != nil {
+	route, validated, err := s.prepareExec(ctx, req.SQL, false)
+	if err != nil {
 		return ExecResult{}, err
 	}
-	route := s.pluginsForSQL(ctx, req.SQL)
 	defer route.CloseOnDemand()
-	if len(route.Omitted) > 0 {
-		return ExecResult{}, logfile.Typed(fmt.Errorf(
-			"the SELECT references more than SQLite's %d attached databases; split the query (omitted: %s)",
-			plugin.MaxAttached, strings.Join(route.OmittedSources(), ", ")), DegradedInvalidSQL)
-	}
-	gate, closeGate, err := s.GateFor(route.IncludeCore, route.Databases)
-	if err != nil {
-		return ExecResult{}, err
-	}
-	defer closeGate()
-	// The stage that failed is only knowable here, and it is the same
-	// distinction the degraded answers already declare: what the gate refused
-	// and what the engine could not run are two different fixes.
-	if err := gate.RejectUnqualified(req.SQL); err != nil {
-		return ExecResult{}, logfile.Typed(err, DegradedInvalidSQL)
-	}
-	validated, err := gate.Validate(req.SQL)
-	if err != nil {
-		return ExecResult{}, logfile.Typed(err, DegradedInvalidSQL)
-	}
 	columns, rows, err := s.executeWithPluginsBudget(ctx, validated, "", maxChars, route.Databases,
 		execBudget{timeout: req.Timeout, set: req.TimeoutSet})
 	if err != nil {
-		degraded := DegradedExecution
-		if errors.Is(err, ErrQueryTimeout) {
-			degraded = DegradedTimeout
-		}
-		return ExecResult{}, logfile.Typed(err, degraded)
+		return ExecResult{}, typedExecError(err)
 	}
 	result := ExecResult{
-		SQL:       validated,
-		Columns:   columns,
-		Rows:      rows,
-		RowCount:  len(rows),
-		MaxChars:  maxChars,
-		LatencyMS: time.Since(start).Milliseconds(),
-		Version:   s.opts.Version,
-		SourceSHA: s.opts.Commit,
+		SQL: validated, Columns: columns, Rows: rows, RowCount: len(rows),
+		MaxChars: maxChars, LatencyMS: time.Since(start).Milliseconds(),
+		Version: s.opts.Version, SourceSHA: s.opts.Commit,
 	}
 	if s.PluginsActive() {
 		result.Databases = route.Consulted()
 	}
 	return result, nil
+}
+
+func (s *Service) prepareExec(ctx context.Context, statement string, cursor bool) (PluginRoute, string, error) {
+	if _, err := s.EnsureSchema(ctx); err != nil {
+		return PluginRoute{}, "", err
+	}
+	route := s.pluginsForSQL(ctx, statement)
+	ok := false
+	defer func() {
+		if !ok {
+			route.CloseOnDemand()
+		}
+	}()
+	if len(route.Omitted) > 0 {
+		return PluginRoute{}, "", logfile.Typed(fmt.Errorf(
+			"the SELECT references more than SQLite's %d attached databases; split the query (omitted: %s)",
+			plugin.MaxAttached, strings.Join(route.OmittedSources(), ", ")), DegradedInvalidSQL)
+	}
+	gate, closeGate, err := s.GateFor(route.IncludeCore, route.Databases)
+	if err != nil {
+		return PluginRoute{}, "", err
+	}
+	defer closeGate()
+	// The stage that failed is only knowable here, and it is the same
+	// distinction the degraded answers already declare: what the gate refused
+	// and what the engine could not run are two different fixes.
+	if err := gate.RejectUnqualified(statement); err != nil {
+		return PluginRoute{}, "", logfile.Typed(err, DegradedInvalidSQL)
+	}
+	validate := gate.Validate
+	if cursor {
+		validate = gate.ValidateCursor
+	}
+	validated, err := validate(statement)
+	if err != nil {
+		return PluginRoute{}, "", logfile.Typed(err, DegradedInvalidSQL)
+	}
+	ok = true
+	return route, validated, nil
+}
+
+func typedExecError(err error) error {
+	degraded := DegradedExecution
+	if errors.Is(err, ErrQueryTimeout) {
+		degraded = DegradedTimeout
+	}
+	return logfile.Typed(err, degraded)
 }
 
 // execute runs the validated SELECT and normalizes the rows into maps keyed by
@@ -126,12 +144,16 @@ func executionError(parent, queryCtx context.Context, timeout time.Duration, err
 // SQL execution share it, so unexpected column types are handled in
 // one place.
 func ScanRows(rows *sql.Rows, maxChars int, term string) ([]string, []map[string]any, error) {
+	return scanRowsPage(rows, maxChars, term, 0)
+}
+
+func scanRowsPage(rows *sql.Rows, maxChars int, term string, limit int) ([]string, []map[string]any, error) {
 	columns, err := rows.Columns()
 	if err != nil {
 		return nil, nil, err
 	}
 	var result []map[string]any
-	for rows.Next() {
+	for (limit == 0 || len(result) < limit) && rows.Next() {
 		values := make([]any, len(columns))
 		pointers := make([]any, len(columns))
 		for i := range values {

@@ -325,6 +325,17 @@ func (g *Gate) Close() error { return g.engine.close() }
 // going to run. The string it returns is the one to execute: it may carry the
 // LIMIT that was missing.
 func (g *Gate) Validate(stmt string) (string, error) {
+	return g.validate(stmt, true)
+}
+
+// ValidateCursor keeps SELECT, schema, function and visibility checks while
+// leaving the total row count to a cursor. Its consumer must bound each page;
+// the vector reader emits at most 500 rows per response.
+func (g *Gate) ValidateCursor(stmt string) (string, error) {
+	return g.validate(stmt, false)
+}
+
+func (g *Gate) validate(stmt string, limitRows bool) (string, error) {
 	if strings.IndexByte(stmt, 0) >= 0 {
 		return "", fmt.Errorf("SQL parse error: embedded NUL byte")
 	}
@@ -344,6 +355,9 @@ func (g *Gate) Validate(stmt string) (string, error) {
 	clean, err := enforceLimit(stmt)
 	if err != nil {
 		return "", err
+	}
+	if !limitRows {
+		clean = stmt
 	}
 	if err := g.engine.prepare(clean); err != nil {
 		return "", err
