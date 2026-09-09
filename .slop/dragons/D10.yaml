@@ -1,28 +1,35 @@
 schema: 1
 id: D10
-status: accepted
+status: removed
 category: adjacent_feature
-title: "Call history is dual-written to JSONL and ops with no ops expiry"
+title: "Call-history dual-write runtime removed; legacy schema cleanup pending"
 created_at: 2026-09-08
 incident:
   intent: >
     Querying databases does not require keeping every command forever. One
-    audit destination is enough: bounded JSONL for diagnosis, or ops with an
-    explicit retention policy.
+    audit destination is enough: bounded JSONL for diagnosis. The owner chose
+    JSONL on 2026-09-08.
   what_was_built: >
     Every call is written to JSONL and to roca-ops.db with segment import,
     hashes, parity checks and fallback; ops rows never expire.
   justifying_sentence: "Dual-write the ops database and existing executions/mcp-audit JSONL"
   source: >
     INFORME-SLOP-ADYACENTE.md §3 D10 and §6 item 8; PR #69 reversed by PR #132
-    (DATA-5); issue #353 (held for an owner destination decision).
+    (DATA-5); issue #353 owner decision of 2026-09-08.
   cost: "1,399 lines + 702 test lines; payload stored at least twice plus extracted SQL columns"
 rule: >
-  One write per call. Choose JSONL only or ops only, import history that is
-  not yet in the chosen destination, remove parity/backfill, document and
-  enforce retention.
+  JSONL is the only audit destination. TestCostAuditDestination executes the
+  CLI and observes one JSONL record per exec and zero ops audit growth;
+  make audit-test with ROCA_AUDIT_PUBLISHED_BIN compares the published binary with the branch.
+  S1 removes the persistence/parity/backfill runtime. Dormant legacy tables
+  remain until S2's separately validated storage-removal migration for #353.
 forbid:
-  paths: []
+  paths:
+    - "internal/distribution/callhistory/**"
   symbols:
     - "BackfillIfNeeded"
-  strings: []
+    - "NewWithOps"
+  strings:
+    - "internal/distribution/logfile/**::call_history"
+    - "internal/distribution/cli/**::call_history"
+    - "internal/distribution/mcpplug/**::call_history"

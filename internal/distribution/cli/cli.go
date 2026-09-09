@@ -62,7 +62,6 @@ type cliEnv struct {
 	prelogged            bool
 	skipExecutionLog     bool
 	openedDir            string
-	auditOpsDatabase     string
 	liveIngest           *ingestRows
 	wantIngestProgress   bool
 	ingestStarted        time.Time
@@ -108,16 +107,6 @@ func executeWithOptions(env *cliEnv, args []string, in io.Reader, plugins bool) 
 		env.started = started
 	}
 	env.loadCommandFeatures()
-	// The durable half of the call log is database I/O like any other, so a
-	// read-only run keeps the JSONL sink alone and leaves the ops database
-	// exactly as it found it.
-	if !config.ReadOnly(os.Getenv(config.EnvReadOnly)) {
-		if paths, err := env.resolvePaths(); err == nil {
-			if root := pluginRoot(paths); root != "" {
-				env.auditOpsDatabase = filepath.Join(root, rocaops.Name, rocaops.DatabaseFilename)
-			}
-		}
-	}
 	root := rootCommand(env)
 	if plugins {
 		if handled, code, err := dispatchPlugin(env, root, args, env.features); handled {
@@ -793,9 +782,8 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 	}
 	// Placing the bundled plugins writes directories, manifests and schemas.
 	// Read-only refuses writes before any of that, so an audit of a machine
-	// leaves it exactly as it found it. The ops package is always present for
-	// durable call history; features.roca_ops still controls only its agent-memory
-	// write and query routes during the staged split.
+	// leaves it exactly as it found it. The ops package owns operational memory;
+	// features.roca_ops controls its staged memory write and query routes.
 	if !readOnly && !env.skipBundledLifecycle {
 		if pluginDir == "" {
 			return nil, fmt.Errorf("the bundled ops plugin needs a HOME for its database")
@@ -916,12 +904,7 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 	}
 	if !readOnly {
 		audit := logfile.New(filepath.Dir(paths.DB))
-		if pluginDir != "" {
-			env.auditOpsDatabase = filepath.Join(pluginDir, rocaops.Name, rocaops.DatabaseFilename)
-			audit = logfile.NewWithOps(filepath.Dir(paths.DB), env.auditOpsDatabase)
-		}
 		_ = audit.Prepare()
-		_ = audit.BackfillIfNeeded()
 	}
 	env.openedDir = filepath.Dir(paths.DB)
 	return svc, nil
