@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -32,10 +33,8 @@ const (
 )
 
 var (
-	candidateCountTimeout = 2 * time.Second
-	countDeclaredChunks   = readDeclaredChunkCount
-	statVectorFile        = os.Stat
-	workerActivityMu      sync.Mutex
+	statVectorFile   = os.Stat
+	workerActivityMu sync.Mutex
 )
 
 // StatusRequest is the filesystem seat status reads. It does not take an
@@ -136,12 +135,10 @@ func inspectDatabase(ctx context.Context, pluginRoot string, database vectorData
 	facts, statErr := sidecarFileFacts(sidecarPath)
 	row.SidecarBytes, row.LastWrite = facts.Bytes, facts.LastWrite
 	row.IndexLock = inspectIndexLock(sidecarPath)
-	candidate := boundedCandidateCount(ctx, database, sourcePath)
 	if statErr != nil {
 		return row
 	}
 	if !facts.Exists {
-		row.CandidateChunks = candidateCountForMarker(candidate, currentSourceMarker(sourcePath))
 		row.State = StateEmpty
 		row.IndexLock = IndexLockAbsent
 		return row
@@ -158,7 +155,10 @@ func inspectDatabase(ctx context.Context, pluginRoot string, database vectorData
 	row.EmbeddedChunks = &snapshot.EmbeddedChunks
 	row.EmbeddingPages = snapshot.EmbeddingPages
 	marker := currentSourceMarker(sourcePath)
-	row.CandidateChunks = candidateCountForMarker(candidate, marker)
+	if snapshot.Contract == database.contractFingerprint() && snapshot.Fingerprint != "" &&
+		marker != nil && snapshot.SourceMarker == *marker && snapshot.CompletedGeneration == *marker {
+		row.CandidateChunks = snapshot.CompletedChunks
+	}
 	row.State = classifySidecar(facts.Exists, true, workerActive, row.EmbeddedChunks, snapshot.Contract,
 		database.contractFingerprint(), snapshot.Fingerprint, snapshot.SourceMarker, marker)
 	currentFacts, currentFactsErr := sidecarFileFacts(sidecarPath)
@@ -181,11 +181,13 @@ func inspectDatabase(ctx context.Context, pluginRoot string, database vectorData
 }
 
 type sidecarSnapshot struct {
-	EmbeddedChunks int64
-	EmbeddingPages *int64
-	Contract       string
-	Fingerprint    string
-	SourceMarker   string
+	CompletedGeneration string
+	CompletedChunks     *int64
+	EmbeddedChunks      int64
+	EmbeddingPages      *int64
+	Contract            string
+	Fingerprint         string
+	SourceMarker        string
 }
 
 func readSidecarSnapshot(ctx context.Context, store *sql.DB) (sidecarSnapshot, bool) {
@@ -203,8 +205,8 @@ func readSidecarSnapshot(ctx context.Context, store *sql.DB) (sidecarSnapshot, b
 	}
 	snapshot.EmbeddedChunks = count
 	snapshot.EmbeddingPages = embeddingPageCount(snapshotCtx, tx)
-	rows, err := tx.QueryContext(snapshotCtx, `SELECT key,value FROM meta WHERE key IN (?,?,?)`,
-		"contract", "source_fingerprint", sourceMarkerMetaKey)
+	rows, err := tx.QueryContext(snapshotCtx, `SELECT key,value FROM meta WHERE key IN (?,?,?,?,?)`,
+		"contract", "source_fingerprint", sourceMarkerMetaKey, "completed_chunks", "completed_generation")
 	if err != nil {
 		return sidecarSnapshot{}, false
 	}
@@ -215,6 +217,12 @@ func readSidecarSnapshot(ctx context.Context, store *sql.DB) (sidecarSnapshot, b
 			return sidecarSnapshot{}, false
 		}
 		switch key {
+		case "completed_generation":
+			snapshot.CompletedGeneration = value
+		case "completed_chunks":
+			if count, err := strconv.ParseInt(value, 10, 64); err == nil && count >= 0 {
+				snapshot.CompletedChunks = &count
+			}
 		case "contract":
 			snapshot.Contract = value
 		case "source_fingerprint":
@@ -308,86 +316,6 @@ func sidecarFileFacts(path string) (sidecarFileSnapshot, error) {
 	}, nil
 }
 
-type candidateChunkSnapshot struct {
-	Chunks       *int64
-	SourceMarker string
-}
-
-func boundedCandidateCount(ctx context.Context, database vectorDatabase, path string) candidateChunkSnapshot {
-	ctx, cancel := boundContext(ctx, candidateCountTimeout)
-	defer cancel()
-	type reply struct {
-		snapshot candidateChunkSnapshot
-		err      error
-	}
-	ch := make(chan reply, 1)
-	go func() {
-		snapshot, err := countDeclaredChunks(ctx, database, path)
-		ch <- reply{snapshot, err}
-	}()
-	select {
-	case got := <-ch:
-		if got.err != nil {
-			return candidateChunkSnapshot{}
-		}
-		return got.snapshot
-	case <-ctx.Done():
-		return candidateChunkSnapshot{}
-	}
-}
-
-func readDeclaredChunkCount(ctx context.Context, database vectorDatabase, path string) (candidateChunkSnapshot, error) {
-	before, err := sourceFileMarker(path)
-	if os.IsNotExist(err) {
-		return candidateChunkSnapshot{}, nil
-	} else if err != nil {
-		return candidateChunkSnapshot{}, err
-	}
-	store, err := openSQLiteBusy(path, true, int(candidateCountTimeout/time.Millisecond))
-	if err != nil {
-		return candidateChunkSnapshot{}, err
-	}
-	defer store.Close()
-	tx, err := store.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
-	if err != nil {
-		return candidateChunkSnapshot{}, err
-	}
-	defer tx.Rollback()
-	var total int64
-	for _, table := range database.Tables {
-		counts := make([]string, 0, len(table.TextColumns))
-		maxChars, overlap := 0, 0
-		if table.Chunking != nil && (table.Chunking.MaxChars != nil || table.Chunking.OverlapChars != nil) {
-			maxChars, overlap = table.chunking()
-		}
-		for _, column := range table.TextColumns {
-			text := `COALESCE(CAST(` + quoteIdentifier(column) + ` AS TEXT),'')`
-			counts = append(counts, fmt.Sprintf("%s(%s,%d,%d)", declaredChunkCountFunction, text, maxChars, overlap))
-		}
-		if len(counts) == 0 {
-			continue
-		}
-		statement := `SELECT COALESCE(SUM(` + strings.Join(counts, "+") + `),0) FROM ` + quoteIdentifier(table.Name) +
-			` WHERE ` + declaredSourcePredicate("", table)
-		var n int64
-		if err := tx.QueryRowContext(ctx, statement).Scan(&n); err != nil {
-			return candidateChunkSnapshot{}, err
-		}
-		total += n
-	}
-	if err := tx.Commit(); err != nil {
-		return candidateChunkSnapshot{}, err
-	}
-	after, err := sourceFileMarker(path)
-	if err != nil {
-		return candidateChunkSnapshot{}, err
-	}
-	if before != after {
-		return candidateChunkSnapshot{}, errSourceChanged
-	}
-	return candidateChunkSnapshot{Chunks: &total, SourceMarker: after}, nil
-}
-
 func currentSourceMarker(path string) *string {
 	marker, err := sourceFileMarker(path)
 	if err == nil {
@@ -398,13 +326,6 @@ func currentSourceMarker(path string) *string {
 		return &missing
 	}
 	return nil
-}
-
-func candidateCountForMarker(candidate candidateChunkSnapshot, marker *string) *int64 {
-	if candidate.Chunks == nil || marker == nil || candidate.SourceMarker != *marker {
-		return nil
-	}
-	return candidate.Chunks
 }
 
 type workerActivity struct {
@@ -468,9 +389,10 @@ func clearWorkerActivity(stateDir string) error {
 }
 
 type sourceMarkerFact struct {
-	Path    string `json:"path"`
-	Size    int64  `json:"size"`
-	ModTime int64  `json:"mtime_ns"`
+	Path     string `json:"path"`
+	Size     int64  `json:"size"`
+	ModTime  int64  `json:"mtime_ns"`
+	Identity string `json:"identity"`
 }
 
 func sourceFileMarker(path string) (string, error) {
@@ -493,16 +415,17 @@ func sourceFileMarker(path string) (string, error) {
 			return "", err
 		}
 		facts = append(facts, sourceMarkerFact{Path: filepath.Clean(absolute), Size: fact.Size,
-			ModTime: fact.ModTime})
+			ModTime: fact.ModTime, Identity: fact.Identity})
 	}
 	raw, err := json.Marshal(facts)
 	return string(raw), err
 }
 
 type sqliteFileFact struct {
-	Exists  bool
-	Size    int64
-	ModTime int64
+	Identity string
+	Exists   bool
+	Size     int64
+	ModTime  int64
 }
 
 func stableSQLiteFileFacts(path string, suffixes []string) ([]sqliteFileFact, error) {
@@ -554,7 +477,11 @@ func readSQLiteFileFacts(path string, suffixes []string) ([]sqliteFileFact, erro
 		if err != nil {
 			return nil, err
 		}
-		facts[index] = sqliteFileFact{Exists: true, Size: info.Size(), ModTime: info.ModTime().UnixNano()}
+		identity, err := fileChangeIdentity(path+suffix, info)
+		if err != nil {
+			return nil, err
+		}
+		facts[index] = sqliteFileFact{Exists: true, Size: info.Size(), ModTime: info.ModTime().UnixNano(), Identity: identity}
 	}
 	return facts, nil
 }

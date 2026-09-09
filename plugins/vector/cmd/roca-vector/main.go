@@ -207,6 +207,7 @@ func ingestCommand(env *environment) *cobra.Command {
 	var model string
 	var source string
 	var reembed bool
+	var verify bool
 	var accelerate bool
 	command := &cobra.Command{
 		Use:   "ingest --delta",
@@ -272,6 +273,7 @@ func ingestCommand(env *environment) *cobra.Command {
 			}
 			if federated {
 				federation.Reembed = reembed
+				federation.Verify = verify
 				federation.Progress = progress
 				federationReport, ingestErr := federation.Ingest(command.Context(), source)
 				err = ingestErr
@@ -318,6 +320,7 @@ func ingestCommand(env *environment) *cobra.Command {
 		},
 	}
 	command.Flags().BoolVar(&delta, "delta", false, "embed only new or changed chunks")
+	command.Flags().BoolVar(&verify, "verify", false, "verify source content even when file metadata is unchanged")
 	command.Flags().BoolVar(&reembed, "reembed", false, "rebuild sidecar chunks under the current generation policy")
 	command.Flags().StringVar(&model, "model", "", "embedding model identifier (default: indexed model)")
 	command.Flags().StringVar(&source, "source", "", "limit the delta to one declared table")
