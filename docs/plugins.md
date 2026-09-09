@@ -808,7 +808,7 @@ database remain readable; the manifest migration does not move data. It owns an
 accent-insensitive `memories_fts` index over its own memories, rebuilt on every
 schema apply so a database that predates the index answers for the rows it
 already held. See [Operations](operations.md) for call-history storage and the
-legacy ops-history transition.
+bounded JSONL recovery contract.
 
 DATA-2 also prepares a second, hidden memory route in that same custodial
 database. `memory_records` holds the multiset union of ops, core, and harvested

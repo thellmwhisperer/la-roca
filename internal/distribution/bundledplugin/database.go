@@ -107,7 +107,7 @@ func TableColumns(ctx context.Context, querier interface {
 
 // ApplySchema upgrades one bundled plugin's owned database in place, then
 // prepares its plugin-local DATA SPLIT ledger. Every declaration it executes is
-// additive and idempotent; source rows remain the caller's custody throughout.
+// idempotent; each plugin owns any explicit historical-data deletion.
 func ApplySchema(path, pluginName, declaration string, schemaVersion, indexVersion int) error {
 	db, err := OpenDatabase(path, false)
 	if err != nil {

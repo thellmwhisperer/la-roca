@@ -102,14 +102,14 @@ the branch. [D3 FTS evidence](docs/d3-fts-evidence.md) owns the lab procedure,
 cost assertions, and transcript locations.
 
 `make audit-test` executes the CLI in a synthetic home and asserts one JSONL
-record per successful or rejected `exec`, no growth of dormant ops history,
+record per successful or rejected `exec`, absence of ops audit tables,
 and JSONL-only doctor reads. `make audit-test
 ROCA_AUDIT_PUBLISHED_BIN=<absolute-published-binary>` requires the published
 control to reproduce the second ops write, then upgrades a separate synthetic
 home to the branch. It prints both versions, SHA-256 digests, and observed
 record counts; retain its output with delivery evidence. The delivery gate
 runs the paired comparison when that explicit variable is set. No live home or
-installed `roca` is selected. Storage removal and VACUUM proof are S2 of #353.
+installed `roca` is selected. The paired run also measures deletion and VACUUM reclamation on a synthetic lab copy.
 
 `make snapshot-evidence ROCA_SNAPSHOT_PUBLISHED_BIN=<absolute-pinned-v1.82.3-binary>`
 runs the historical D1 kill only with the `snapshot_evidence` build tag and an

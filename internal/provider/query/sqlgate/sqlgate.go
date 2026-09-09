@@ -53,10 +53,6 @@ const MaxLimit = 1000
 // tables and compatibility view stay shadow-only until the atomic federation
 // cutover selects them.
 //
-// `call_history_segments` and `call_history_state` are dormant bookkeeping
-// from the removed ops backfill and parity gate. Keep them hidden until the
-// storage-removal migration drops them; they are never calls anyone made.
-//
 // Exact-dedup runs and remaps are owner-gated maintenance evidence. Typed ID
 // resolution can read them, but generated SQL must not treat them as a domain.
 var invisibleTables = []string{
@@ -70,7 +66,6 @@ var invisibleTables = []string{
 	"tool_use_version_memberships", "thinking_block_version_memberships",
 	"ingest_file_state_version_memberships",
 	"memory_records", "memory_records_fts", "memory_provenance", "memory_compatibility",
-	"call_history_segments", "call_history_state",
 	"dedup_runs", "memory_id_remaps", "session_id_remaps",
 	"exchange_id_remaps", "thinking_block_id_remaps",
 }
