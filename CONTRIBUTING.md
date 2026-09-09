@@ -82,6 +82,20 @@ It is a separate opt-in comparison on synthetic homes, never a mutable
 `make check` dependency. It requires an explicit executable, validates its
 v1.82.6 version, and fails if the published comparison does not execute.
 
+`make migrate-test ROCA_PUBLISHED_BIN=<published-binary>` runs `TestCostMigrate`
+against two synthetic verified homes, including legacy DATA-4 rows, and requires
+an explicit published executable. It records published and branch measurements
+under `.tmp/migrate-evidence` (override with `ROCA_MIGRATE_EVIDENCE_DIR`), checks
+that the published baseline reproduces size-dependent reads, and requires branch
+logical reads (including cache hits) within five percent across sizes and opens
+under 100 ms. It then takes frozen snapshots offline and repeats SELECT and
+migrate, checking that migrated exchanges remain readable. Linux uses process
+read accounting; macOS requires `clang` for read instrumentation and measures
+time separately without instrumentation. It never measures the live federation.
+The ordinary acceptance suite runs the branch regression without requiring a
+published binary; the paired target is also required by the no-mistakes test
+command.
+
 The D1 acceptance denies temporary copies throughout the read-only operation
 and checks durable database digests, allowing SQLite SHM. Synthetic vector
 latency tests live in `plugins/vector/internal/vector/status_issue336_test.go`:

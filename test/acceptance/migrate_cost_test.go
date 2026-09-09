@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -53,6 +54,19 @@ func migrateFixtureCost(t *testing.T, label string, rows int) (migrateCost, migr
 	if err != nil {
 		t.Fatal(err)
 	}
+	evidenceDir := os.Getenv("ROCA_MIGRATE_EVIDENCE_DIR")
+	if evidenceDir == "" {
+		evidenceDir = filepath.Join(root, ".tmp", "migrate-evidence")
+	}
+	if err := os.MkdirAll(evidenceDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	var transcript strings.Builder
+	t.Cleanup(func() {
+		if err := os.WriteFile(filepath.Join(evidenceDir, label+"-cli.txt"), []byte(transcript.String()), 0600); err != nil {
+			t.Error(err)
+		}
+	})
 	dbPath := filepath.Join(m.home, ".roca", "roca.db")
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0700); err != nil {
 		t.Fatal(err)
@@ -96,6 +110,7 @@ func migrateFixtureCost(t *testing.T, label string, rows int) (migrateCost, migr
 		t.Fatal(err)
 	}
 	output, code := m.runUnder(t, nil, "migrate", "--json")
+	fmt.Fprintf(&transcript, "$ roca migrate --json\n%s[exit %d]\n", output, code)
 	if code != 0 || !strings.Contains(output, `"verified": true`) {
 		t.Fatalf("migrate: code=%d %s", code, output)
 	}
@@ -114,11 +129,7 @@ func migrateFixtureCost(t *testing.T, label string, rows int) (migrateCost, migr
 		if err != nil {
 			t.Fatal(err)
 		}
-		dir := filepath.Join(root, ".tmp", "migrate-evidence")
-		if err := os.MkdirAll(dir, 0700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, label+"-"+binaryLabel+".json"), evidence, 0600); err != nil {
+		if err := os.WriteFile(filepath.Join(evidenceDir, label+"-"+binaryLabel+".json"), evidence, 0600); err != nil {
 			t.Fatal(err)
 		}
 		t.Logf("%s: %s", binaryLabel, evidence)
@@ -136,10 +147,24 @@ func migrateFixtureCost(t *testing.T, label string, rows int) (migrateCost, migr
 	if err := os.Rename(snapshots, snapshots+"-offline"); err != nil {
 		t.Fatal(err)
 	}
+	transcript.WriteString("\nFrozen snapshots moved offline; backups retained.\n")
 	for _, args := range [][]string{{"exec", "SELECT 1"}, {"migrate", "--json"}} {
-		if output, code := m.runUnder(t, nil, args...); code != 0 {
+		output, code := m.runUnder(t, nil, args...)
+		fmt.Fprintf(&transcript, "$ roca %s\n%s[exit %d]\n", strings.Join(args, " "), output, code)
+		if code != 0 {
 			t.Fatalf("without frozen sources: %v: %s", args, output)
 		}
+	}
+	query := "SELECT COUNT(*) AS migrated_exchanges FROM plugin_roca_corpus.exchanges"
+	output, code = m.runUnder(t, nil, "exec", query, "--json")
+	fmt.Fprintf(&transcript, "$ roca exec %q --json\n%s[exit %d]\n", query, output, code)
+	var result struct {
+		Rows []struct {
+			Exchanges int `json:"migrated_exchanges"`
+		} `json:"rows"`
+	}
+	if err := json.Unmarshal([]byte(output), &result); err != nil || code != 0 || len(result.Rows) != 1 || result.Rows[0].Exchanges != exchanges {
+		t.Fatalf("migrated exchanges without frozen sources: code=%d %s", code, output)
 	}
 	if after.ElapsedNS >= int64(100*time.Millisecond) {
 		t.Fatalf("D2: ordinary exec took %s; budget is <100 ms", time.Duration(after.ElapsedNS))

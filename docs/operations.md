@@ -265,8 +265,10 @@ size:
    family row counts (including present paths that cannot be followed or
    opened), and named migration states plus the shared DATA-6
    cutover verdict. The verdict is `true`, `false`, or `unknown` (`null` in
-   JSON): a timeout is always unknown and never evidence of an incomplete migration. A verified
-   verdict requires readable corpus, ops, and cron stores
+   JSON): a timeout reading destination readiness is unknown, never evidence of
+   an incomplete migration. A locked legacy core does not obscure readable
+   destination readiness. A verified verdict requires readable corpus, ops,
+   and cron stores
    together with verified DATA-2, DATA-3, and DATA-4 custody. A fresh init, a
    core-only legacy home, a mid-migration home, and a verified cutover home are
    distinguishable at a glance.
@@ -387,22 +389,25 @@ cleanup.
 
 `roca migrate` resumes DATA-2 memory custody, DATA-3 corpus custody and DATA-4
 legacy custody, then reports `migration: verified` (`{"verified":true}` with
-`--json`). It uses the existing frozen snapshots and committed batch receipts;
-an interrupted run can be invoked again. A verified installation returns without
-opening frozen snapshots, hashing, checking integrity or materializing rows.
-Backups remain in place. Read-only mode refuses migration.
+`--json`). It prepares the bundled destinations and creates frozen snapshots
+when memory custody is unfinished. Once memory custody verifies, subsequent
+stages reuse those snapshots and committed batch receipts; a missing verified
+snapshot is an error rather than a reason to copy the live source again.
+An interrupted run can be invoked again. When all destination ledgers are
+verified, another run returns without opening frozen snapshots, hashing,
+checking integrity or materializing rows. Backups remain in place.
+Read-only mode refuses migration.
 
 Run it before selecting `shadow-equal` or `cutover` in `[layout].serving`.
-The command preserves that selection. Ordinary commands read the selected
-layout directly and never migrate it as a side effect of opening the service.
+The command preserves that selection. With an existing core database, ordinary
+service opens in either layout check destination readiness and report
+`run roca migrate` if required custody is unfinished, including in read-only
+mode. They preserve the serving selection on this failure. Ordinary commands
+never migrate custody as a side effect of opening the service. Verified opens
+read fixed destination ledger entries, without reading frozen sources or doing
+row-count, hash, integrity-check or materialization work. Older DATA-4 imports
+with batch receipts but no completion seals also require this explicit step. See [plugin custody](plugins.md) for reconciliation and storage-upgrade
+rules.
 
-The D2 cost regression is `TestCostMigrate` in the acceptance suite. With
-`ROCA_PUBLISHED_BIN` pointing to the published executable, it records both
-published and branch measurements under `.tmp/migrate-evidence` for two
-synthetic verified homes, including legacy DATA-4 rows. It measures logical
-process reads (including cache hits), requires branch reads within five percent
-across the two sizes and opens under 100 ms, and takes the snapshots offline
-before repeating both SELECT and migrate. It never measures the live federation.
-The [migrate command](../internal/distribution/cli/migrate.go) records DATA-4
-completion in the destination ledger after reconciliation;
-ordinary opens read these fixed entries and never recount legacy source tables.
+[Build and test](../CONTRIBUTING.md#build-and-test) owns the synthetic D2 cost
+regression and published-versus-branch evidence procedure.

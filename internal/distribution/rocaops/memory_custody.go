@@ -162,11 +162,6 @@ func MemoryCustodyWriterFenced(ctx context.Context, opsPath string) (fenced bool
 // ops' hidden DATA-2 tables. The currently served memories and FTS tables are
 // never selected as a destination, so a completed shadow migration cannot
 // change an answer before cutover.
-//
-// DATA-2 deliberately ships this engine and its frozen-home proof with no
-// caller: nothing in the installer or the CLI invokes it, exactly as DATA-1
-// shipped the ledger with only Prepare wired. Choosing when a real home runs
-// the copy, and serving the result, belongs to the DATA-6 cutover rung.
 func MigrateMemoryCustody(ctx context.Context, options MemoryCustodyOptions) (MemoryCustodyReport, error) {
 	if err := options.valid(); err != nil {
 		return MemoryCustodyReport{}, err
@@ -357,8 +352,9 @@ func pendingMemories(source string, rows []memoryRow,
 
 // recordMemoryVerification separates the two verified outcomes: a population
 // that carried memories reaches the terminal verified state, while a home whose
-// three sources were all empty reaches verified-empty, which stays open so the
-// rows it may hold later are still carried instead of silently skipped.
+// three sources were all empty reaches verified-empty. Low-level callers can
+// reopen that empty population; ReuseVerifiedSnapshots instead preserves the
+// frozen inputs needed to resume the remaining custody stages.
 //
 // The two are told apart by this migration's own membership count rather than by
 // any batch the ops ledger holds, so a batch some other rung commits into the
