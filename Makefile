@@ -75,6 +75,11 @@ dist: $(DIST_TARGETS) vector-dist ## Build native vector payloads plus the Windo
 test: ## Unit and contract tests
 	go test ./...
 
+.PHONY: codex-identity-test
+codex-identity-test: build ## Paired Codex session identity regression on a declared lab
+	@test -n "$(ROCA_CODEX_PUBLISHED_BIN)" || (echo 'Set ROCA_CODEX_PUBLISHED_BIN to the v1.84.8 executable'; exit 1)
+	ROCA_BIN=$(abspath $(BIN)) go test -tags=acceptance ./test/acceptance -run '^TestCodexIdentityPublished$$' -v -count=1
+
 .PHONY: accept accept-index split-oracle e2e-smoke
 # Pin the suite to the artefact this recipe's `build` just wrote. An inherited
 # ROCA_BIN, including a stub, cannot select a different binary.
