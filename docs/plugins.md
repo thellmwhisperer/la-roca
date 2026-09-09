@@ -231,20 +231,17 @@ configuration and installed manifests. Database retention, pruning,
 compaction, and scale are plugin policy, and one plugin cannot prune another
 plugin's history.
 
-The kernel's own attach point is an empty in-memory SQLite database. During
-the reversible cutover, temporary compatibility views reproduce the former
-core tables from plugin custody memberships, and temporary FTS indexes
-preserve the legacy ranking surface. The single `layout.serving` marker and
-its rollback states are documented in the
-[runtime map](architecture.md#runtime-map). This adapter is not a plugin API.
+The kernel's own attach point is an empty in-memory SQLite database. The
+[migration contract](operations.md#explicit-data-split-migration) owns serving
+selection, compatibility reads, and FTS ranking behavior during cutover.
+This adapter is not a plugin API.
 A plugin database is opened read-only and reached only through its declared
 alias.
 
 `roca-corpus` and `roca-ops`, the engine's manifest-backed bundled consumers,
-prove the model without changing the product contract: both are resident,
-ingest and operational writes still land in the same data, query results are
-unchanged, and readable query output still begins with the same consulted
-database list.
+prove the model: both are resident, ingest and operational writes still land
+in the same data, and readable query output still begins with the same
+consulted database list.
 
 ## The manifest
 
@@ -823,7 +820,7 @@ record, while duplicates within a source and divergent payloads remain physical
 versions. Plugin-local custody memberships and `memory_compatibility` retain
 every legacy database label and ID. Its derived `memory_records_fts` is rebuilt
 and checked before the ledger becomes `verified`. These names stay outside
-prompts and the SQL gate during shadow mode, so the served `memories`/
+prompts and the SQL gate during legacy serving, so the served `memories`/
 `memories_fts` route and source databases remain untouched until the atomic
 cutover.
 

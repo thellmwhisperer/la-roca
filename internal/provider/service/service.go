@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -97,12 +96,9 @@ type Options struct {
 	// ReadLayout is the single reversible selector for the serving route. The
 	// zero value is the released legacy route.
 	ReadLayout ReadLayout
-	// RollbackLayout atomically restores legacy-serving when the shadow differs
-	// or the cutover hub cannot reopen. The surface owns the marker location.
+	// RollbackLayout atomically restores legacy-serving if the cutover hub
+	// cannot reopen. The surface owns the marker location.
 	RollbackLayout func(error) error
-	// RecordShadowMismatch persists row-free local evidence without changing the
-	// legacy answer returned to the caller. Observability remains non-fatal.
-	RecordShadowMismatch func(error)
 	// VectorSearch is the optional federated vector leg for hybrid query.
 	// Nil means this installation has no vector plugin, and Search runs FTS
 	// alone with the same envelope.
@@ -149,11 +145,10 @@ type Service struct {
 	gate        *sqlgate.Gate
 	gateFailure error
 
-	layoutMu         sync.Mutex
-	readLayout       ReadLayout
-	hubSearchMu      sync.Mutex
-	hubSearchReady   bool
-	hubSearchFailure error
+	layoutMu       sync.Mutex
+	hubSearchMu    sync.Mutex
+	hubSearchReady bool
+	readLayout     ReadLayout
 }
 
 // Open opens the database. Its schema is adopted before the first data operation.
@@ -172,7 +167,10 @@ func openWithContext(ctx context.Context, opts Options) (*Service, error) {
 	if layout == "" {
 		layout = LayoutLegacyServing
 	}
-	if layout != LayoutLegacyServing && layout != LayoutShadowEqual && layout != LayoutCutover {
+	if layout == LayoutShadowEqual {
+		return nil, fmt.Errorf("shadow-equal validation is retired; select legacy-serving or cutover in layout.serving (run roca migrate before cutover)")
+	}
+	if layout != LayoutLegacyServing && layout != LayoutCutover {
 		return nil, fmt.Errorf("unknown serving layout %q", layout)
 	}
 	svc := &Service{opts: opts, registry: registry, readLayout: layout}
@@ -261,86 +259,7 @@ func (s *Service) closeOpened() error {
 	return result
 }
 
-func (s *Service) shadowEqual(columns []string, rows []map[string]any,
-	hubColumns []string, hubRows []map[string]any) bool {
-	return reflect.DeepEqual(columns, hubColumns) && reflect.DeepEqual(rows, hubRows)
-}
-
-func (s *Service) rollbackShadow(reason error) {
-	s.layoutMu.Lock()
-	if s.readLayout != LayoutShadowEqual {
-		s.layoutMu.Unlock()
-		return
-	}
-	s.readLayout = LayoutLegacyServing
-	s.layoutMu.Unlock()
-
-	recorded := reason
-	if s.opts.RollbackLayout != nil {
-		if err := s.opts.RollbackLayout(fmt.Errorf("shadow comparison failed: %w", reason)); err != nil {
-			recorded = errors.Join(reason, fmt.Errorf("persist legacy-serving rollback: %w", err))
-		}
-	}
-	if s.opts.RecordShadowMismatch != nil {
-		s.opts.RecordShadowMismatch(recorded)
-	}
-}
-
-func (s *Service) rollbackCutover(reason error) error {
-	if s.opts.ReadOnly {
-		return reason
-	}
-	s.layoutMu.Lock()
-	if s.readLayout != LayoutCutover {
-		s.layoutMu.Unlock()
-		return nil
-	}
-	legacy, err := store.Open(s.opts.DBPath)
-	if err != nil {
-		s.layoutMu.Unlock()
-		return fmt.Errorf("open the legacy database after the cutover search failed: %w", err)
-	}
-	s.legacy = legacy
-	s.db = legacy
-	s.readLayout = LayoutLegacyServing
-	s.schemaMu.Lock()
-	s.schemaOK = false
-	s.schemaMu.Unlock()
-	s.layoutMu.Unlock()
-
-	if s.opts.RollbackLayout != nil {
-		if err := s.opts.RollbackLayout(fmt.Errorf("cutover hub search failed: %w", reason)); err != nil {
-			return errors.Join(reason, fmt.Errorf("persist legacy-serving rollback: %w", err))
-		}
-	}
-	return nil
-}
-
-func (s *Service) recoverHubSearchFailure(err error) error {
-	switch s.servingLayout() {
-	case LayoutShadowEqual:
-		s.rollbackShadow(fmt.Errorf("shadow hub search differs: %w", err))
-		return nil
-	case LayoutCutover:
-		return s.rollbackCutover(err)
-	default:
-		return err
-	}
-}
-
-func (s *Service) compareShadow(equal bool, hubErr error, mismatch string) {
-	if hubErr == nil && equal {
-		return
-	}
-	if hubErr == nil {
-		hubErr = errors.New(mismatch)
-	}
-	s.rollbackShadow(hubErr)
-}
-
 func (s *Service) servingLayout() ReadLayout {
-	s.layoutMu.Lock()
-	defer s.layoutMu.Unlock()
 	return s.readLayout
 }
 

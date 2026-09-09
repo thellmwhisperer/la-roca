@@ -17,7 +17,8 @@ incident:
 rule: >
   Validate only empty input and Unicode character length on deterministic
   search. Model-invoking plugins own prompt defenses.
-  TestCostCrossAndDeterministicQuestionDependencies forbids the regex dependency;
+  TestCostDeterministicQuestionValidation requires zero allocations per valid
+  question and runtime within eight times a shape-only check on synthetic text;
   TestQueryFindsSystemPromptWithStrictInputEnabled pins a successful lab search.
 forbid:
   symbols:

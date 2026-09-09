@@ -491,21 +491,7 @@ func (s *Service) ExecuteWithPlugins(ctx context.Context, statement, term string
 
 func (s *Service) executeWithPluginsBudget(ctx context.Context, statement, term string,
 	maxChars int, databases []plugin.Database, budget execBudget) ([]string, []map[string]any, error) {
-	if s.servingLayout() != LayoutLegacyServing && s.hub != nil && needsHubSearch(statement) {
-		if err := s.ensureHubSearch(ctx); err != nil {
-			if recoverErr := s.recoverHubSearchFailure(err); recoverErr != nil {
-				return nil, nil, recoverErr
-			}
-		}
-	}
-	columns, rows, err := s.executeWithDatabase(ctx, statement, term, maxChars, databases, s.db, budget)
-	if err != nil || s.servingLayout() != LayoutShadowEqual || s.hubDB == nil {
-		return columns, rows, err
-	}
-	hubColumns, hubRows, hubErr := s.executeWithDatabase(
-		ctx, statement, term, maxChars, databases, s.hubDB, budget)
-	s.compareShadow(s.shadowEqual(columns, rows, hubColumns, hubRows), hubErr, "shadow rows differ")
-	return columns, rows, nil
+	return s.executeWithDatabase(ctx, statement, term, maxChars, databases, s.db, budget)
 }
 
 func (s *Service) executeWithDatabase(ctx context.Context, statement, term string,

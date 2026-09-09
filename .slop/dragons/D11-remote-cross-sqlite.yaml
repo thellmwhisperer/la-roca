@@ -16,8 +16,9 @@ incident:
     second scan of every cell, solely to concatenate already loaded results.
 rule: >
   Concatenate in Go, project missing columns to null and preserve the envelope.
-  TestCostCrossAndDeterministicQuestionDependencies forbids SQL imports at the
-  gather boundary; existing remote fixtures pin ordering and exact IDs.
+  TestCostCrossNoSQLiteConnections observes zero SQLite connections while running
+  the gather regressions, with a real connection as a positive control in an
+  isolated subprocess; existing remote fixtures pin ordering and exact IDs.
 forbid:
   symbols:
     - "loadCrossTable"

@@ -825,6 +825,9 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 		ingestProgress = env.liveIngest.update
 	}
 	readLayout := service.ReadLayout(file.Layout.Serving)
+	if readLayout == service.LayoutShadowEqual {
+		return nil, fmt.Errorf("shadow-equal validation is retired; select legacy-serving or cutover in layout.serving (run roca migrate before cutover)")
+	}
 	opsDatabase := ""
 	if pluginDir != "" {
 		opsDatabase = filepath.Join(pluginDir, rocaops.Name, rocaops.DatabaseFilename)
@@ -868,20 +871,9 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 	}
 	rocaOpsEnabled := file.Features.RocaOps || readLayout != service.LayoutLegacyServing || writerFenced
 	var rollbackLayout func(error) error
-	var recordShadowMismatch func(error)
 	if !readOnly {
 		rollbackLayout = func(error) error {
 			return config.SetServingLayout(paths.Config, config.LayoutLegacyServing)
-		}
-		recordShadowMismatch = func(reason error) {
-			writer := logfile.NewWithOps(filepath.Dir(paths.DB), opsDatabase)
-			_ = writer.Append(logfile.Executions, logfile.ExecutionRecord{
-				CallRecord: logfile.CallRecord{
-					Timestamp: time.Now().UTC(), Source: "kernel", Args: []string{}, OK: false,
-					Error: reason.Error(), ErrorType: "shadow_mismatch",
-				},
-				Command: "shadow-compare", DatabasePath: paths.DB, ExitCode: ExitError,
-			})
 		}
 	}
 	vectorSearch := service.VectorSearchFunc(nil)
@@ -905,7 +897,6 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 		CorpusEnabled:             !env.omitCorpus,
 		ReadLayout:                readLayout,
 		RollbackLayout:            rollbackLayout,
-		RecordShadowMismatch:      recordShadowMismatch,
 
 		ConfigPath:   paths.Config,
 		ConfigExists: file.Exists,
