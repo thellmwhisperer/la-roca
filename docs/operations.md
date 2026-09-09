@@ -122,9 +122,10 @@ right repair is to move those memories into an existing layer instead. Both
 repair commands follow the same selected database and `roca-ops` routing as
 `roca store`; the command printed by doctor includes the matching `--db-path`.
 
-Every CLI command except `roca doctor --report`, and every MCP tool call,
-writes one redacted audit record to JSONL under the selected data directory's
-`logs/`, whether it succeeds or fails. Call history is written only to JSONL.
+CLI commands and MCP tool calls write one redacted audit record to JSONL under
+the selected data directory's `logs/`, whether they succeed or fail. CLI runs
+with `--read-only`, `roca remote cross`, and `roca doctor --report` suppress
+audit logging. Call history is written only to JSONL.
 The support report writes no audit record because its read-only contract
 includes observability. An append failure emits a warning without changing
 the command or tool result. Query result rows are never logged.
@@ -230,7 +231,7 @@ diagnosis.
 prints one fenced text block with a generation timestamp; `roca doctor --report
 --json` emits the same snapshot as JSON. The collector is read-only: it does
 not install plugins, adopt schema, prepare the federation hub, or change
-`layout.serving`; it also writes no JSONL or ops audit record and makes no
+`layout.serving`; it also writes no audit record and makes no
 network calls.
 Support-only database observation uses short, context-aware lock waits, so a
 locked store is reported as unreadable instead of delaying the snapshot. All
@@ -340,8 +341,9 @@ so CLI and MCP enforce the same boundary. Installing the bundled
 [`roca-corpus`](plugins.md#the-bundled-roca-corpus-plugin) archive is itself a
 write, so a read-only run never places it: on an installation that does not have
 it yet, answers cover core only and carry that omission as a warning. Read-only
-commands may still append JSONL audit records; `roca doctor --report` suppresses
-audit entirely. No command writes or backfills audit history into a database.
+commands using `ROCA_READ_ONLY=1` may still append JSONL audit records; the CLI
+`--read-only` flag suppresses them. The other audit exceptions are listed above.
+No command writes or backfills audit history into a database.
 See [Read-only snapshot cleanup](#read-only-snapshot-cleanup)
 for SQLite reader traffic and operator-consented cleanup.
 
