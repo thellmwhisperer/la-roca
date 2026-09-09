@@ -1,0 +1,17 @@
+schema: 1
+id: R2
+status: accepted
+category: adjacent_feature
+title: "D3 parser still recommends retired shadow-equal"
+created_at: 2026-09-09
+incident:
+  intent: "Correct what the cleanup wave added, dismantle nothing else."
+  what_was_built: "internal/provider/config/file.go still lists shadow-equal in the invalid layout diagnostic. Service construction already rejects the retired mode."
+  justifying_sentence: "Accepted for the separate diagnostic correction requested by issue #385. Removing FTS rebuilds remains enforced by D3; changing parser compatibility is outside this reader and migration delivery."
+  source: "https://github.com/thellmwhisperer/la-roca/issues/385, residue R2"
+  cost: "One stale diagnostic choice; no query I/O cost is claimed."
+rule: "Accepted for the separate diagnostic correction requested by issue #385. Removing FTS rebuilds remains enforced by D3; changing parser compatibility is outside this reader and migration delivery."
+forbid:
+  paths: []
+  symbols: []
+  strings: []

@@ -1,0 +1,17 @@
+schema: 1
+id: R4
+status: accepted
+category: adjacent_feature
+title: "D12 strict_input remains a configuration field"
+created_at: 2026-09-09
+incident:
+  intent: "Correct what the cleanup wave added, dismantle nothing else."
+  what_was_built: "internal/provider/config/file.go still parses and defaults strict_input; supportreport/report.go reports it. Deterministic search no longer uses it to reject prompt-related text."
+  justifying_sentence: "Accepted as configuration compatibility residue pending a separate field retirement. The deterministic query behavior is covered by TestQueryFindsSystemPromptWithStrictInputEnabled; restoring prompt-pattern rejection is forbidden by D12."
+  source: "https://github.com/thellmwhisperer/la-roca/issues/385, residue R4"
+  cost: "One boolean field plus parsing and reporting; no search-byte or runtime improvement is claimed."
+rule: "Accepted as configuration compatibility residue pending a separate field retirement. The deterministic query behavior is covered by TestQueryFindsSystemPromptWithStrictInputEnabled; restoring prompt-pattern rejection is forbidden by D12."
+forbid:
+  paths: []
+  symbols: []
+  strings: []

@@ -34,10 +34,10 @@ func TestCostUnchangedSourceAndStoredStatus(t *testing.T) {
 		return oldHash(path, contract)
 	}
 	t.Cleanup(func() { hashVectorSource = oldHash })
-	run := f.Core.Run
-	f.Core.Run = func(context.Context, string, ...string) ([]byte, error) {
+	run := f.Core.readRequest
+	f.Core.readRequest = func(context.Context, CoreCLI, map[string]any, any) error {
 		t.Error("unchanged pass queried source text")
-		return nil, fmt.Errorf("source reads forbidden")
+		return fmt.Errorf("source reads forbidden")
 	}
 	// Linux rchar counts logical read/pread bytes, including cached reads and
 	// sidecar overhead. Elsewhere the hash seam counts its complete input bytes.
@@ -88,7 +88,7 @@ func TestCostUnchangedSourceAndStoredStatus(t *testing.T) {
 	if bytes < info.Size() {
 		t.Fatal("explicit verification did not hash source")
 	}
-	f.Core.Run = run
+	f.Core.readRequest = run
 	f.Verify = false
 	mutateSourceDatabase(t, source, `UPDATE articles SET body='One source changed' WHERE id='article-1'`)
 	for pass := 0; pass < 2; pass++ {
@@ -163,17 +163,17 @@ func TestCompletedGenerationInvalidation(t *testing.T) {
 				}
 			case "interrupted", "during-pass":
 				mutateSourceDatabase(t, source, `UPDATE articles SET body='Changed before pass'`)
-				run := f.Core.Run
+				run := f.Core.readRequest
 				changed := false
-				f.Core.Run = func(ctx context.Context, exe string, args ...string) ([]byte, error) {
+				f.Core.readRequest = func(ctx context.Context, core CoreCLI, request map[string]any, result any) error {
 					if change == "interrupted" {
-						return nil, context.Canceled
+						return context.Canceled
 					}
 					if !changed {
 						changed = true
 						mutateSourceDatabase(t, source, `UPDATE articles SET body='Changed during pass'`)
 					}
-					return run(ctx, exe, args...)
+					return run(ctx, core, request, result)
 				}
 				_, err := f.Ingest(ctx, "")
 				if change == "interrupted" && err == nil {
@@ -182,7 +182,7 @@ func TestCompletedGenerationInvalidation(t *testing.T) {
 				if change == "during-pass" && err != nil {
 					t.Fatal(err)
 				}
-				f.Core.Run = run
+				f.Core.readRequest = run
 			case "legacy-count":
 				store := openTestSQLite(t, SidecarPath(source))
 				if _, err := store.Exec(`DELETE FROM meta WHERE key='completed_generation'; UPDATE meta SET value='999' WHERE key='completed_chunks'`); err != nil {

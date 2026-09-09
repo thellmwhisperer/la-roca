@@ -10,7 +10,7 @@ func TestResolveDatabaseScopeRefreshesRepeatedAnswers(t *testing.T) {
 	calls := 0
 	core := CoreCLI{
 		Executable: "/synthetic/roca",
-		Run: func(context.Context, string, ...string) ([]byte, error) {
+		readRequest: readerFixture(func(context.Context, string, ...string) ([]byte, error) {
 			calls++
 			name := "ops"
 			if calls > 1 {
@@ -18,7 +18,7 @@ func TestResolveDatabaseScopeRefreshesRepeatedAnswers(t *testing.T) {
 			}
 			return json.Marshal(DatabaseScope{Databases: []string{name},
 				Selected: []DatabaseSelection{{Source: "plugin:roca-ops", Database: name}}})
-		},
+		}),
 	}
 	first, err := core.ResolveDatabaseScope(context.Background(), "ops")
 	if err != nil {

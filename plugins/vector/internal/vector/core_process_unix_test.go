@@ -12,7 +12,7 @@ import (
 )
 
 func TestRunCommandCancellationKillsAndReapsItsProcessGroup(t *testing.T) {
-	for _, mode := range []string{"legacy", "reader", "page-deadline"} {
+	for _, mode := range []string{"reader", "page-deadline"} {
 		t.Run(mode, func(t *testing.T) {
 			pidPath := t.TempDir() + "/child.pid"
 			script := t.TempDir() + "/reader"
@@ -31,8 +31,6 @@ func TestRunCommandCancellationKillsAndReapsItsProcessGroup(t *testing.T) {
 			go func() {
 				var err error
 				switch mode {
-				case "legacy":
-					_, err = runCommand(ctx, script)
 				case "reader":
 					_, err = (CoreCLI{Executable: script}).query(ctx, "SELECT 1")
 				case "page-deadline":

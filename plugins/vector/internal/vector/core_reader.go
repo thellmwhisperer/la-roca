@@ -17,18 +17,13 @@ type coreReaderKey struct{}
 
 var nextCursor atomic.Uint64
 
-// The legacy injected runner retains keyset pages for comparison tests. The
-// real reader executes the initial SELECT once and advances its SQLite cursor.
 func (c CoreCLI) queryIngestCursor(ctx context.Context, statement string, cursor *string) ([]map[string]any, error) {
-	if c.Run != nil {
-		return c.queryIngest(ctx, statement)
-	}
 	ctx, cancel := boundContext(ctx, ingestPageTimeout)
 	defer cancel()
 	request := map[string]any{}
 	if *cursor == "" {
 		*cursor = strconv.FormatUint(nextCursor.Add(1), 10)
-		request["sql"] = strings.TrimSuffix(statement, " LIMIT "+strconv.Itoa(walkPageSize))
+		request["sql"] = statement
 	}
 	request["cursor"] = *cursor
 	var result execResult
@@ -164,7 +159,10 @@ func (r *coreReader) stop() {
 	}
 }
 
-func (c CoreCLI) read(ctx context.Context, request any, result any) error {
+func (c CoreCLI) read(ctx context.Context, request map[string]any, result any) error {
+	if c.readRequest != nil {
+		return c.readRequest(ctx, c, request, result)
+	}
 	ctx, close := withCoreReader(ctx)
 	defer close()
 	return ctx.Value(coreReaderKey{}).(*coreReader).read(ctx, c, request, result)
