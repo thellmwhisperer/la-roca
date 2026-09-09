@@ -154,3 +154,13 @@ playground-integration: build
 migrate-test: build ## Measure D2 against published and branch binaries on one lab
 	@test -x "$(ROCA_PUBLISHED_BIN)" || { echo "set ROCA_PUBLISHED_BIN to a published binary" >&2; exit 1; }
 	ROCA_BIN="$(CURDIR)/$(BIN)" ROCA_PUBLISHED_BIN="$(ROCA_PUBLISHED_BIN)" go test -tags acceptance ./test/acceptance -run '^TestCostMigrate$$' -count=1 -v
+
+# D1's historical kill is deliberately absent from the ordinary Go suite.
+ROCA_SNAPSHOT_PUBLISHED_BIN ?=
+.PHONY: snapshot-evidence
+snapshot-evidence: ## Compare D1 killed readers using an explicit v1.82.3 binary
+	@test -x "$(ROCA_SNAPSHOT_PUBLISHED_BIN)" || { echo "set ROCA_SNAPSHOT_PUBLISHED_BIN to an absolute pinned v1.82.3 executable" >&2; exit 1; }
+	@mkdir -p .tmp/snapshot-evidence
+	@ROCA_SNAPSHOT_PUBLISHED_BIN="$(ROCA_SNAPSHOT_PUBLISHED_BIN)" go test -tags snapshot_evidence ./internal/distribution/cli -run '^TestPublishedBinaryKillLeavesReadOnlySnapshotOrphans$$' -count=1 -v > .tmp/snapshot-evidence/published.txt 2>&1 || { cat .tmp/snapshot-evidence/published.txt; exit 1; }
+	@go test ./internal/store -run '^TestOpenReadOnlyKillLeavesNoDirectory$$' -count=1 -v > .tmp/snapshot-evidence/branch.txt 2>&1 || { cat .tmp/snapshot-evidence/branch.txt; exit 1; }
+	@cat .tmp/snapshot-evidence/published.txt .tmp/snapshot-evidence/branch.txt
