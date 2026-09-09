@@ -51,9 +51,6 @@ type Options struct {
 	// from an absent setting, which uses DefaultQueryTimeout.
 	QueryTimeout    time.Duration
 	QueryTimeoutSet bool
-	// DisableStrictInput is the opt-out escape hatch for the experimental
-	// prompt-attack signature gate. Its zero value keeps the gate enabled.
-	DisableStrictInput bool
 	// DisableMissingReferentAsk is the opt-out escape hatch for asking the
 	// operator to name a referent the question left generic instead of letting
 	// the model guess one. Its zero value keeps the ask enabled, and it is its
