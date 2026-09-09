@@ -415,7 +415,7 @@ func TestRemoteCrossScatterGathersOnlyInMemory(t *testing.T) {
 }
 
 // The remote cross JSON envelope must preserve decimal ID strings through its
-// in-memory SQLite union, without embedding JSON quote characters in the IDs.
+// concatenation, without embedding JSON quote characters in the IDs.
 func TestRemoteCrossPreservesExactJSONIDs(t *testing.T) {
 	fixture := fixtureInstallation(t)
 	addRemote(t, fixture.home, "studio", "dev@example.test")

@@ -123,7 +123,7 @@ func executionError(parent, queryCtx context.Context, timeout time.Duration, err
 
 // ScanRows turns any result set into its column names and its rows of named
 // values under the text budget. The query cascade, health diagnosis and
-// in-memory cross queries share it, so unexpected column types are handled in
+// SQL execution share it, so unexpected column types are handled in
 // one place.
 func ScanRows(rows *sql.Rows, maxChars int, term string) ([]string, []map[string]any, error) {
 	columns, err := rows.Columns()

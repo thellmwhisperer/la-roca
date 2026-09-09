@@ -129,7 +129,7 @@ supplies human answering.
 ### Compare rocks across machines
 
 Register an SSH target, run the same gate-approved `SELECT` there, or scatter
-one `SELECT` across local and remote rocks into a temporary in-memory SQLite:
+one `SELECT` across local and remote rocks for comparison:
 
 ```sh
 roca remote add studio --ssh dev@studio.example
