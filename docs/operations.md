@@ -123,12 +123,17 @@ repair commands follow the same selected database and `roca-ops` routing as
 `roca store`; the command printed by doctor includes the matching `--db-path`.
 
 Every CLI command except `roca doctor --report`, and every MCP tool call,
-dual-writes one redacted record to the bundled ops database and to JSONL under
-the selected data directory's `logs/`, whether it succeeds or fails. The
-support report suppresses both sinks because its read-only contract includes
-observability. Either sink may fail independently: the surviving sink is still
-written, one warning is emitted, and the observed command or tool result never
-changes. Query result rows are written to neither sink.
+writes one redacted audit record to JSONL under the selected data directory's
+`logs/`, whether it succeeds or fails. Call history is written only to JSONL.
+The support report writes no audit record because its read-only contract
+includes observability. An append failure emits a warning without changing
+the command or tool result. Query result rows are never logged.
+
+The legacy ops history tables are dormant: this release neither writes nor
+backfills them, and doctor does not read them. Their schema and old rows remain
+until the separate #353 storage-removal migration. They are not a complete
+archive or a recovery promise. Recovery from JSONL covers only the same-day
+files that still exist; expired or previously rotated-away records are gone.
 
 ## Streams and contents
 
@@ -137,10 +142,7 @@ retain at most 30 days. Each file is capped at 5 MiB and each stream keeps at
 most six files, so a busy installation cannot grow a stream beyond 30 MiB.
 Consumers should glob `<stream>-*.jsonl`; rotated segments have the same prefix.
 An individual record larger than the file cap is dropped under the same
-non-failing writer contract. This DATA SPLIT stage deliberately keeps rotation
-and both call-stream writes unchanged as the rollback path; retiring those two
-JSONL streams requires a separately proven rollback transition. The ops copy
-has no automatic expiry, and its retention policy cannot prune corpus or cron.
+non-failing writer contract. Rotation and redaction are unchanged.
 
 `executions` and `mcp-audit` share one top-level call contract. Surface-specific
 fields are `command` plus `flags` for CLI and `tool` for MCP:
@@ -149,8 +151,8 @@ fields are `command` plus `flags` for CLI and `tool` for MCP:
 {"timestamp":"2026-08-12T10:30:00Z","source":"mcp","tool":"roca_sql","args":{"query":"find the synthetic lighthouse"},"ok":false,"error":"the generated SQL was rejected","error_type":"invalid_sql","duration_ms":184,"question":"find the synthetic lighthouse","sql":"SELECT missing FROM memories","model_sql":"SELECT missing FROM memories","sql_provider":"codex","sql_model":"gpt-synthetic","row_count":0,"fallback_reason":"invalid_sql","retry_type":"gate_rejection","retry_reason":"no such column: missing","correlation_id":"qf_0123456789abcdef"}
 ```
 
-The additive `call_id` is the durable ops identity: it equals the correlation ID
-when one exists and otherwise is derived from the retained segment and line.
+Historical records may contain an ops-derived `call_id`; new records use the
+existing `correlation_id` for surfaced failures without segment identities.
 The stable fields are:
 
 - `timestamp`, `source`, `args`, `ok`, `duration_ms`, and `row_count` on every
@@ -208,13 +210,8 @@ repairs, and failure. Both streams are plain files beside the call audit.
 
 ## Reading query failures
 
-Retained `executions` and `mcp-audit` segments are backfilled into ops in one
-bounded transaction per segment. Segment digests and source-line identities
-make a retry idempotent and resumable; parseable rows commit once, while
-malformed and unreadable counts keep their existing meaning. `roca doctor`
-switches to the ops reader only after that retained set reaches parity. If the
-ops parity or read fails, it rolls back to the JSONL reader without changing
-the diagnosis.
+Doctor reads retained `executions` and `mcp-audit` JSONL segments directly.
+Malformed lines and unreadable files remain visible as gaps in that sample.
 
 Doctor reports the number of failed query calls in the last 24 hours, on either
 surface: `query`, `explore`, `roca_query`, `roca_explore`, and `roca_sql`. It
@@ -288,18 +285,52 @@ The report never includes conversation text, memory bodies, file paths outside
 the `~/.roca` layout names, or person names. Corpus-scale totals are the only
 counts.
 
+## Query one day of call history with SQL
+
+Import only the retained execution and MCP segments for a chosen UTC date into
+scratch SQLite. Python 3's standard library is sufficient. Choose an unused
+scratch database path; this recipe creates its `audit` table and refuses to
+append to an existing table. It reads the logs without modifying them and
+includes rotated segments. Malformed JSON aborts the import transaction.
+
+```sh
+python3 - "$HOME/.roca/logs" 2026-09-09 "${TMPDIR:-/tmp}/roca-audit.sqlite" <<'PY'
+import json, pathlib, sqlite3, sys
+logs, day, scratch = sys.argv[1:]
+with sqlite3.connect(scratch) as db:
+    db.execute("CREATE TABLE audit (record TEXT NOT NULL CHECK(json_valid(record)))")
+    for stream in ("executions", "mcp-audit"):
+        for path in sorted(pathlib.Path(logs).glob(f"{stream}-{day}*.jsonl")):
+            with path.open() as source:
+                for line in source:
+                    json.loads(line)
+                    db.execute("INSERT INTO audit VALUES (?)", (line.strip(),))
+    for row in db.execute("""
+        SELECT coalesce(json_extract(record, '$.command'),
+                        json_extract(record, '$.tool')) AS operation,
+               count(*) AS calls,
+               sum(json_extract(record, '$.ok') = 0) AS failures
+        FROM audit GROUP BY operation ORDER BY operation
+    """):
+        print(row)
+PY
+```
+
+Use the selected data directory's `logs/` instead of `~/.roca/logs` when it
+is customized. A day with no retained files yields an empty scratch table;
+SQL cannot recover expired history. Delete the scratch database when finished.
+This is an ad hoc diagnostic import, not a second product audit destination.
+
 ## Redaction
 
-Before a record reaches either sink, redaction covers sensitive field names;
+Before a record reaches the log, redaction covers sensitive field names;
 bearer and key/value secrets; PEM private keys; OpenAI `sk-*`, GitHub
 `gh[pousr]_*` and `github_pat_*`, Slack `xox*`, JWT `eyJ*`, AWS `AKIA*`, and
 Google `AIza*` credential shapes.
 
 Log directories and files are created with operator-only permissions.
 The public contract, JSONL adapter, rotation, retention, and redaction are owned
-by `internal/distribution/logfile`; durable ops persistence is owned by
-`internal/distribution/callhistory` and the schema in
-`internal/distribution/rocaops/schema.sql`.
+by `internal/distribution/logfile`.
 
 ## Read-only boundary
 
@@ -307,10 +338,10 @@ by `internal/distribution/logfile`; durable ops persistence is owned by
 so CLI and MCP enforce the same boundary. Installing the bundled
 [`roca-corpus`](plugins.md#the-bundled-roca-corpus-plugin) archive is itself a
 write, so a read-only run never places it: on an installation that does not have
-it yet, answers cover core only and carry that omission as a warning. The
-durable half of the call log is database I/O under the same rule: a read-only
-run writes and backfills no call history, and `roca doctor` reads its failure
-history from JSONL. See [Read-only snapshot cleanup](#read-only-snapshot-cleanup)
+it yet, answers cover core only and carry that omission as a warning. Read-only
+commands may still append JSONL audit records; `roca doctor --report` suppresses
+audit entirely. No command writes or backfills audit history into a database.
+See [Read-only snapshot cleanup](#read-only-snapshot-cleanup)
 for SQLite reader traffic and operator-consented cleanup.
 
 ## Exact duplicate maintenance
@@ -362,9 +393,8 @@ Experimental plugin packages are not part of the selected data directory: they
 live under `~/.roca/plugins`, and protected removals are archived beside them.
 The bundled `roca-cron` plugin keeps its canonical journey database there too;
 it observes the selected data directory's existing `logs/.roca.lock` without
-owning it. The durable half of the call log is plugin-owned the same way: it
-lives in `roca-ops/roca-ops.db` under that tree whichever data directory the
-JSONL copy is written to. See [Plugins](plugins.md#scheduled-rides).
+owning it. Call history belongs to the selected data directory's JSONL logs,
+independently of the plugin tree. See [Plugins](plugins.md#scheduled-rides).
 
 ## Read-only snapshot cleanup
 

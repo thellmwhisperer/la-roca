@@ -60,27 +60,15 @@ func TestAuditCorrelatesADegradedAnswerOnlyWhenItReachesTheAgentAsAnError(t *tes
 	cases := []struct {
 		name       string
 		isError    bool
-		brokenOps  bool
 		correlated bool
 	}{
-		{"a degraded failure is a tool error", true, false, true},
-		{"a degraded answer is still an answer", false, false, false},
-		// Either sink may fail without changing the tool result: a durable sink
-		// that refused is warned about, and the record the JSONL sink did write
-		// still names its correlation ID to the agent.
-		{"a refused durable sink is not the tool result", true, true, true},
+		{"a degraded failure is a tool error", true, true},
+		{"a degraded answer is still an answer", false, false},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			root := t.TempDir()
 			writer := logfile.New(root)
-			if testCase.brokenOps {
-				database := filepath.Join(root, "roca-ops.db")
-				if err := os.WriteFile(database, []byte("not a database"), 0o600); err != nil {
-					t.Fatal(err)
-				}
-				writer = logfile.NewWithOps(root, database)
-			}
 			if err := writer.Prepare(); err != nil {
 				t.Fatal(err)
 			}
@@ -108,9 +96,8 @@ func TestAuditCorrelatesADegradedAnswerOnlyWhenItReachesTheAgentAsAnError(t *tes
 				t.Fatalf("correlated on screen=%v, in the log=%v, want %v: %s",
 					strings.Contains(text, "correlation_id"), logged, testCase.correlated, raw)
 			}
-			if strings.Contains(warnings.String(), "warning:") != testCase.brokenOps {
-				t.Fatalf("durable sink warning = %q, want a refused sink = %v",
-					warnings.String(), testCase.brokenOps)
+			if warnings.Len() != 0 {
+				t.Fatalf("audit warning: %s", warnings.String())
 			}
 			if !strings.Contains(raw, `"error_type":"invalid_sql"`) {
 				t.Fatalf("the degraded reason is not the error type: %s", raw)
