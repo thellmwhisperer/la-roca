@@ -542,6 +542,11 @@ func scalarInt(raw any) int {
 
 func (s *Service) runSearchSQL(ctx context.Context, route PluginRoute, statement string,
 	maxChars int) ([]map[string]any, error) {
+	if route.IncludeCore {
+		if err := s.ensureHubSearchViews(ctx); err != nil {
+			return nil, err
+		}
+	}
 	gate, closeGate, err := s.GateFor(route.IncludeCore, route.Databases)
 	if err != nil {
 		return nil, err
