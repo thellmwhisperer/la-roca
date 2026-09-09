@@ -79,7 +79,7 @@ test: ## Unit and contract tests
 # Pin the suite to the artefact this recipe's `build` just wrote. An inherited
 # ROCA_BIN, including a stub, cannot select a different binary.
 accept: build accept-index ## The godog acceptance suites against the real binary
-	ROCA_BIN=$(BIN) ROCA_PLAYGROUND_INTEGRATION= ROCA_PLAYGROUND_FEATURES= ROCA_PUBLISHED_BIN= go test -tags=acceptance ./test/acceptance -count=1
+	ROCA_BIN=$(BIN) ROCA_PLAYGROUND_INTEGRATION= ROCA_PLAYGROUND_FEATURES= ROCA_PUBLISHED_BIN= ROCA_AUDIT_PUBLISHED_BIN= go test -tags=acceptance ./test/acceptance -count=1
 
 e2e-smoke: build ## Real binary in a disposable home: init, ingest, query, plugin install and update
 	ROCA_BIN=$(BIN) ROCA_PLAYGROUND_INTEGRATION= ROCA_PLAYGROUND_FEATURES= ROCA_PUBLISHED_BIN= go test -tags=acceptance ./test/acceptance -run '^TestRealBinaryDisposableHomeSmoke$$' -count=1
@@ -137,6 +137,14 @@ help:
 .PHONY: playground-test
 playground-test: ## Test local playground argv, absence, audit and custody contracts
 	go test ./internal/distribution/cli -run '^Test(Playground|OpenForPlugin)' -count=1
+
+.PHONY: audit-test audit-evidence
+audit-test: build ## Observe one audit record per exec on a synthetic home
+	ROCA_BIN="$(CURDIR)/$(BIN)" ROCA_AUDIT_PUBLISHED_BIN= go test -tags acceptance ./test/acceptance -run '^TestCostAuditDestination$$' -count=1 -v
+
+audit-evidence: build ## Compare JSONL-only audit writes with an explicit published binary
+	@test -n "$(ROCA_AUDIT_PUBLISHED_BIN)" || (echo "ROCA_AUDIT_PUBLISHED_BIN is required"; exit 1)
+	ROCA_BIN="$(CURDIR)/$(BIN)" ROCA_AUDIT_PUBLISHED_BIN="$(ROCA_AUDIT_PUBLISHED_BIN)" go test -tags acceptance ./test/acceptance -run '^TestCostAuditDestination$$' -count=1 -v
 
 # Optional extraction evidence uses an explicitly supplied published binary.
 # Human answering scenarios belong to the plugin repo.
