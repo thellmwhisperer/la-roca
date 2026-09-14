@@ -140,6 +140,13 @@ identity invalidation contract, replacement cost fixture, and paired native
 default-query comparison.
 See [D7 batch indexing evidence](docs/d7-batch-evidence.md) for the isolated
 published-versus-branch transaction counts and timings.
+
+Session hooks carry an evidence obligation no unit test can discharge: a
+harness that accepts the entry La Roca writes can still refuse to run it or
+discard what it prints. Install on one machine, open a real session of each
+supported harness, and read back what that harness recorded as its own context.
+See [session hooks: evidence](docs/session-hooks-evidence.md) for what the
+harnesses did with the hook, and for the two defects only a live session found.
 See [D8/D9 source generation evidence](docs/d8-d9-evidence.md) for unchanged-pass
 source reads and stored-count status latency in the isolated lab.
 

@@ -115,6 +115,31 @@ func TestCursorInstallCreatesADocumentCursorCanRead(t *testing.T) {
 			agentcfg.RuntimeCursor, sessionRequest{}), 1)
 }
 
+// A Codex install that said nothing here would look finished and inject
+// nothing: Codex skips a hook it has not been trusted with, and says so to
+// nobody. A lab session found this the way only a lab session can.
+func TestCodexInstallNamesTheTrustStepItCannotTake(t *testing.T) {
+	home := skillTestHome(t)
+	t.Setenv(EnvExecutable, filepath.Join(home, "bin", "roca"))
+
+	var output, note strings.Builder
+	runHookCLI(t, &output, &note, "install", "codex")
+	if !strings.Contains(note.String(), "trusted") {
+		t.Fatalf("a Codex install does not name the trust step: %q", note.String())
+	}
+	// Saying it twice, on an install that changed nothing, is noise.
+	note.Reset()
+	runHookCLI(t, &output, &note, "install", "codex")
+	if note.String() != "" {
+		t.Fatalf("an unchanged Codex install repeated the note: %q", note.String())
+	}
+	note.Reset()
+	runHookCLI(t, &output, &note, "install", "cursor")
+	if note.String() != "" {
+		t.Fatalf("the Codex note reached another runtime: %q", note.String())
+	}
+}
+
 // A document this product cannot read never blocks a withdrawal, and never
 // loses a byte of what the operator put there.
 func TestJSONHookWithdrawalLeavesAnUnreadableDocumentAlone(t *testing.T) {

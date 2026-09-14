@@ -92,7 +92,9 @@ func sessionHookStdout(runtime, body string) string {
 	body = strings.TrimSpace(body)
 	switch runtime {
 	case agentcfg.RuntimePi, agentcfg.RuntimeOpencode:
-		// The extension and the plugin read stdout and inject it themselves.
+		// pi's extension and OpenCode's plugin read stdout and inject it
+		// themselves. Codex takes a SessionStart hook's stdout as the context
+		// directly: a JSON envelope there is dropped, as a lab session proved.
 		if body == "" {
 			return ""
 		}
