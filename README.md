@@ -95,10 +95,22 @@ single row.
 ### Give your whole fleet one memory
 
 A session loads its project context with `roca pill` and `roca handoff latest`.
-Opt-in Claude SessionStart hooks can load both automatically; ZCode's opt-in
-SessionStart hook injects the active handoffs. A handoff is stored only when
-you explicitly ask. The session you open today knows what Codex did last
-night, without you re-explaining the project.
+One opt-in session hook loads both automatically, and it is the same hook on
+every harness La Roca supports:
+
+```sh
+roca hooks install <claude|codex|cursor|opencode|pi|zcode> --pills --handoff
+roca hooks uninstall <runtime>
+```
+
+Every install writes into the file that harness already reads — Claude's
+settings, Codex's and Cursor's `hooks.json`, a pi extension, an OpenCode
+plugin, ZCode's nested config and wrapper — beside whatever hooks are already
+there, never over them. On session start it injects La Roca's search craft plus
+the project's pills and latest handoff. A handoff is stored only when you
+explicitly ask. The session you open today knows what Codex did last night,
+without you re-explaining the project.
+[Which file each runtime touches, and how to verify it.](docs/operations.md#session-hooks)
 Every agent reads and writes the same database, from the shell or through
 [MCP](docs/mcp.md). See the
 [session-context contract](docs/queries.md#session-context).

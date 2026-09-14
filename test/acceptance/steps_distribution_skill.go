@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/cucumber/godog"
@@ -22,6 +23,14 @@ func registerDistributionSkillSteps(ctx *godog.ScenarioContext, w *distributionW
 		w.skillIsARegisteredArtifact)
 	ctx.When(`^the operator requests a skill install without choosing an agent or all agents$`, w.installSkillWithoutChoice)
 	ctx.Then(`^the request fails and every agent home remains without the skill$`, w.noAgentReceivedSkill)
+	ctx.Given(`^every supported harness already has a session hook of its own$`,
+		w.harnessesWithTheirOwnSessionHook)
+	ctx.When(`^the operator installs the La Roca session hooks for every supported harness$`,
+		w.installSessionHooksEverywhere)
+	ctx.Then(`^every harness carries the La Roca session hook beside the hook it already had$`,
+		w.everyHarnessCarriesTheSessionHook)
+	ctx.Then(`^withdrawing them leaves every harness with only the hook it already had$`,
+		w.withdrawalLeavesOnlyTheForeignHook)
 	ctx.Given(`^synthetic agent instruction files with operator-owned content$`, w.syntheticInstructionFiles)
 	ctx.When(`^the operator initializes La Roca$`, w.initializeWithInstructionFiles)
 	ctx.Then(`^prompt.md is created and every agent instruction file is unchanged$`, w.promptIsSeparateFromInstructions)
@@ -253,4 +262,150 @@ func distributionSkillFile(agent, home, skill string) (string, error) {
 		return "", fmt.Errorf("unknown agent %q", agent)
 	}
 	return filepath.Join(append([]string{home}, append(parts, "skills", skill, "SKILL.md")...)...), nil
+}
+
+// Every harness in this scenario starts with a session hook another tool
+// installed, because that is how the machines this ships to actually look. The
+// contract is one added hook per harness, never a replaced one.
+var distributionHookFixtures = map[string]struct{ path, body, marker string }{
+	"claude": {
+		path:   filepath.Join(".claude", "settings.json"),
+		body:   `{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"pane-state session"}]}]}}`,
+		marker: "pane-state session",
+	},
+	"codex": {
+		path:   filepath.Join(".codex", "hooks.json"),
+		body:   `{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"pane-state session","timeout":10}]}]}}`,
+		marker: "pane-state session",
+	},
+	"cursor": {
+		path:   filepath.Join(".cursor", "hooks.json"),
+		body:   `{"version":1,"hooks":{"sessionStart":[{"command":"pane-state session"}]}}`,
+		marker: "pane-state session",
+	},
+	"zcode": {
+		path:   filepath.Join(".zcode", "cli", "config.json"),
+		body:   `{"hooks":{"enabled":true,"events":{"SessionStart":[{"hooks":[{"type":"command","command":"pane-state","timeoutMs":5000}]}]}}}`,
+		marker: `"pane-state"`,
+	},
+	"pi": {
+		path:   filepath.Join(".pi", "agent", "extensions", "pane-state.ts"),
+		body:   "export default function () {}\n",
+		marker: "export default function () {}",
+	},
+	"opencode": {
+		path:   filepath.Join(".config", "opencode", "plugins", "pane-state.js"),
+		body:   "export default { id: \"pane.state\" };\n",
+		marker: `id: "pane.state"`,
+	},
+}
+
+func distributionHookRuntimes() []string {
+	names := make([]string, 0, len(distributionHookFixtures))
+	for name := range distributionHookFixtures {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func (w *distributionWorld) harnessesWithTheirOwnSessionHook() error {
+	if err := w.ensurePrepared(); err != nil {
+		return err
+	}
+	for _, runtime := range distributionHookRuntimes() {
+		fixture := distributionHookFixtures[runtime]
+		path := filepath.Join(w.home, fixture.path)
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			return err
+		}
+		if err := os.WriteFile(path, []byte(fixture.body), 0o600); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (w *distributionWorld) installSessionHooksEverywhere() error {
+	for _, runtime := range distributionHookRuntimes() {
+		if run := w.run("hooks", "install", runtime, "--pills", "--handoff"); run.code != 0 {
+			return fmt.Errorf("hooks install %s failed: %s%s", runtime, run.stdout, run.stderr)
+		}
+	}
+	return nil
+}
+
+func (w *distributionWorld) everyHarnessCarriesTheSessionHook() error {
+	for _, runtime := range distributionHookRuntimes() {
+		fixture := distributionHookFixtures[runtime]
+		body, err := os.ReadFile(filepath.Join(w.home, fixture.path))
+		if err != nil {
+			return err
+		}
+		if !strings.Contains(string(body), fixture.marker) {
+			return fmt.Errorf("%s lost the hook it already had: %s", runtime, body)
+		}
+		// ZCode reaches its runner through the wrapper the install writes, and
+		// pi and OpenCode through an extension file of their own beside the one
+		// they already had.
+		switch runtime {
+		case "zcode":
+			if body, err = os.ReadFile(
+				filepath.Join(w.home, ".zcode", "hooks", "roca-handoff.sh")); err != nil {
+				return err
+			}
+		case "pi", "opencode":
+			if body, err = os.ReadFile(distributionSessionScript(runtime, w.home)); err != nil {
+				return err
+			}
+		}
+		// The shell runtimes carry one command line; pi and OpenCode carry the
+		// same argv as a JSON array their extension passes to the binary.
+		wanted := "hooks run session --runtime " + runtime
+		if runtime == "pi" || runtime == "opencode" {
+			wanted = `"--runtime", "` + runtime + `"`
+		}
+		if !strings.Contains(string(body), wanted) {
+			return fmt.Errorf("%s did not receive the La Roca session hook: %s", runtime, body)
+		}
+	}
+	return nil
+}
+
+func (w *distributionWorld) withdrawalLeavesOnlyTheForeignHook() error {
+	for _, runtime := range distributionHookRuntimes() {
+		if run := w.run("hooks", "uninstall", runtime); run.code != 0 {
+			return fmt.Errorf("hooks uninstall %s failed: %s%s", runtime, run.stdout, run.stderr)
+		}
+	}
+	for _, runtime := range distributionHookRuntimes() {
+		fixture := distributionHookFixtures[runtime]
+		path := filepath.Join(w.home, fixture.path)
+		body, err := os.ReadFile(path)
+		if runtime == "pi" || runtime == "opencode" {
+			if err != nil {
+				return fmt.Errorf("%s lost the extension it already had: %v", runtime, err)
+			}
+			if _, err := os.Stat(distributionSessionScript(runtime, w.home)); !os.IsNotExist(err) {
+				return fmt.Errorf("%s kept the La Roca script after a withdrawal", runtime)
+			}
+		}
+		if err != nil {
+			return err
+		}
+		if !strings.Contains(string(body), fixture.marker) {
+			return fmt.Errorf("withdrawal removed %s's own hook: %s", runtime, body)
+		}
+		if strings.Contains(string(body), "hooks run session") {
+			return fmt.Errorf("%s kept the La Roca session hook after a withdrawal: %s", runtime, body)
+		}
+	}
+	return nil
+}
+
+func distributionSessionScript(runtime, home string) string {
+	if runtime == "pi" {
+		return filepath.Join(home, ".pi", "agent", "extensions", "roca-session.ts")
+	}
+	return filepath.Join(home, ".config", "opencode", "plugins", "roca-session.js")
 }

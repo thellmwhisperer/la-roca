@@ -272,43 +272,29 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 		}
 	}
 
-	// The Claude signing hook lives in a different file from Claude's MCP
-	// declaration and names the binary this command is about to unlink, so a
-	// hook left behind fires `roca` on every Bash tool call and finds nothing.
-	if settings, err := claudeSettingsPath(); err != nil {
-		failed(report, "%s", err)
-	} else {
-		outcome, warning, err := uninstallClaudeAuthorshipHook(settings)
+	// Every session hook names the binary this command is about to unlink, so
+	// one left behind opens each new session by calling a `roca` that is gone.
+	// Claude's signing hook lives in the same file and fires on every Bash
+	// tool call, so it is withdrawn here too. A problem reading one runtime
+	// never suppresses the withdrawal from the others.
+	for _, runtime := range hookRuntimeNames() {
+		path, err := hookArtifactPath(runtime)
+		if err != nil {
+			failed(report, "%s", err)
+			continue
+		}
+		outcome, warning, err := uninstallRuntimeHooks(env, runtime, path)
 		if warning != "" {
 			fmt.Fprintln(env.errOut, warning)
 		}
-		withdrawn("the Claude signing hook from "+settings, outcome, err)
-		for _, kind := range []string{"pills", "handoff"} {
-			session, sessionWarning, sessionErr := uninstallClaudeSessionHook(settings, kind)
-			if sessionWarning != "" {
-				fmt.Fprintln(env.errOut, sessionWarning)
-			}
-			withdrawn("the Claude SessionStart "+kind+" hook from "+settings, session, sessionErr)
-		}
+		withdrawn("the "+runtime+" session hook from "+path, outcome, err)
 		if purge {
-			removeRecoveryBackups(report, settings)
+			removeRecoveryBackups(report, path)
 		}
 	}
 
-	if wrapper, err := zcodeHookWrapperPath(); err != nil {
-		failed(report, "%s", err)
-	} else if config, err := hookConfigPath(agentcfg.RuntimeZcode); err != nil {
-		failed(report, "%s", err)
-	} else {
-		outcome, warning, err := uninstallZcodeHandoffHook(config, wrapper)
-		if warning != "" {
-			fmt.Fprintln(env.errOut, warning)
-		}
-		withdrawn("the zcode SessionStart hook from "+config, outcome, err)
-		if purge {
-			removeRecoveryBackups(report, config)
-			removeRecoveryBackups(report, wrapper)
-		}
+	if wrapper, err := zcodeHookWrapperPath(); err == nil && purge {
+		removeRecoveryBackups(report, wrapper)
 	}
 
 	home, err := os.UserHomeDir()

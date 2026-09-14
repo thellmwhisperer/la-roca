@@ -20,6 +20,22 @@ claims:
     contract:
       file: features/distribution/skill.feature
       item: "Nothing is ever installed into an agent without being asked"
+  internal/distribution/cli/hooks_context.go:
+    contract:
+      file: features/distribution/skill.feature
+      item: "Every supported harness gets the same session hook, beside the hooks it already has"
+  internal/distribution/cli/hooks_json.go:
+    contract:
+      file: features/distribution/skill.feature
+      item: "Every supported harness gets the same session hook, beside the hooks it already has"
+  internal/distribution/cli/hooks_runtimes.go:
+    contract:
+      file: features/distribution/skill.feature
+      item: "Every supported harness gets the same session hook, beside the hooks it already has"
+  internal/distribution/cli/hooks_script.go:
+    contract:
+      file: features/distribution/skill.feature
+      item: "Every supported harness gets the same session hook, beside the hooks it already has"
   internal/distribution/cli/hooks_zcode.go:
     contract:
       file: features/distribution/skill.feature
