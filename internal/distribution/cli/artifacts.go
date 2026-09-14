@@ -240,6 +240,9 @@ func (env *cliEnv) refreshManagedArtifacts(executable string, force bool) (artif
 			}
 			env.finishFileRefresh(entry, out, desired, &report)
 		case artifactKindHook:
+			if entry.Runtime != agentcfg.RuntimeClaude {
+				continue
+			}
 			out, err := refreshClaudeHook(entry.Path, executable, entry.SystemSHA256,
 				report.Enabled, force)
 			if err != nil {
