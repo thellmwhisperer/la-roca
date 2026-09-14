@@ -233,8 +233,20 @@ func installSessionHook(env *cliEnv, runtime, path, declared string,
 		return installZcodeSessionHook(path, declared, req)
 	default:
 		outcome, err := installJSONSessionHook(runtime, path, declared, req)
-		return outcome, "", err
+		return outcome, sessionHookInstallNote(runtime, outcome), err
 	}
+}
+
+// sessionHookInstallNote is the one thing an operator still has to do after an
+// install that otherwise finished. Codex runs only hooks whose exact command it
+// has been trusted with, and skips an untrusted one in silence, so an install
+// that said nothing here would look complete and inject nothing.
+func sessionHookInstallNote(runtime string, outcome agentcfg.Outcome) string {
+	if runtime != agentcfg.RuntimeCodex || !outcome.Changed {
+		return ""
+	}
+	return "note: Codex runs a hook only once you have trusted its exact command; " +
+		"open Codex and accept the new hook, or the session context is skipped in silence"
 }
 
 // uninstallRuntimeHooks withdraws everything La Roca owns for one runtime and

@@ -73,6 +73,10 @@ moved, rewritten or removed, on any of the files below.
 | `pi` | `~/.pi/agent/extensions/roca-session.ts` (`PI_CODING_AGENT_DIR`) | the file carries `ROCA_MANAGED_HOOK=session` and a `before_agent_start` handler |
 | `zcode` | `~/.zcode/cli/config.json` plus `~/.zcode/hooks/roca-handoff.sh` (`ZCODE_HOME`) | the nested `hooks.events.SessionStart` names the wrapper, and the wrapper calls `hooks run session --runtime zcode` |
 
+What a live session of each harness actually received, and the two things that
+only a live session could find, are recorded in
+[session hooks: evidence](session-hooks-evidence.md).
+
 The quickest end-to-end check on any of them is to run the installed command by
 hand and read its stdout: `roca hooks run session --runtime <runtime> --pills`.
 Each harness reads a different envelope, so that is what the runner writes:
@@ -104,6 +108,12 @@ settings, and an edited fragment is left alone until `roca hooks install claude
 divergence and registry contract. Because both Claude hooks live in one file,
 the signing entry is written first: settings this product cannot parse refuse
 the whole install rather than leave one hook written and the other not.
+
+Codex is the one harness with a step this product cannot take for the operator:
+it runs a hook only once that exact command has been trusted, recording a
+`trusted_hash` per entry in its own `config.toml`, and skips an untrusted hook in
+silence. `roca hooks install codex` says so; accepting the hook is the
+operator's decision and La Roca never writes that approval on their behalf.
 
 Installs that supersede a pre-1.85 Claude install withdraw its two separate
 `hooks run claude-pills` and `hooks run claude-handoff` entries, so the same
