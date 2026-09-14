@@ -279,12 +279,12 @@ func refuseUnreadableClaudeInstall(path string) error {
 		return nil
 	}
 	if err != nil {
-		return err
+		return fmt.Errorf("%s: %w", path, err)
 	}
 	previous := string(body)
 	for _, event := range []string{claudePreToolUseEvent, claudeSessionStartEvent} {
 		if _, _, _, err := claudeEventHookSettings(previous, event); err != nil {
-			return err
+			return fmt.Errorf("%s: %w", path, err)
 		}
 	}
 	return nil
