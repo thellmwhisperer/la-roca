@@ -2,13 +2,18 @@ package cli
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/agentcfg"
 )
 
-const claudeSessionStartEvent = "SessionStart"
+const (
+	claudeSessionStartEvent = "SessionStart"
+	claudePreToolUseEvent   = "PreToolUse"
+)
 
 var (
 	claudePillsHookInvocation = regexp.MustCompile(
@@ -104,7 +109,7 @@ func uninstallClaudeHook(path string, spec claudeHookSpec, unreadableWarning str
 			warning = unreadableWarning
 			return previous, nil
 		}
-		remaining, withdrawn := withoutClaudeHook(entries, spec.invocation)
+		remaining, withdrawn := withoutJSONHook(entries, true, spec.invocation)
 		if !withdrawn {
 			return previous, nil
 		}
@@ -168,35 +173,6 @@ func adoptClaudeHook(entries []any, command string, matcher *regexp.Regexp) (fou
 	return found, repointed
 }
 
-func withoutClaudeHook(entries []any, matcher *regexp.Regexp) ([]any, bool) {
-	remaining := make([]any, 0, len(entries))
-	withdrawn := false
-	for _, entry := range entries {
-		group, ok := entry.(map[string]any)
-		hooks, isList := group["hooks"].([]any)
-		if !ok || !isList {
-			remaining = append(remaining, entry)
-			continue
-		}
-		kept := make([]any, 0, len(hooks))
-		ours := false
-		for _, raw := range hooks {
-			hook, isHook := raw.(map[string]any)
-			if isHook && hook["type"] == "command" && matcher.MatchString(commandOf(hook)) {
-				ours, withdrawn = true, true
-				continue
-			}
-			kept = append(kept, raw)
-		}
-		if ours && len(kept) == 0 {
-			continue
-		}
-		group["hooks"] = kept
-		remaining = append(remaining, group)
-	}
-	return remaining, withdrawn
-}
-
 func mergeHookOutcomes(base agentcfg.Outcome, extra agentcfg.Outcome) agentcfg.Outcome {
 	if extra.Changed {
 		base.Changed = true
@@ -207,26 +183,155 @@ func mergeHookOutcomes(base agentcfg.Outcome, extra agentcfg.Outcome) agentcfg.O
 	return base
 }
 
-func installClaudeAuthorshipAndSessionHooks(env *cliEnv, path, declared string, force, pills, handoff bool) (agentcfg.Outcome, string, error) {
-	if pills || handoff {
-		outcome := agentcfg.Outcome{Runtime: "claude", Path: path}
-		if pills {
-			extra, err := installClaudeSessionHook(path, declared, "pills")
-			if err != nil {
-				return outcome, "", err
-			}
-			outcome = mergeHookOutcomes(outcome, extra)
+// installRuntimeHooks is what `roca hooks install <runtime>` does, and it does
+// the same thing on every harness: one session-start hook that injects the
+// fixed SYSTEM fragment, the active pills when asked, and the latest handoff
+// when asked. Claude Code keeps one extra hook nothing else can offer — the
+// PreToolUse entry that signs `roca store` with the model in its transcript —
+// so a Claude install writes that too.
+func installRuntimeHooks(env *cliEnv, runtime, path, declared string,
+	force, pills, handoff bool) (agentcfg.Outcome, string, error) {
+	var outcome agentcfg.Outcome
+	var warning string
+	if runtime == agentcfg.RuntimeClaude {
+		// The signing hook goes first because it is the strict reader of this
+		// file: settings it cannot parse must refuse the whole install before
+		// the session entry is written, never halfway through it.
+		signing, signingWarning, err := installClaudeSigningHook(env, path, declared, force)
+		if err != nil {
+			return signing, signingWarning, err
 		}
-		if handoff {
-			extra, err := installClaudeSessionHook(path, declared, "handoff")
+		outcome, warning = signing, signingWarning
+		// A pre-1.85 install left two separate SessionStart entries behind.
+		// Leaving them there would inject the same pills twice from one file.
+		for _, kind := range []string{"pills", "handoff"} {
+			legacy, _, err := uninstallClaudeSessionHook(path, kind)
 			if err != nil {
-				return outcome, "", err
+				return outcome, warning, err
 			}
-			outcome = mergeHookOutcomes(outcome, extra)
+			outcome = mergeHookOutcomes(outcome, legacy)
 		}
-		return outcome, "", nil
 	}
+	session, sessionWarning, err := installSessionHook(
+		env, runtime, path, declared, sessionRequest{pills: pills, handoff: handoff}, force)
+	return mergeHookOutcomes(session, outcome),
+		combineWarnings(warning, sessionWarning), err
+}
 
+// installSessionHook routes one runtime to its native transport. The hook is
+// the same hook everywhere; only the file it is written into differs.
+func installSessionHook(env *cliEnv, runtime, path, declared string,
+	req sessionRequest, force bool) (agentcfg.Outcome, string, error) {
+	if !filepath.IsAbs(declared) {
+		return agentcfg.Outcome{Runtime: runtime, Path: path}, "",
+			fmt.Errorf("resolve the running executable %q to an absolute path", declared)
+	}
+	switch hookRuntimes[runtime].transport {
+	case transportScript:
+		return installSessionScript(env, runtime, path, declared, req, force)
+	case transportZcodeWrapper:
+		return installZcodeSessionHook(path, declared, req)
+	default:
+		outcome, err := installJSONSessionHook(runtime, path, declared, req)
+		return outcome, "", err
+	}
+}
+
+// uninstallRuntimeHooks withdraws everything La Roca owns for one runtime and
+// leaves every neighbouring hook, in every file, exactly as it was.
+//
+// Claude keeps two hooks in one file, and an event this product cannot read
+// must not hold the other one hostage: each is withdrawn on its own, and the
+// markers left behind are named together in a single warning, because the
+// operator has a single file to fix.
+func uninstallRuntimeHooks(env *cliEnv, runtime, path string) (agentcfg.Outcome, string, error) {
+	if runtime != agentcfg.RuntimeClaude {
+		return uninstallSessionHook(env, runtime, path)
+	}
+	sessionReadable := claudeEventReadable(path, claudeSessionStartEvent)
+	signingReadable := claudeEventReadable(path, claudePreToolUseEvent)
+	outcome := agentcfg.Outcome{Runtime: runtime, Path: path}
+	if sessionReadable {
+		session, _, err := uninstallJSONSessionHook(runtime, path)
+		if err != nil {
+			return outcome, "", err
+		}
+		outcome = mergeHookOutcomes(outcome, session)
+		for _, kind := range []string{"pills", "handoff"} {
+			legacy, _, err := uninstallClaudeSessionHook(path, kind)
+			if err != nil {
+				return outcome, "", err
+			}
+			outcome = mergeHookOutcomes(outcome, legacy)
+		}
+	}
+	if signingReadable {
+		signing, _, err := uninstallClaudeAuthorshipHook(path)
+		outcome = mergeHookOutcomes(outcome, signing)
+		if err == nil {
+			err = env.unregisterArtifact(artifactKindHook, agentcfg.RuntimeClaude, path)
+		}
+		if err != nil {
+			return outcome, "", err
+		}
+	}
+	return outcome, claudeWithdrawalWarning(path, !sessionReadable, !signingReadable), nil
+}
+
+// claudeEventReadable answers whether one event of Claude's settings is the
+// shape this product can edit. Settings that are not there are readable: there
+// is nothing in them to misread, and nothing to withdraw.
+func claudeEventReadable(path, event string) bool {
+	body, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return true
+	}
+	if err != nil {
+		return false
+	}
+	_, _, _, err = claudeEventHookSettings(string(body), event)
+	return err == nil
+}
+
+// claudeWithdrawalWarning is the one line an operator gets for the entries a
+// withdrawal could not take out, naming each ownership marker to delete so no
+// hook survives calling a binary that is gone.
+func claudeWithdrawalWarning(path string, session, signing bool) string {
+	var left []string
+	if session {
+		left = append(left, "the hooks.SessionStart entries whose command contains "+
+			"`hooks run session --runtime claude`, `hooks run claude-pills` or "+
+			"`hooks run claude-handoff`")
+	}
+	if signing {
+		left = append(left, "the hooks.PreToolUse entry whose command ends in "+
+			"`hooks run claude`")
+	}
+	if len(left) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("warning: %s is not readable as Claude settings, so nothing "+
+		"there was changed; remove %s by hand", path, strings.Join(left, " and "))
+}
+
+func uninstallSessionHook(env *cliEnv, runtime, path string) (agentcfg.Outcome, string, error) {
+	switch hookRuntimes[runtime].transport {
+	case transportScript:
+		return uninstallSessionScript(env, runtime, path)
+	case transportZcodeWrapper:
+		wrapper, err := zcodeHookWrapperPath()
+		if err != nil {
+			return agentcfg.Outcome{Runtime: runtime, Path: path}, "", err
+		}
+		return uninstallZcodeHandoffHook(path, wrapper)
+	default:
+		return uninstallJSONSessionHook(runtime, path)
+	}
+}
+
+// installClaudeSigningHook installs the Claude-only PreToolUse entry and keeps
+// the registry honest about the fragment it owns.
+func installClaudeSigningHook(env *cliEnv, path, declared string, force bool) (agentcfg.Outcome, string, error) {
 	entry, registered, err := env.registeredArtifact(artifactKindHook, "claude", path)
 	if err != nil {
 		return agentcfg.Outcome{Runtime: "claude", Path: path}, "", err
@@ -264,35 +369,6 @@ func installClaudeAuthorshipAndSessionHooks(env *cliEnv, path, declared string, 
 		if err := env.registerHook(path, "claude", system); err != nil {
 			return outcome, "", err
 		}
-	}
-	return outcome, warning, nil
-}
-
-func uninstallClaudeAuthorshipAndSessionHooks(env *cliEnv, path string, pills, handoff bool) (agentcfg.Outcome, string, error) {
-	if !pills && !handoff {
-		outcome, warning, err := uninstallClaudeAuthorshipHook(path)
-		if err == nil {
-			err = env.unregisterArtifact(artifactKindHook, "claude", path)
-		}
-		return outcome, warning, err
-	}
-	outcome := agentcfg.Outcome{Runtime: "claude", Path: path}
-	var warning string
-	if pills {
-		extra, extraWarning, err := uninstallClaudeSessionHook(path, "pills")
-		if err != nil {
-			return extra, extraWarning, err
-		}
-		outcome = mergeHookOutcomes(outcome, extra)
-		warning = combineWarnings(warning, extraWarning)
-	}
-	if handoff {
-		extra, extraWarning, err := uninstallClaudeSessionHook(path, "handoff")
-		if err != nil {
-			return extra, extraWarning, err
-		}
-		outcome = mergeHookOutcomes(outcome, extra)
-		warning = combineWarnings(warning, extraWarning)
 	}
 	return outcome, warning, nil
 }
