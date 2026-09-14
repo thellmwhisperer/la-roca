@@ -3,6 +3,7 @@
 package acceptance
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -267,26 +268,30 @@ func distributionSkillFile(agent, home, skill string) (string, error) {
 // Every harness in this scenario starts with a session hook another tool
 // installed, because that is how the machines this ships to actually look. The
 // contract is one added hook per harness, never a replaced one.
-var distributionHookFixtures = map[string]struct{ path, body, marker string }{
+var distributionHookFixtures = map[string]struct{ path, body, marker, foreign string }{
 	"claude": {
-		path:   filepath.Join(".claude", "settings.json"),
-		body:   `{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"pane-state session"}]}]}}`,
-		marker: "pane-state session",
+		path:    filepath.Join(".claude", "settings.json"),
+		body:    `{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"pane-state session"}]}]}}`,
+		marker:  "pane-state session",
+		foreign: "pane-state session",
 	},
 	"codex": {
-		path:   filepath.Join(".codex", "hooks.json"),
-		body:   `{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"pane-state session","timeout":10}]}]}}`,
-		marker: "pane-state session",
+		path:    filepath.Join(".codex", "hooks.json"),
+		body:    `{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"pane-state session","timeout":10}]}]}}`,
+		marker:  "pane-state session",
+		foreign: "pane-state session",
 	},
 	"cursor": {
-		path:   filepath.Join(".cursor", "hooks.json"),
-		body:   `{"version":1,"hooks":{"sessionStart":[{"command":"pane-state session"}]}}`,
-		marker: "pane-state session",
+		path:    filepath.Join(".cursor", "hooks.json"),
+		body:    `{"version":1,"hooks":{"sessionStart":[{"command":"pane-state session"}]}}`,
+		marker:  "pane-state session",
+		foreign: "pane-state session",
 	},
 	"zcode": {
-		path:   filepath.Join(".zcode", "cli", "config.json"),
-		body:   `{"hooks":{"enabled":true,"events":{"SessionStart":[{"hooks":[{"type":"command","command":"pane-state","timeoutMs":5000}]}]}}}`,
-		marker: `"pane-state"`,
+		path:    filepath.Join(".zcode", "cli", "config.json"),
+		body:    `{"hooks":{"enabled":true,"events":{"SessionStart":[{"hooks":[{"type":"command","command":"pane-state","timeoutMs":5000}]}]}}}`,
+		marker:  `"pane-state"`,
+		foreign: "pane-state",
 	},
 	"pi": {
 		path:   filepath.Join(".pi", "agent", "extensions", "pane-state.ts"),
@@ -342,31 +347,33 @@ func (w *distributionWorld) everyHarnessCarriesTheSessionHook() error {
 		if err != nil {
 			return err
 		}
-		if !strings.Contains(string(body), fixture.marker) {
-			return fmt.Errorf("%s lost the hook it already had: %s", runtime, body)
-		}
-		// ZCode reaches its runner through the wrapper the install writes, and
-		// pi and OpenCode through an extension file of their own beside the one
-		// they already had.
 		switch runtime {
-		case "zcode":
-			if body, err = os.ReadFile(
-				filepath.Join(w.home, ".zcode", "hooks", "roca-handoff.sh")); err != nil {
-				return err
-			}
 		case "pi", "opencode":
-			if body, err = os.ReadFile(distributionSessionScript(runtime, w.home)); err != nil {
+			if !strings.Contains(string(body), fixture.marker) {
+				return fmt.Errorf("%s lost the hook it already had: %s", runtime, body)
+			}
+			script, err := os.ReadFile(distributionSessionScript(runtime, w.home))
+			if err != nil {
 				return err
 			}
-		}
-		// The shell runtimes carry one command line; pi and OpenCode carry the
-		// same argv as a JSON array their extension passes to the binary.
-		wanted := "hooks run session --runtime " + runtime
-		if runtime == "pi" || runtime == "opencode" {
-			wanted = `"--runtime", "` + runtime + `"`
-		}
-		if !strings.Contains(string(body), wanted) {
-			return fmt.Errorf("%s did not receive the La Roca session hook: %s", runtime, body)
+			if !strings.Contains(string(script), `"--runtime", "`+runtime+`"`) {
+				return fmt.Errorf("%s did not receive the La Roca session hook: %s", runtime, script)
+			}
+		default:
+			commands, err := harnessHookCommands(runtime, body)
+			if err != nil {
+				return err
+			}
+			if countCommands(commands, fixture.foreign) != 1 {
+				return fmt.Errorf("%s lost the hook it already had: %v", runtime, commands)
+			}
+			wanted := distributionSessionHookCommand(w.installed, runtime)
+			if runtime == "zcode" {
+				wanted = filepath.Join(w.home, ".zcode", "hooks", "roca-handoff.sh")
+			}
+			if countCommands(commands, wanted) != 1 {
+				return fmt.Errorf("%s did not receive the La Roca session hook: %v", runtime, commands)
+			}
 		}
 	}
 	return nil
@@ -389,15 +396,27 @@ func (w *distributionWorld) withdrawalLeavesOnlyTheForeignHook() error {
 			if _, err := os.Stat(distributionSessionScript(runtime, w.home)); !os.IsNotExist(err) {
 				return fmt.Errorf("%s kept the La Roca script after a withdrawal", runtime)
 			}
+			if !strings.Contains(string(body), fixture.marker) {
+				return fmt.Errorf("withdrawal removed %s's own hook: %s", runtime, body)
+			}
+			continue
 		}
 		if err != nil {
 			return err
 		}
-		if !strings.Contains(string(body), fixture.marker) {
-			return fmt.Errorf("withdrawal removed %s's own hook: %s", runtime, body)
+		commands, err := harnessHookCommands(runtime, body)
+		if err != nil {
+			return err
 		}
-		if strings.Contains(string(body), "hooks run session") {
-			return fmt.Errorf("%s kept the La Roca session hook after a withdrawal: %s", runtime, body)
+		if countCommands(commands, fixture.foreign) != 1 {
+			return fmt.Errorf("withdrawal removed %s's own hook: %v", runtime, commands)
+		}
+		wanted := distributionSessionHookCommand(w.installed, runtime)
+		if runtime == "zcode" {
+			wanted = filepath.Join(w.home, ".zcode", "hooks", "roca-handoff.sh")
+		}
+		if countCommands(commands, wanted) != 0 {
+			return fmt.Errorf("%s kept the La Roca session hook after a withdrawal: %v", runtime, commands)
 		}
 	}
 	return nil
@@ -408,4 +427,98 @@ func distributionSessionScript(runtime, home string) string {
 		return filepath.Join(home, ".pi", "agent", "extensions", "roca-session.ts")
 	}
 	return filepath.Join(home, ".config", "opencode", "plugins", "roca-session.js")
+}
+
+func distributionSessionHookCommand(binary, runtime string) string {
+	return "'" + strings.ReplaceAll(binary, "'", `'"'"'`) + "' hooks run session --runtime " +
+		runtime + " --pills --handoff"
+}
+
+func harnessHookCommands(runtime string, body []byte) ([]string, error) {
+	var document map[string]any
+	if err := json.Unmarshal(body, &document); err != nil {
+		return nil, fmt.Errorf("%s hook document is not JSON: %w", runtime, err)
+	}
+	switch runtime {
+	case "claude", "codex":
+		return nestedHookCommands(document["hooks"], "SessionStart")
+	case "cursor":
+		return flatHookCommands(document["hooks"], "sessionStart")
+	case "zcode":
+		hooks, _ := document["hooks"].(map[string]any)
+		if hooks == nil {
+			return nil, fmt.Errorf("zcode hooks must be an object")
+		}
+		return nestedHookCommands(hooks["events"], "SessionStart")
+	default:
+		return nil, fmt.Errorf("%s has no JSON hook document", runtime)
+	}
+}
+
+func nestedHookCommands(raw any, event string) ([]string, error) {
+	root, ok := raw.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("hooks container is not an object")
+	}
+	entries, ok := root[event].([]any)
+	if !ok {
+		return nil, fmt.Errorf("hooks.%s is missing or not an array", event)
+	}
+	var commands []string
+	for i, entry := range entries {
+		group, ok := entry.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("hooks.%s[%d] is not an object", event, i)
+		}
+		hooks, ok := group["hooks"].([]any)
+		if !ok {
+			return nil, fmt.Errorf("hooks.%s[%d].hooks is not an array", event, i)
+		}
+		for j, hook := range hooks {
+			object, ok := hook.(map[string]any)
+			if !ok {
+				return nil, fmt.Errorf("hooks.%s[%d].hooks[%d] is not an object", event, i, j)
+			}
+			command, ok := object["command"].(string)
+			if !ok {
+				return nil, fmt.Errorf("hooks.%s[%d].hooks[%d].command is not a string", event, i, j)
+			}
+			commands = append(commands, command)
+		}
+	}
+	return commands, nil
+}
+
+func flatHookCommands(raw any, event string) ([]string, error) {
+	root, ok := raw.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("hooks container is not an object")
+	}
+	entries, ok := root[event].([]any)
+	if !ok {
+		return nil, fmt.Errorf("hooks.%s is missing or not an array", event)
+	}
+	var commands []string
+	for i, entry := range entries {
+		object, ok := entry.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("hooks.%s[%d] is not an object", event, i)
+		}
+		command, ok := object["command"].(string)
+		if !ok {
+			return nil, fmt.Errorf("hooks.%s[%d].command is not a string", event, i)
+		}
+		commands = append(commands, command)
+	}
+	return commands, nil
+}
+
+func countCommands(commands []string, want string) int {
+	seen := 0
+	for _, command := range commands {
+		if command == want {
+			seen++
+		}
+	}
+	return seen
 }
