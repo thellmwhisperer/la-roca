@@ -455,7 +455,9 @@ func harnessHookCommands(runtime string, body []byte) ([]string, error) {
 	}
 }
 
-func nestedHookCommands(raw any, event string) ([]string, error) {
+// hookEventEntries is the part both document shapes share: the container has
+// to be an object, and the event it holds has to be a list.
+func hookEventEntries(raw any, event string) ([]any, error) {
 	root, ok := raw.(map[string]any)
 	if !ok {
 		return nil, fmt.Errorf("hooks container is not an object")
@@ -463,6 +465,14 @@ func nestedHookCommands(raw any, event string) ([]string, error) {
 	entries, ok := root[event].([]any)
 	if !ok {
 		return nil, fmt.Errorf("hooks.%s is missing or not an array", event)
+	}
+	return entries, nil
+}
+
+func nestedHookCommands(raw any, event string) ([]string, error) {
+	entries, err := hookEventEntries(raw, event)
+	if err != nil {
+		return nil, err
 	}
 	var commands []string
 	for i, entry := range entries {
@@ -490,13 +500,9 @@ func nestedHookCommands(raw any, event string) ([]string, error) {
 }
 
 func flatHookCommands(raw any, event string) ([]string, error) {
-	root, ok := raw.(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf("hooks container is not an object")
-	}
-	entries, ok := root[event].([]any)
-	if !ok {
-		return nil, fmt.Errorf("hooks.%s is missing or not an array", event)
+	entries, err := hookEventEntries(raw, event)
+	if err != nil {
+		return nil, err
 	}
 	var commands []string
 	for i, entry := range entries {
