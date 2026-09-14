@@ -41,50 +41,96 @@ The entry launches this executable's absolute path, overridable with
 shell that does not read an interactive `PATH`. Reinstalling repoints an entry
 whose binary moved instead of adding a second one.
 
-`roca hooks install claude --pills` and `--handoff` are opt-in SessionStart
-entries that run `roca pill` and `roca hooks run claude-handoff`. The handoff
+### Session hooks
+
+`roca hooks install <runtime>` installs one session-start hook, and it is the
+same hook on every supported harness: `claude`, `codex`, `cursor`, `opencode`,
+`pi` and `zcode`. On session start it injects a fixed SYSTEM fragment — vectors
+first, `roca exec` with the semantic catalog, `roca query` as last resort, and
+never sqlite3 or python over the `.db` files — so a fresh session on any harness
+knows how to search before it starts guessing. `--pills` adds the active pills
+for the working directory's project; `--handoff` adds that project's latest
+handoff. Both are opt-in and neither is installed by init or update. The handoff
 runner selects at most one handoff using the
-[session-context selection rules](queries.md#session-context). Its default
-AXI/TOON output stays below 4,000 bytes, including UTF-8 content, escaping,
-metadata, and the envelope; content and metadata previews shrink as needed.
-The installed hook uses this output mode. A flagged
-install edits only the requested SessionStart entries; the signing hook remains
-a separate, bare `hooks install claude` operation. Init and update install no
-SessionStart entries. Each flag has its own uninstall marker:
-`roca hooks uninstall claude --pills` and `--handoff` withdraw those entries and
-leave the signing hook in place. The implementation is owned by
-[`internal/distribution/cli/hooks_session.go`](../internal/distribution/cli/hooks_session.go).
+[session-context selection rules](queries.md#session-context); its AXI/TOON
+output stays below 4,000 bytes, including UTF-8 content, escaping, metadata and
+the envelope.
 
-That exact command hook inside `PreToolUse` is the artifact's SYSTEM fragment;
-the enclosing group, surrounding Claude settings, and every other hook are its
-USER zone. Its `hooks run claude` command is the explicit ownership marker
-recorded in `~/.roca/artifacts.json`. Refresh never rewrites the surrounding
-settings, and an edited fragment is left alone until
-`roca hooks install claude --force` replaces it. See
-[Update](lifecycle.md#update) for the shared zone, divergence and registry
-contract.
+Every installed hook launches this executable's absolute path, overridable with
+`--executable` or `ROCA_BIN`, because harnesses run hooks in a non-interactive
+shell that does not read an interactive `PATH`. Reinstalling repoints an entry
+whose binary moved instead of adding a second one. `roca hooks uninstall
+<runtime>` is symmetric, idempotent, takes no flags, and withdraws everything La
+Roca owns for that runtime. Neighbouring hooks another tool installed are never
+moved, rewritten or removed, on any of the files below.
 
-`roca hooks uninstall claude` withdraws the signing entry and leaves every
-other setting, and every hook that is not La Roca's, exactly as it was. `roca
-uninstall` independently attempts to withdraw the signing, pills, and handoff
-entries before it unlinks the binary, so a problem reading one hook shape does
-not suppress either of the others. Settings La Roca cannot read stop an install,
-which cannot safely edit what it cannot parse, but never stop a withdrawal: the
-file is left byte for byte as it is, and stderr names each affected ownership
-marker (`hooks run claude`, `hooks run claude-pills`, or `hooks run
-claude-handoff`) to delete by hand.
+| Runtime | File this install touches | How to verify it |
+| --- | --- | --- |
+| `claude` | `~/.claude/settings.json` (`CLAUDE_CONFIG_DIR`) | `hooks.SessionStart` holds a command ending in `hooks run session --runtime claude` |
+| `codex` | `~/.codex/hooks.json` (`CODEX_HOME`) | `hooks.SessionStart` holds the same command with `--runtime codex` and a `timeout` |
+| `cursor` | `~/.cursor/hooks.json` (`CURSOR_HOME`) | `version` is 1 and `hooks.sessionStart` holds the command with `--runtime cursor` |
+| `opencode` | `~/.config/opencode/plugins/roca-session.js` (`OPENCODE_CONFIG`) | the file carries `ROCA_MANAGED_HOOK=session` and an `experimental.chat.system.transform` hook |
+| `pi` | `~/.pi/agent/extensions/roca-session.ts` (`PI_CODING_AGENT_DIR`) | the file carries `ROCA_MANAGED_HOOK=session` and a `before_agent_start` handler |
+| `zcode` | `~/.zcode/cli/config.json` plus `~/.zcode/hooks/roca-handoff.sh` (`ZCODE_HOME`) | the nested `hooks.events.SessionStart` names the wrapper, and the wrapper calls `hooks run session --runtime zcode` |
 
-`roca hooks install zcode` writes `~/.zcode/hooks/roca-handoff.sh` and a nested
-`hooks.events.SessionStart` command in `~/.zcode/cli/config.json`. ZCode
-discards plain-text hook stdout, so the wrapper always emits JSON
-`{"additionalContext":"..."}` (or `{}` when there is no handoff). Install and
-uninstall are opt-in and idempotent; init and update never write this hook.
-Parent containers (`hooks`, `hooks.events`) created by this install are
+The quickest end-to-end check on any of them is to run the installed command by
+hand and read its stdout: `roca hooks run session --runtime <runtime> --pills`.
+Each harness reads a different envelope, so that is what the runner writes:
+`hookSpecificOutput.additionalContext` for Claude Code and Codex,
+`additional_context` for Cursor, `additionalContext` for ZCode, and plain text
+for pi and OpenCode, whose extension and plugin inject it themselves. A runner
+that cannot reach the database still emits the fixed fragment; a harness is
+never shown a read error where its project context belongs.
+
+Each harness's own file shape decides what La Roca owns inside it. In Claude's
+and Codex's documents it is the command object; in Cursor's it is the one
+`sessionStart` entry; in ZCode's it is the nested command plus the wrapper it
+names, and parent containers (`hooks`, `hooks.events`) this install created are
 recorded beside the config and pruned on uninstall only when they remain empty.
-The command object carries `type`, `command`, and `timeoutMs`. Neighbouring
-operator hooks stay in place. Claude Desktop is not part of this installer.
-The ZCode config and wrapper lifecycle is owned by
-[`internal/distribution/cli/hooks_zcode.go`](../internal/distribution/cli/hooks_zcode.go).
+For pi and OpenCode the whole written file is the SYSTEM fragment: it carries an
+ownership line, a file at that path without it is refused rather than replaced,
+and one La Roca wrote and the operator edited is left alone until `roca hooks
+install <runtime> --force` replaces it, keeping a recovery copy. `roca update`
+does not refresh those two scripts; reinstalling is how they are repointed.
+
+`roca hooks install claude` additionally maintains the Claude-only `PreToolUse`
+hook for Bash. It signs `roca store` commands with `--agent claude` and the
+latest model recorded in Claude's own transcript, or `unknown` when that direct
+evidence is absent. That exact command hook inside `PreToolUse` is its own
+registered SYSTEM fragment; the enclosing group, surrounding Claude settings,
+and every other hook are its USER zone. Refresh never rewrites the surrounding
+settings, and an edited fragment is left alone until `roca hooks install claude
+--force` replaces it. See [Update](lifecycle.md#update) for the shared zone,
+divergence and registry contract. Because both Claude hooks live in one file,
+the signing entry is written first: settings this product cannot parse refuse
+the whole install rather than leave one hook written and the other not.
+
+Installs that supersede a pre-1.85 Claude install withdraw its two separate
+`hooks run claude-pills` and `hooks run claude-handoff` entries, so the same
+pills are not injected twice from one file.
+
+`roca hooks uninstall <runtime>` leaves every other setting, and every hook that
+is not La Roca's, exactly as it was. `roca uninstall` independently attempts the
+same withdrawal for every supported runtime before it unlinks the binary, so a
+problem reading one file does not suppress any of the others. Settings La Roca
+cannot read stop an install, which cannot safely edit what it cannot parse, but
+never stop a withdrawal: the file is left byte for byte as it is, and stderr
+names each ownership marker to delete by hand. Claude's two events are probed
+separately, so an unreadable `PreToolUse` never holds the session entry hostage,
+and one unreadable file still produces exactly one warning line.
+
+The implementation is owned by
+[`internal/distribution/cli/hooks_session.go`](../internal/distribution/cli/hooks_session.go)
+(what an install and a withdrawal do per runtime),
+[`hooks_context.go`](../internal/distribution/cli/hooks_context.go) (the fixed
+fragment and the per-harness envelopes),
+[`hooks_runtimes.go`](../internal/distribution/cli/hooks_runtimes.go) (the table
+of harnesses and their files),
+[`hooks_json.go`](../internal/distribution/cli/hooks_json.go) (Claude, Codex and
+Cursor), [`hooks_script.go`](../internal/distribution/cli/hooks_script.go) (pi
+and OpenCode) and
+[`hooks_zcode.go`](../internal/distribution/cli/hooks_zcode.go) (ZCode). Claude
+Desktop is not part of this installer.
 
 Other harnesses can use the same client-side pattern: intercept the shell tool,
 read identity only from a harness-owned session source, and inject both flags.

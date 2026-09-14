@@ -127,6 +127,20 @@ func runPillList(ctx context.Context, env *cliEnv, project string) error {
 	return runSessionContext(ctx, env, project, (*service.Service).ListPills, axi.Pills)
 }
 
+// latestHandoffLoader reads a project's newest handoffs, capped. The terminal
+// verb and the session hooks ask the same question of the same service and
+// differ only in how many answers they have room for.
+func latestHandoffLoader(limit int) func(*service.Service, context.Context, string) (service.HandoffList, error) {
+	return func(svc *service.Service, ctx context.Context, project string) (service.HandoffList, error) {
+		list, err := svc.LatestHandoffs(ctx, project)
+		if err != nil {
+			return service.HandoffList{}, err
+		}
+		list.Handoffs = limitSlice(list.Handoffs, limit)
+		return list, nil
+	}
+}
+
 type latestHandoffOptions struct {
 	project     string
 	limit       int
@@ -142,15 +156,7 @@ func runLatestHandoffs(ctx context.Context, env *cliEnv, opts latestHandoffOptio
 	if opts.allProjects {
 		return runLatestHandoffsAllProjects(ctx, env, opts)
 	}
-	return runSessionContext(ctx, env, opts.project,
-		func(svc *service.Service, ctx context.Context, project string) (service.HandoffList, error) {
-			list, err := svc.LatestHandoffs(ctx, project)
-			if err != nil {
-				return service.HandoffList{}, err
-			}
-			list.Handoffs = limitSlice(list.Handoffs, opts.limit)
-			return list, nil
-		},
+	return runSessionContext(ctx, env, opts.project, latestHandoffLoader(opts.limit),
 		func(list service.HandoffList) string {
 			if opts.headChars > 0 {
 				return axi.HandoffHeads(list, opts.headChars)

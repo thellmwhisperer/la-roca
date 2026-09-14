@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -49,7 +48,10 @@ func hookConfigPath(runtime string) (string, error) {
 	return agentcfg.ConfigPath(runtime, home, os.Getenv)
 }
 
-func installZcodeHandoffHook(configPath, executable string) (agentcfg.Outcome, string, error) {
+// installZcodeSessionHook writes ZCode's wrapper and its nested SessionStart
+// entry. ZCode discards plain-text hook stdout, so the wrapper is what
+// guarantees valid JSON even when the binary behind it fails.
+func installZcodeSessionHook(configPath, executable string, req sessionRequest) (agentcfg.Outcome, string, error) {
 	wrapperPath, err := zcodeHookWrapperPath()
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
@@ -73,7 +75,7 @@ func installZcodeHandoffHook(configPath, executable string) (agentcfg.Outcome, s
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
-	wrapperContent := zcodeWrapper(executable)
+	wrapperContent := zcodeWrapper(executable, req)
 	wrapperBackup, err := writeZcodeWrapper(wrapperPath, wrapperContent)
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
@@ -307,33 +309,14 @@ func zcodeHookTree(settings map[string]any) (hooks, events map[string]any, entri
 }
 
 func jsonObject(previous string) (map[string]any, error) {
-	settings := map[string]any{}
-	if strings.TrimSpace(previous) == "" {
-		return settings, nil
-	}
-	decoder := json.NewDecoder(strings.NewReader(previous))
-	decoder.UseNumber()
-	if err := decoder.Decode(&settings); err != nil {
-		return nil, fmt.Errorf("read zcode settings: %w", err)
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		if err == nil {
-			return nil, fmt.Errorf("read zcode settings: multiple JSON values")
-		}
-		return nil, fmt.Errorf("read zcode settings: %w", err)
-	}
-	if settings == nil {
-		return nil, fmt.Errorf("zcode settings must be an object")
-	}
-	return settings, nil
+	return readJSONDocument("zcode settings", previous)
 }
 
-func zcodeWrapper(executable string) string {
+func zcodeWrapper(executable string, req sessionRequest) string {
 	return `#!/bin/bash
 ` + zcodeHookWrapperMarker + `
 set -euo pipefail
-if OUTPUT=$(` + shellQuote(executable) + ` hooks run zcode 2>/dev/null) && [ -n "$OUTPUT" ]; then
+if OUTPUT=$(` + sessionHookCommand(executable, agentcfg.RuntimeZcode, req) + ` 2>/dev/null) && [ -n "$OUTPUT" ]; then
   printf '%s\n' "$OUTPUT"
 else
   printf '{}\n'
@@ -444,6 +427,9 @@ func zcodeHookJSON(context string) []byte {
 	return append(encoded, '\n')
 }
 
+// runZcodeHandoffHook answers the wrappers written before session hooks became
+// the same feature on every harness. Those wrappers are on operators' disks and
+// still call `hooks run zcode`; reinstalling replaces them.
 func runZcodeHandoffHook(ctx context.Context, env *cliEnv) error {
 	fmt.Fprint(env.out, string(zcodeHookJSON(zcodeHandoffContext(ctx, env))))
 	return nil

@@ -64,7 +64,7 @@ func readZcodeHookDocument(t *testing.T, path string) map[string]any {
 func TestZcodeHookInstallerWritesNestedSessionStartAndJSONWrapper(t *testing.T) {
 	home, config := zcodeHookTestPaths(t)
 	fake := `#!/bin/sh
-if [ "$1 $2 $3" = "hooks run zcode" ]; then
+if [ "$1 $2 $3 $4 $5" = "hooks run session --runtime zcode" ]; then
   printf '%s\n' '{"additionalContext":"synthetic handoff"}'
   exit 0
 fi
