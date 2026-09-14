@@ -194,7 +194,9 @@ active.
 The `roca`, `roca-operations`, and `roca-vector` skills, the generated
 `roca-semantica` catalog skill, `prompt.md`, and
 the Claude authorship hook are registered in the schema-versioned
-`~/.roca/artifacts.json`. Each entry records its harness,
+`~/.roca/artifacts.json`. Pi and OpenCode session scripts are recorded
+there as hook entries; [session hooks](operations.md#session-hooks) owns
+that lifecycle. Each entry records its harness,
 path, installed release, available release, format, and SYSTEM checksum. The
 same registry feeds uninstall's central owned-path inventory; an artifact with
 operator bytes in its USER zone is not claimed as a whole file.
@@ -238,12 +240,11 @@ and forcing it rewrites the whole file rather than preserving USER. Every
 changed file gets a named `.roca.bak` recovery copy before publication, and that
 copy is where the replaced bytes survive.
 
-The hook uses the same ownership split inside Claude's settings: the one entry
-whose command ends in `hooks run claude` is the explicitly marked SYSTEM
-fragment, while the surrounding settings and other hook entries are USER.
-ZCode's explicit SessionStart hook follows its separate
-[hook lifecycle](operations.md#memory-authorship); it is outside this artifact
-registry and update does not seed or refresh it.
+The Claude authorship hook uses the same ownership split inside Claude's
+settings: the one entry whose command ends in `hooks run claude` is the
+explicitly marked SYSTEM fragment, while the surrounding settings and other
+hook entries are USER. Session hooks follow their own
+[lifecycle](operations.md#session-hooks).
 
 This registry is only for the artifacts La Roca itself ships. Third-party
 skills, skill marketplaces, and remote artifact distribution are not part of

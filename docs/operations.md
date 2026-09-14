@@ -98,16 +98,15 @@ install <runtime> --force` replaces it, keeping a recovery copy. `roca update`
 does not refresh those two scripts; reinstalling is how they are repointed.
 
 `roca hooks install claude` additionally maintains the Claude-only `PreToolUse`
-hook for Bash. It signs `roca store` commands with `--agent claude` and the
-latest model recorded in Claude's own transcript, or `unknown` when that direct
-evidence is absent. That exact command hook inside `PreToolUse` is its own
-registered SYSTEM fragment; the enclosing group, surrounding Claude settings,
-and every other hook are its USER zone. Refresh never rewrites the surrounding
-settings, and an edited fragment is left alone until `roca hooks install claude
---force` replaces it. See [Update](lifecycle.md#update) for the shared zone,
-divergence and registry contract. Because both Claude hooks live in one file,
-the signing entry is written first: settings this product cannot parse refuse
-the whole install rather than leave one hook written and the other not.
+hook described under [Memory authorship](#memory-authorship). That exact command
+hook inside `PreToolUse` is its own registered SYSTEM fragment; the enclosing
+group, surrounding Claude settings, and every other hook are its USER zone.
+Refresh never rewrites the surrounding settings, and an edited fragment is left
+alone until `roca hooks install claude --force` replaces it. See
+[Update](lifecycle.md#update) for the shared zone, divergence and registry
+contract. Because both Claude hooks live in one file, the signing entry is
+written first: settings this product cannot parse refuse the whole install
+rather than leave one hook written and the other not.
 
 Codex is the one harness with a step this product cannot take for the operator:
 it runs a hook only once that exact command has been trusted, recording a

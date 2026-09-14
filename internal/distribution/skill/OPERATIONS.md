@@ -295,9 +295,8 @@ For handoff selection, limits, and the cross-project view, see the
 [session-context contract](https://github.com/thellmwhisperer/la-roca/blob/main/docs/queries.md#session-context).
 
 Handoffs live on ops. The qualified table is `plugin_roca_ops.memories`.
-ZCode can inject those handoffs at SessionStart as JSON `additionalContext`;
-the operator enables that integration explicitly with `roca hooks install
-zcode`.
+Session-start injection of pills and handoffs is owned by the
+[session-hooks contract](https://github.com/thellmwhisperer/la-roca/blob/main/docs/operations.md#session-hooks).
 
 ## Investigation method
 
