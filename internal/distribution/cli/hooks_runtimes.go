@@ -57,7 +57,7 @@ var hookRuntimes = map[string]hookRuntime{
 	},
 	agentcfg.RuntimeZcode: {
 		transport: transportZcodeWrapper, event: "SessionStart",
-		locate: func() (string, error) { return hookConfigPath(agentcfg.RuntimeZcode) },
+		locate: hookConfigPath,
 	},
 	agentcfg.RuntimePi: {
 		transport: transportScript, locate: piExtensionPath,

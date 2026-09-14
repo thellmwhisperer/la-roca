@@ -37,15 +37,12 @@ func zcodeHookWrapperPath() (string, error) {
 	return filepath.Join(root, "hooks", "roca-handoff.sh"), nil
 }
 
-func hookConfigPath(runtime string) (string, error) {
-	if runtime == agentcfg.RuntimeClaude {
-		return claudeSettingsPath()
-	}
+func hookConfigPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("I do not know where your HOME is")
 	}
-	return agentcfg.ConfigPath(runtime, home, os.Getenv)
+	return agentcfg.ConfigPath(agentcfg.RuntimeZcode, home, os.Getenv)
 }
 
 // installZcodeSessionHook writes ZCode's wrapper and its nested SessionStart
