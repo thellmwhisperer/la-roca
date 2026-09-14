@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/artifact"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/agentcfg"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/release"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/skill"
 )
@@ -434,5 +435,22 @@ exit 1
 	}
 	if string(got) != directory {
 		t.Fatalf("bundled plugin prefix = %q, want %q", got, directory)
+	}
+}
+
+func TestRefreshLeavesScriptSessionHooksUntouched(t *testing.T) {
+	home := skillTestHome(t)
+	path := filepath.Join(home, ".pi", "agent", "extensions", "roca-session.ts")
+	body := "export default function (pi) {}\n"
+	writeFile(t, path, body)
+	report := enabledRefresh(t, home, artifact.Entry{
+		Kind: artifactKindHook, Runtime: agentcfg.RuntimePi, Path: path,
+		InstalledVersion: "v1.0.0", SystemSHA256: artifact.Checksum(body),
+	})
+	if len(report.Failed) != 0 || report.Outdated != 0 {
+		t.Fatalf("a script hook was treated as Claude settings: %+v", report)
+	}
+	if got := string(mustRead(t, path)); got != body {
+		t.Fatalf("refresh rewrote the script: %s", got)
 	}
 }

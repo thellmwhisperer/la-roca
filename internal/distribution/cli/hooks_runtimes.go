@@ -15,10 +15,9 @@ import (
 // runtime: Codex and Cursor differ only in which member holds their session
 // event, and pi and OpenCode only in the language of the file La Roca writes.
 const (
-	transportClaudeSettings = "claude-settings"
-	transportJSONHooks      = "json-hooks"
-	transportZcodeWrapper   = "zcode-wrapper"
-	transportScript         = "script"
+	transportJSONHooks    = "json-hooks"
+	transportZcodeWrapper = "zcode-wrapper"
+	transportScript       = "script"
 )
 
 // hookRuntime is everything that differs between the harnesses `roca hooks
@@ -45,7 +44,7 @@ type hookRuntime struct {
 
 var hookRuntimes = map[string]hookRuntime{
 	agentcfg.RuntimeClaude: {
-		transport: transportClaudeSettings, event: claudeSessionStartEvent, nested: true,
+		transport: transportJSONHooks, event: claudeSessionStartEvent, nested: true,
 		locate: claudeSettingsPath,
 	},
 	agentcfg.RuntimeCodex: {

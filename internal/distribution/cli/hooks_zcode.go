@@ -122,6 +122,12 @@ func installZcodeSessionHook(configPath, executable string, req sessionRequest) 
 			return outcome, "", err
 		}
 	}
+	if !wrapperBefore.exists || string(wrapperBefore.body) != wrapperContent {
+		outcome.Changed = true
+	}
+	if wrapperBackup != "" && outcome.Backup == "" {
+		outcome.Backup = wrapperBackup
+	}
 	return outcome, "", nil
 }
 

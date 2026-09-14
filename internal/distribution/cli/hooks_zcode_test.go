@@ -146,6 +146,31 @@ exit 1
 	}
 }
 
+func TestZcodeReinstallWithFlagsReportsTheWrapperChange(t *testing.T) {
+	home, config := zcodeHookTestPaths(t)
+	writeZcodeHookExecutable(t, home, "#!/bin/sh\nexit 0\n")
+	writeFile(t, config, `{"hooks":{"enabled":false}}`)
+
+	var first, second strings.Builder
+	runHookCLI(t, &first, nil, "install", "zcode")
+	if !strings.Contains(first.String(), "updated") {
+		t.Fatalf("first install did not report a change: %q", first.String())
+	}
+	runHookCLI(t, &second, nil, "install", "zcode", "--pills", "--handoff")
+	if !strings.Contains(second.String(), "updated") {
+		t.Fatalf("rewriting the wrapper reported unchanged: %q", second.String())
+	}
+	if !strings.Contains(second.String(), "backup:") {
+		t.Fatalf("wrapper recovery copy was not named: %q", second.String())
+	}
+	wrapper := string(mustRead(t, filepath.Join(home, ".zcode", "hooks", "roca-handoff.sh")))
+	command := sessionHookCommand(filepath.Join(home, "bin", "roca"), "zcode",
+		sessionRequest{pills: true, handoff: true})
+	if !strings.Contains(wrapper, command) {
+		t.Fatalf("wrapper does not launch %s: %s", command, wrapper)
+	}
+}
+
 func TestZcodeHookUninstallDoesNotRemoveOperatorOwnedEmptyHooks(t *testing.T) {
 	home, config := zcodeHookTestPaths(t)
 	writeZcodeHookExecutable(t, home, "#!/bin/sh\nexit 0\n")
