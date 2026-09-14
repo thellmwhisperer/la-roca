@@ -307,6 +307,30 @@ func TestEverySessionHookCarriesTheFixedFragment(t *testing.T) {
 	}
 }
 
+// An install that cannot read its own registry has to refuse before it writes,
+// or the operator is left with a working hook behind a non-zero exit and no way
+// to tell which half happened.
+func TestScriptInstallRefusesBeforeWritingWhenTheRegistryIsUnreadable(t *testing.T) {
+	home := skillTestHome(t)
+	t.Setenv(EnvExecutable, filepath.Join(home, "bin", "roca"))
+	registry := filepath.Join(home, ".roca", "artifacts.json")
+	writeFile(t, registry, `{"schema":1,"artifacts":[]}`)
+	if err := os.Chmod(registry, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(registry, 0o600) })
+
+	root := rootCommand(&cliEnv{out: &strings.Builder{}, errOut: &strings.Builder{},
+		build: Build{Version: "v1.2.3"}})
+	root.SetArgs([]string{"hooks", "install", "pi", "--pills"})
+	if err := root.Execute(); err == nil {
+		t.Fatal("install succeeded with an unreadable registry")
+	}
+	if _, err := os.Stat(mustHookPath(t, agentcfg.RuntimePi)); !os.IsNotExist(err) {
+		t.Fatalf("a refused install left the script behind: %v", err)
+	}
+}
+
 func mustHookPath(t *testing.T, runtime string) string {
 	t.Helper()
 	path, err := hookArtifactPath(runtime)
