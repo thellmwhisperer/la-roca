@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -536,8 +537,12 @@ func TestUninstallReportsEveryOwnedMarkerOnce(t *testing.T) {
 
 func runHookCLI(t *testing.T, output, warnings *strings.Builder, args ...string) {
 	t.Helper()
+	var errOut io.Writer = io.Discard
+	if warnings != nil {
+		errOut = warnings
+	}
 	root := rootCommand(&cliEnv{
-		out: output, errOut: warnings, build: Build{Version: "v1.2.3"},
+		out: output, errOut: errOut, build: Build{Version: "v1.2.3"},
 	})
 	root.SetArgs(append([]string{"hooks"}, args...))
 	if err := root.Execute(); err != nil {
