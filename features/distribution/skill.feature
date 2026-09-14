@@ -31,6 +31,12 @@ Feature: Distribution agent teaching
     When the operator requests a skill install without choosing an agent or all agents
     Then the request fails and every agent home remains without the skill
 
+  Scenario: Every supported harness gets the same session hook, beside the hooks it already has
+    Given every supported harness already has a session hook of its own
+    When the operator installs the La Roca session hooks for every supported harness
+    Then every harness carries the La Roca session hook beside the hook it already had
+    And withdrawing them leaves every harness with only the hook it already had
+
   Scenario: The agent prompt lands as prompt.md; La Roca never edits an agent's instruction files
     Given synthetic agent instruction files with operator-owned content
     When the operator initializes La Roca
