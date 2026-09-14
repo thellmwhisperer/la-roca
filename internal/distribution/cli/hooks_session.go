@@ -32,13 +32,6 @@ func claudeHandoffHookCommand(executable string) string {
 	return shellQuote(executable) + " hooks run claude-handoff"
 }
 
-func claudeSessionHookCommand(kind, executable string) string {
-	if kind == "handoff" {
-		return claudeHandoffHookCommand(executable)
-	}
-	return claudePillsHookCommand(executable)
-}
-
 func claudeSessionHookInvocation(kind string) *regexp.Regexp {
 	if kind == "handoff" {
 		return claudeHandoffHookInvocation
@@ -51,20 +44,6 @@ type claudeHookSpec struct {
 	invocation *regexp.Regexp
 	command    func(string) string
 	entry      func(string) map[string]any
-}
-
-func installClaudeSessionHook(path, executable, kind string) (agentcfg.Outcome, error) {
-	return installClaudeHook(path, executable, claudeHookSpec{
-		event: claudeSessionStartEvent, invocation: claudeSessionHookInvocation(kind),
-		command: func(declared string) string { return claudeSessionHookCommand(kind, declared) },
-		entry:   claudeSessionHookEntry,
-	})
-}
-
-func claudeSessionHookEntry(command string) map[string]any {
-	return map[string]any{
-		"hooks": []any{map[string]any{"type": "command", "command": command}},
-	}
 }
 
 func installClaudeHook(path, executable string, spec claudeHookSpec) (agentcfg.Outcome, error) {
@@ -194,9 +173,11 @@ func installRuntimeHooks(env *cliEnv, runtime, path, declared string,
 	var outcome agentcfg.Outcome
 	var warning string
 	if runtime == agentcfg.RuntimeClaude {
-		// The signing hook goes first because it is the strict reader of this
-		// file: settings it cannot parse must refuse the whole install before
-		// the session entry is written, never halfway through it.
+		// Settings this product cannot parse refuse the whole install rather
+		// than leave one hook written and the other not.
+		if err := refuseUnreadableClaudeInstall(path); err != nil {
+			return agentcfg.Outcome{Runtime: runtime, Path: path}, "", err
+		}
 		signing, signingWarning, err := installClaudeSigningHook(env, path, declared, force)
 		if err != nil {
 			return signing, signingWarning, err
@@ -288,6 +269,25 @@ func uninstallRuntimeHooks(env *cliEnv, runtime, path string) (agentcfg.Outcome,
 		}
 	}
 	return outcome, claudeWithdrawalWarning(path, !sessionReadable, !signingReadable), nil
+}
+
+// refuseUnreadableClaudeInstall reads both Claude events before any of them is
+// written. A missing file is writable; a file this product cannot parse is not.
+func refuseUnreadableClaudeInstall(path string) error {
+	body, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	previous := string(body)
+	for _, event := range []string{claudePreToolUseEvent, claudeSessionStartEvent} {
+		if _, _, _, err := claudeEventHookSettings(previous, event); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // claudeEventReadable answers whether one event of Claude's settings is the

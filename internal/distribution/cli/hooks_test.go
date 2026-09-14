@@ -492,23 +492,39 @@ func TestSessionHookInstallLeavesADivergedSigningHookAlone(t *testing.T) {
 
 // Claude settings this product cannot parse refuse the install rather than
 // leave one of its two hooks written and the other not.
-func TestInstallRefusesMalformedPreToolUse(t *testing.T) {
-	home := skillTestHome(t)
-	t.Setenv(EnvExecutable, filepath.Join(home, "bin", "roca"))
-	path := filepath.Join(home, ".claude", "settings.json")
-	writeFile(t, path, `{"hooks":{"PreToolUse":"operator-owned"}}`)
+func TestInstallRefusesMalformedClaudeHookEvents(t *testing.T) {
+	for _, test := range []struct {
+		name, body, malformed string
+	}{
+		{"PreToolUse", `{"hooks":{"PreToolUse":"operator-owned"}}`, "PreToolUse"},
+		{"SessionStart", `{"hooks":{"SessionStart":"operator-owned"}}`, "SessionStart"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			home := skillTestHome(t)
+			t.Setenv(EnvExecutable, filepath.Join(home, "bin", "roca"))
+			path := filepath.Join(home, ".claude", "settings.json")
+			writeFile(t, path, test.body)
 
-	root := rootCommand(&cliEnv{out: &strings.Builder{}, errOut: &strings.Builder{},
-		build: Build{Version: "v1.2.3"}})
-	root.SetArgs([]string{"hooks", "install", "claude", "--pills"})
-	if err := root.Execute(); err == nil {
-		t.Fatal("an install edited settings it cannot parse")
-	}
-	if got := readClaudeHookValue(t, path, "PreToolUse"); got != "operator-owned" {
-		t.Fatalf("a refused install changed PreToolUse: %#v", got)
-	}
-	if readClaudeHookValue(t, path, "SessionStart") != nil {
-		t.Fatal("a refused install wrote half of its hooks")
+			root := rootCommand(&cliEnv{out: &strings.Builder{}, errOut: &strings.Builder{},
+				build: Build{Version: "v1.2.3"}})
+			root.SetArgs([]string{"hooks", "install", "claude", "--pills"})
+			if err := root.Execute(); err == nil {
+				t.Fatal("an install edited settings it cannot parse")
+			}
+			if got := readClaudeHookValue(t, path, test.malformed); got != "operator-owned" {
+				t.Fatalf("a refused install changed %s: %#v", test.malformed, got)
+			}
+			other := "SessionStart"
+			if test.malformed == "SessionStart" {
+				other = "PreToolUse"
+			}
+			if readClaudeHookValue(t, path, other) != nil {
+				t.Fatal("a refused install wrote half of its hooks")
+			}
+			if _, err := os.Stat(filepath.Join(home, ".roca", "artifacts.json")); !os.IsNotExist(err) {
+				t.Fatal("a refused install registered a hook")
+			}
+		})
 	}
 }
 
