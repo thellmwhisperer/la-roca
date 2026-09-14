@@ -508,8 +508,12 @@ func TestInstallRefusesMalformedClaudeHookEvents(t *testing.T) {
 			root := rootCommand(&cliEnv{out: &strings.Builder{}, errOut: &strings.Builder{},
 				build: Build{Version: "v1.2.3"}})
 			root.SetArgs([]string{"hooks", "install", "claude", "--pills"})
-			if err := root.Execute(); err == nil {
+			err := root.Execute()
+			if err == nil {
 				t.Fatal("an install edited settings it cannot parse")
+			}
+			if !strings.Contains(err.Error(), path) {
+				t.Fatalf("refusal did not name the settings file: %v", err)
 			}
 			if got := readClaudeHookValue(t, path, test.malformed); got != "operator-owned" {
 				t.Fatalf("a refused install changed %s: %#v", test.malformed, got)
