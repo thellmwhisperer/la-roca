@@ -109,9 +109,18 @@ export default function (pi) {
 // installSessionScript writes one runtime's extension or plugin. A file this
 // product did not write is never replaced; one it wrote and the operator edited
 // is left alone, named in a warning, until `--force` says otherwise.
+//
+// The registry is read before anything is written, because an install that
+// wrote the script and then failed its own bookkeeping would leave a working
+// hook behind a non-zero exit, which is the one outcome an operator cannot act
+// on.
 func installSessionScript(env *cliEnv, runtime, path, executable string,
 	req sessionRequest, force bool) (agentcfg.Outcome, string, error) {
 	outcome := agentcfg.Outcome{Runtime: runtime, Path: path}
+	entry, registered, err := env.registeredArtifact(artifactKindHook, runtime, path)
+	if err != nil {
+		return outcome, "", err
+	}
 	desired := sessionScript(runtime, executable, req)
 	previous, err := os.ReadFile(path)
 	switch {
@@ -121,16 +130,14 @@ func installSessionScript(env *cliEnv, runtime, path, executable string,
 	case !strings.Contains(string(previous), rocaScriptMarker):
 		return outcome, "", fmt.Errorf(
 			"refuse to replace %s, which La Roca did not write", path)
-	default:
-		if string(previous) == desired {
-			return outcome, "", env.registerHook(path, runtime, desired)
-		}
-		if diverged, err := sessionScriptDiverged(env, runtime, path, string(previous)); err != nil {
-			return outcome, "", err
-		} else if diverged && !force {
-			return outcome, fmt.Sprintf("warning: %s has edits; run `roca hooks install %s "+
-				"--force` to replace it", path, runtime), nil
-		}
+	case string(previous) == desired:
+		return outcome, "", env.registerHook(path, runtime, desired)
+	case !force && (!registered || entry.SystemSHA256 != artifact.Checksum(string(previous))):
+		// The whole script is the SYSTEM fragment, so a file that no longer
+		// says what the install recorded is the operator's edit, and a file no
+		// registry entry stands behind was never proven to be this build's.
+		return outcome, fmt.Sprintf("warning: %s has edits; run `roca hooks install %s "+
+			"--force` to replace it", path, runtime), nil
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return outcome, "", fmt.Errorf("create the directory of %s: %w", path, err)
@@ -149,20 +156,6 @@ func installSessionScript(env *cliEnv, runtime, path, executable string,
 	}
 	outcome.Changed = true
 	return outcome, "", env.registerHook(path, runtime, desired)
-}
-
-// sessionScriptDiverged answers whether the file on disk still says what the
-// install that wrote it recorded. A script no registry entry stands behind was
-// never proven to be this build's, so it counts as diverged and needs consent.
-func sessionScriptDiverged(env *cliEnv, runtime, path, current string) (bool, error) {
-	entry, registered, err := env.registeredArtifact(artifactKindHook, runtime, path)
-	if err != nil {
-		return false, err
-	}
-	if !registered {
-		return true, nil
-	}
-	return entry.SystemSHA256 != artifact.Checksum(current), nil
 }
 
 // uninstallSessionScript removes the file this product wrote and nothing else.
