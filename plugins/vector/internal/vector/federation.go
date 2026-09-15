@@ -1245,12 +1245,12 @@ func (d DeclaredCorpus) ResolveSources(ctx context.Context,
 		}
 		literals := make([]string, len(ids))
 		for index, id := range ids {
-			literals[index] = sqlLiteral(id)
+			literals[index] = sqlTypedLiteral(id)
 		}
 		inList := strings.Join(literals, ",")
 		for _, column := range table.TextColumns {
 			branches = append(branches, fmt.Sprintf(
-				`SELECT %s AS source_kind,CAST(%s AS TEXT) AS source_id,%s AS column_name,CAST(%s AS TEXT) AS column_text FROM %s.%s WHERE CAST(%s AS TEXT) IN (%s)`,
+				`SELECT %s AS source_kind,CAST(%s AS TEXT) AS source_id,%s AS column_name,CAST(%s AS TEXT) AS column_text FROM %s.%s WHERE %s IN (%s)`,
 				sqlLiteral(table.Name), quoteIdentifier(table.IDColumn), sqlLiteral(column),
 				quoteIdentifier(column), quoteIdentifier(d.Database.Alias), quoteIdentifier(table.Name),
 				quoteIdentifier(table.IDColumn), inList))

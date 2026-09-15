@@ -489,6 +489,126 @@ func TestFederationQueryUsesTheCoreRuntimeInventory(t *testing.T) {
 	}
 }
 
+func TestResolveSourcesUsesRawIDPredicate(t *testing.T) {
+	root := t.TempDir()
+	dbPath := filepath.Join(root, "roca-corpus.db")
+	createSourceDatabase(t, dbPath, `
+		CREATE TABLE exchanges(id INTEGER PRIMARY KEY, human_text TEXT, agent_text TEXT);
+		CREATE TABLE sessions(session_id TEXT PRIMARY KEY, title TEXT, project TEXT);
+		INSERT INTO exchanges VALUES (1,'human one','agent one'),(2,'human two','agent two');
+		INSERT INTO sessions VALUES ('sess-a','Title A','proj');`)
+	var captured []string
+	base := sqliteExecRunner(t, map[string]string{"plugin_roca_corpus": dbPath})
+	runner := func(ctx context.Context, executable string, args ...string) ([]byte, error) {
+		if len(args) > 0 {
+			captured = append(captured, args[len(args)-1])
+		}
+		return base(ctx, executable, args...)
+	}
+	declared := DeclaredCorpus{
+		Core: CoreCLI{Executable: "roca", readRequest: readerFixture(runner)},
+		Database: vectorDatabase{Plugin: "roca-corpus", Database: "corpus", Alias: "plugin_roca_corpus",
+			Tables: []vectorTable{
+				{Name: "exchanges", IDColumn: "id", TextColumns: []string{"human_text", "agent_text"}},
+				{Name: "sessions", IDColumn: "session_id", TextColumns: []string{"title", "project"}},
+			}},
+	}
+	exchange := sourceRow{kind: "exchanges", sourceID: "1"}
+	session := sourceRow{kind: "sessions", sourceID: "sess-a"}
+	resolved, err := declared.ResolveSources(context.Background(), []sourceLookup{
+		{kind: "exchanges", where: locator{SourceID: "1", Identity: exchange.identity()}},
+		{kind: "exchanges", where: locator{SourceID: "2"}},
+		{kind: "sessions", where: locator{SourceID: "sess-a", Identity: session.identity()}},
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if !strings.Contains(resolved[sourceLookupKey("exchanges", "1")], "human one") ||
+		!strings.Contains(resolved[sourceLookupKey("sessions", "sess-a")], "Title A") {
+		t.Fatalf("resolved texts = %v", resolved)
+	}
+	if len(captured) != 1 {
+		t.Fatalf("captured statements = %d, want 1: %q", len(captured), captured)
+	}
+	statement := captured[0]
+	if strings.Contains(statement, "WHERE CAST(") {
+		t.Fatalf("ResolveSources still CASTs the id predicate: %s", statement)
+	}
+	if !strings.Contains(statement, `CAST("id" AS TEXT) AS source_id`) ||
+		!strings.Contains(statement, `CAST("session_id" AS TEXT) AS source_id`) {
+		t.Fatalf("SELECT list lost CAST to TEXT: %s", statement)
+	}
+	if !strings.Contains(statement, `WHERE "id" IN (1,2)`) {
+		t.Fatalf("integer ids were not typed as integers: %s", statement)
+	}
+	if !strings.Contains(statement, `WHERE "session_id" IN ('sess-a')`) {
+		t.Fatalf("text ids were not kept as quoted literals: %s", statement)
+	}
+
+	db := openTestSQLite(t, dbPath)
+	t.Cleanup(func() { db.Close() })
+	castPlan := explainQueryPlan(t, db,
+		`SELECT id FROM exchanges WHERE CAST(id AS TEXT) IN ('1','2')`)
+	rawPlan := explainQueryPlan(t, db, `SELECT id FROM exchanges WHERE id IN (1,2)`)
+	attached := openTestSQLite(t, ":memory:")
+	t.Cleanup(func() { attached.Close() })
+	if _, err := attached.Exec(`ATTACH DATABASE ? AS plugin_roca_corpus`, dbPath); err != nil {
+		t.Fatal(err)
+	}
+	generatedPlan := explainQueryPlan(t, attached, statement)
+	if !strings.Contains(castPlan, "SCAN") {
+		t.Fatalf("CAST predicate plan should full-scan, got %q", castPlan)
+	}
+	if strings.Contains(castPlan, "SEARCH") || strings.Contains(castPlan, "INTEGER PRIMARY KEY") {
+		t.Fatalf("CAST predicate unexpectedly used the id index: %q", castPlan)
+	}
+	if !strings.Contains(rawPlan, "INTEGER PRIMARY KEY") && !strings.Contains(rawPlan, "SEARCH") {
+		t.Fatalf("raw id predicate plan should use the id index, got %q", rawPlan)
+	}
+	if strings.Contains(rawPlan, "SCAN") {
+		t.Fatalf("raw id predicate still scanned: %q", rawPlan)
+	}
+	if !strings.Contains(generatedPlan, "INTEGER PRIMARY KEY") && !strings.Contains(generatedPlan, "SEARCH") {
+		t.Fatalf("generated ResolveSources plan should use the id index, got %q", generatedPlan)
+	}
+	if strings.Contains(generatedPlan, "SCAN") {
+		t.Fatalf("generated ResolveSources plan still scanned: %q", generatedPlan)
+	}
+}
+
+func explainQueryPlan(t *testing.T, db *sql.DB, statement string) string {
+	t.Helper()
+	rows, err := db.Query("EXPLAIN QUERY PLAN " + statement)
+	if err != nil {
+		t.Fatalf("explain %s: %v", statement, err)
+	}
+	defer rows.Close()
+	columns, err := rows.Columns()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var details []string
+	for rows.Next() {
+		values := make([]any, len(columns))
+		pointers := make([]any, len(columns))
+		for index := range values {
+			pointers[index] = &values[index]
+		}
+		if err := rows.Scan(pointers...); err != nil {
+			t.Fatal(err)
+		}
+		parts := make([]string, 0, len(columns))
+		for _, value := range values {
+			parts = append(parts, fmt.Sprint(value))
+		}
+		details = append(details, strings.Join(parts, " "))
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return strings.Join(details, " | ")
+}
+
 func TestResolveSourcesAlignsUnionArmsAcrossChunkGenerations(t *testing.T) {
 	root := t.TempDir()
 	dbPath := filepath.Join(root, "roca-corpus.db")
