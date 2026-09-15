@@ -38,6 +38,10 @@ type execResult struct {
 	Rows []map[string]any `json:"rows"`
 }
 
+type columnTypeResult struct {
+	Type string `json:"type"`
+}
+
 type corePage struct {
 	kind   string
 	query  string
@@ -539,8 +543,33 @@ func (c CoreCLI) queryPage(ctx context.Context, statement, timeout string) ([]ma
 	return result.Rows, err
 }
 
+func (c CoreCLI) columnType(ctx context.Context, database, table, column string) (string, error) {
+	request := map[string]any{
+		"column_type": map[string]any{
+			"database": database,
+			"table":    table,
+			"column":   column,
+		},
+	}
+	var result columnTypeResult
+	if err := c.read(ctx, request, &result); err != nil {
+		return "", err
+	}
+	return result.Type, nil
+}
+
 func sqlLiteral(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
+}
+
+func sqlTypedLiteral(value, affinity string) string {
+	if affinity == "INTEGER" {
+		parsed, err := strconv.ParseInt(value, 10, 64)
+		if err == nil && strconv.FormatInt(parsed, 10) == value {
+			return value
+		}
+	}
+	return sqlLiteral(value)
 }
 
 func stringValue(value any) string {
