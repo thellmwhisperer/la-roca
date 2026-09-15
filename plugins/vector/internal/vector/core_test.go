@@ -491,6 +491,29 @@ func readerFixture(run CommandRunner) func(context.Context, CoreCLI, map[string]
 	return func(ctx context.Context, core CoreCLI, request map[string]any, result any) error {
 		mu.Lock()
 		defer mu.Unlock()
+		decode := func(raw []byte, result any) error {
+			decoder := json.NewDecoder(bytes.NewReader(raw))
+			decoder.UseNumber()
+			return decoder.Decode(result)
+		}
+		if metadata, ok := request["column_type"].(map[string]any); ok {
+			statement := fmt.Sprintf(`SELECT type FROM %s.pragma_table_info(%s) WHERE name=%s`,
+				quoteIdentifier(stringValue(metadata["database"])),
+				sqlLiteral(stringValue(metadata["table"])), sqlLiteral(stringValue(metadata["column"])))
+			raw, err := run(ctx, core.Executable, fixtureRequestArgs(core, map[string]any{"sql": statement})...)
+			if err != nil {
+				return err
+			}
+			var rows execResult
+			if err := decode(raw, &rows); err != nil {
+				return err
+			}
+			if len(rows.Rows) != 1 {
+				return fmt.Errorf("column type query returned %d rows", len(rows.Rows))
+			}
+			*(result.(*columnTypeResult)) = columnTypeResult{Type: stringValue(rows.Rows[0]["type"])}
+			return nil
+		}
 		cursor, _ := request["cursor"].(string)
 		var raw []byte
 		if cursor == "" || request["sql"] != nil {
@@ -499,11 +522,6 @@ func readerFixture(run CommandRunner) func(context.Context, CoreCLI, map[string]
 			if err != nil {
 				return err
 			}
-		}
-		decode := func(raw []byte, result any) error {
-			decoder := json.NewDecoder(bytes.NewReader(raw))
-			decoder.UseNumber()
-			return decoder.Decode(result)
 		}
 		if cursor == "" {
 			return decode(raw, result)

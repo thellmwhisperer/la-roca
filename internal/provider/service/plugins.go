@@ -306,6 +306,40 @@ func (s *Service) residentCorpus() *plugin.Database {
 	return databaseForVerb(s.resident, IngestVerb, rocaCorpusPluginName)
 }
 
+func (s *Service) VectorColumnType(ctx context.Context, schema, table, column string) (string, error) {
+	inventory := s.InventoryRoute(ctx)
+	defer inventory.CloseOnDemand()
+	var selected plugin.Database
+	for _, database := range inventory.Databases {
+		if database.Schema != schema {
+			continue
+		}
+		for _, vectorTable := range database.VectorTables {
+			if vectorTable.Name == table && vectorTable.IDColumn == column {
+				selected = database
+				break
+			}
+		}
+		if selected.Schema != "" {
+			break
+		}
+	}
+	if selected.Schema == "" {
+		return "", fmt.Errorf("vector column %s.%s.%s is not declared", schema, table, column)
+	}
+	hub, err := plugin.OpenHub(ctx, []plugin.Database{selected})
+	if err != nil {
+		return "", err
+	}
+	defer hub.Close()
+	var declaredType string
+	if err := hub.QueryRowContext(ctx,
+		`SELECT type FROM pragma_table_info(?, ?) WHERE name = ?`, table, schema, column).Scan(&declaredType); err != nil {
+		return "", fmt.Errorf("read vector column %s.%s.%s: %w", schema, table, column, err)
+	}
+	return declaredType, nil
+}
+
 // databaseForVerb resolves the single database a verb writes into. A package
 // that declares the verb over several databases names no seat at all, because
 // the kernel would otherwise pick one of them by discovery order.
