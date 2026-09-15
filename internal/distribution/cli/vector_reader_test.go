@@ -15,6 +15,32 @@ import (
 	"testing"
 )
 
+func TestVectorReaderReadsDeclaredColumnTypeThroughMetadataOperation(t *testing.T) {
+	fixtureInstallation(t)
+	input, err := json.Marshal(map[string]any{"column_type": map[string]string{
+		"database": "plugin_roca_corpus", "table": "sessions", "column": "session_id",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := runRootErr(t, contractBuild(), strings.NewReader(string(input)+"\n"), "_vector-reader")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response struct {
+		Result struct {
+			Type string `json:"type"`
+		} `json:"result"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(output), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Error != "" || response.Result.Type != "TEXT" {
+		t.Fatalf("metadata response = %+v", response)
+	}
+}
+
 func TestVectorReaderKeepsGateScopeAndRecoversAfterRejectedRequests(t *testing.T) {
 	fixtureInstallation(t)
 	runRoot(t, contractBuild(), "store", "--layer", "discovery", "--content", "synthetic reader marker", "--origin", "agent")
