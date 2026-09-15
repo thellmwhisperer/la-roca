@@ -1243,14 +1243,18 @@ func (d DeclaredCorpus) ResolveSources(ctx context.Context,
 		if len(ids) == 0 {
 			continue
 		}
+		affinity, err := d.idAffinity(ctx, table)
+		if err != nil {
+			return nil, err
+		}
 		literals := make([]string, len(ids))
 		for index, id := range ids {
-			literals[index] = sqlLiteral(id)
+			literals[index] = sqlTypedLiteral(id, affinity)
 		}
 		inList := strings.Join(literals, ",")
 		for _, column := range table.TextColumns {
 			branches = append(branches, fmt.Sprintf(
-				`SELECT %s AS source_kind,CAST(%s AS TEXT) AS source_id,%s AS column_name,CAST(%s AS TEXT) AS column_text FROM %s.%s WHERE CAST(%s AS TEXT) IN (%s)`,
+				`SELECT %s AS source_kind,CAST(%s AS TEXT) AS source_id,%s AS column_name,CAST(%s AS TEXT) AS column_text FROM %s.%s WHERE %s IN (%s)`,
 				sqlLiteral(table.Name), quoteIdentifier(table.IDColumn), sqlLiteral(column),
 				quoteIdentifier(column), quoteIdentifier(d.Database.Alias), quoteIdentifier(table.Name),
 				quoteIdentifier(table.IDColumn), inList))
@@ -1302,6 +1306,30 @@ func (d DeclaredCorpus) ResolveSources(ctx context.Context,
 		}
 	}
 	return resolved, nil
+}
+
+func (d DeclaredCorpus) idAffinity(ctx context.Context, table vectorTable) (string, error) {
+	declaredType, err := d.Core.columnType(ctx, d.Database.Alias, table.Name, table.IDColumn)
+	if err != nil {
+		return "", fmt.Errorf("read id affinity for %s/%s: %w", d.Database.owner(), table.Name, err)
+	}
+	return sqliteColumnAffinity(declaredType), nil
+}
+
+func sqliteColumnAffinity(declaredType string) string {
+	typeName := strings.ToUpper(strings.TrimSpace(declaredType))
+	switch {
+	case strings.Contains(typeName, "INT"):
+		return "INTEGER"
+	case strings.Contains(typeName, "CHAR"), strings.Contains(typeName, "CLOB"), strings.Contains(typeName, "TEXT"):
+		return "TEXT"
+	case strings.Contains(typeName, "BLOB"), typeName == "":
+		return "BLOB"
+	case strings.Contains(typeName, "REAL"), strings.Contains(typeName, "FLOA"), strings.Contains(typeName, "DOUB"):
+		return "REAL"
+	default:
+		return "NUMERIC"
+	}
 }
 
 func (d DeclaredCorpus) CountSources(ctx context.Context, sourceKind string) (int, error) {

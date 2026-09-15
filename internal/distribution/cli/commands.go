@@ -721,11 +721,16 @@ func vectorReaderCommand(env *cliEnv) *cobra.Command {
 			encoder := json.NewEncoder(env.out)
 			for {
 				var request struct {
-					SQL       string `json:"sql"`
-					Databases string `json:"databases"`
-					Scope     bool   `json:"scope"`
-					TimeoutMS *int   `json:"timeout_ms,omitempty"`
-					Cursor    string `json:"cursor,omitempty"`
+					SQL        string `json:"sql"`
+					Databases  string `json:"databases"`
+					Scope      bool   `json:"scope"`
+					TimeoutMS  *int   `json:"timeout_ms,omitempty"`
+					Cursor     string `json:"cursor,omitempty"`
+					ColumnType *struct {
+						Database string `json:"database"`
+						Table    string `json:"table"`
+						Column   string `json:"column"`
+					} `json:"column_type,omitempty"`
 				}
 				if err := decoder.Decode(&request); err != nil {
 					if errors.Is(err, io.EOF) {
@@ -735,7 +740,14 @@ func vectorReaderCommand(env *cliEnv) *cobra.Command {
 				}
 				var result any
 				var err error
-				if request.Scope {
+				if request.ColumnType != nil {
+					var declaredType string
+					declaredType, err = svc.VectorColumnType(cmd.Context(), request.ColumnType.Database,
+						request.ColumnType.Table, request.ColumnType.Column)
+					result = struct {
+						Type string `json:"type"`
+					}{Type: declaredType}
+				} else if request.Scope {
 					var names []string
 					names, err = service.ParseDatabaseList(request.Databases)
 					if err == nil {
