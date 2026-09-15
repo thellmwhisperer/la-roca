@@ -1309,16 +1309,11 @@ func (d DeclaredCorpus) ResolveSources(ctx context.Context,
 }
 
 func (d DeclaredCorpus) idAffinity(ctx context.Context, table vectorTable) (string, error) {
-	statement := fmt.Sprintf(`SELECT type FROM %s.pragma_table_info(%s) WHERE name=%s`,
-		quoteIdentifier(d.Database.Alias), sqlLiteral(table.Name), sqlLiteral(table.IDColumn))
-	rows, err := d.Core.query(ctx, statement)
+	declaredType, err := d.Core.columnType(ctx, d.Database.Alias, table.Name, table.IDColumn)
 	if err != nil {
 		return "", fmt.Errorf("read id affinity for %s/%s: %w", d.Database.owner(), table.Name, err)
 	}
-	if len(rows) != 1 {
-		return "", fmt.Errorf("read id affinity for %s/%s returned %d rows", d.Database.owner(), table.Name, len(rows))
-	}
-	return sqliteColumnAffinity(stringValue(rows[0]["type"])), nil
+	return sqliteColumnAffinity(declaredType), nil
 }
 
 func sqliteColumnAffinity(declaredType string) string {
