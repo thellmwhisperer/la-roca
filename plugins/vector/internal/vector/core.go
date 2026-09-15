@@ -543,12 +543,12 @@ func sqlLiteral(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
 }
 
-// sqlTypedLiteral emits an unquoted integer when value is a canonical int64,
-// otherwise a quoted SQL string, so IN-lists match INTEGER and TEXT affinity.
-func sqlTypedLiteral(value string) string {
-	parsed, err := strconv.ParseInt(value, 10, 64)
-	if err == nil && strconv.FormatInt(parsed, 10) == value {
-		return value
+func sqlTypedLiteral(value, affinity string) string {
+	if affinity == "INTEGER" {
+		parsed, err := strconv.ParseInt(value, 10, 64)
+		if err == nil && strconv.FormatInt(parsed, 10) == value {
+			return value
+		}
 	}
 	return sqlLiteral(value)
 }

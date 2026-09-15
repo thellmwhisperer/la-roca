@@ -495,8 +495,10 @@ func TestResolveSourcesUsesRawIDPredicate(t *testing.T) {
 	createSourceDatabase(t, dbPath, `
 		CREATE TABLE exchanges(id INTEGER PRIMARY KEY, human_text TEXT, agent_text TEXT);
 		CREATE TABLE sessions(session_id TEXT PRIMARY KEY, title TEXT, project TEXT);
+		CREATE TABLE text_ids(id TEXT PRIMARY KEY, body TEXT);
 		INSERT INTO exchanges VALUES (1,'human one','agent one'),(2,'human two','agent two');
-		INSERT INTO sessions VALUES ('sess-a','Title A','proj');`)
+		INSERT INTO sessions VALUES ('sess-a','Title A','proj');
+		INSERT INTO text_ids VALUES ('1','Text ID one');`)
 	var captured []string
 	base := sqliteExecRunner(t, map[string]string{"plugin_roca_corpus": dbPath})
 	runner := func(ctx context.Context, executable string, args ...string) ([]byte, error) {
@@ -511,26 +513,36 @@ func TestResolveSourcesUsesRawIDPredicate(t *testing.T) {
 			Tables: []vectorTable{
 				{Name: "exchanges", IDColumn: "id", TextColumns: []string{"human_text", "agent_text"}},
 				{Name: "sessions", IDColumn: "session_id", TextColumns: []string{"title", "project"}},
+				{Name: "text_ids", IDColumn: "id", TextColumns: []string{"body"}},
 			}},
 	}
 	exchange := sourceRow{kind: "exchanges", sourceID: "1"}
 	session := sourceRow{kind: "sessions", sourceID: "sess-a"}
+	textID := sourceRow{kind: "text_ids", sourceID: "1"}
 	resolved, err := declared.ResolveSources(context.Background(), []sourceLookup{
 		{kind: "exchanges", where: locator{SourceID: "1", Identity: exchange.identity()}},
 		{kind: "exchanges", where: locator{SourceID: "2"}},
 		{kind: "sessions", where: locator{SourceID: "sess-a", Identity: session.identity()}},
+		{kind: "text_ids", where: locator{SourceID: "1", Identity: textID.identity()}},
 	})
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
 	if !strings.Contains(resolved[sourceLookupKey("exchanges", "1")], "human one") ||
-		!strings.Contains(resolved[sourceLookupKey("sessions", "sess-a")], "Title A") {
+		!strings.Contains(resolved[sourceLookupKey("sessions", "sess-a")], "Title A") ||
+		!strings.Contains(resolved[sourceLookupKey("text_ids", "1")], "Text ID one") {
 		t.Fatalf("resolved texts = %v", resolved)
 	}
-	if len(captured) != 1 {
-		t.Fatalf("captured statements = %d, want 1: %q", len(captured), captured)
+	var statement string
+	for _, candidate := range captured {
+		if strings.Contains(candidate, "source_kind") {
+			statement = candidate
+			break
+		}
 	}
-	statement := captured[0]
+	if statement == "" {
+		t.Fatalf("captured statements = %q", captured)
+	}
 	if strings.Contains(statement, "WHERE CAST(") {
 		t.Fatalf("ResolveSources still CASTs the id predicate: %s", statement)
 	}
@@ -543,6 +555,9 @@ func TestResolveSourcesUsesRawIDPredicate(t *testing.T) {
 	}
 	if !strings.Contains(statement, `WHERE "session_id" IN ('sess-a')`) {
 		t.Fatalf("text ids were not kept as quoted literals: %s", statement)
+	}
+	if !strings.Contains(statement, `WHERE "id" IN ('1')`) {
+		t.Fatalf("numeric-looking text id was not kept as a quoted literal: %s", statement)
 	}
 
 	db := openTestSQLite(t, dbPath)

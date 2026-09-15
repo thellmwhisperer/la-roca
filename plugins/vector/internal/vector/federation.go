@@ -1243,9 +1243,13 @@ func (d DeclaredCorpus) ResolveSources(ctx context.Context,
 		if len(ids) == 0 {
 			continue
 		}
+		affinity, err := d.idAffinity(ctx, table)
+		if err != nil {
+			return nil, err
+		}
 		literals := make([]string, len(ids))
 		for index, id := range ids {
-			literals[index] = sqlTypedLiteral(id)
+			literals[index] = sqlTypedLiteral(id, affinity)
 		}
 		inList := strings.Join(literals, ",")
 		for _, column := range table.TextColumns {
@@ -1302,6 +1306,35 @@ func (d DeclaredCorpus) ResolveSources(ctx context.Context,
 		}
 	}
 	return resolved, nil
+}
+
+func (d DeclaredCorpus) idAffinity(ctx context.Context, table vectorTable) (string, error) {
+	statement := fmt.Sprintf(`SELECT type FROM %s.pragma_table_info(%s) WHERE name=%s`,
+		quoteIdentifier(d.Database.Alias), sqlLiteral(table.Name), sqlLiteral(table.IDColumn))
+	rows, err := d.Core.query(ctx, statement)
+	if err != nil {
+		return "", fmt.Errorf("read id affinity for %s/%s: %w", d.Database.owner(), table.Name, err)
+	}
+	if len(rows) != 1 {
+		return "", fmt.Errorf("read id affinity for %s/%s returned %d rows", d.Database.owner(), table.Name, len(rows))
+	}
+	return sqliteColumnAffinity(stringValue(rows[0]["type"])), nil
+}
+
+func sqliteColumnAffinity(declaredType string) string {
+	typeName := strings.ToUpper(strings.TrimSpace(declaredType))
+	switch {
+	case strings.Contains(typeName, "INT"):
+		return "INTEGER"
+	case strings.Contains(typeName, "CHAR"), strings.Contains(typeName, "CLOB"), strings.Contains(typeName, "TEXT"):
+		return "TEXT"
+	case strings.Contains(typeName, "BLOB"), typeName == "":
+		return "BLOB"
+	case strings.Contains(typeName, "REAL"), strings.Contains(typeName, "FLOA"), strings.Contains(typeName, "DOUB"):
+		return "REAL"
+	default:
+		return "NUMERIC"
+	}
 }
 
 func (d DeclaredCorpus) CountSources(ctx context.Context, sourceKind string) (int, error) {
