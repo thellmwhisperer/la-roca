@@ -16,6 +16,14 @@ the SHA-256 digest, and only then replaces the target by rename. It refuses to
 overwrite an unrelated executable and converges safely after an interrupted
 run.
 
+On Unix, `install.sh` refuses before downloading or writing when it is running
+as root over a `$HOME/.roca` directory owned by another user, including when
+that directory is a symlink. The CLI applies the same refusal to every
+invocation other than bare help or version forms before command parsing,
+capability reconciliation, or execution logging; the exempt forms remain
+available without writing core audit or reconciliation state. Re-run the
+command as the owner named in the error instead of using `sudo`.
+
 The installed core materializes `roca-vector` in the same directory, including
 when `--prefix` or `ROCA_PREFIX` selects a custom one. Its manifest and dormant
 `state/` directory live under `~/.roca/plugins/roca-vector/`; the semantic
@@ -26,6 +34,9 @@ the companion is installed. See
 first query. Installation refuses to
 replace an externally sourced plugin package, an unmanaged plugin directory, or
 an executable it does not own, and reports the collision instead.
+Re-running the installer with an existing zero-byte vector index lock still
+updates the binary: the lock file's presence alone does not block the update or
+require deleting it.
 
 The core also places its bundled data plugins under `~/.roca/plugins/`. Each
 starts as an empty SQLite database, is verified and recorded like any other

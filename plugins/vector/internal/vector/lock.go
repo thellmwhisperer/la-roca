@@ -52,11 +52,7 @@ func tryLockIndex(path string) (func() error, bool, error) {
 }
 
 func ensureLockFile(path string) error {
-	created, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
-	if err != nil {
-		return err
-	}
-	return created.Close()
+	return ensureLockFilePlatform(path)
 }
 
 func validateExistingLock(path string, file *os.File, release func() error) error {
