@@ -304,13 +304,17 @@ func (env *cliEnv) openCronService(readOnly bool) (*rocacron.Service, error) {
 	if env.json {
 		out, errOut = io.Discard, io.Discard
 	}
+	dataDir := filepath.Dir(paths.DB)
 	return rocacron.Open(rocacron.Options{
-		PluginRoot: root,
-		Database:   filepath.Join(root, rocacron.Name, rocacron.DatabaseFilename),
-		LockPath:   logfile.New(filepath.Dir(paths.DB)).LockPath(),
-		ReadOnly:   readOnly,
-		Out:        out,
-		ErrOut:     errOut,
+		PluginRoot:  root,
+		Database:    filepath.Join(root, rocacron.Name, rocacron.DatabaseFilename),
+		LockPath:    logfile.New(dataDir).LockPath(),
+		ConfigPath:  paths.Config,
+		RidesDir:    filepath.Join(dataDir, config.DirRides),
+		ConsentPath: filepath.Join(dataDir, config.FileRideConsent),
+		ReadOnly:    readOnly,
+		Out:         out,
+		ErrOut:      errOut,
 	})
 }
 

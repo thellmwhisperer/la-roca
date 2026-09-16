@@ -886,6 +886,12 @@ directory, a changed payload, or an installation whose manifest and checksums no
 longer agree contributes nothing. That check re-reads every declared payload
 except the plugin's own writable database.
 
+The bundled `roca-vector` plugin ships a `vector_delta` ride (`after_ingest`) so
+a fresh install already schedules `roca vector ingest --delta` after the nightly
+ingest. Editing a bundled plugin directory is not the way to add or change a
+ride: that changes the checksum-verified payload and the plugin contributes
+nothing. Operator configuration lives outside the payload.
+
 ### Declaring rides
 
 A plugin opts in with `rides.toml`. Ride, train, and gate names are identifier
@@ -897,9 +903,29 @@ command = "roca-receipts import --delta"
 gate = "after_ingest"
 ```
 
-`roca cron list` aggregates the built-in and installed plugin manifests in
-stable plugin/ride order. `roca cron run [train] --dry-run` prints that order
-and each gate's current status without invoking or recording anything.
+The operator can declare the same fields outside any plugin payload. Write
+`[ride.<name>]` tables in `~/.roca/config.toml`, or drop `*.toml` files into
+`~/.roca/rides.d/`. Those files are operator configuration, not package
+payload, so `roca update` keeps working. Writing the ride is the declaration;
+the train records **EXECUTABLE** consent once in `~/.roca/rides.consent.json`
+and reuses that gate afterwards:
+
+```toml
+[ride.vector_delta]
+command = "roca vector ingest --delta"
+gate = "after_ingest"
+```
+
+Name collisions: later lexical files in `rides.d` win on a repeated ride name;
+`config.toml` then wins over the directory. An operator ride of the same name
+replaces every non-core plugin ride of that name. Plugin rides keep their own
+plugin identity unless replaced; operator rides use the reserved `operator`
+namespace. The built-in `core` ingest ride cannot be replaced.
+
+`roca cron list` aggregates the built-in ride, installed plugin manifests, and
+operator declarations in stable plugin/ride order. `roca cron run [train]
+--dry-run` prints that order and each gate's current status without invoking or
+recording a journey.
 
 A gate named `after_<ride>` opens only when that dependency's latest recorded
 journey ended with exit code zero. The dependency is the ride of that name

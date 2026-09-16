@@ -11,8 +11,9 @@ import (
 )
 
 const (
-	RidesFilename = "rides.toml"
-	DefaultTrain  = "nightly"
+	RidesFilename  = "rides.toml"
+	DefaultTrain   = "nightly"
+	OperatorPlugin = "operator"
 )
 
 type Ride struct {
@@ -95,16 +96,108 @@ func readRides(pluginName, path string) ([]Ride, error) {
 	if err != nil {
 		return nil, err
 	}
+	return parseRideSource(pluginName, filepath.Base(path), raw, false)
+}
+
+// DiscoverOperatorRides reads operator-owned ride tables from config.toml and
+// rides.d. Later lexical rides.d files win on a repeated name; config.toml
+// then wins over the directory.
+func DiscoverOperatorRides(configPath, ridesDir string) ([]Ride, []string) {
+	byName := map[string]Ride{}
+	sourceOf := map[string]string{}
+	var warnings []string
+
+	if directory := strings.TrimSpace(ridesDir); directory != "" {
+		entries, err := os.ReadDir(directory)
+		if err != nil && !os.IsNotExist(err) {
+			warnings = append(warnings,
+				fmt.Sprintf("operator rides in %s could not be read: %v", directory, err))
+		} else if err == nil {
+			names := make([]string, 0, len(entries))
+			for _, entry := range entries {
+				name := entry.Name()
+				if entry.IsDir() || strings.HasPrefix(name, ".") || !strings.HasSuffix(name, ".toml") {
+					continue
+				}
+				names = append(names, name)
+			}
+			slices.Sort(names)
+			for _, name := range names {
+				found, err := readRides(OperatorPlugin, filepath.Join(directory, name))
+				if err != nil {
+					warnings = append(warnings,
+						fmt.Sprintf("operator ride file %s is unusable: %v", name, err))
+					continue
+				}
+				for _, ride := range found {
+					if previous, ok := sourceOf[ride.Name]; ok {
+						warnings = append(warnings, fmt.Sprintf(
+							"operator ride %s in %s overrides %s", ride.Name, name, previous))
+					}
+					byName[ride.Name] = ride
+					sourceOf[ride.Name] = name
+				}
+			}
+		}
+	}
+
+	if path := strings.TrimSpace(configPath); path != "" {
+		found, err := readConfigRides(path)
+		if err != nil {
+			warnings = append(warnings,
+				fmt.Sprintf("operator rides in %s are unusable: %v", path, err))
+		} else {
+			label := filepath.Base(path)
+			for _, ride := range found {
+				if previous, ok := sourceOf[ride.Name]; ok {
+					warnings = append(warnings, fmt.Sprintf(
+						"operator ride %s in %s overrides %s", ride.Name, label, previous))
+				}
+				byName[ride.Name] = ride
+				sourceOf[ride.Name] = label
+			}
+		}
+	}
+
+	rides := make([]Ride, 0, len(byName))
+	for _, ride := range byName {
+		rides = append(rides, ride)
+	}
+	slices.SortFunc(rides, func(a, b Ride) int { return strings.Compare(a.Name, b.Name) })
+	return rides, warnings
+}
+
+func readConfigRides(path string) ([]Ride, error) {
+	raw, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return parseRideSource(OperatorPlugin, filepath.Base(path), raw, true)
+}
+
+func parseRideSource(pluginName, source string, raw []byte, configFile bool) ([]Ride, error) {
 	var document rideDocument
 	metadata, err := toml.Decode(string(raw), &document)
 	if err != nil {
-		return nil, fmt.Errorf("parse %s: %w", RidesFilename, err)
+		return nil, fmt.Errorf("parse %s: %w", source, err)
 	}
-	if undecoded := metadata.Undecoded(); len(undecoded) > 0 {
-		return nil, fmt.Errorf("parse %s: unknown field %s", RidesFilename, undecoded[0])
+	if configFile {
+		for _, key := range metadata.Undecoded() {
+			if strings.HasPrefix(key.String(), "ride.") {
+				return nil, fmt.Errorf("parse %s: unknown field %s", source, key)
+			}
+		}
+	} else if undecoded := metadata.Undecoded(); len(undecoded) > 0 {
+		return nil, fmt.Errorf("parse %s: unknown field %s", source, undecoded[0])
 	}
 	if len(document.Rides) == 0 {
-		return nil, fmt.Errorf("%s declares no rides", RidesFilename)
+		if configFile {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("%s declares no rides", source)
 	}
 
 	rides := make([]Ride, 0, len(document.Rides))
@@ -120,13 +213,13 @@ func readRides(pluginName, path string) ([]Ride, error) {
 			(gate != "" && (!gated || !validIdentifier(dependency))) {
 			return nil, fmt.Errorf(
 				"%s ride %q needs safe ride, train, and gate names plus a command",
-				RidesFilename, name)
+				source, name)
 		}
 		if gated && dependency != "ingest" {
 			if _, declared := document.Rides[dependency]; !declared {
 				return nil, fmt.Errorf(
 					"%s ride %q gate %q does not resolve to a ride in the same plugin",
-					RidesFilename, name, gate)
+					source, name, gate)
 			}
 		}
 		rides = append(rides, Ride{

@@ -5,6 +5,7 @@ package rocavector
 import (
 	"bytes"
 	"crypto/sha256"
+	_ "embed"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -29,6 +30,9 @@ var (
 	manifest     = []byte(`{"schema":1,"name":"roca-vector","version":"dev","kind":"executable","state_directory":"state"}`)
 )
 
+//go:embed rides.toml
+var rides []byte
+
 // ErrNoPayload reports that the running binary is not a release envelope and
 // carries no appended vector executable at all. It distinguishes that build
 // fact from a payload that exists but failed to read or verify.
@@ -50,7 +54,8 @@ func BundleSpec() bundledplugin.Spec {
 func bundleSpec(payload func() ([]byte, error)) bundledplugin.Spec {
 	return bundledplugin.Spec{
 		Name: Name, LegacyName: LegacyName, Executable: executableFilename(),
-		Source: BundledSource, Manifest: manifest, Payload: payload, MigrationGuard: migrationGuard,
+		Source: BundledSource, Manifest: manifest, Rides: rides, Payload: payload,
+		MigrationGuard: migrationGuard,
 	}
 }
 

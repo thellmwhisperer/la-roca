@@ -196,6 +196,13 @@ func TestListRejectsRidesWithoutVerifiedInstallerOwnership(t *testing.T) {
 			want: "reserved",
 		},
 		{
+			name: "reserved operator namespace",
+			prepare: func(t *testing.T, root string) {
+				writeRides(t, root, plugin.OperatorPlugin, "[ride.payload]\ncommand = \"echo impostor\"\n")
+			},
+			want: "reserved",
+		},
+		{
 			name: "consent recorded without execution",
 			prepare: func(t *testing.T, root string) {
 				writeRides(t, root, "trusted", "[ride.payload]\ncommand = \"echo unconsented\"\n")
@@ -391,6 +398,105 @@ func TestTheRealCoreLockProbeNeitherCreatesNorKeepsTheLock(t *testing.T) {
 	}
 }
 
+func TestOperatorRidesMergeWithPluginManifestsAndRecordConsent(t *testing.T) {
+	root, database := cronWorld(t, `[ride.vector_delta]
+command = "roca vector ingest --delta"
+gate = "after_ingest"
+`)
+	home := filepath.Dir(root)
+	ridesDir := filepath.Join(home, "rides.d")
+	if err := os.Mkdir(ridesDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ridesDir, "10-early.toml"), []byte(`[ride.extra]
+command = "from-early"
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ridesDir, "90-late.toml"), []byte(`[ride.extra]
+command = "echo extra"
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(home, "config.toml")
+	if err := os.WriteFile(configPath, []byte(`[ride.vector_delta]
+command = "echo operator-vector-delta"
+gate = "after_ingest"
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	consentPath := filepath.Join(home, "rides.consent.json")
+	service := mustOpenCron(t, rocacron.Options{
+		PluginRoot: root, Database: database, ConfigPath: configPath,
+		RidesDir: ridesDir, ConsentPath: consentPath,
+	})
+	rides, warnings := service.List()
+	if len(rides) != 3 {
+		t.Fatalf("rides = %+v warnings = %v", rides, warnings)
+	}
+	if rides[0].Plugin != "core" || rides[1].Plugin != plugin.OperatorPlugin ||
+		rides[1].Name != "extra" || rides[1].Command != "echo extra" ||
+		rides[2].Name != "vector_delta" || rides[2].Command != "echo operator-vector-delta" {
+		t.Fatalf("merged rides = %+v", rides)
+	}
+	if len(warnings) != 2 {
+		t.Fatalf("merge warnings = %v", warnings)
+	}
+	if err := os.WriteFile(configPath, []byte(`[ride.broken]
+command = "echo broken"
+surprise = true
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rides, warnings = service.List()
+	if len(rides) != 3 || rides[2].Plugin != "vector" ||
+		!strings.Contains(strings.Join(warnings, "\n"), "unknown field") {
+		t.Fatalf("invalid config rides = %+v warnings = %v", rides, warnings)
+	}
+	raw, err := os.ReadFile(consentPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), string(plugininstall.Executable)) {
+		t.Fatalf("consent = %s", raw)
+	}
+
+	if err := os.WriteFile(consentPath, []byte(`{"schema":1,"risk":"data-only","rides":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rides, warnings = service.List()
+	if len(rides) != 2 || rides[1].Plugin != "vector" ||
+		!strings.Contains(strings.Join(warnings, "\n"), string(plugininstall.DataOnly)) {
+		t.Fatalf("unconsented rides = %+v warnings = %v", rides, warnings)
+	}
+}
+
+func mustOpenCron(t *testing.T, options rocacron.Options) *rocacron.Service {
+	t.Helper()
+	if options.LockPath == "" {
+		options.LockPath = filepath.Join(t.TempDir(), ".roca.lock")
+	}
+	if options.Out == nil {
+		options.Out = io.Discard
+	}
+	if options.ErrOut == nil {
+		options.ErrOut = io.Discard
+	}
+	if options.Now == nil {
+		clock := time.Date(2026, 8, 14, 1, 2, 3, 0, time.UTC)
+		options.Now = func() time.Time {
+			clock = clock.Add(25 * time.Millisecond)
+			return clock
+		}
+	}
+	service, err := rocacron.Open(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = service.Close() })
+	return service
+}
+
 func cronWorld(t *testing.T, vectorRides string) (string, string) {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), "plugins")
@@ -440,24 +546,9 @@ func insertJourney(t *testing.T, path, pluginName, ride string, exitCode int) {
 
 func newService(t *testing.T, root, database string, runner rocacron.CommandRunner) *rocacron.Service {
 	t.Helper()
-	clock := time.Date(2026, 8, 14, 1, 2, 3, 0, time.UTC)
-	service, err := rocacron.Open(rocacron.Options{
-		PluginRoot: root,
-		Database:   database,
-		LockPath:   filepath.Join(t.TempDir(), ".roca.lock"),
-		Now: func() time.Time {
-			clock = clock.Add(25 * time.Millisecond)
-			return clock
-		},
-		RunCommand: runner,
-		Out:        io.Discard,
-		ErrOut:     io.Discard,
+	return mustOpenCron(t, rocacron.Options{
+		PluginRoot: root, Database: database, RunCommand: runner,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = service.Close() })
-	return service
 }
 
 type journey struct {
