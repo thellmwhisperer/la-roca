@@ -84,6 +84,29 @@ command = "echo should-not-run"
 	}
 }
 
+func TestDiscoverOperatorRidesResolvesGatesAcrossFiles(t *testing.T) {
+	ridesDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(ridesDir, "10-export.toml"), []byte(`[ride.export]
+command = "echo export"
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ridesDir, "20-upload.toml"), []byte(`[ride.upload]
+command = "echo upload"
+gate = "after_export"
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	rides, warnings := plugin.DiscoverOperatorRides("", ridesDir)
+	if len(warnings) != 0 || len(rides) != 2 {
+		t.Fatalf("rides = %+v warnings = %v", rides, warnings)
+	}
+	if rides[0].Name != "export" || rides[1].Name != "upload" || rides[1].Gate != "after_export" {
+		t.Fatalf("rides = %+v", rides)
+	}
+}
+
 func allowInstalledRideFixture(string, string) error { return nil }
 
 func writeRides(t *testing.T, root, name, body string) {

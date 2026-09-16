@@ -88,6 +88,9 @@ func InspectRides(pluginName, directory string) ([]Ride, error) {
 	if os.IsNotExist(err) {
 		return nil, nil
 	}
+	if err == nil {
+		err = validateRideDependencies(filepath.Join(directory, RidesFilename), found)
+	}
 	return found, err
 }
 
@@ -163,6 +166,10 @@ func DiscoverOperatorRides(configPath, ridesDir string) ([]Ride, []string) {
 	for _, ride := range byName {
 		rides = append(rides, ride)
 	}
+	if err := validateRideDependencies("operator rides", rides); err != nil {
+		warnings = append(warnings, err.Error())
+		return nil, warnings
+	}
 	slices.SortFunc(rides, func(a, b Ride) int { return strings.Compare(a.Name, b.Name) })
 	return rides, warnings
 }
@@ -215,17 +222,28 @@ func parseRideSource(pluginName, source string, raw []byte, configFile bool) ([]
 				"%s ride %q needs safe ride, train, and gate names plus a command",
 				source, name)
 		}
-		if gated && dependency != "ingest" {
-			if _, declared := document.Rides[dependency]; !declared {
-				return nil, fmt.Errorf(
-					"%s ride %q gate %q does not resolve to a ride in the same plugin",
-					source, name, gate)
-			}
-		}
 		rides = append(rides, Ride{
 			Name: name, Plugin: pluginName, Train: train, Command: command, Gate: gate,
 		})
 	}
 	slices.SortFunc(rides, func(a, b Ride) int { return strings.Compare(a.Name, b.Name) })
 	return rides, nil
+}
+
+func validateRideDependencies(source string, rides []Ride) error {
+	declared := make(map[string]struct{}, len(rides))
+	for _, ride := range rides {
+		declared[ride.Name] = struct{}{}
+	}
+	for _, ride := range rides {
+		dependency, gated := strings.CutPrefix(ride.Gate, "after_")
+		if gated && dependency != "ingest" {
+			if _, ok := declared[dependency]; !ok {
+				return fmt.Errorf(
+					"%s ride %q gate %q does not resolve to a ride in the same plugin",
+					source, ride.Name, ride.Gate)
+			}
+		}
+	}
+	return nil
 }
