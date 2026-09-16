@@ -51,6 +51,10 @@ func registerDistributionCLISteps(ctx *godog.ScenarioContext, w *distributionWor
 	ctx.Then(`^core ingest appears before the plugin ride and its dependency gate is closed$`,
 		w.cronPreviewIsOrderedAndGated)
 	ctx.Then(`^dry-run executes no ride and records no journey$`, w.cronDryRunIsInert)
+	ctx.When(`^the operator declares a vector_delta ride outside any plugin payload$`,
+		w.declareOperatorVectorDelta)
+	ctx.Then(`^the nightly train reports 2 rides and names the operator declaration$`,
+		w.nightlyTrainReportsOperatorVectorDelta)
 }
 
 func (w *distributionWorld) previewDefaultCronTrain() error {
@@ -99,6 +103,27 @@ func (w *distributionWorld) cronPreviewIsOrderedAndGated() error {
 	if w.last.code != 0 || !strings.Contains(w.last.stdout, "core\tingest\tready") ||
 		!strings.Contains(w.last.stdout, "vector-rides\tvector_delta\tdeferred_after_ingest") {
 		return fmt.Errorf("cron preview = %+v", w.last)
+	}
+	return nil
+}
+
+func (w *distributionWorld) declareOperatorVectorDelta() error {
+	if err := w.prepare("operator-rides"); err != nil {
+		return err
+	}
+	body := distributionPreparedConfig + "\n[ride.vector_delta]\ncommand = \"echo operator-vector-delta\"\ngate = \"after_ingest\"\n"
+	if err := writeFixture(filepath.Join(w.home, ".roca", "config.toml"), body); err != nil {
+		return err
+	}
+	w.last = w.runAt(w.home, w.installed, "cron", "run", "nightly")
+	return nil
+}
+
+func (w *distributionWorld) nightlyTrainReportsOperatorVectorDelta() error {
+	if w.last.code != 0 || !strings.Contains(w.last.stdout, "train nightly: 2 rides") ||
+		!strings.Contains(w.last.stdout, "operator\tvector_delta") ||
+		!strings.Contains(w.last.stdout, "echo operator-vector-delta") {
+		return fmt.Errorf("operator nightly train = %+v", w.last)
 	}
 	return nil
 }

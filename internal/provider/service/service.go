@@ -98,9 +98,19 @@ type Options struct {
 	// cannot reopen. The surface owns the marker location.
 	RollbackLayout func(error) error
 	// VectorSearch is the optional federated vector leg for hybrid query.
-	// Nil means this installation has no vector plugin, and Search runs FTS
-	// alone with the same envelope.
+	// Tests inject it. Production with VectorEnabled leaves it nil so Search
+	// can pass the request's knobs to PluginVectorQuery.
 	VectorSearch VectorSearchFunc
+	// Query is the resolved [query] hybrid knobs. Empty uses DefaultSettings.
+	Query search.Settings
+}
+
+// QuerySettings is the service's resolved hybrid knobs, defaults filled in.
+func (s *Service) QuerySettings() search.Settings {
+	if s == nil {
+		return search.DefaultSettings()
+	}
+	return s.opts.Query.WithDefaults()
 }
 
 // VectorEnabled reports the consent decision resolved by the opening surface.
@@ -171,6 +181,7 @@ func openWithContext(ctx context.Context, opts Options) (*Service, error) {
 	if layout != LayoutLegacyServing && layout != LayoutCutover {
 		return nil, fmt.Errorf("unknown serving layout %q", layout)
 	}
+	opts.Query = opts.Query.WithDefaults()
 	svc := &Service{opts: opts, registry: registry, readLayout: layout}
 	if layout != LayoutCutover {
 		if opts.ReadOnly {

@@ -81,7 +81,7 @@ elif [ ! -x "$binary" ]; then
   echo "slopslint: building ${COMMIT} (${os}-${arch})"
   (
     cd "$build_dir"
-    "${bun_command[@]}" install --frozen-lockfile
+    "${bun_command[@]}" install --frozen-lockfile --cache-dir .bun-cache
     "${bun_command[@]}" build ./src/cli.ts --compile \
       "--target=bun-${os}-${arch}" --outfile "${binary_absolute}.part"
   )

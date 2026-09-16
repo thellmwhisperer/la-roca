@@ -9,7 +9,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func tryExclusiveFileLock(path string) (func() error, bool, error) {
+func tryExclusiveFileLock(path string, _ bool) (func() error, bool, error) {
 	name, err := windows.UTF16PtrFromString(path)
 	if err != nil {
 		return nil, false, err

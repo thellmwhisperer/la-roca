@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -49,26 +50,32 @@ var schema string
 type CommandRunner func(context.Context, string, io.Writer, io.Writer) (int, error)
 
 type Options struct {
-	PluginRoot string
-	Database   string
-	LockPath   string
-	ReadOnly   bool
-	Now        func() time.Time
-	RunCommand CommandRunner
-	Out        io.Writer
-	ErrOut     io.Writer
+	PluginRoot    string
+	Database      string
+	LockPath      string
+	ConfigPath    string
+	RidesDir      string
+	VectorEnabled bool
+	ReadOnly      bool
+	Now           func() time.Time
+	RunCommand    CommandRunner
+	Out           io.Writer
+	ErrOut        io.Writer
 }
 
 type Service struct {
-	db         *sql.DB
-	pluginRoot string
-	lockPath   string
-	now        func() time.Time
-	runCommand CommandRunner
-	out        io.Writer
-	errOut     io.Writer
-	readOnly   bool
-	LockFree   func(string) (bool, error)
+	db            *sql.DB
+	pluginRoot    string
+	lockPath      string
+	configPath    string
+	ridesDir      string
+	vectorEnabled bool
+	now           func() time.Time
+	runCommand    CommandRunner
+	out           io.Writer
+	errOut        io.Writer
+	readOnly      bool
+	LockFree      func(string) (bool, error)
 }
 
 type RideResult struct {
@@ -146,7 +153,9 @@ func Open(options Options) (*Service, error) {
 	}
 	return &Service{
 		db: db, pluginRoot: options.PluginRoot, lockPath: options.LockPath,
-		now: now, runCommand: runner, out: out, errOut: errOut,
+		configPath: options.ConfigPath, ridesDir: options.RidesDir,
+		vectorEnabled: options.VectorEnabled,
+		now:           now, runCommand: runner, out: out, errOut: errOut,
 		readOnly: options.ReadOnly, LockFree: coreLockFree,
 	}, nil
 }
@@ -175,9 +184,30 @@ func (s *Service) Close() error {
 	return s.db.Close()
 }
 
-func (s *Service) List() ([]plugin.Ride, []string) {
+func (s *Service) List() ([]plugin.Ride, []string, error) {
+	return s.list()
+}
+
+func (s *Service) list() ([]plugin.Ride, []string, error) {
 	discovered, warnings := plugin.DiscoverRides(s.pluginRoot, verifyInstalledRides)
-	return append([]plugin.Ride{coreIngestRide()}, discovered...), warnings
+	for index := range discovered {
+		if discovered[index].Plugin == "roca-vector" && discovered[index].Name == "vector_delta" {
+			discovered[index].Command = coreCommand("vector ingest --delta")
+		}
+	}
+	if !s.vectorEnabled {
+		discovered = slices.DeleteFunc(discovered, func(ride plugin.Ride) bool {
+			return ride.Plugin == "roca-vector" && ride.Name == "vector_delta"
+		})
+	}
+	operator, operatorWarnings, err := plugin.DiscoverOperatorRides(s.configPath, s.ridesDir)
+	warnings = append(warnings, operatorWarnings...)
+	if err != nil {
+		return nil, warnings, err
+	}
+	merged, mergeWarnings := mergeOperatorRides(discovered, operator)
+	warnings = append(warnings, mergeWarnings...)
+	return append([]plugin.Ride{coreIngestRide()}, merged...), warnings, nil
 }
 
 // verifyInstalledRides admits a payload the installer still owns and whose
@@ -187,6 +217,9 @@ func (s *Service) List() ([]plugin.Ride, []string) {
 func verifyInstalledRides(pluginName, directory string) error {
 	if pluginName == corePlugin {
 		return fmt.Errorf("plugin name %q is reserved for the built-in ride namespace", corePlugin)
+	}
+	if pluginName == plugin.OperatorPlugin {
+		return fmt.Errorf("plugin name %q is reserved for operator-declared rides", plugin.OperatorPlugin)
 	}
 	manifest, err := plugininstall.VerifyInstalledPayload(pluginName, directory)
 	if err != nil {
@@ -238,7 +271,10 @@ func (s *Service) Run(ctx context.Context, train string, dryRun bool) (Report, e
 	if train == "" {
 		train = plugin.DefaultTrain
 	}
-	all, warnings := s.List()
+	all, warnings, err := s.list()
+	if err != nil {
+		return Report{}, err
+	}
 	declared := make(map[string]bool, len(all))
 	for _, ride := range all {
 		declared[rideKey(ride.Plugin, ride.Name)] = true
@@ -307,7 +343,6 @@ func (s *Service) runRide(ctx context.Context, ride plugin.Ride, declared map[st
 	if !open {
 		return result, s.recordDeferred(ride, status, "the gated dependency has no latest successful journey")
 	}
-
 	started := s.now().UTC()
 	var stdout, stderr excerpt
 	exitCode, runErr := s.runCommand(ctx, ride.Command,
@@ -368,6 +403,34 @@ func gateOwner(ride plugin.Ride, dependency string, declared map[string]bool) (s
 }
 
 func rideKey(pluginName, ride string) string { return pluginName + "\x00" + ride }
+
+func mergeOperatorRides(pluginRides, operatorRides []plugin.Ride) ([]plugin.Ride, []string) {
+	if len(operatorRides) == 0 {
+		return pluginRides, nil
+	}
+	overridden := make(map[string]bool, len(operatorRides))
+	for _, ride := range operatorRides {
+		overridden[ride.Name] = true
+	}
+	var warnings []string
+	kept := make([]plugin.Ride, 0, len(pluginRides)+len(operatorRides))
+	for _, ride := range pluginRides {
+		if overridden[ride.Name] && ride.Plugin == "roca-vector" && ride.Name == "vector_delta" {
+			warnings = append(warnings, fmt.Sprintf(
+				"operator ride %s overrides plugin %s/%s", ride.Name, ride.Plugin, ride.Name))
+			continue
+		}
+		kept = append(kept, ride)
+	}
+	kept = append(kept, operatorRides...)
+	slices.SortFunc(kept, func(a, b plugin.Ride) int {
+		if byPlugin := strings.Compare(a.Plugin, b.Plugin); byPlugin != 0 {
+			return byPlugin
+		}
+		return strings.Compare(a.Name, b.Name)
+	})
+	return kept, warnings
+}
 
 func (s *Service) lastJourneyOK(ctx context.Context, owner, ride string) (bool, error) {
 	if s.db == nil {

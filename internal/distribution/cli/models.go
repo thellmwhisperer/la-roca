@@ -2,9 +2,12 @@ package cli
 
 import (
 	"context"
-
+	"fmt"
+	"io"
 	"os"
-
+	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -14,6 +17,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/supportreport"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
+	"github.com/thellmwhisperer/la-roca/internal/securefile"
 )
 
 const (
@@ -26,6 +30,13 @@ type doctorReport struct {
 	QueryFailures     logfile.QueryFailureSummary `json:"query_failures"`
 	Vector            *vectorDoctorReport         `json:"vector,omitempty"`
 	ReadOnlySnapshots leftoverSnapshots           `json:"read_only_snapshots"`
+	ForeignOwned      []stateOwnership            `json:"foreign_owned,omitempty"`
+}
+
+type stateOwnership struct {
+	Path    string `json:"path"`
+	Owner   string `json:"owner"`
+	Command string `json:"chown"`
 }
 
 func doctorCommand(env *cliEnv) *cobra.Command {
@@ -43,11 +54,16 @@ func doctorCommand(env *cliEnv) *cobra.Command {
 			"also reports leftover read-only snapshot copies under the temp root and\n" +
 			"offers to delete the abandoned ones.",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			foreignOwned := env.collectForeignOwnedState()
 			if support {
 				env.skipExecutionLog = true
-				return env.runDoctorReport(cmd.Context())
+				err := env.runDoctorReport(cmd.Context(), foreignOwned)
+				if err != nil && len(foreignOwned) > 0 {
+					renderForeignOwnedSupport(env, len(foreignOwned))
+				}
+				return err
 			}
-			return env.serviceRunE(func(cmd *cobra.Command, _ []string, svc *service.Service) error {
+			err := env.serviceRunE(func(cmd *cobra.Command, _ []string, svc *service.Service) error {
 				report, err := svc.Doctor(cmd.Context())
 				if err != nil {
 					return err
@@ -68,13 +84,15 @@ func doctorCommand(env *cliEnv) *cobra.Command {
 				}
 				answer := doctorReport{DoctorReport: report, QueryFailures: failures,
 					Vector:            env.collectVectorDoctor(cmd.Context()),
-					ReadOnlySnapshots: collectSnapshotDoctor()}
+					ReadOnlySnapshots: collectSnapshotDoctor(),
+					ForeignOwned:      foreignOwned}
 				if env.json {
 					return env.printJSON(answer)
 				}
 				renderDoctor(env, report)
 				renderVectorDoctor(env, answer.Vector)
 				renderSnapshotDoctor(env, answer.ReadOnlySnapshots)
+				renderForeignOwnedState(env, answer.ForeignOwned)
 				renderQueryFailures(env, failures)
 				if err := env.offerSnapshotCleanup(cmd, answer.ReadOnlySnapshots); err != nil {
 					return err
@@ -84,6 +102,10 @@ func doctorCommand(env *cliEnv) *cobra.Command {
 				}
 				return err
 			})(cmd, args)
+			if err != nil && len(foreignOwned) > 0 {
+				renderForeignOwnedStateTo(env.errOut, foreignOwned)
+			}
+			return err
 		},
 	}
 	cmd.Flags().BoolVar(&support, "report", false,
@@ -91,7 +113,12 @@ func doctorCommand(env *cliEnv) *cobra.Command {
 	return cmd
 }
 
-func (env *cliEnv) runDoctorReport(ctx context.Context) error {
+type doctorSupportReport struct {
+	supportreport.Snapshot
+	ForeignOwnedCount int `json:"foreign_owned_count,omitempty"`
+}
+
+func (env *cliEnv) runDoctorReport(ctx context.Context, foreignOwned []stateOwnership) error {
 	paths, err := env.resolvePaths()
 	if err != nil {
 		return err
@@ -110,10 +137,18 @@ func (env *cliEnv) runDoctorReport(ctx context.Context) error {
 		return err
 	}
 	if env.json {
-		return env.printJSON(snapshot)
+		return env.printJSON(doctorSupportReport{Snapshot: snapshot, ForeignOwnedCount: len(foreignOwned)})
 	}
 	env.print("%s", supportreport.Render(snapshot))
+	renderForeignOwnedSupport(env, len(foreignOwned))
 	return nil
+}
+
+func renderForeignOwnedSupport(env *cliEnv, count int) {
+	if count == 0 {
+		return
+	}
+	env.print("state ownership findings: %d (run `roca doctor` locally for exact repair commands)", count)
 }
 
 func renderQueryFailures(env *cliEnv, summary logfile.QueryFailureSummary) {
@@ -143,6 +178,7 @@ func renderDoctor(env *cliEnv, report service.DoctorReport) {
 	} else {
 		env.print("configuration: %s (does not exist: defaults in use)", report.ConfigPath)
 	}
+	env.print("%s", renderQueryKnobs(report.Query))
 	env.print("agents detected: %s", detectedAgentsLine(report.DetectedAgents))
 	env.print("agents not found: %s", missingAgentsLine(report.DetectedAgents))
 	env.print("authentication: local agent models use their own CLI sessions; La Roca stores no secrets")
@@ -179,9 +215,47 @@ func renderDoctor(env *cliEnv, report service.DoctorReport) {
 	}
 }
 
+func renderQueryKnobs(query service.QueryDoctor) string {
+	templates := "default"
+	if !query.ExpandTemplates {
+		templates = "false"
+	} else if len(query.Templates) > 0 {
+		templates = strings.Join(query.Templates, ", ")
+	}
+	return fmt.Sprintf("query: oversample %d · templates %s · rrf_k %d · min_vector_score %s · max_rare_terms %d · parallel_legs %t",
+		query.Oversample, templates, query.RRFK, strconv.FormatFloat(query.MinVectorScore, 'f', -1, 64),
+		query.MaxRareTerms, query.ParallelLegs)
+}
+
 func orDash(value string) string {
 	if value == "" {
 		return "-"
 	}
 	return value
+}
+
+func (env *cliEnv) collectForeignOwnedState() []stateOwnership {
+	paths, err := env.resolvePaths()
+	if err != nil || paths.Home == "" {
+		return nil
+	}
+	repairs := securefile.ScanForeignOwned(filepath.Join(paths.Home, config.DirOwn))
+	found := make([]stateOwnership, 0, len(repairs))
+	for _, repair := range repairs {
+		found = append(found, stateOwnership{
+			Path: repair.Path, Owner: repair.Owner, Command: repair.Command,
+		})
+	}
+	return found
+}
+
+func renderForeignOwnedState(env *cliEnv, found []stateOwnership) {
+	renderForeignOwnedStateTo(env.out, found)
+}
+
+func renderForeignOwnedStateTo(out io.Writer, found []stateOwnership) {
+	for _, item := range found {
+		fmt.Fprintf(out, "state file owned by %s: %s\n", item.Owner, item.Path)
+		fmt.Fprintf(out, "      remedy: %s\n", item.Command)
+	}
 }

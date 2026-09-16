@@ -11,8 +11,9 @@ import (
 )
 
 const (
-	RidesFilename = "rides.toml"
-	DefaultTrain  = "nightly"
+	RidesFilename  = "rides.toml"
+	DefaultTrain   = "nightly"
+	OperatorPlugin = "operator"
 )
 
 type Ride struct {
@@ -87,6 +88,9 @@ func InspectRides(pluginName, directory string) ([]Ride, error) {
 	if os.IsNotExist(err) {
 		return nil, nil
 	}
+	if err == nil {
+		err = validateRideDependencies(filepath.Join(directory, RidesFilename), found)
+	}
 	return found, err
 }
 
@@ -95,16 +99,118 @@ func readRides(pluginName, path string) ([]Ride, error) {
 	if err != nil {
 		return nil, err
 	}
+	return parseRideSource(pluginName, path, raw, false)
+}
+
+// DiscoverOperatorRides reads operator-owned ride tables from config.toml and
+// rides.d.
+func DiscoverOperatorRides(configPath, ridesDir string) ([]Ride, []string, error) {
+	byName := map[string]Ride{}
+	sourceOf := map[string]string{}
+	var warnings []string
+
+	if directory := strings.TrimSpace(ridesDir); directory != "" {
+		entries, err := os.ReadDir(directory)
+		if err != nil && !os.IsNotExist(err) {
+			warnings = append(warnings,
+				fmt.Sprintf("operator rides in %s could not be read: %v", directory, err))
+		} else if err == nil {
+			names := make([]string, 0, len(entries))
+			for _, entry := range entries {
+				name := entry.Name()
+				if entry.IsDir() || strings.HasPrefix(name, ".") || !strings.HasSuffix(name, ".toml") {
+					continue
+				}
+				names = append(names, name)
+			}
+			slices.Sort(names)
+			for _, name := range names {
+				path := filepath.Join(directory, name)
+				found, err := readOperatorRides(OperatorPlugin, path, false)
+				if err != nil {
+					return nil, warnings, fmt.Errorf(
+						"operator ride file %s is unusable: %w", name, err)
+				}
+				for _, ride := range found {
+					if previous, ok := sourceOf[ride.Name]; ok {
+						return nil, warnings, fmt.Errorf(
+							"duplicate operator ride %q declared in %s and %s",
+							ride.Name, previous, name)
+					}
+					byName[ride.Name] = ride
+					sourceOf[ride.Name] = name
+				}
+			}
+		}
+	}
+
+	if path := strings.TrimSpace(configPath); path != "" {
+		found, err := readOperatorRides(OperatorPlugin, path, true)
+		if err != nil {
+			return nil, warnings, fmt.Errorf(
+				"operator rides in %s are unusable: %w", path, err)
+		} else {
+			label := filepath.Base(path)
+			for _, ride := range found {
+				if previous, ok := sourceOf[ride.Name]; ok {
+					return nil, warnings, fmt.Errorf(
+						"duplicate operator ride %q declared in %s and %s",
+						ride.Name, previous, label)
+				}
+				byName[ride.Name] = ride
+				sourceOf[ride.Name] = label
+			}
+		}
+	}
+
+	rides := make([]Ride, 0, len(byName))
+	for _, ride := range byName {
+		rides = append(rides, ride)
+	}
+	rides, dependencyWarnings := filterRideDependencies(rides)
+	warnings = append(warnings, dependencyWarnings...)
+	slices.SortFunc(rides, func(a, b Ride) int { return strings.Compare(a.Name, b.Name) })
+	return rides, warnings, nil
+}
+
+func readOperatorRides(pluginName, path string, configFile bool) ([]Ride, error) {
+	info, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", path)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return parseRideSource(pluginName, path, raw, configFile)
+}
+
+func parseRideSource(pluginName, source string, raw []byte, configFile bool) ([]Ride, error) {
 	var document rideDocument
 	metadata, err := toml.Decode(string(raw), &document)
 	if err != nil {
-		return nil, fmt.Errorf("parse %s: %w", RidesFilename, err)
+		return nil, fmt.Errorf("parse %s: %w", source, err)
 	}
-	if undecoded := metadata.Undecoded(); len(undecoded) > 0 {
-		return nil, fmt.Errorf("parse %s: unknown field %s", RidesFilename, undecoded[0])
+	if configFile {
+		for _, key := range metadata.Undecoded() {
+			if strings.HasPrefix(key.String(), "ride.") {
+				return nil, fmt.Errorf("parse %s: unknown field %s", source, key)
+			}
+		}
+	} else if undecoded := metadata.Undecoded(); len(undecoded) > 0 {
+		return nil, fmt.Errorf("parse %s: unknown field %s", source, undecoded[0])
 	}
 	if len(document.Rides) == 0 {
-		return nil, fmt.Errorf("%s declares no rides", RidesFilename)
+		if configFile {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("%s declares no rides", source)
 	}
 
 	rides := make([]Ride, 0, len(document.Rides))
@@ -120,14 +226,7 @@ func readRides(pluginName, path string) ([]Ride, error) {
 			(gate != "" && (!gated || !validIdentifier(dependency))) {
 			return nil, fmt.Errorf(
 				"%s ride %q needs safe ride, train, and gate names plus a command",
-				RidesFilename, name)
-		}
-		if gated && dependency != "ingest" {
-			if _, declared := document.Rides[dependency]; !declared {
-				return nil, fmt.Errorf(
-					"%s ride %q gate %q does not resolve to a ride in the same plugin",
-					RidesFilename, name, gate)
-			}
+				source, name)
 		}
 		rides = append(rides, Ride{
 			Name: name, Plugin: pluginName, Train: train, Command: command, Gate: gate,
@@ -135,4 +234,61 @@ func readRides(pluginName, path string) ([]Ride, error) {
 	}
 	slices.SortFunc(rides, func(a, b Ride) int { return strings.Compare(a.Name, b.Name) })
 	return rides, nil
+}
+
+func validateRideDependencies(source string, rides []Ride) error {
+	declared := make(map[string]struct{}, len(rides))
+	for _, ride := range rides {
+		declared[ride.Name] = struct{}{}
+	}
+	for _, ride := range rides {
+		dependency, gated := strings.CutPrefix(ride.Gate, "after_")
+		if gated && dependency != "ingest" {
+			if _, ok := declared[dependency]; !ok {
+				return fmt.Errorf(
+					"%s ride %q gate %q does not resolve to a ride in the same plugin",
+					source, ride.Name, ride.Gate)
+			}
+		}
+	}
+	return nil
+}
+
+func filterRideDependencies(rides []Ride) ([]Ride, []string) {
+	slices.SortFunc(rides, func(a, b Ride) int { return strings.Compare(a.Name, b.Name) })
+	declared := make(map[string]struct{}, len(rides))
+	for _, ride := range rides {
+		declared[ride.Name] = struct{}{}
+	}
+	var warnings []string
+	for {
+		removed := false
+		for _, ride := range rides {
+			if _, admitted := declared[ride.Name]; !admitted {
+				continue
+			}
+			dependency, gated := strings.CutPrefix(ride.Gate, "after_")
+			if !gated || dependency == "ingest" {
+				continue
+			}
+			if _, ok := declared[dependency]; ok {
+				continue
+			}
+			delete(declared, ride.Name)
+			warnings = append(warnings, fmt.Sprintf(
+				"operator ride %s/%s omitted because gate %q has no admitted dependency",
+				ride.Plugin, ride.Name, ride.Gate))
+			removed = true
+		}
+		if !removed {
+			break
+		}
+	}
+	kept := make([]Ride, 0, len(declared))
+	for _, ride := range rides {
+		if _, ok := declared[ride.Name]; ok {
+			kept = append(kept, ride)
+		}
+	}
+	return kept, warnings
 }

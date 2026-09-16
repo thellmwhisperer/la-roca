@@ -119,6 +119,9 @@ keep_alive = "10m"
 think      = false
 ```
 
+The `[query]` hybrid retrieval keys, defaults, accepted values, flags, and
+tradeoffs are owned by [Hybrid retrieval](queries.md#hybrid-retrieval).
+
 With no explicit `models.order`, the effective order is the detected shipped
 agent CLI binaries first and `ollama` last. For example, a machine where two
 supported CLIs are installed gets both before Ollama; a machine with neither
