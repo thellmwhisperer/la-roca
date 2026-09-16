@@ -41,7 +41,7 @@ func TestStoreRefusesAHandoffFromANonSessionWriter(t *testing.T) {
 			if err == nil {
 				t.Fatal("store accepted a handoff from a writer that is not a session harness")
 			}
-			for _, want := range []string{"tasks-axi", "pr", "decision", "expires_at"} {
+			for _, want := range []string{"tasks-axi", "pr", "decision", "expires_at", "accepted layers for this surface", "layer=discovery"} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("refusal does not name %q: %v", want, err)
 				}

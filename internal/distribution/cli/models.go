@@ -167,6 +167,20 @@ func renderQueryFailures(env *cliEnv, summary logfile.QueryFailureSummary) {
 	}
 	env.print("%s", rowOutput(
 		[]string{"time", "source", "call", "type", "error", "correlation_id"}, rows))
+	if queryFailureTimedOut(summary) {
+		env.print("Run roca vector query for the semantic leg alone; raise query.timeout_ms if the hybrid path is required")
+	}
+}
+
+func queryFailureTimedOut(summary logfile.QueryFailureSummary) bool {
+	for _, failure := range summary.Recent {
+		text := strings.ToLower(failure.Error + " " + failure.ErrorType)
+		if strings.Contains(text, "time limit") || strings.Contains(text, "timeout") ||
+			strings.Contains(text, "exceeded") {
+			return true
+		}
+	}
+	return false
 }
 
 func renderDoctor(env *cliEnv, report service.DoctorReport) {
