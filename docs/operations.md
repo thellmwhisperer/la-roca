@@ -153,12 +153,18 @@ Curated memories use typed layers (`handoff`, `pattern`, `discovery`,
 
 A handoff is stored only on explicit operator instruction. `roca store` and
 `roca_store` accept one only from a recognized interactive session harness on
-the CLI or MCP surface. Its content must give nonblank values for the labeled
-fields branch/scope, done, current state, and next step; a replacement names its
-predecessor with CLI `--supersedes` or the MCP `supersedes` field rather than in
-prose. Rejections direct worker progress to tasks-axi, delivery to the `pr`
-field, session decisions to layer `decision`, and expiring job state to a layer
-with `expires_at`.
+the CLI or MCP surface. MCP stamps that harness from the client's identity card
+and maps known aliases (`claude-desktop`, `cowork`, `Claude Code`, `claude-ai`,
+and the equivalent names of the other runtimes) onto the canonical session
+names. Its content must give nonblank values for the literal labels
+`branch/scope:`, `done:`, `state:` (or `current state:`), and `next:`; a
+replacement names its predecessor with CLI `--supersedes` or the MCP
+`supersedes` field rather than a SUPERSEDE in prose. A writer refusal names the
+agent, surface and origin it saw, lists the session writers, and shows those
+labels with one valid example. The MCP audit row for each store call records
+those three fields. Rejections direct worker progress to tasks-axi, delivery to
+the `pr` field, session decisions to layer `decision`, and expiring job state to
+a layer with `expires_at`.
 
 `roca store --layer <name>` accepts only a name in the live layer registry and
 lists the registered layers when it refuses a write. This validation is shared

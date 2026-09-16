@@ -253,7 +253,7 @@ func TestWritingThroughThePlugIsWritingThroughTheProduct(t *testing.T) {
 	retry := callTool(t, session, "roca_store", map[string]any{
 		"layer": "discovery", "content": "written from a shell-less agent",
 	})
-	if retry.Meta["skipped_duplicate"] != true || retry.Meta["duplicate_source"] != "claude-code" ||
+	if retry.Meta["skipped_duplicate"] != true || retry.Meta["duplicate_source"] != "claude" ||
 		retry.Meta["duplicate_surface"] != service.SurfaceMCP {
 		t.Fatalf("MCP duplicate signal = %#v", retry.Meta)
 	}
@@ -278,8 +278,61 @@ func TestWritingThroughThePlugIsWritingThroughTheProduct(t *testing.T) {
 	if storedID == 0 {
 		t.Fatal("the write through the plug has no identity")
 	}
-	if agent != "claude-code" || model != service.UnknownAuthor || surface != service.SurfaceMCP {
-		t.Errorf("authorship = %q/%q via %q, want claude-code/unknown via mcp", agent, model, surface)
+	if agent != "claude" || model != service.UnknownAuthor || surface != service.SurfaceMCP {
+		t.Errorf("authorship = %q/%q via %q, want claude/unknown via mcp", agent, model, surface)
+	}
+}
+
+func TestMCPHandoffAcceptsSessionAliasesAndRefusesAWorkerNote(t *testing.T) {
+	content := "branch: fixture\ndone: recorded\nstate: stored\nnext: continue"
+	tests := []struct {
+		client    string
+		wantAgent string
+		accept    bool
+	}{
+		{"claude-code", "claude", true},
+		{"claude-desktop", "claude", true},
+		{"cowork", "claude", true},
+		{"Claude Code", "claude", true},
+		{"claude-ai", "claude", true},
+		{"codex", "codex", true},
+		{"glm-5.2 (codex/slopslint-detector-a1)", "glm-5.2 (codex/slopslint-detector-a1)", false},
+	}
+	for _, test := range tests {
+		t.Run(test.client, func(t *testing.T) {
+			svc := seededService(t)
+			session := connectAs(t, svc, test.client, "1")
+			arguments := map[string]any{"layer": "handoff", "content": content}
+			if test.accept {
+				result := callTool(t, session, "roca_store", arguments)
+				assertNoStructuredEnvelope(t, result)
+				var agent, surface string
+				if err := svc.DB().SQL().QueryRow(
+					"SELECT source_agent, source_surface FROM memories WHERE content = ?", content).
+					Scan(&agent, &surface); err != nil {
+					t.Fatal(err)
+				}
+				if agent != test.wantAgent || surface != service.SurfaceMCP {
+					t.Errorf("stored authorship = %q via %q, want %q via mcp", agent, surface, test.wantAgent)
+				}
+			} else {
+				refused := callToolExpectingError(t, session, "roca_store", arguments)
+				want := fmt.Sprintf("handoff refused: agent=%q surface=%q origin=%q",
+					test.wantAgent, service.SurfaceMCP, "agent")
+				if !strings.Contains(refused, want) {
+					t.Fatalf("worker refusal does not name what it saw: %s", refused)
+				}
+			}
+			raw := readSingleLog(t, svc.DataDir(), logfile.Executions)
+			for _, field := range []string{
+				`"tool":"roca_store"`, `"agent":"` + test.wantAgent + `"`,
+				`"surface":"mcp"`, `"origin":"agent"`,
+			} {
+				if !strings.Contains(string(raw), field) {
+					t.Errorf("store audit lacks %s: %s", field, raw)
+				}
+			}
+		})
 	}
 }
 

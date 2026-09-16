@@ -3,6 +3,7 @@ package service
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -13,6 +14,25 @@ var sessionHandoffHarnesses = map[string]bool{
 	"claude": true, "claude-code": true,
 	"codex": true, "cursor": true, "grok": true,
 	"hermes": true, "opencode": true, "pi": true, "qwen": true,
+}
+
+// sessionAgentAliases map MCP clientInfo names and other runtime aliases onto
+// the canonical harness the allowlist already knows.
+var sessionAgentAliases = map[string]string{
+	"claude-desktop": "claude",
+	"claude desktop": "claude",
+	"cowork":         "claude",
+	"claude-cowork":  "claude",
+	"claude cowork":  "claude",
+	"claude code":    "claude",
+	"claude-code":    "claude",
+	"claude-ai":      "claude",
+	"claude ai":      "claude",
+	"codex-cli":      "codex",
+	"codex cli":      "codex",
+	"hermes-agent":   "hermes",
+	"pi-signed":      "pi",
+	"pi-launcher":    "pi",
 }
 
 var sessionHandoffSurfaces = map[string]bool{
@@ -26,6 +46,24 @@ var handoffShapeLabel = regexp.MustCompile(
 
 var requiredHandoffFields = []string{"branch/scope", "done", "state", "next"}
 
+const acceptedHandoffLabels = "branch/scope:, done:, state: (or current state:), and next:"
+
+const acceptedHandoffExample = `layer=handoff content="branch: main\ndone: recorded\nstate: stored\nnext: continue"`
+
+// CanonicalSessionAgent maps a client or flag name onto the harness the
+// session-writer allowlist knows. Unknown names stay as the trimmed lowercase
+// form so a refusal can name what it saw.
+func CanonicalSessionAgent(name string) string {
+	agent := strings.ToLower(strings.TrimSpace(name))
+	if agent == "" {
+		return ""
+	}
+	if canonical, ok := sessionAgentAliases[agent]; ok {
+		return canonical
+	}
+	return agent
+}
+
 func refuseHandoffWrite(physical string, origin string, authorship Authorship, content string) error {
 	if physical != "handoff" {
 		return nil
@@ -37,16 +75,28 @@ func refuseHandoffWrite(physical string, origin string, authorship Authorship, c
 }
 
 func refuseHandoffWriter(origin string, authorship Authorship) error {
-	agent := strings.ToLower(strings.TrimSpace(authorship.Agent))
+	agent := CanonicalSessionAgent(authorship.Agent)
 	surface := strings.ToLower(strings.TrimSpace(authorship.Surface))
 	if (origin == "human" || origin == "agent") &&
 		sessionHandoffHarnesses[agent] && sessionHandoffSurfaces[surface] {
 		return nil
 	}
 	return fmt.Errorf(
-		"handoff is reserved for session writers (a session harness writing from cli or mcp); " +
-			"progress belongs in tasks-axi; delivery belongs in the pr field; " +
-			"a session decision belongs in layer decision; job state belongs in a layer with expires_at")
+		"handoff refused: agent=%q surface=%q origin=%q; session writers are %s writing from cli or mcp; "+
+			"progress belongs in tasks-axi; delivery belongs in the pr field; "+
+			"a session decision belongs in layer decision; job state belongs in a layer with expires_at; "+
+			"accepted shape uses the labels %s; example: %s",
+		valueOr(agent, UnknownAuthor), valueOr(surface, UnknownAuthor), valueOr(origin, UnknownAuthor),
+		sessionWriterNames(), acceptedHandoffLabels, acceptedHandoffExample)
+}
+
+func sessionWriterNames() string {
+	names := make([]string, 0, len(sessionHandoffHarnesses))
+	for name := range sessionHandoffHarnesses {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return strings.Join(names, ", ")
 }
 
 func refuseHandoffShape(content string) error {
@@ -82,7 +132,6 @@ func refuseHandoffShape(content string) error {
 		return nil
 	}
 	return fmt.Errorf(
-		"a handoff must name branch/scope, done, current state, and next step (missing or blank %s); "+
-			"declare replacement with --supersedes, not in prose",
-		strings.Join(missing, ", "))
+		"a handoff must use the labels %s (missing or blank %s); a SUPERSEDE in prose goes with --supersedes",
+		acceptedHandoffLabels, strings.Join(missing, ", "))
 }

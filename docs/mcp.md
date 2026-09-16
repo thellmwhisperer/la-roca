@@ -104,6 +104,10 @@ session, which is why every diagnostic in this path writes to standard error.
 
 `roca_store` applies the same [handoff write policy](operations.md#handoff-writes)
 as the CLI, including session-writer, required-field, and supersession checks.
+The plug stamps `authorship.Agent` from the client's identity card and
+maps runtime aliases onto the canonical harness names. A refused handoff
+names the agent, surface and origin it saw. The MCP audit row for each store
+call records those three fields.
 `roca_handoff_latest` and `roca_pill_show` follow the
 [session-context contract](queries.md#session-context): omitting `project` uses
 the working-directory basename, and a miss names the available projects or pill
