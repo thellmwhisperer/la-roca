@@ -3,14 +3,15 @@
 package plugin
 
 import (
+	"fmt"
 	"os"
 	"syscall"
 )
 
-func fileOwnerUID(info os.FileInfo) (int, bool) {
+func operatorRideFileOwnedByUser(_ *os.File, info os.FileInfo, euid int) (bool, error) {
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {
-		return 0, false
+		return false, fmt.Errorf("file owner is unavailable")
 	}
-	return int(stat.Uid), true
+	return int(stat.Uid) == euid, nil
 }

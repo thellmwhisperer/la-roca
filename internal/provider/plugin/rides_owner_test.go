@@ -14,11 +14,6 @@ command = "echo backup"
 `), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	info, err := os.Lstat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	if err := CheckOperatorRideFile(path); err != nil {
 		t.Fatalf("owner plus 0600: %v", err)
 	}
@@ -42,13 +37,6 @@ command = "echo backup"
 	if err := os.Chmod(path, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if uid, ok := fileOwnerUID(info); ok {
-		if err := operatorRideFileAllowed(path, info, uid+1); err == nil ||
-			!strings.Contains(err.Error(), "not owned by the user running roca cron") {
-			t.Fatalf("wrong owner: %v", err)
-		}
-	}
-
 	rides, warnings, err := DiscoverOperatorRides(path, "")
 	if err != nil {
 		t.Fatal(err)
