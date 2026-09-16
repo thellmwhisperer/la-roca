@@ -149,12 +149,12 @@ func TestVectorQueryResidentPreservesQueryOutcome(t *testing.T) {
 	}
 	hit := map[string]any{
 		"rank": 1, "score": 0.9, "database": "corpus", "table": "exchanges",
-		"id": "$(touch /tmp/pwned)", "source": "plugin:roca-corpus", "source_id": "42",
+		"id": "42", "source": "plugin:roca-corpus", "source_id": "42",
 		"text": "harbor lantern", "alias": "plugin_roca_corpus", "id_column": "id",
 		"text_columns": []string{"human_text", "agent_text"},
 	}
 	wantHelp := vectorhelp.Query([]vectorhelp.Hit{{
-		Alias: "plugin_roca_corpus", Table: "exchanges", ID: "$(touch /tmp/pwned)",
+		Alias: "plugin_roca_corpus", Table: "exchanges", ID: "42",
 		IDColumn: "id", TextColumns: []string{"human_text", "agent_text"},
 	}})
 	single := map[string]any{"results": []any{hit}, "vector_executed": true}

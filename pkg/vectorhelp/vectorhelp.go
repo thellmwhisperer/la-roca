@@ -34,26 +34,11 @@ func readHitHint(hits []Hit) string {
 			hit.IDColumn == "" || len(hit.TextColumns) == 0 {
 			continue
 		}
-		columns := make([]string, len(hit.TextColumns))
-		for index, column := range hit.TextColumns {
-			columns[index] = quoteIdentifier(column)
-		}
-		statement := fmt.Sprintf("SELECT %s FROM %s.%s WHERE %s = %s",
-			strings.Join(columns, ", "), quoteIdentifier(hit.Alias), quoteIdentifier(hit.Table),
-			quoteIdentifier(hit.IDColumn), sqlLiteral(hit.ID))
 		return fmt.Sprintf(
-			"Run `roca exec %s --max-chars 2000` to read a hit in full",
-			shellQuote(statement))
+			"Run `roca exec \"SELECT %s FROM %s.%s WHERE %s = %s\" --max-chars 2000` to read a hit in full",
+			strings.Join(hit.TextColumns, ", "), hit.Alias, hit.Table, hit.IDColumn, sqlLiteral(hit.ID))
 	}
 	return ""
-}
-
-func quoteIdentifier(value string) string {
-	return `"` + strings.ReplaceAll(value, `"`, `""`) + `"`
-}
-
-func shellQuote(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
 func sqlLiteral(value string) string {
