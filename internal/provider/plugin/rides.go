@@ -204,6 +204,11 @@ func readOperatorRides(pluginName, path string, configFile bool) ([]Ride, error)
 	if !os.SameFile(pathInfo, info) {
 		return nil, fmt.Errorf("%w: operator ride file %s changed while it was opened; refuse to run its rides", ErrUntrustedOperatorRide, path)
 	}
+	if !configFile {
+		if err := operatorRideFileAllowed(path, file, info, os.Geteuid()); err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrUntrustedOperatorRide, err)
+		}
+	}
 	raw, err := io.ReadAll(file)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
