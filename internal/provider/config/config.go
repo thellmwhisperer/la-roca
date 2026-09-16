@@ -42,12 +42,12 @@ type Paths struct {
 
 // Directories and files this product knows about.
 const (
-	DirOwn          = ".roca"
-	FileDB          = "roca.db"
-	DirBackups      = "backups"
-	DirRunner       = "runner"
-	DirRides        = "rides.d"
-	EnvDBPath       = "ROCA_DB_PATH"
+	DirOwn     = ".roca"
+	FileDB     = "roca.db"
+	DirBackups = "backups"
+	DirRunner  = "runner"
+	DirRides   = "rides.d"
+	EnvDBPath  = "ROCA_DB_PATH"
 )
 
 // Resolve decides which database is opened and where its backups and its cache
