@@ -12,7 +12,7 @@ const (
 	RRFK             = 60
 	HybridOversample = 100
 	MaxOversample    = 100
-	MaxRRFK          = (1 << 53) - MaxOversample
+	MaxRRFK          = 1 << 52
 	MaxRareTerms     = 5
 	MaxDFRatio       = 0.02
 	MinVectorScore   = 0.35
