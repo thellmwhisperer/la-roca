@@ -47,7 +47,7 @@ func operatorRideFilePermissionsAllowed(file *os.File, _ os.FileInfo) error {
 		return err
 	}
 	if dacl == nil {
-		return nil
+		return fmt.Errorf("has a permissive or missing DACL; refuse to run its rides")
 	}
 	systemSID, err := windows.CreateWellKnownSid(windows.WinLocalSystemSid)
 	if err != nil {
@@ -57,7 +57,9 @@ func operatorRideFilePermissionsAllowed(file *os.File, _ os.FileInfo) error {
 	if err != nil {
 		return err
 	}
-	const writeMask = uint32(windows.FILE_GENERIC_WRITE | windows.GENERIC_WRITE | windows.GENERIC_ALL)
+	const writeMask = uint32(windows.FILE_WRITE_DATA | windows.FILE_APPEND_DATA |
+		windows.FILE_WRITE_EA | windows.FILE_WRITE_ATTRIBUTES | windows.DELETE |
+		windows.WRITE_DAC | windows.WRITE_OWNER | windows.GENERIC_WRITE | windows.GENERIC_ALL)
 	for index := uint32(0); index < uint32(dacl.AceCount); index++ {
 		var ace *windows.ACCESS_ALLOWED_ACE
 		if err := windows.GetAce(dacl, index, &ace); err != nil {
