@@ -322,25 +322,34 @@ func installVectorFixture(t *testing.T) vectorFixture {
 	if _, err := plugininstall.VerifyInstalledPayload(rocavector.Name, directory); err != nil {
 		t.Fatal(err)
 	}
-	binary, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	binary, err = filepath.Abs(binary)
-	if err != nil {
-		t.Fatal(err)
-	}
-	command := "'" + strings.ReplaceAll(binary, "'", "'\\''") + "' vector ingest --delta"
-	if runtime.GOOS == "windows" {
-		command = `"` + strings.ReplaceAll(binary, `"`, `""`) + `" vector ingest --delta`
-	}
 	rides, err := plugin.InspectRides(rocavector.Name, directory)
 	if err != nil || len(rides) != 1 || rides[0].Name != "vector_delta" ||
 		rides[0].Train != plugin.DefaultTrain || rides[0].Gate != "after_ingest" ||
-		rides[0].Command != command {
+		rides[0].Command != "roca vector ingest --delta" {
 		t.Fatalf("bundled vector rides = %+v, %v", rides, err)
 	}
 	return fixture
+}
+
+func TestBundledVectorRideChecksumIsTheSameAtTwoPrefixes(t *testing.T) {
+	first := installVectorFixture(t)
+	secondRoot, secondBin := filepath.Join(t.TempDir(), "plugins"), filepath.Join(t.TempDir(), "bin")
+	if _, err := rocavector.EnsureWithPayload(secondRoot, secondBin, "v1", []byte("vector one")); err != nil {
+		t.Fatal(err)
+	}
+	left, err := plugininstall.VerifyInstalledPayload(rocavector.Name, filepath.Join(first.root, rocavector.Name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	right, err := plugininstall.VerifyInstalledPayload(rocavector.Name, filepath.Join(secondRoot, rocavector.Name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if left.Files[plugin.RidesFilename] == "" ||
+		left.Files[plugin.RidesFilename] != right.Files[plugin.RidesFilename] {
+		t.Fatalf("ride checksums differ across prefixes: %q vs %q",
+			left.Files[plugin.RidesFilename], right.Files[plugin.RidesFilename])
+	}
 }
 
 func plantLegacyVector(t *testing.T, root, bin, version string, payload []byte) {

@@ -5,19 +5,20 @@ package rocavector
 import (
 	"bytes"
 	"crypto/sha256"
+	_ "embed"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"runtime"
-	"strconv"
-	"strings"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/bundledplugin"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/plugininstall"
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 )
+
+//go:embed rides.toml
+var bundledRides []byte
 
 const (
 	Name          = "roca-vector"
@@ -53,30 +54,9 @@ func BundleSpec() bundledplugin.Spec {
 func bundleSpec(payload func() ([]byte, error)) bundledplugin.Spec {
 	return bundledplugin.Spec{
 		Name: Name, LegacyName: LegacyName, Executable: executableFilename(),
-		Source: BundledSource, Manifest: manifest, Rides: bundledRides(), Payload: payload,
+		Source: BundledSource, Manifest: manifest, Rides: bundledRides, Payload: payload,
 		MigrationGuard: migrationGuard,
 	}
-}
-
-func bundledRides() []byte {
-	executable, err := os.Executable()
-	if err != nil {
-		executable = os.Args[0]
-	}
-	absolute, err := filepath.Abs(executable)
-	if err != nil {
-		absolute = executable
-	}
-	command := shellQuote(absolute) + " vector ingest --delta"
-	return []byte("[ride.vector_delta]\ncommand = " + strconv.Quote(command) +
-		"\ngate = \"after_ingest\"\n")
-}
-
-func shellQuote(value string) string {
-	if runtime.GOOS == "windows" {
-		return `"` + strings.ReplaceAll(value, `"`, `""`) + `"`
-	}
-	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
 }
 
 func executableFilename() string {
