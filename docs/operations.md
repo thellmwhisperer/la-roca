@@ -486,9 +486,9 @@ silent misses. Normal store writes use the same complete-payload law inside the
 serialized write transaction and return `skipped_duplicate: true` with that
 canonical ID on an exact retry. A difference in metadata, provenance, project,
 status, supersedes, expiry, or non-equivalent authorship is not a duplicate.
-MCP retries expand the supplied source agent to the aliases described under
-[Memory authorship](#memory-authorship). CLI retries match the stored agent
-exactly, so distinct harness names stay distinct authors.
+MCP retries expand the system-stamped source agent to the aliases described
+under [Memory authorship](#memory-authorship). CLI retries match the stored
+agent exactly, so distinct harness names stay distinct authors.
 
 ## Data directory
 

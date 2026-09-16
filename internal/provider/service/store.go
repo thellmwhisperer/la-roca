@@ -84,10 +84,11 @@ type StoreResult struct {
 // Store writes one memory. It is the write half of the product, and the same
 // object the plug's `roca_store` and the shell's `roca store` both call.
 //
-// Deduplication compares the complete persisted payload, expanding the supplied
-// source agent across the known session aliases. A near duplicate is independent
-// evidence and remains independent when provenance, metadata, lifecycle,
-// project, or non-equivalent authorship differs.
+// Deduplication compares the complete persisted payload. MCP retries expand the
+// source agent across known session aliases; CLI retries keep distinct harness
+// names as distinct authors. A near duplicate is independent evidence and stays
+// independent when provenance, metadata, lifecycle, project, or other
+// non-equivalent authorship differs.
 func (s *Service) Store(ctx context.Context, req StoreRequest) (result StoreResult, err error) {
 	defer func() {
 		if err != nil {
