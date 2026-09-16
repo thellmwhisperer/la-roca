@@ -248,19 +248,19 @@ type searchLegs struct {
 
 func (s *Service) runSearchLegs(ctx context.Context, req SearchRequest, route PluginRoute,
 	surfaces []searchSurface, tokens []string, maxChars int, settings search.Settings) (searchLegs, error) {
-	runFTS := func() ([]search.RankedDoc, bool, []string, error) {
-		terms, err := s.selectTerms(ctx, route, surfaces, tokens, maxChars, settings)
+	runFTS := func(runCtx context.Context) ([]search.RankedDoc, bool, []string, error) {
+		terms, err := s.selectTerms(runCtx, route, surfaces, tokens, maxChars, settings)
 		if err != nil {
 			return nil, false, nil, err
 		}
-		docs, err := s.searchFTS(ctx, route, surfaces, terms, maxChars, settings)
+		docs, err := s.searchFTS(runCtx, route, surfaces, terms, maxChars, settings)
 		if err != nil {
 			return nil, false, terms, err
 		}
 		return docs, len(surfaces) > 0 && len(terms) > 0, terms, nil
 	}
-	runVector := func() ([]search.RankedDoc, []string, bool) {
-		hits, notices, ok, err := s.searchVector(ctx, req, settings)
+	runVector := func(runCtx context.Context) ([]search.RankedDoc, []string, bool) {
+		hits, notices, ok, err := s.searchVector(runCtx, req, settings)
 		if err != nil {
 			return nil, []string{"vector search unavailable: " + err.Error()}, false
 		}
@@ -270,14 +270,16 @@ func (s *Service) runSearchLegs(ctx context.Context, req SearchRequest, route Pl
 		return vectorRanked(hits, settings.MinVectorScore), notices, true
 	}
 	if !settings.ParallelLegs {
-		ftsDocs, ftsRan, terms, err := runFTS()
+		ftsDocs, ftsRan, terms, err := runFTS(ctx)
 		if err != nil {
 			return searchLegs{terms: terms}, err
 		}
-		vectorDocs, notices, vectorOK := runVector()
+		vectorDocs, notices, vectorOK := runVector(ctx)
 		return searchLegs{terms: terms, ftsDocs: ftsDocs, ftsRan: ftsRan, vectorDocs: vectorDocs,
 			vectorOK: vectorOK, notices: notices}, nil
 	}
+	parallelCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	var (
 		ftsDocs    []search.RankedDoc
 		ftsRan     bool
@@ -291,11 +293,14 @@ func (s *Service) runSearchLegs(ctx context.Context, req SearchRequest, route Pl
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		ftsDocs, ftsRan, terms, ftsErr = runFTS()
+		ftsDocs, ftsRan, terms, ftsErr = runFTS(parallelCtx)
+		if ftsErr != nil {
+			cancel()
+		}
 	}()
 	go func() {
 		defer wg.Done()
-		vectorDocs, notices, vectorOK = runVector()
+		vectorDocs, notices, vectorOK = runVector(parallelCtx)
 	}()
 	wg.Wait()
 	return searchLegs{terms: terms, ftsDocs: ftsDocs, ftsRan: ftsRan, vectorDocs: vectorDocs,

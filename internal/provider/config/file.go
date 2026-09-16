@@ -1009,13 +1009,13 @@ func readTemplates(value any) (off bool, list []string, ok bool) {
 		for _, item := range typed {
 			text, isText := item.(string)
 			text = strings.TrimSpace(text)
-			if !isText || text == "" {
+			if !isText || text == "" || !strings.Contains(text, "%s") {
 				return false, nil, false
 			}
 			out = append(out, text)
 		}
 		if len(out) == 0 {
-			return true, nil, true
+			return false, nil, false
 		}
 		return false, out, true
 	default:

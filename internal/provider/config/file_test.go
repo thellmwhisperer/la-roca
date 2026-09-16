@@ -425,6 +425,16 @@ func TestAValueOfTheWrongTypeKeepsTheDefaultAndWarns(t *testing.T) {
 			check: func(file File) bool { return !file.Query.TemplatesSet },
 		},
 		{
+			name: "empty templates", body: "[query]\ntemplates = []\n",
+			wants: "query.templates",
+			check: func(file File) bool { return !file.Query.TemplatesSet },
+		},
+		{
+			name: "template without question placeholder", body: "[query]\ntemplates = [\"about\"]\n",
+			wants: "query.templates",
+			check: func(file File) bool { return !file.Query.TemplatesSet },
+		},
+		{
 			name: "quoted parallel_legs", body: "[query]\nparallel_legs = \"true\"\n",
 			wants: "query.parallel_legs",
 			check: func(file File) bool { return !file.Query.ParallelLegsSet },
