@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/pflag"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
+	"github.com/thellmwhisperer/la-roca/pkg/vectorhelp"
 	"github.com/thellmwhisperer/la-roca/pkg/vectorresident"
 )
 
@@ -113,6 +114,7 @@ func runVectorQueryResident(env *cliEnv, args []string, companion string, paths 
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return true, ExitError, fmt.Errorf("decode semantic search: %w", err)
 	}
+	help := vectorQueryHelp(result)
 	if inv.json || env.json {
 		if err := env.printJSON(map[string]any{
 			"query": inv.query, "k": inv.k, "databases": result.Databases, "model": result.Model,
@@ -120,6 +122,7 @@ func runVectorQueryResident(env *cliEnv, args []string, companion string, paths 
 			"database_results": result.DatabaseResults, "notices": result.Notices,
 			"vector_executed": result.VectorExecuted,
 			"elapsed_ms":      time.Since(started).Milliseconds(),
+			"help":            help,
 		}); err != nil {
 			return true, ExitError, err
 		}
@@ -133,9 +136,12 @@ func runVectorQueryResident(env *cliEnv, args []string, companion string, paths 
 			fmt.Fprintf(env.out, "database %s · model %s\n", database.Database, database.Model)
 			printVectorHits(env, database.Results)
 		}
-		return true, ExitOK, nil
+	} else {
+		printVectorHits(env, result.Results)
 	}
-	printVectorHits(env, result.Results)
+	if rendered := renderHelp(help...); rendered != "" {
+		env.print("%s", rendered)
+	}
 	return true, ExitOK, nil
 }
 
@@ -156,14 +162,38 @@ type databaseHits struct {
 }
 
 type vectorHit struct {
-	Rank     int     `json:"rank"`
-	Score    float64 `json:"score"`
-	Database string  `json:"database,omitempty"`
-	Table    string  `json:"table,omitempty"`
-	ID       string  `json:"id,omitempty"`
-	Source   string  `json:"source"`
-	SourceID string  `json:"source_id"`
-	Text     string  `json:"text"`
+	Rank        int      `json:"rank"`
+	Score       float64  `json:"score"`
+	Database    string   `json:"database,omitempty"`
+	Table       string   `json:"table,omitempty"`
+	ID          string   `json:"id,omitempty"`
+	Source      string   `json:"source"`
+	SourceID    string   `json:"source_id"`
+	Text        string   `json:"text"`
+	Alias       string   `json:"alias,omitempty"`
+	IDColumn    string   `json:"id_column,omitempty"`
+	TextColumns []string `json:"text_columns,omitempty"`
+}
+
+func vectorQueryHelp(result federatedVectorQuery) []string {
+	hits := result.Results
+	if result.MixedModels {
+		for _, database := range result.DatabaseResults {
+			hits = append(hits, database.Results...)
+		}
+	}
+	return vectorhelp.Query(vectorHelpHits(hits))
+}
+
+func vectorHelpHits(hits []vectorHit) []vectorhelp.Hit {
+	out := make([]vectorhelp.Hit, len(hits))
+	for i, hit := range hits {
+		out[i] = vectorhelp.Hit{
+			Alias: hit.Alias, Table: hit.Table, ID: hit.ID,
+			IDColumn: hit.IDColumn, TextColumns: hit.TextColumns,
+		}
+	}
+	return out
 }
 
 func printVectorHits(env *cliEnv, results []vectorHit) {
