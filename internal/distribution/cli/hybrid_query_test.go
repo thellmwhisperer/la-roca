@@ -37,6 +37,29 @@ func TestQueryHelpNamesTheHybridKnobs(t *testing.T) {
 	}
 }
 
+func TestQueryRejectsInvalidNumericKnobsBeforeOpeningTheService(t *testing.T) {
+	for _, testCase := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "oversample below minimum", args: []string{"query", "--oversample", "0", "question"}, want: "oversample must be between 1 and 100"},
+		{name: "oversample above maximum", args: []string{"query", "--oversample", "101", "question"}, want: "oversample must be between 1 and 100"},
+		{name: "rrf k below minimum", args: []string{"query", "--rrf-k", "0", "question"}, want: "rrf-k must be 1 or greater"},
+		{name: "min score non-finite", args: []string{"query", "--min-vector-score", "NaN", "question"}, want: "min-vector-score must be a finite positive number"},
+		{name: "rare terms below minimum", args: []string{"query", "--max-rare-terms", "0", "question"}, want: "max-rare-terms must be 1 or greater"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			root := rootCommand(&cliEnv{})
+			root.SetArgs(testCase.args)
+			err := root.Execute()
+			if err == nil || !strings.Contains(err.Error(), testCase.want) {
+				t.Fatalf("error = %v, want %q", err, testCase.want)
+			}
+		})
+	}
+}
+
 func TestDoctorPrintsConfiguredQueryKnobs(t *testing.T) {
 	fixture := fixtureInstallation(t)
 	writeConfig(t, fixture.home, "[query]\noversample = 30\ntemplates = false\nparallel_legs = true\n")

@@ -1,5 +1,10 @@
 package search
 
+import (
+	"fmt"
+	"math"
+)
+
 // TemplateMode is how the vector leg expands the raw question.
 type TemplateMode int
 
@@ -25,6 +30,22 @@ type Settings struct {
 	Templates      TemplateMode
 	TemplateList   []string
 	Top            int
+}
+
+// Validate checks the operator-controlled numeric retrieval knobs.
+func (s Settings) Validate() error {
+	switch {
+	case s.Oversample < 1 || s.Oversample > MaxOversample:
+		return fmt.Errorf("oversample must be between 1 and %d", MaxOversample)
+	case s.RRFK < 1:
+		return fmt.Errorf("rrf-k must be 1 or greater")
+	case s.MinVectorScore <= 0 || math.IsNaN(s.MinVectorScore) || math.IsInf(s.MinVectorScore, 0):
+		return fmt.Errorf("min-vector-score must be a finite positive number")
+	case s.MaxRareTerms < 1:
+		return fmt.Errorf("max-rare-terms must be 1 or greater")
+	default:
+		return nil
+	}
 }
 
 // Overlay is one request's explicit knob writes. A nil pointer leaves the

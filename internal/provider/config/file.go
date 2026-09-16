@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"regexp"
 	"sort"
@@ -934,7 +935,7 @@ func readQuery(section map[string]any, path string, warnings *[]string) QueryCon
 			query.TimeoutSet = true
 		case "oversample":
 			value, ok := readNumber(section[key])
-			if !ok || value < 1 || value > 100 {
+			if !ok || value < 1 || value > search.MaxOversample {
 				*warnings = append(*warnings, invalidValue("query.oversample", path,
 					"a whole number from 1 to 100"))
 				continue
@@ -954,7 +955,7 @@ func readQuery(section map[string]any, path string, warnings *[]string) QueryCon
 			value, ok := readFloat(section[key])
 			if !ok || value <= 0 {
 				*warnings = append(*warnings, invalidValue("query.min_vector_score", path,
-					"a positive number"))
+					"a finite positive number"))
 				continue
 			}
 			query.MinVectorScore = value
@@ -1266,6 +1267,9 @@ func readNumber(value any) (int, bool) {
 	case int64:
 		return int(typed), true
 	case float64:
+		if math.IsNaN(typed) || math.IsInf(typed, 0) || typed != math.Trunc(typed) {
+			return 0, false
+		}
 		return int(typed), true
 	}
 	return 0, false
@@ -1276,6 +1280,9 @@ func readFloat(value any) (float64, bool) {
 	case int64:
 		return float64(typed), true
 	case float64:
+		if math.IsNaN(typed) || math.IsInf(typed, 0) {
+			return 0, false
+		}
 		return typed, true
 	}
 	return 0, false

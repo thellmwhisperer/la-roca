@@ -387,6 +387,26 @@ func TestAValueOfTheWrongTypeKeepsTheDefaultAndWarns(t *testing.T) {
 			check: func(file File) bool { return !file.Query.OversampleSet },
 		},
 		{
+			name: "fractional oversample", body: "[query]\noversample = 30.9\n",
+			wants: "query.oversample",
+			check: func(file File) bool { return !file.Query.OversampleSet },
+		},
+		{
+			name: "fractional rrf_k", body: "[query]\nrrf_k = 60.1\n",
+			wants: "query.rrf_k",
+			check: func(file File) bool { return !file.Query.RRFKSet },
+		},
+		{
+			name: "fractional max_rare_terms", body: "[query]\nmax_rare_terms = 5.5\n",
+			wants: "query.max_rare_terms",
+			check: func(file File) bool { return !file.Query.MaxRareTermsSet },
+		},
+		{
+			name: "non-finite min_vector_score", body: "[query]\nmin_vector_score = nan\n",
+			wants: "query.min_vector_score",
+			check: func(file File) bool { return !file.Query.MinVectorScoreSet },
+		},
+		{
 			name: "templates true", body: "[query]\ntemplates = true\n",
 			wants: "query.templates",
 			check: func(file File) bool { return !file.Query.TemplatesSet },

@@ -109,6 +109,9 @@ func (s *Service) Search(ctx context.Context, req SearchRequest) (SearchResult, 
 		return SearchResult{}, err
 	}
 	settings := s.QuerySettings().Apply(req.Overlay)
+	if err := settings.Validate(); err != nil {
+		return SearchResult{}, err
+	}
 	top := req.Top
 	if top <= 0 {
 		top = settings.Top

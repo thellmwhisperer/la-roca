@@ -657,6 +657,14 @@ func queryCommand(env *cliEnv) *cobra.Command {
 			"full-text alone. Questions must contain text and may be at most 1000 characters. " +
 			"Flag values override config.toml [query], which overrides the built-in defaults.",
 		Args: cobra.MinimumNArgs(1),
+		PreRunE: func(cmd *cobra.Command, _ []string) error {
+			settings := search.DefaultSettings().Apply(queryFlagOverlay(
+				cmd, oversample, rrfK, minVectorScore, maxRareTerms, parallelLegs, noTemplates))
+			if err := settings.Validate(); err != nil {
+				return fmt.Errorf("invalid query flag: %w", err)
+			}
+			return nil
+		},
 		RunE: env.serviceRunE(func(cmd *cobra.Command, args []string, svc *service.Service) error {
 			req.Question = strings.Join(args, " ")
 			names, err := service.ParseDatabaseList(databases)

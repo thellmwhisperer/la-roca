@@ -11,6 +11,7 @@ import (
 const (
 	RRFK             = 60
 	HybridOversample = 100
+	MaxOversample    = 100
 	MaxRareTerms     = 5
 	MaxDFRatio       = 0.02
 	MinVectorScore   = 0.35
