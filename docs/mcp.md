@@ -102,12 +102,9 @@ session, which is why every diagnostic in this path writes to standard error.
 | `roca_explore` (playground plugin) | Runs plain or deep investigation with prose, terrain, next probes, and generated SQL | Agents following evidence without a shell |
 | `roca_sql` (playground plugin) | Compiles a question into SQL without running it | Agents that need to inspect the SQL before `roca_exec` runs it |
 
-`roca_store` applies the same [handoff write policy](operations.md#handoff-writes)
-as the CLI, including session-writer, required-field, and supersession checks.
-The plug stamps `authorship.Agent` from the client's identity card and
-maps runtime aliases onto the canonical harness names. A refused handoff
-names the agent, surface and origin it saw. The MCP audit row for each store
-call records those three fields.
+`roca_store` follows [memory authorship](operations.md#memory-authorship), the
+same [handoff write policy](operations.md#handoff-writes) as the CLI, and the
+[audit record contract](operations.md#streams-and-contents).
 `roca_handoff_latest` and `roca_pill_show` follow the
 [session-context contract](queries.md#session-context): omitting `project` uses
 the working-directory basename, and a miss names the available projects or pill

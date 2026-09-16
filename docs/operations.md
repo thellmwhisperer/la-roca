@@ -24,14 +24,18 @@ The audit log, redaction, and `ROCA_READ_ONLY=1` boundary follow below.
 ## Memory authorship
 
 Every new memory stores a system-stamped harness, model and write surface in
-`memories.source_agent`, `source_model` and `source_surface`. MCP uses the
-connected client's handshake `clientInfo`; the CLI's primary path is explicit
-`roca store --agent <harness> --model <model>`. Best-effort CLI environment and
-process detection accepts only one unambiguous harness and otherwise records
-`unknown`. Existing rows remain NULL and are rendered as unknown; La Roca never
-retroactively guesses. The three names are reserved: `agent`, `model` and
-`surface` in `--metadata` are refused with the flags to use instead, so no tag
-is ever silently dropped.
+`memories.source_agent`, `source_model` and `source_surface`. MCP takes the
+harness from the connected client's handshake `clientInfo`, trims and
+lowercases it, and maps known Claude Desktop, Cowork, Claude Code and Claude AI
+names to `claude`, Codex CLI to `codex`, Hermes Agent to `hermes`, and Pi Signed
+or Pi Launcher to `pi`. Names outside those alias sets remain the trimmed,
+lowercase client name.
+The CLI's primary path is explicit `roca store --agent <harness> --model
+<model>`. Best-effort CLI environment and process detection accepts only one
+unambiguous harness and otherwise records `unknown`. Existing rows remain NULL
+and are rendered as unknown; La Roca never retroactively guesses. The three
+names are reserved: `agent`, `model` and `surface` in `--metadata` are refused
+with the flags to use instead, so no tag is ever silently dropped.
 
 `roca hooks install claude` adds a Claude Code `PreToolUse` hook for Bash. It
 signs `roca store` commands with `--agent claude` and the latest model recorded
@@ -154,17 +158,15 @@ Curated memories use typed layers (`handoff`, `pattern`, `discovery`,
 A handoff is stored only on explicit operator instruction. `roca store` and
 `roca_store` accept one only from a recognized interactive session harness on
 the CLI or MCP surface. MCP stamps that harness from the client's identity card
-and maps known aliases (`claude-desktop`, `cowork`, `Claude Code`, `claude-ai`,
-and the equivalent names of the other runtimes) onto the canonical session
-names. Its content must give nonblank values for the literal labels
-`branch/scope:`, `done:`, `state:` (or `current state:`), and `next:`; a
+under the [memory authorship](#memory-authorship) contract. Its content must
+give nonblank values for `branch:`, `scope:`, or `branch/scope:`, followed by
+the literal labels `done:`, `state:` (or `current state:`), and `next:`; a
 replacement names its predecessor with CLI `--supersedes` or the MCP
 `supersedes` field rather than a SUPERSEDE in prose. A writer refusal names the
 agent, surface and origin it saw, lists the session writers, and shows those
-labels with one valid example. The MCP audit row for each store call records
-those three fields. Rejections direct worker progress to tasks-axi, delivery to
-the `pr` field, session decisions to layer `decision`, and expiring job state to
-a layer with `expires_at`.
+labels with one valid example. Rejections direct worker progress to tasks-axi,
+delivery to the `pr` field, session decisions to layer `decision`, and expiring
+job state to a layer with `expires_at`.
 
 `roca store --layer <name>` accepts only a name in the live layer registry and
 lists the registered layers when it refuses a write. This validation is shared
@@ -228,6 +230,9 @@ The stable fields are:
   string array of the positional arguments for CLI commands and plugin
   commands, and the tool argument object for MCP calls, or the raw argument
   text as a string when that payload is not valid JSON.
+- Every MCP `roca_store` call adds its system-stamped `agent` and `surface`,
+  plus the requested `origin` or its `agent` default, whether the call succeeds
+  or is refused.
 - `error` and `error_type` on failures. `error_type` is a declared category and
   never a Go type name: `invalid_sql`, `model_error`, `model_unavailable`,
   `sql_execution_error`, `sql_execution_timeout`, `not_initialized`,
@@ -480,7 +485,9 @@ canonical ID explicitly, so references retained outside SQLite do not become
 silent misses. Normal store writes use the same complete-payload law inside the
 serialized write transaction and return `skipped_duplicate: true` with that
 canonical ID on an exact retry. A difference in metadata, provenance, project,
-status, supersedes, expiry, or authorship is not a duplicate.
+status, supersedes, expiry, or non-equivalent authorship is not a duplicate.
+For this retry check, the supplied source agent expands to the normalized
+aliases described under [Memory authorship](#memory-authorship).
 
 ## Data directory
 

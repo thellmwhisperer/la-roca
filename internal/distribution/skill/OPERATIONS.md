@@ -376,12 +376,11 @@ Do not stack synonyms.
   quote-heavy memories with `roca_store` over MCP, whose structured params
   avoid shell escaping. When shell permissions block a CLI call, the MCP
   tools are the frictionless path, not a fallback.
-- Authorship is automatic from MCP `clientInfo`. Known aliases
-  (`claude-desktop`, `cowork`, `Claude Code`, `claude-ai`, and the equivalent
-  names of the other runtimes) stamp as the canonical harness. On CLI, always pass
-  `--agent <harness> --model <model>`; environment and ancestry detection are a
-  conservative bonus and ambiguous evidence is stored as `unknown`. `agent`,
-  `model` and `surface` are refused inside metadata: they are the identity card.
+- Authorship is automatic from MCP `clientInfo`; known client aliases stamp as
+  their canonical harness. On CLI, always pass `--agent <harness> --model
+  <model>`; environment and ancestry detection are a conservative bonus and
+  ambiguous evidence is stored as `unknown`. `agent`, `model` and `surface` are
+  refused inside metadata: they are the identity card.
 - Use the layer filter deliberately: `handoff` for continuity and
   `feedback`/`pattern` for distilled lessons. Search coordination layers
   explicitly when tracing origins; ordinary knowledge search can skip them.
