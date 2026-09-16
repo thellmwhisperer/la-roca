@@ -350,7 +350,7 @@ Do not stack synonyms.
 - Start project work with `roca pill` and `roca handoff latest`. Ask for the
   current handoff protocol and follow it instead of freezing it here.
   Do not write a handoff unless the operator asked for one. When they do, the
-  shape is branch/scope, done, current state, and next step, and replacement is
+  shape is branch/scope, done, state (or current state), and next, and replacement is
   declared with CLI `--supersedes` or the MCP `supersedes` field, not in prose.
   Progress belongs in tasks-axi; delivery belongs in the `pr` field; a session
   decision belongs in layer `decision`; job state belongs in a layer with
