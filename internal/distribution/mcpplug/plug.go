@@ -102,8 +102,30 @@ func newServer(svc *service.Service, build Build, resident *residentVector) *mcp
 		mcp.AddTool(server, handoffLatestTool, sanitizing(p.handoffLatest, dbPath, dataDir))
 		mcp.AddTool(server, pillShowTool, sanitizing(p.pillShow, dbPath, dataDir))
 	}
+	server.AddReceivingMiddleware(vectorQueryFirst)
 	server.AddReceivingMiddleware(auditCalls(audit, os.Stderr))
 	return server
+}
+
+func vectorQueryFirst(next mcp.MethodHandler) mcp.MethodHandler {
+	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+		result, err := next(ctx, method, req)
+		if err != nil || method != "tools/list" {
+			return result, err
+		}
+		listed, ok := result.(*mcp.ListToolsResult)
+		if !ok {
+			return result, nil
+		}
+		for index, tool := range listed.Tools {
+			if tool.Name == vectorQueryTool.Name {
+				copy(listed.Tools[1:index+1], listed.Tools[:index])
+				listed.Tools[0] = tool
+				break
+			}
+		}
+		return listed, nil
+	}
 }
 
 // sanitizing wraps a tool handler so that its error never carries the database
