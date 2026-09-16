@@ -59,10 +59,8 @@ func scanForeignOwned(root string, current Identity, lookup func(string) (Identi
 			name = fmt.Sprintf("%d", owner.UID)
 		}
 		isSymlink := entry.Type()&os.ModeSymlink != 0
-		command := fmt.Sprintf("sudo chown %s %s", current.Name, shellQuote(path))
-		if isSymlink {
-			command = fmt.Sprintf("sudo chown -h %s %s", current.Name, shellQuote(path))
-		} else if entry.IsDir() {
+		command := fmt.Sprintf("sudo chown -h %s %s", current.Name, shellQuote(path))
+		if entry.IsDir() && !isSymlink {
 			command = fmt.Sprintf("sudo chown -R %s %s", current.Name, shellQuote(path))
 		}
 		found = append(found, Repair{

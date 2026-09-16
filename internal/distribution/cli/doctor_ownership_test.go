@@ -25,7 +25,7 @@ func TestDoctorPrintsChownForForeignOwnedState(t *testing.T) {
 	)
 	t.Cleanup(restore)
 
-	want := "sudo chown operator '" + lock + "'"
+	want := "sudo chown -h operator '" + lock + "'"
 	human := runRoot(t, contractBuild(), "doctor")
 	for _, fragment := range []string{"state file owned by root: " + lock, want} {
 		if !strings.Contains(human, fragment) {
@@ -80,7 +80,7 @@ func TestDoctorReportsOwnershipWhenServiceCannotOpenState(t *testing.T) {
 	if err == nil {
 		t.Fatal("doctor unexpectedly opened an uninitialized state")
 	}
-	want := "sudo chown operator '" + lock + "'"
+	want := "sudo chown -h operator '" + lock + "'"
 	if !strings.Contains(out, want) {
 		t.Fatalf("doctor error path missing %q:\n%s", want, out)
 	}

@@ -5,10 +5,15 @@ package rocavector
 import (
 	"errors"
 	"os"
+	"path/filepath"
+	"syscall"
 
-	"github.com/thellmwhisperer/la-roca/internal/securefile"
 	"golang.org/x/sys/unix"
 )
+
+var chownCreatedLock = func(file *os.File, uid, gid int) error {
+	return file.Chown(uid, gid)
+}
 
 func tryExclusiveFileLock(path string, alignOwner bool) (func() error, bool, error) {
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600)
@@ -23,7 +28,7 @@ func tryExclusiveFileLock(path string, alignOwner bool) (func() error, bool, err
 		}
 	}
 	if alignOwner && created {
-		if err := securefile.AlignToParentOwner(path); err != nil {
+		if err := alignCreatedLockOwner(path, file); err != nil {
 			removeCreatedLock(path, file)
 			return nil, false, err
 		}
@@ -50,4 +55,16 @@ func removeCreatedLock(path string, file *os.File) {
 		_ = os.Remove(path)
 	}
 	_ = file.Close()
+}
+
+func alignCreatedLockOwner(path string, file *os.File) error {
+	parent, err := os.Stat(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	parentStat, ok := parent.Sys().(*syscall.Stat_t)
+	if !ok {
+		return nil
+	}
+	return chownCreatedLock(file, int(parentStat.Uid), -1)
 }

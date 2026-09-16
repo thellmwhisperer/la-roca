@@ -24,7 +24,7 @@ func TestStateOwnershipScenarios(t *testing.T) {
 			}
 			return operator, nil
 		})
-		want := "sudo chown operator '" + lock + "'"
+		want := "sudo chown -h operator '" + lock + "'"
 		if len(got) != 1 || got[0].Command != want || got[0].Owner != "root" || got[0].Path != lock {
 			t.Fatalf("repair = %#v, want command %q", got, want)
 		}

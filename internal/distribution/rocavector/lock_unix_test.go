@@ -81,10 +81,9 @@ func TestCreatedIndexLockIsRemovedWhenOwnershipAlignmentFails(t *testing.T) {
 		map[string]securefile.Identity{path: {UID: 0, Name: "root"}},
 	)
 	t.Cleanup(restoreIdentity)
-	restoreChown := securefile.OverrideChown(func(string, int, int) error {
-		return errors.New("chown failed")
-	})
-	t.Cleanup(restoreChown)
+	previousChown := chownCreatedLock
+	chownCreatedLock = func(*os.File, int, int) error { return errors.New("chown failed") }
+	t.Cleanup(func() { chownCreatedLock = previousChown })
 
 	if _, busy, err := tryExclusiveFileLock(path, true); err == nil || busy {
 		t.Fatalf("lock: busy=%v err=%v, want alignment failure", busy, err)
