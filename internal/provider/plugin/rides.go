@@ -2,7 +2,6 @@ package plugin
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -176,24 +175,10 @@ func DiscoverOperatorRides(configPath, ridesDir string) ([]Ride, []string, error
 }
 
 func readOperatorRides(pluginName, path string, configFile bool) ([]Ride, error) {
-	file, err := openOperatorRide(path, !configFile)
+	raw, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return nil, nil
 	}
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-	if !configFile {
-		info, err := file.Stat()
-		if err != nil {
-			return nil, err
-		}
-		if !info.Mode().IsRegular() {
-			return nil, fmt.Errorf("%s is not a regular file", path)
-		}
-	}
-	raw, err := io.ReadAll(file)
 	if err != nil {
 		return nil, err
 	}
