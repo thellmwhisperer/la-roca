@@ -90,9 +90,9 @@ timeout_ms = 5000
 # Hybrid retrieval knobs for `roca query`. Absent keys keep the baked-in
 # defaults (oversample 100, built-in question templates, rrf_k 60,
 # min_vector_score 0.35, max_rare_terms 5, sequential legs). `templates` is a
-# list of wrappers or false to embed only the raw question. `roca query`
-# flags override these for one invocation; `roca doctor` prints the effective
-# values. Tradeoffs live in docs/queries.md#hybrid-retrieval.
+# list of wrappers or false to embed only the raw question. `--oversample` and
+# `--no-templates` override their settings for one invocation; `roca doctor`
+# prints the effective values. Tradeoffs live in docs/queries.md#hybrid-retrieval.
 # oversample = 100
 # templates = false
 # rrf_k = 60

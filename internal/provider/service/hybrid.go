@@ -114,7 +114,7 @@ func (s *Service) Search(ctx context.Context, req SearchRequest) (SearchResult, 
 	}
 	top := req.Top
 	if top <= 0 {
-		top = settings.Top
+		top = search.DefaultTop
 	}
 	maxChars := TextBudget(req.MaxChars)
 	result := SearchResult{
@@ -144,13 +144,8 @@ func (s *Service) Search(ctx context.Context, req SearchRequest) (SearchResult, 
 
 	surfaces := collectSurfaces(route)
 	tokens := uniqueTokens(search.Tokenize(req.Question))
-	terms, termErr := s.selectTerms(ctx, route, surfaces, tokens, maxChars, settings)
-	if termErr != nil {
-		return result, termErr
-	}
-	result.Terms = terms
-
-	legs, legsErr := s.runSearchLegs(ctx, req, route, surfaces, terms, maxChars, settings)
+	legs, legsErr := s.runSearchLegs(ctx, req, route, surfaces, tokens, maxChars, settings)
+	result.Terms = legs.terms
 	if legsErr != nil {
 		return result, legsErr
 	}
@@ -243,6 +238,7 @@ func vectorRanked(hits []VectorHit, minScore float64) []search.RankedDoc {
 }
 
 type searchLegs struct {
+	terms      []string
 	ftsDocs    []search.RankedDoc
 	ftsRan     bool
 	vectorDocs []search.RankedDoc
@@ -251,13 +247,17 @@ type searchLegs struct {
 }
 
 func (s *Service) runSearchLegs(ctx context.Context, req SearchRequest, route PluginRoute,
-	surfaces []searchSurface, terms []string, maxChars int, settings search.Settings) (searchLegs, error) {
-	runFTS := func() ([]search.RankedDoc, bool, error) {
+	surfaces []searchSurface, tokens []string, maxChars int, settings search.Settings) (searchLegs, error) {
+	runFTS := func() ([]search.RankedDoc, bool, []string, error) {
+		terms, err := s.selectTerms(ctx, route, surfaces, tokens, maxChars, settings)
+		if err != nil {
+			return nil, false, nil, err
+		}
 		docs, err := s.searchFTS(ctx, route, surfaces, terms, maxChars, settings)
 		if err != nil {
-			return nil, false, err
+			return nil, false, terms, err
 		}
-		return docs, len(surfaces) > 0 && len(terms) > 0, nil
+		return docs, len(surfaces) > 0 && len(terms) > 0, terms, nil
 	}
 	runVector := func() ([]search.RankedDoc, []string, bool) {
 		hits, notices, ok, err := s.searchVector(ctx, req, settings)
@@ -270,17 +270,18 @@ func (s *Service) runSearchLegs(ctx context.Context, req SearchRequest, route Pl
 		return vectorRanked(hits, settings.MinVectorScore), notices, true
 	}
 	if !settings.ParallelLegs {
-		ftsDocs, ftsRan, err := runFTS()
+		ftsDocs, ftsRan, terms, err := runFTS()
 		if err != nil {
-			return searchLegs{}, err
+			return searchLegs{terms: terms}, err
 		}
 		vectorDocs, notices, vectorOK := runVector()
-		return searchLegs{ftsDocs: ftsDocs, ftsRan: ftsRan, vectorDocs: vectorDocs,
+		return searchLegs{terms: terms, ftsDocs: ftsDocs, ftsRan: ftsRan, vectorDocs: vectorDocs,
 			vectorOK: vectorOK, notices: notices}, nil
 	}
 	var (
 		ftsDocs    []search.RankedDoc
 		ftsRan     bool
+		terms      []string
 		ftsErr     error
 		vectorDocs []search.RankedDoc
 		notices    []string
@@ -290,14 +291,14 @@ func (s *Service) runSearchLegs(ctx context.Context, req SearchRequest, route Pl
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		ftsDocs, ftsRan, ftsErr = runFTS()
+		ftsDocs, ftsRan, terms, ftsErr = runFTS()
 	}()
 	go func() {
 		defer wg.Done()
 		vectorDocs, notices, vectorOK = runVector()
 	}()
 	wg.Wait()
-	return searchLegs{ftsDocs: ftsDocs, ftsRan: ftsRan, vectorDocs: vectorDocs,
+	return searchLegs{terms: terms, ftsDocs: ftsDocs, ftsRan: ftsRan, vectorDocs: vectorDocs,
 		vectorOK: vectorOK, notices: notices}, ftsErr
 }
 
@@ -529,7 +530,7 @@ func (s *Service) selectTerms(ctx context.Context, route PluginRoute, surfaces [
 			stats = append(stats, search.TermStat{Term: token, Docs: documentCounts[index]})
 		}
 	}
-	return search.SelectRareTerms(stats, corpusDocs, settings.MaxDFRatio, settings.MaxRareTerms), nil
+	return search.SelectRareTerms(stats, corpusDocs, search.MaxDFRatio, settings.MaxRareTerms), nil
 }
 
 func (s *Service) searchFTS(ctx context.Context, route PluginRoute, surfaces []searchSurface,

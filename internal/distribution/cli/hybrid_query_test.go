@@ -29,15 +29,19 @@ func TestQueryHelpNamesTheHybridKnobs(t *testing.T) {
 	if err := root.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"--oversample", "--no-templates", "--top", "--rrf-k",
-		"--min-vector-score", "--max-rare-terms", "--parallel-legs"} {
+	for _, want := range []string{"--oversample", "--no-templates", "--top"} {
 		if !strings.Contains(output.String(), want) {
 			t.Errorf("query help lacks %q:\n%s", want, output.String())
 		}
 	}
+	for _, removed := range []string{"--rrf-k", "--min-vector-score", "--max-rare-terms", "--parallel-legs"} {
+		if strings.Contains(output.String(), removed) {
+			t.Errorf("query help still exposes %q:\n%s", removed, output.String())
+		}
+	}
 }
 
-func TestQueryRejectsInvalidNumericKnobsBeforeOpeningTheService(t *testing.T) {
+func TestQueryRejectsInvalidOversampleBeforeOpeningTheService(t *testing.T) {
 	for _, testCase := range []struct {
 		name string
 		args []string
@@ -45,9 +49,6 @@ func TestQueryRejectsInvalidNumericKnobsBeforeOpeningTheService(t *testing.T) {
 	}{
 		{name: "oversample below minimum", args: []string{"query", "--oversample", "0", "question"}, want: "oversample must be between 1 and 100"},
 		{name: "oversample above maximum", args: []string{"query", "--oversample", "101", "question"}, want: "oversample must be between 1 and 100"},
-		{name: "rrf k below minimum", args: []string{"query", "--rrf-k", "0", "question"}, want: "rrf-k must be 1 or greater"},
-		{name: "min score non-finite", args: []string{"query", "--min-vector-score", "NaN", "question"}, want: "min-vector-score must be a finite positive number"},
-		{name: "rare terms below minimum", args: []string{"query", "--max-rare-terms", "0", "question"}, want: "max-rare-terms must be 1 or greater"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			root := rootCommand(&cliEnv{})

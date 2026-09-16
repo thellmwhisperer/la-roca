@@ -644,10 +644,6 @@ func queryCommand(env *cliEnv) *cobra.Command {
 	var req service.SearchRequest
 	var databases string
 	var oversample int
-	var rrfK int
-	var minVectorScore float64
-	var maxRareTerms int
-	var parallelLegs bool
 	var noTemplates bool
 	cmd := &cobra.Command{
 		Use:   "query <question>",
@@ -655,11 +651,11 @@ func queryCommand(env *cliEnv) *cobra.Command {
 		Long: "Zero-inference hybrid search: rarity-selected full-text plus template-expanded " +
 			"vector neighbors, fused with RRF. Without a vector index the same command runs " +
 			"full-text alone. Questions must contain text and may be at most 1000 characters. " +
-			"Flag values override config.toml [query], which overrides the built-in defaults.",
+			"Supported flags override their corresponding config.toml [query] values, which " +
+			"override the built-in defaults.",
 		Args: cobra.MinimumNArgs(1),
 		PreRunE: func(cmd *cobra.Command, _ []string) error {
-			settings := search.DefaultSettings().Apply(queryFlagOverlay(
-				cmd, oversample, rrfK, minVectorScore, maxRareTerms, parallelLegs, noTemplates))
+			settings := search.DefaultSettings().Apply(queryFlagOverlay(cmd, oversample, noTemplates))
 			if err := settings.Validate(); err != nil {
 				return fmt.Errorf("invalid query flag: %w", err)
 			}
@@ -672,7 +668,7 @@ func queryCommand(env *cliEnv) *cobra.Command {
 				return err
 			}
 			req.Databases = names
-			req.Overlay = queryFlagOverlay(cmd, oversample, rrfK, minVectorScore, maxRareTerms, parallelLegs, noTemplates)
+			req.Overlay = queryFlagOverlay(cmd, oversample, noTemplates)
 			result, err := svc.Search(cmd.Context(), req)
 			if err != nil {
 				return err
@@ -688,13 +684,6 @@ func queryCommand(env *cliEnv) *cobra.Command {
 	cmd.Flags().IntVar(&req.Top, "top", search.DefaultTop, "number of fused hits to return")
 	cmd.Flags().IntVar(&oversample, "oversample", search.HybridOversample,
 		"candidates each retrieval leg gathers before fusion")
-	cmd.Flags().IntVar(&rrfK, "rrf-k", search.RRFK, "Reciprocal Rank Fusion k")
-	cmd.Flags().Float64Var(&minVectorScore, "min-vector-score", search.MinVectorScore,
-		"drop vector neighbors below this cosine")
-	cmd.Flags().IntVar(&maxRareTerms, "max-rare-terms", search.MaxRareTerms,
-		"rarest FTS tokens kept for MATCH")
-	cmd.Flags().BoolVar(&parallelLegs, "parallel-legs", false,
-		"run the FTS and vector legs concurrently")
 	cmd.Flags().BoolVar(&noTemplates, "no-templates", false,
 		"embed only the raw question, without question wrappers")
 	cmd.Flags().BoolVar(&req.RequireBoth, "require-both", false, "keep only hits found by both FTS and vector")
@@ -703,23 +692,10 @@ func queryCommand(env *cliEnv) *cobra.Command {
 	return cmd
 }
 
-func queryFlagOverlay(cmd *cobra.Command, oversample, rrfK int, minVectorScore float64,
-	maxRareTerms int, parallelLegs, noTemplates bool) search.Overlay {
+func queryFlagOverlay(cmd *cobra.Command, oversample int, noTemplates bool) search.Overlay {
 	var overlay search.Overlay
 	if cmd.Flags().Changed("oversample") {
 		overlay.Oversample = &oversample
-	}
-	if cmd.Flags().Changed("rrf-k") {
-		overlay.RRFK = &rrfK
-	}
-	if cmd.Flags().Changed("min-vector-score") {
-		overlay.MinVectorScore = &minVectorScore
-	}
-	if cmd.Flags().Changed("max-rare-terms") {
-		overlay.MaxRareTerms = &maxRareTerms
-	}
-	if cmd.Flags().Changed("parallel-legs") {
-		overlay.ParallelLegs = &parallelLegs
 	}
 	overlay.NoTemplates = noTemplates
 	return overlay

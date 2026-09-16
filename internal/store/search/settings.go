@@ -25,11 +25,9 @@ type Settings struct {
 	RRFK           int
 	MinVectorScore float64
 	MaxRareTerms   int
-	MaxDFRatio     float64
 	ParallelLegs   bool
 	Templates      TemplateMode
 	TemplateList   []string
-	Top            int
 }
 
 // Validate checks the operator-controlled numeric retrieval knobs.
@@ -67,9 +65,7 @@ func DefaultSettings() Settings {
 		RRFK:           RRFK,
 		MinVectorScore: MinVectorScore,
 		MaxRareTerms:   MaxRareTerms,
-		MaxDFRatio:     MaxDFRatio,
 		Templates:      TemplatesDefault,
-		Top:            DefaultTop,
 	}
 }
 
@@ -87,12 +83,6 @@ func (s Settings) WithDefaults() Settings {
 	}
 	if s.MaxRareTerms <= 0 {
 		s.MaxRareTerms = MaxRareTerms
-	}
-	if s.MaxDFRatio <= 0 {
-		s.MaxDFRatio = MaxDFRatio
-	}
-	if s.Top <= 0 {
-		s.Top = DefaultTop
 	}
 	if s.Templates == TemplatesCustom && len(s.TemplateList) == 0 {
 		s.Templates = TemplatesOff
