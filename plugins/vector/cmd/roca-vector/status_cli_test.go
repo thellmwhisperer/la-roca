@@ -127,3 +127,57 @@ func TestStatusCommandReportsAXIRowsWithoutWaitingForTheModel(t *testing.T) {
 		t.Fatalf("status still lies:\n%s", text)
 	}
 }
+
+func TestStatusHelpSuggestsInstallOnlyWhenChunksAreMissing(t *testing.T) {
+	chunks := int64(12)
+	zero := int64(0)
+	report := vector.Vectorization{
+		Databases: []vector.DatabaseVectorization{
+			{Plugin: "roca-ops", Database: "ops", State: vector.StateComplete, EmbeddedChunks: &chunks, IndexLock: vector.IndexLockStale},
+			{Plugin: "roca-corpus", Database: "corpus", State: vector.StateEmpty, EmbeddedChunks: &zero},
+		},
+	}
+	help := statusHelp(report)
+	joined := strings.Join(help, "\n")
+	if !strings.Contains(joined, "roca vector install") {
+		t.Fatalf("zero chunks did not suggest install: %v", help)
+	}
+	if !strings.Contains(joined, "stale lock; the next ingest or compact takes it, nothing to do") {
+		t.Fatalf("stale lock hint missing: %v", help)
+	}
+
+	completeOnly := vector.Vectorization{
+		Databases: []vector.DatabaseVectorization{
+			{Plugin: "roca-ops", Database: "ops", State: vector.StateComplete, EmbeddedChunks: &chunks, IndexLock: vector.IndexLockStale},
+		},
+	}
+	help = statusHelp(completeOnly)
+	joined = strings.Join(help, "\n")
+	if strings.Contains(joined, "roca vector install") {
+		t.Fatalf("embedded sidecar still suggested install: %v", help)
+	}
+}
+
+func TestQueryHelpReadsAHitAndOffersToNarrow(t *testing.T) {
+	help := queryHelp(vector.FederatedQuery{Results: []vector.Result{{
+		Database: "corpus", Table: "exchanges", ID: "42", Alias: "plugin_roca_corpus",
+		IDColumn: "id", TextColumns: []string{"human_text", "agent_text"},
+	}}})
+	joined := strings.Join(help, "\n")
+	if !strings.Contains(joined, `SELECT human_text, agent_text FROM plugin_roca_corpus.exchanges WHERE id = '42'`) ||
+		!strings.Contains(joined, "--databases <one>") {
+		t.Fatalf("vector query help = %v", help)
+	}
+}
+
+func TestQueryHelpUsesDeclaredReadShapeAndEscapesTheHitID(t *testing.T) {
+	help := queryHelp(vector.FederatedQuery{Results: []vector.Result{{
+		Table: "records", ID: "a'b", Alias: "plugin_fixture_records",
+		IDColumn: "record_key", TextColumns: []string{"body", "title"},
+	}}})
+	joined := strings.Join(help, "\n")
+	want := `SELECT body, title FROM plugin_fixture_records.records WHERE record_key = 'a''b'`
+	if !strings.Contains(joined, want) {
+		t.Fatalf("vector query help = %v, want %q", help, want)
+	}
+}

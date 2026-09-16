@@ -295,7 +295,7 @@ func TestLatestHandoffsKeepsANewHandoffThatDoesNotSupersede(t *testing.T) {
 	}
 }
 
-func TestLatestHandoffsFallsBackToGlobalWhenTheProjectHasNone(t *testing.T) {
+func TestLatestHandoffsDoesNotReturnOtherProjects(t *testing.T) {
 	svc := sessionContextService(t)
 	insertHandoff(t, svc, handoffSeed{
 		content: "global close", createdAt: "2026-08-01 00:00:00",
@@ -306,14 +306,12 @@ func TestLatestHandoffsFallsBackToGlobalWhenTheProjectHasNone(t *testing.T) {
 	})
 
 	got, err := svc.LatestHandoffs(t.Context(), "demo")
-	if err != nil {
-		t.Fatal(err)
+	if err == nil || !strings.Contains(err.Error(), "no handoff for project demo") ||
+		!strings.Contains(err.Error(), "other") {
+		t.Fatalf("unknown project error = %v", err)
 	}
-	if !got.GlobalFallback {
-		t.Fatal("expected global fallback when the project has no handoff")
-	}
-	if len(got.Handoffs) != 1 || got.Handoffs[0].Content != "global close" {
-		t.Fatalf("fallback = %+v, want the global handoff", got.Handoffs)
+	if strings.Contains(err.Error(), "global close") || len(got.Handoffs) != 0 {
+		t.Fatalf("unknown project leaked other handoffs: %+v err=%v", got, err)
 	}
 }
 
@@ -335,7 +333,7 @@ func TestLatestHandoffsPrefersProjectRowsOverGlobals(t *testing.T) {
 	}
 }
 
-func TestLatestHandoffsFallsBackAfterProjectRowsAreSuperseded(t *testing.T) {
+func TestLatestHandoffsDoesNotFallBackAfterProjectRowsAreSuperseded(t *testing.T) {
 	svc := sessionContextService(t)
 	insertHandoff(t, svc, handoffSeed{
 		content: "global close", createdAt: "2026-08-01 00:00:00",
@@ -346,11 +344,11 @@ func TestLatestHandoffsFallsBackAfterProjectRowsAreSuperseded(t *testing.T) {
 	insertMemory(t, svc, "decision", "replacement decision", "demo", "2026-08-03 00:00:00", old, nil)
 
 	got, err := svc.LatestHandoffs(t.Context(), "demo")
-	if err != nil {
-		t.Fatal(err)
+	if err == nil || !strings.Contains(err.Error(), "no handoff for project demo") {
+		t.Fatalf("superseded project error = %v", err)
 	}
-	if !got.GlobalFallback || len(got.Handoffs) != 1 || got.Handoffs[0].Content != "global close" {
-		t.Fatalf("got %+v, want the global current handoff", got)
+	if len(got.Handoffs) != 0 {
+		t.Fatalf("superseded project leaked handoffs: %+v", got)
 	}
 }
 

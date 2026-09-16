@@ -13,6 +13,7 @@ import (
 	"unicode"
 
 	"github.com/thellmwhisperer/la-roca/internal/jsonid"
+	"github.com/thellmwhisperer/la-roca/internal/provider/layers"
 )
 
 // The two surfaces that write. They travel in the memory row's canonical
@@ -86,7 +87,12 @@ type StoreResult struct {
 // Deduplication compares the complete persisted payload. A near duplicate is
 // independent evidence and remains independent even when only one provenance,
 // metadata, lifecycle, project, or authorship field differs.
-func (s *Service) Store(ctx context.Context, req StoreRequest) (StoreResult, error) {
+func (s *Service) Store(ctx context.Context, req StoreRequest) (result StoreResult, err error) {
+	defer func() {
+		if err != nil {
+			err = StoreErrorWithGuidance(err)
+		}
+	}()
 	if s.opts.ReadOnly {
 		return StoreResult{}, refuseReadOnly("store")
 	}
@@ -130,7 +136,7 @@ func (s *Service) Store(ctx context.Context, req StoreRequest) (StoreResult, err
 			return StoreResult{}, err
 		}
 	}
-	result := StoreResult{
+	result = StoreResult{
 		Layer:     physical,
 		Version:   s.opts.Version,
 		SourceSHA: s.opts.Commit,
@@ -365,6 +371,25 @@ func encodeMetadata(metadata map[string]any) (string, error) {
 
 func valueOr(value, fallback string) string {
 	return cmp.Or(strings.TrimSpace(value), fallback)
+}
+
+// StoreErrorWithGuidance teaches a rejected writer the accepted layers and one
+// valid retry. Protocol adapters use it for rejections that happen before
+// Store can inspect the request.
+func StoreErrorWithGuidance(err error) error {
+	if err == nil || strings.Contains(err.Error(), "accepted layers for this surface") {
+		return err
+	}
+	return fmt.Errorf("%w; accepted layers for this surface: %s; example: layer=discovery content=\"found that X\"",
+		err, acceptedStoreLayers())
+}
+
+func acceptedStoreLayers() string {
+	registry, err := layers.Load()
+	if err != nil || len(registry.Layers) == 0 {
+		return "user, feedback, project, pattern, pill, discovery, handoff, question, review, issue"
+	}
+	return strings.Join(registry.Names(), ", ")
 }
 
 // orNull is the SQL NULL a zero value stands for. An empty layer, an absent

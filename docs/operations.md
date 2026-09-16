@@ -163,6 +163,9 @@ with `expires_at`.
 `roca store --layer <name>` accepts only a name in the live layer registry and
 lists the registered layers when it refuses a write. This validation is shared
 by the CLI and MCP store paths.
+Every rejected MCP `roca_store` call also names the accepted layers for that
+surface and includes a valid `discovery` example, including requests rejected
+before the shared store service can inspect their payload.
 Use the `roca layers` registry commands for the supported catalogue surface.
 For direct SQL, follow the [authored-SQL table-name contract](queries.md#table-names-in-authored-sql);
 explicitly qualified physical references such as `main.layers` intentionally
@@ -194,14 +197,15 @@ below to query retained records without restoring an ops audit destination.
 
 ## Streams and contents
 
-The dated `executions`, `mcp-audit`, `ingest`, and `migrations` JSONL streams
-retain at most 30 days. Each file is capped at 5 MiB and each stream keeps at
-most six files, so a busy installation cannot grow a stream beyond 30 MiB.
+CLI and MCP calls share one `executions` JSONL stream. Retention is three
+months. Each file is capped at 5 MiB and the stream keeps at most 200 files.
+Older `mcp-audit-*.jsonl` files are still read by `roca doctor` and removed on
+uninstall. `ingest` and `migrations` stay separate housekeeping streams.
 Consumers should glob `<stream>-*.jsonl`; rotated segments have the same prefix.
 An individual record larger than the file cap is dropped under the same
 non-failing writer contract. Rotation and redaction are unchanged.
 
-`executions` and `mcp-audit` share one top-level call contract. Surface-specific
+`executions` carries one top-level call contract for both surfaces. Surface-specific
 fields are `command` plus `flags` for CLI and `tool` for MCP:
 
 ```json
@@ -267,7 +271,8 @@ repairs, and failure. Both streams are plain files beside the call audit.
 
 ## Reading query failures
 
-Doctor reads retained `executions` and `mcp-audit` JSONL segments directly.
+Doctor reads retained `executions` JSONL segments, plus leftover `mcp-audit`
+files from earlier builds.
 Malformed lines and unreadable files remain visible as gaps in that sample.
 
 Doctor reports the number of failed query calls in the last 24 hours, on either
@@ -280,6 +285,9 @@ in `malformed_lines`, and a segment that cannot be read is skipped and counted
 in `unreadable_files`: the count and the five newest errors still describe
 everything that could be read, and the read failure is a warning, not a failed
 diagnosis.
+When one of those recent failures timed out, human output suggests running
+`roca vector query` for the semantic leg alone and raising `query.timeout_ms`
+only when the hybrid path is required.
 
 ## State ownership diagnosis
 

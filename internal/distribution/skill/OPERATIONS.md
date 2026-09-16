@@ -10,11 +10,12 @@ description: >
 
 # La Roca
 
-Local SQLite memory of what agents leave on disk. Search with deterministic
-hybrid retrieval, use the playground when a model should turn a question into
-SQL, investigate concepts with grounded exploration, and store memories that
-last. No network is required after install beyond configured model or embedding
-providers.
+Local SQLite memory of what agents leave on disk. Search by meaning with the
+fast vector leg, frame evidence with checked SQL, and add deterministic
+full-text fusion when exact terms matter. Use the playground only when a model
+should turn a question into SQL, investigate concepts with grounded exploration,
+and store memories that last. No network is required after install beyond
+configured model or embedding providers.
 
 Before first use, run `roca init` in a terminal. With no home database it asks
 `new` or `adopt` with no default. `adopt` then asks you to type the source path,
@@ -45,14 +46,17 @@ Two kinds of freshness, two commands:
 
 ## Shell commands
 
-Agents write SQL and run it: `roca exec`. Agents search with `roca query`
-(zero answering-model inference: rarity-selected FTS plus template-expanded
-vector neighbors, fused with RRF). Humans who want a model to write SQL and
-explain the rows use `roca playground`. Agents never pass `--full`.
+Agents start semantic search with `roca vector query`. Write the SQL yourself
+and run it with `roca exec`. Use `roca query` only when exact terms matter and
+the search needs its rarity-selected FTS leg fused with template-expanded vector
+neighbors.
+All three use zero answering-model inference. Humans who want a model to write
+SQL and explain the rows use `roca playground`. Agents never pass `--full`.
 
 ```bash
+roca vector query "who is Ana" 20 --databases corpus,ops
 roca exec "SELECT COUNT(*) AS memories FROM plugin_roca_ops.memories"
-roca query "who is Ana"
+roca query "who is Ana" # only when exact terms and fusion matter
 roca explore --deep "format"
 roca explore "rows"
 roca query "what happened with Y" --json
@@ -110,7 +114,8 @@ search hybrid · engines fts,vector · 12 ms
 terms[3]: axi, output, toon
 rows[1]{rank,source,legs,consensus,vector_score,vector_rank,fts_rank,snippet}:
   1,corpus.memories.1,vector+fts,true,0.51,2,1,"AXI output uses TOON rows, stable fields, and contextual help."
-help[2]:
+help[3]:
+  - "Run `roca vector query \"what do we know about AXI output\" 20 --databases corpus,ops` for the fast semantic leg alone (this command adds the full-text leg and fusion)"
   - "Run `roca query \"what do we know about AXI output\" --json` for the complete result envelope"
   - "Run `roca query \"what do we know about AXI output\" --require-both` to keep only dual-confirmed hits"
 ```
@@ -138,9 +143,10 @@ arguments.
 
 ## Search craft
 
-Write the SQL yourself against the semantic catalog (`roca-semantica`) and
-run it with `roca exec`. That is the craft. Anything that spends inference
-is last resort.
+When a selected sidecar is ready, start with `roca vector query`. Write the SQL
+yourself against the semantic catalog (`roca-semantica`) and run it with `roca
+exec` to frame those hits. That is the craft. Anything that spends inference is
+last resort.
 
 Vector readiness is per selected sidecar. The aggregate worker record at
 `~/.roca/plugins/roca-vector/state/completion.json` reports `finished_at` and
@@ -174,8 +180,8 @@ read it directly; use the qualified table named there when writing SQL yourself.
 
 | Situation | Action |
 |---|---|
-| Past work / people / "have we…" | Write SQL and `roca exec`; hybrid first when a selected sidecar is ready |
-| Researching a topic, not a point fact | Write SQL and `roca exec`; hybrid first when a selected sidecar is ready |
+| Past work / people / "have we…" | `roca vector query`, then `roca exec` when a selected sidecar is ready; exec alone otherwise |
+| Researching a topic, not a point fact | `roca vector query`, then `roca exec` when a selected sidecar is ready; exec alone otherwise |
 | Cannot name the exact term | Hybrid loop when a selected sidecar is ready; otherwise exec with FTS MATCH |
 | Cannot express it as SQL | `roca query` for hybrid search; last resort `roca playground --sql-only` or `roca explore`; never `--full` |
 | Answer looks stale / about today | `roca ingest`, then ask again |
@@ -183,8 +189,8 @@ read it directly; use the qualified table named there when writing SQL yourself.
 | Stuck on the SQL | `roca playground --sql-only` then `roca exec` |
 | Durable memory | `roca store --layer … --content … --agent … --model …` |
 | Who wrote it / which model | ask by author, or store with `--model` |
-| Project start | `roca pill` and `roca handoff latest` |
-| No shell | `roca_query` to search; `roca_exec` for SQL; `roca_explore` last resort |
+| Project start | Bare `roca`, or the direct `roca pill` and `roca handoff latest` reads |
+| No shell | `roca_vector_query` first; `roca_exec` for SQL; `roca_query` only for exact-term fusion; `roca_explore` last resort |
 
 ## Plugins
 
@@ -351,9 +357,10 @@ Do not stack synonyms.
   `expires_at`.
 - Ask bare first: use one short concept and no hints. Hints can steer SQL to the
   wrong table; a typo can silently leave noise as the best match.
-- Write SQL and `roca exec` first. `roca query` is hybrid search. `roca explore`
-  is last resort. With an index, the hybrid loop is mandatory; do not start with
-  explore as a substitute.
+- With an index, start with `roca vector query`, then write SQL and run `roca
+  exec`. `roca query` is the hybrid exact-term path; `roca explore` is last
+  resort. The hybrid loop is mandatory; do not start with explore as a
+  substitute.
 - Widen deliberately: say "search the whole corpus (conversations, thinking,
   memories, sessions)", request OR between terms and raise limits consciously.
 - For counts or rankings, name `sessions` or `exchanges`, where the mass lives;

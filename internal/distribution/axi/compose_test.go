@@ -54,6 +54,16 @@ func TestQueryRendersTheRouteLineTOONRowsAndHelp(t *testing.T) {
 	}
 }
 
+func TestSearchKeepsHelpForOneHit(t *testing.T) {
+	got := axi.Search(service.SearchResult{
+		Question: "one exact hit", Engines: []string{"fts"},
+		Hits: []service.SearchHit{{Rank: 1, Source: "memory", Snippet: "one"}},
+	})
+	if !strings.Contains(got, "help[3]:") {
+		t.Fatalf("one-hit search lost contextual help:\n%s", got)
+	}
+}
+
 func TestQueryAndExecDeclareConsultedDatabases(t *testing.T) {
 	queryText := axi.Query(service.QueryResult{
 		Path: service.PathLLM, Match: service.MatchFound,
@@ -210,6 +220,47 @@ func TestRowOutputKeepsLegacyBudgetAndExecDefaultsTo500(t *testing.T) {
 	}
 }
 
+func TestSearchHelpLeadsWithVectorQuery(t *testing.T) {
+	got := axi.Search(service.SearchResult{
+		Question:  "harbor lantern",
+		Engines:   []string{"fts", "vector"},
+		Databases: []string{"corpus", "ops"},
+		Hits: []service.SearchHit{
+			{Rank: 1, Source: "memory:1", Legs: []string{"vector"}, Snippet: "one"},
+			{Rank: 2, Source: "memory:2", Legs: []string{"fts"}, Snippet: "two"},
+		},
+		RowCount: 2,
+	})
+	if !strings.Contains(got, "roca vector query") || !strings.Contains(got, "20 --databases corpus,ops") {
+		t.Fatalf("search help does not lead with vector query:\n%s", got)
+	}
+	if !strings.Contains(got, "full-text leg and fusion") {
+		t.Fatalf("search help does not explain hybrid:\n%s", got)
+	}
+	vectorAt := strings.Index(got, "roca vector query")
+	jsonAt := strings.Index(got, "--json")
+	if vectorAt < 0 || jsonAt < vectorAt {
+		t.Fatalf("vector hint is not first:\n%s", got)
+	}
+}
+
+func TestMCPSearchHintsHandoffTools(t *testing.T) {
+	got := axi.MCPSearch(service.SearchResult{
+		Question: "latest handover for firstmate",
+		Engines:  []string{"fts"},
+		Hits: []service.SearchHit{
+			{Rank: 1, Source: "memory:1", Legs: []string{"fts"}, Snippet: "one"},
+			{Rank: 2, Source: "memory:2", Legs: []string{"fts"}, Snippet: "two"},
+		},
+		RowCount: 2,
+	})
+	for _, want := range []string{"roca_handoff_latest", "roca_pill_show", "roca_vector_query"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("MCP search help missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestSearchBudgetClipsSnippetsWithoutClippingCitations(t *testing.T) {
 	for _, render := range []struct {
 		name string
@@ -230,7 +281,7 @@ func TestSearchBudgetClipsSnippetsWithoutClippingCitations(t *testing.T) {
 					Hits: []service.SearchHit{{Rank: 1, Source: source, Legs: []string{"fts"}, Snippet: strings.Repeat("x", 1000)}},
 				})
 				want := "\n  1," + source + ",fts," + strings.Repeat("x", snippetBudget-1) + "…"
-				if !strings.HasSuffix(got, want) {
+				if !strings.Contains(got, want) {
 					t.Fatalf("search budget %d lost citation or snippet budget: %q", budget, got)
 				}
 			}
