@@ -138,11 +138,7 @@ func TestDiscoverOperatorRidesRejectsAnUnusableFile(t *testing.T) {
 		}
 	}
 
-	rides, warnings, err := plugin.DiscoverOperatorRides("", ridesDir)
-	if err == nil || rides != nil || len(warnings) != 0 ||
-		!strings.Contains(err.Error(), "operator ride file 10-export.toml is unusable") {
-		t.Fatalf("unusable operator rides = %+v warnings = %v err = %v", rides, warnings, err)
-	}
+	requireOperatorRidesError(t, ridesDir, "operator ride file 10-export.toml is unusable")
 }
 
 func TestDiscoverOperatorRidesRejectsDuplicateNamesAcrossFiles(t *testing.T) {
@@ -154,11 +150,7 @@ func TestDiscoverOperatorRidesRejectsDuplicateNamesAcrossFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rides, warnings, err := plugin.DiscoverOperatorRides("", ridesDir)
-	if err == nil || rides != nil || len(warnings) != 0 ||
-		!strings.Contains(err.Error(), "duplicate operator ride") {
-		t.Fatalf("duplicate operator rides = rides=%+v warnings=%v err=%v", rides, warnings, err)
-	}
+	requireOperatorRidesError(t, ridesDir, "duplicate operator ride")
 }
 
 func TestDiscoverOperatorRidesRejectsDuplicateNamesWithinFile(t *testing.T) {
@@ -174,14 +166,19 @@ command = "echo second"
 		t.Fatal(err)
 	}
 
-	rides, warnings, err := plugin.DiscoverOperatorRides("", ridesDir)
-	if err == nil || rides != nil || len(warnings) != 0 ||
-		!strings.Contains(err.Error(), "operator ride file backup.toml is unusable") {
-		t.Fatalf("duplicate operator rides = rides=%+v warnings=%v err=%v", rides, warnings, err)
-	}
+	requireOperatorRidesError(t, ridesDir, "operator ride file backup.toml is unusable")
 }
 
 func allowInstalledRideFixture(string, string) error { return nil }
+
+func requireOperatorRidesError(t *testing.T, ridesDir, want string) {
+	t.Helper()
+	rides, warnings, err := plugin.DiscoverOperatorRides("", ridesDir)
+	if err == nil || rides != nil || len(warnings) != 0 || !strings.Contains(err.Error(), want) {
+		t.Fatalf("operator rides = rides=%+v warnings=%v err=%v; want error containing %q",
+			rides, warnings, err, want)
+	}
+}
 
 func writeRides(t *testing.T, root, name, body string) {
 	t.Helper()
