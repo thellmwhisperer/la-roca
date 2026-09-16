@@ -496,17 +496,11 @@ surprise = true
 func TestRunRejectsDuplicateOperatorRides(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "plugins")
 	ridesDir := filepath.Join(t.TempDir(), "rides.d")
-	if err := os.Mkdir(ridesDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	for name, command := range map[string]string{
+	if err := testfixture.WriteOperatorRideFiles(ridesDir, "backup", map[string]string{
 		"10-backup.toml": "echo first",
 		"20-backup.toml": "echo second",
-	} {
-		if err := os.WriteFile(filepath.Join(ridesDir, name),
-			[]byte(fmt.Sprintf("[ride.backup]\ncommand = %q\n", command)), 0o600); err != nil {
-			t.Fatal(err)
-		}
+	}); err != nil {
+		t.Fatal(err)
 	}
 	service := mustOpenCron(t, rocacron.Options{
 		PluginRoot: root, Database: filepath.Join(t.TempDir(), rocacron.DatabaseFilename),

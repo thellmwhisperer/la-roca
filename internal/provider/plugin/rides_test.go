@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
+	"github.com/thellmwhisperer/la-roca/test/testfixture"
 )
 
 func TestDiscoverRidesReadsEveryInstalledPluginInDeterministicOrder(t *testing.T) {
@@ -150,14 +151,11 @@ func TestDiscoverOperatorRidesPreservesIndependentRidesAfterRefusal(t *testing.T
 
 func TestDiscoverOperatorRidesRejectsDuplicateNamesAcrossFiles(t *testing.T) {
 	ridesDir := t.TempDir()
-	for name, command := range map[string]string{
+	if err := testfixture.WriteOperatorRideFiles(ridesDir, "backup", map[string]string{
 		"10-backup.toml": "echo first",
 		"20-backup.toml": "echo second",
-	} {
-		if err := os.WriteFile(filepath.Join(ridesDir, name),
-			[]byte(fmt.Sprintf("[ride.backup]\ncommand = %q\n", command)), 0o600); err != nil {
-			t.Fatal(err)
-		}
+	}); err != nil {
+		t.Fatal(err)
 	}
 
 	rides, warnings, err := plugin.DiscoverOperatorRides("", ridesDir)

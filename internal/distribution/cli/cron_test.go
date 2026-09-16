@@ -40,8 +40,7 @@ gate = "after_ingest"
 				filepath.Join(home, ".local", "bin"), "test"); err != nil {
 				t.Fatal(err)
 			}
-			var output, warnings strings.Builder
-			env := &cliEnv{build: Build{Version: "test"}, out: &output, errOut: &warnings}
+			env, output, warnings := newCronTestEnv()
 			code, err := executeWithEnv(env, test.args, nil)
 			if err != nil || code != ExitOK {
 				t.Fatalf("%v = code %d err %v: %s", test.args, code, err, warnings.String())
@@ -73,8 +72,7 @@ func TestCronListAndDryRunRemainAvailableInReadOnlyMode(t *testing.T) {
 	t.Setenv("ROCA_READ_ONLY", "1")
 	writeConfig(t, home, "[features]\ncron = true\n")
 
-	var output, warnings strings.Builder
-	env := &cliEnv{build: Build{Version: "test"}, out: &output, errOut: &warnings}
+	env, output, warnings := newCronTestEnv()
 	for _, args := range [][]string{{"cron", "list"}, {"cron", "run", "--dry-run"}} {
 		output.Reset()
 		code, err := executeWithEnv(env, args, nil)
@@ -105,8 +103,7 @@ surprise = true
 		t.Fatal(err)
 	}
 
-	var output, warnings strings.Builder
-	env := &cliEnv{build: Build{Version: "test"}, out: &output, errOut: &warnings}
+	env, output, warnings := newCronTestEnv()
 	code, err := executeWithEnv(env, []string{"cron", "run", "--dry-run"}, nil)
 	if err != nil || code != ExitOK {
 		t.Fatalf("cron run = code %d err %v: %s%s", code, err, output.String(), warnings.String())
@@ -128,4 +125,10 @@ func TestCronCommandDoesNotExistUntilItsFeatureIsEnabled(t *testing.T) {
 			t.Fatalf("cron with config %q = code %d err %v: %s", body, code, err, output.String())
 		}
 	}
+}
+
+func newCronTestEnv() (*cliEnv, *strings.Builder, *strings.Builder) {
+	output := &strings.Builder{}
+	warnings := &strings.Builder{}
+	return &cliEnv{build: Build{Version: "test"}, out: output, errOut: warnings}, output, warnings
 }
