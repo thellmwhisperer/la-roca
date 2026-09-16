@@ -112,3 +112,35 @@ func TestCLIRefusesRootOverUserOwnedState(t *testing.T) {
 		t.Fatalf("version as root should still answer: %s", version)
 	}
 }
+
+func TestCLISharedBoundaryGuardsParsingAndReadOnlyInvocations(t *testing.T) {
+	home := hermeticHome(t)
+	if err := os.MkdirAll(filepath.Join(home, ".roca"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	restore := securefile.OverrideEffectiveUID(0)
+	t.Cleanup(restore)
+
+	for _, testCase := range []struct {
+		name      string
+		args      []string
+		expectErr bool
+	}{
+		{name: "parsing", args: []string{"init", "--unknown"}, expectErr: true},
+		{name: "command help", args: []string{"query", "--help"}},
+		{name: "short help", args: []string{"-h"}},
+		{name: "root help"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			var out, errOut strings.Builder
+			env := &cliEnv{build: contractBuild(), out: &out, errOut: &errOut}
+			_, err := executeWithOptions(env, testCase.args, nil, false)
+			if (err != nil) != testCase.expectErr {
+				t.Fatalf("invocation %v error = %v, want error %v", testCase.args, err, testCase.expectErr)
+			}
+			if _, statErr := os.Stat(filepath.Join(home, ".roca", "logs")); !os.IsNotExist(statErr) {
+				t.Fatalf("invocation %v created execution logs: %v", testCase.args, statErr)
+			}
+		})
+	}
+}

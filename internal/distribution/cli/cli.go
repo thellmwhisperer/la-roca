@@ -102,7 +102,7 @@ func executeWithEnv(env *cliEnv, args []string, in io.Reader) (int, error) {
 
 func executeWithOptions(env *cliEnv, args []string, in io.Reader, plugins bool) (int, error) {
 	env.skipExecutionLog = false
-	if versionOrHelpInvocation(args) {
+	if rootGuardExemptInvocation(args) {
 		env.skipExecutionLog = true
 	}
 	started := env.started
@@ -110,17 +110,17 @@ func executeWithOptions(env *cliEnv, args []string, in io.Reader, plugins bool) 
 		started = time.Now()
 		env.started = started
 	}
+	if !rootGuardExemptInvocation(args) {
+		if err := env.refuseRootOverUserStatePath(); err != nil {
+			env.skipExecutionLog = true
+			return ExitError, logfile.Correlate(err)
+		}
+	}
 	if !doctorInvocation(args) {
 		env.loadCommandFeatures()
 	}
 	root := rootCommand(env)
 	if plugins {
-		if len(args) > 0 && !strings.HasPrefix(args[0], "-") && !builtIn(root, args[0]) {
-			if err := env.refuseRootOverUserStatePath(); err != nil {
-				env.skipExecutionLog = true
-				return ExitError, logfile.Correlate(err)
-			}
-		}
 		if handled, code, err := dispatchPlugin(env, root, args, env.features); handled {
 			env.auditCommand = args[0]
 			env.auditArgs = redactPluginArguments(args[1:])
@@ -186,21 +186,33 @@ func executeWithOptions(env *cliEnv, args []string, in io.Reader, plugins bool) 
 	return code, err
 }
 
-func versionOrHelpInvocation(args []string) bool {
+func rootGuardExemptInvocation(args []string) bool {
+	commandSeen := false
 	for index := 0; index < len(args); index++ {
 		argument := args[index]
 		switch {
-		case argument == "--version" || argument == "--help":
+		case argument == "--version" || argument == "--help" || argument == "-h":
 			return true
 		case argument == "--db-path":
+			if index+1 >= len(args) {
+				return false
+			}
 			index++
-		case strings.HasPrefix(argument, "-"):
+		case argument == "--json" || argument == "--read-only" ||
+			strings.HasPrefix(argument, "--db-path="):
 			continue
+		case strings.HasPrefix(argument, "-"):
+			return false
 		default:
-			return argument == "version" || argument == "help"
+			if !commandSeen {
+				commandSeen = true
+				if argument == "version" || argument == "help" {
+					return true
+				}
+			}
 		}
 	}
-	return false
+	return !commandSeen
 }
 
 func doctorInvocation(args []string) bool {
