@@ -44,13 +44,20 @@ func TestDoctorPrintsChownForForeignOwnedState(t *testing.T) {
 	}
 
 	report := runRoot(t, contractBuild(), "doctor", "--report")
-	if !strings.Contains(report, want) {
-		t.Fatalf("support report missing %q:\n%s", want, report)
+	for _, forbidden := range []string{want, lock, "root", "operator"} {
+		if strings.Contains(report, forbidden) {
+			t.Fatalf("support report disclosed %q:\n%s", forbidden, report)
+		}
+	}
+	if !strings.Contains(report, "state ownership findings: 1") {
+		t.Fatalf("support report omitted ownership count:\n%s", report)
 	}
 	reportJSON := mustJSON(t, runRoot(t, contractBuild(), "doctor", "--report", "--json"))
-	owned, _ = reportJSON["foreign_owned"].([]any)
-	if len(owned) != 1 {
-		t.Fatalf("support report foreign_owned = %#v, want the lock", reportJSON["foreign_owned"])
+	if reportJSON["foreign_owned_count"] != float64(1) {
+		t.Fatalf("support report foreign_owned_count = %#v, want 1", reportJSON["foreign_owned_count"])
+	}
+	if _, disclosed := reportJSON["foreign_owned"]; disclosed {
+		t.Fatalf("support report disclosed foreign_owned: %#v", reportJSON["foreign_owned"])
 	}
 }
 

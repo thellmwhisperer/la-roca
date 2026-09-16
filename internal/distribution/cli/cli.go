@@ -102,6 +102,9 @@ func executeWithEnv(env *cliEnv, args []string, in io.Reader) (int, error) {
 
 func executeWithOptions(env *cliEnv, args []string, in io.Reader, plugins bool) (int, error) {
 	env.skipExecutionLog = false
+	if versionOrHelpInvocation(args) {
+		env.skipExecutionLog = true
+	}
 	started := env.started
 	if started.IsZero() {
 		started = time.Now()
@@ -114,14 +117,8 @@ func executeWithOptions(env *cliEnv, args []string, in io.Reader, plugins bool) 
 	if plugins {
 		if len(args) > 0 && !strings.HasPrefix(args[0], "-") && !builtIn(root, args[0]) {
 			if err := env.refuseRootOverUserStatePath(); err != nil {
-				env.auditCommand = args[0]
-				env.auditArgs = redactPluginArguments(args[1:])
-				err = logfile.Correlate(err)
-				if logErr := env.logExecution(nil, started, ExitError, err); logErr != nil {
-					fmt.Fprintf(env.errOut,
-						"warning: this run is not in the execution log: %v\n", logErr)
-				}
-				return ExitError, err
+				env.skipExecutionLog = true
+				return ExitError, logfile.Correlate(err)
 			}
 		}
 		if handled, code, err := dispatchPlugin(env, root, args, env.features); handled {
@@ -187,6 +184,23 @@ func executeWithOptions(env *cliEnv, args []string, in io.Reader, plugins bool) 
 		}
 	}
 	return code, err
+}
+
+func versionOrHelpInvocation(args []string) bool {
+	for index := 0; index < len(args); index++ {
+		argument := args[index]
+		switch {
+		case argument == "--version" || argument == "--help":
+			return true
+		case argument == "--db-path":
+			index++
+		case strings.HasPrefix(argument, "-"):
+			continue
+		default:
+			return argument == "version" || argument == "help"
+		}
+	}
+	return false
 }
 
 func doctorInvocation(args []string) bool {
@@ -756,7 +770,11 @@ func (env *cliEnv) refuseRootOverUserState(cmd *cobra.Command) error {
 	if flag := cmd.Flags().Lookup("help"); flag != nil && flag.Changed {
 		return nil
 	}
-	return env.refuseRootOverUserStatePath()
+	err := env.refuseRootOverUserStatePath()
+	if err != nil {
+		env.skipExecutionLog = true
+	}
+	return err
 }
 
 func (env *cliEnv) refuseRootOverUserStatePath() error {

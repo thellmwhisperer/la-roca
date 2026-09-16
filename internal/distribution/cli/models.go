@@ -59,7 +59,7 @@ func doctorCommand(env *cliEnv) *cobra.Command {
 				env.skipExecutionLog = true
 				err := env.runDoctorReport(cmd.Context(), foreignOwned)
 				if err != nil && len(foreignOwned) > 0 {
-					renderForeignOwnedStateTo(env.errOut, foreignOwned)
+					renderForeignOwnedSupport(env, len(foreignOwned))
 				}
 				return err
 			}
@@ -115,7 +115,7 @@ func doctorCommand(env *cliEnv) *cobra.Command {
 
 type doctorSupportReport struct {
 	supportreport.Snapshot
-	ForeignOwned []stateOwnership `json:"foreign_owned,omitempty"`
+	ForeignOwnedCount int `json:"foreign_owned_count,omitempty"`
 }
 
 func (env *cliEnv) runDoctorReport(ctx context.Context, foreignOwned []stateOwnership) error {
@@ -137,11 +137,18 @@ func (env *cliEnv) runDoctorReport(ctx context.Context, foreignOwned []stateOwne
 		return err
 	}
 	if env.json {
-		return env.printJSON(doctorSupportReport{Snapshot: snapshot, ForeignOwned: foreignOwned})
+		return env.printJSON(doctorSupportReport{Snapshot: snapshot, ForeignOwnedCount: len(foreignOwned)})
 	}
 	env.print("%s", supportreport.Render(snapshot))
-	renderForeignOwnedState(env, foreignOwned)
+	renderForeignOwnedSupport(env, len(foreignOwned))
 	return nil
+}
+
+func renderForeignOwnedSupport(env *cliEnv, count int) {
+	if count == 0 {
+		return
+	}
+	env.print("state ownership findings: %d (run `roca doctor` locally for exact repair commands)", count)
 }
 
 func renderQueryFailures(env *cliEnv, summary logfile.QueryFailureSummary) {

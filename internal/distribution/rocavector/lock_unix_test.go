@@ -3,6 +3,7 @@
 package rocavector
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -69,5 +70,26 @@ func TestExistingIndexLockIsNotReowned(t *testing.T) {
 	}
 	if chownCalled {
 		t.Fatal("existing lock was reowned")
+	}
+}
+
+func TestCreatedIndexLockIsRemovedWhenOwnershipAlignmentFails(t *testing.T) {
+	state := t.TempDir()
+	path := filepath.Join(state, "vector.db.index.lock")
+	restoreIdentity := securefile.OverrideIdentityLookups(
+		securefile.Identity{UID: 501, Name: "operator"},
+		map[string]securefile.Identity{path: {UID: 0, Name: "root"}},
+	)
+	t.Cleanup(restoreIdentity)
+	restoreChown := securefile.OverrideChown(func(string, int, int) error {
+		return errors.New("chown failed")
+	})
+	t.Cleanup(restoreChown)
+
+	if _, busy, err := tryExclusiveFileLock(path, true); err == nil || busy {
+		t.Fatalf("lock: busy=%v err=%v, want alignment failure", busy, err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("created lock stat error = %v, want removed lock", err)
 	}
 }

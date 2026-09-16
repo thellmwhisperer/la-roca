@@ -24,7 +24,7 @@ func tryExclusiveFileLock(path string, alignOwner bool) (func() error, bool, err
 	}
 	if alignOwner && created {
 		if err := securefile.AlignToParentOwner(path); err != nil {
-			file.Close()
+			removeCreatedLock(path, file)
 			return nil, false, err
 		}
 	}
@@ -41,4 +41,13 @@ func tryExclusiveFileLock(path string, alignOwner bool) (func() error, bool, err
 		return errors.Join(unlockErr, closeErr)
 	}
 	return validateExclusiveFileLock(path, file, release)
+}
+
+func removeCreatedLock(path string, file *os.File) {
+	createdInfo, statErr := file.Stat()
+	currentInfo, currentErr := os.Stat(path)
+	if statErr == nil && currentErr == nil && os.SameFile(createdInfo, currentInfo) {
+		_ = os.Remove(path)
+	}
+	_ = file.Close()
 }

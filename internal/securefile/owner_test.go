@@ -138,4 +138,24 @@ func TestStateOwnershipScenarios(t *testing.T) {
 			t.Fatalf("symlink repair = %#v", got)
 		}
 	})
+	t.Run("scan emits recursive chown for a foreign directory", func(t *testing.T) {
+		foreignDir := filepath.Join(root, "foreign")
+		foreignLock := filepath.Join(foreignDir, "vector.db.index.lock")
+		if err := os.MkdirAll(foreignDir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(foreignLock, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		got := scanForeignOwned(root, operator, func(path string) (Identity, error) {
+			if path == foreignDir || path == foreignLock {
+				return rootOwner, nil
+			}
+			return operator, nil
+		})
+		want := "sudo chown -R operator '" + foreignDir + "'"
+		if len(got) != 1 || got[0].Path != foreignDir || got[0].Command != want {
+			t.Fatalf("recursive repair = %#v, want command %q", got, want)
+		}
+	})
 }

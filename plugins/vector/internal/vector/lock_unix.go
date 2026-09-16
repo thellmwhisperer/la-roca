@@ -22,7 +22,7 @@ func ensureLockFilePlatform(path string) error {
 	created, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR|unix.O_NOFOLLOW, 0o600)
 	if err == nil {
 		if err := alignCreatedLockOwner(path, created); err != nil {
-			_ = created.Close()
+			removeCreatedLock(path, created)
 			return err
 		}
 		return created.Close()
@@ -35,6 +35,15 @@ func ensureLockFilePlatform(path string) error {
 		return err
 	}
 	return existing.Close()
+}
+
+func removeCreatedLock(path string, file *os.File) {
+	createdInfo, statErr := file.Stat()
+	currentInfo, currentErr := os.Stat(path)
+	if statErr == nil && currentErr == nil && os.SameFile(createdInfo, currentInfo) {
+		_ = os.Remove(path)
+	}
+	_ = file.Close()
 }
 
 func alignCreatedLockOwner(path string, file *os.File) error {

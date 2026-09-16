@@ -54,6 +54,9 @@ func TestPluginDispatchRefusesRootOverUserState(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "running as root") {
 		t.Fatalf("plugin dispatch error = %v", err)
 	}
+	if _, err := os.Stat(filepath.Join(home, ".roca", "logs")); !os.IsNotExist(err) {
+		t.Fatalf("root refusal created execution logs: %v", err)
+	}
 }
 
 func TestVectorExecutableLifecycleRemainsReachableWhenSearchIsDisabled(t *testing.T) {
