@@ -182,7 +182,7 @@ func FuseRRF(vector, fts []RankedDoc, k int) []FusedDoc {
 			}
 			fused[doc.Key] = item
 		}
-		item.Score += 1 / float64(k+doc.Rank)
+		item.Score += 1 / (float64(k) + float64(doc.Rank))
 		if item.Snippet == "" {
 			item.Snippet = doc.Snippet
 		}

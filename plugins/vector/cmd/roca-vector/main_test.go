@@ -73,6 +73,14 @@ func TestInstallLaunchesThePluginBinaryIntoManifestOwnedState(t *testing.T) {
 	}
 }
 
+func TestQueryRejectsTemplatesWithoutExpansion(t *testing.T) {
+	root := rootCommand(&environment{dbPath: "/synthetic/roca.db"})
+	root.SetArgs([]string{"query", "--template", "about %s", "synthetic question"})
+	if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "--template requires --expand-templates") {
+		t.Fatalf("query with an unexpanded template = %v", err)
+	}
+}
+
 func TestQueryStartsBackgroundModelDownloadWithoutWaiting(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

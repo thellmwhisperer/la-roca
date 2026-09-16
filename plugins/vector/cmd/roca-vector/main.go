@@ -407,6 +407,12 @@ func queryCommand(env *environment) *cobra.Command {
 		Use:   "query <text> [k]",
 		Short: "Search routed database sidecars by semantic similarity",
 		Args:  cobra.RangeArgs(1, 2),
+		PreRunE: func(_ *cobra.Command, _ []string) error {
+			if len(templates) > 0 && !expandTemplates {
+				return fmt.Errorf("--template requires --expand-templates")
+			}
+			return nil
+		},
 		RunE: func(command *cobra.Command, args []string) error {
 			k := 10
 			if len(args) == 2 {

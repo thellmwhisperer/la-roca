@@ -115,16 +115,18 @@ func TestSearchParallelLegsFusesTheSameHits(t *testing.T) {
 				Text: "Therapy notes\n\nrecovery"},
 		}}, nil
 	}
-	svc := seededHybridService(t, vector)
-	sequential, err := svc.Search(context.Background(), service.SearchRequest{Question: "salud mental", Top: 10})
+	sequentialSvc := seededHybridService(t, vector)
+	parallelSvc := initialized(t, freshPaths(t), func(options *service.Options) {
+		options.VectorSearch = vector
+		options.Query = search.DefaultSettings()
+		options.Query.ParallelLegs = true
+	})
+	seedHybridCorpus(t, parallelSvc)
+	sequential, err := sequentialSvc.Search(context.Background(), service.SearchRequest{Question: "salud mental", Top: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
-	parallelOn := true
-	parallel, err := svc.Search(context.Background(), service.SearchRequest{
-		Question: "salud mental", Top: 10,
-		Overlay: search.Overlay{ParallelLegs: &parallelOn},
-	})
+	parallel, err := parallelSvc.Search(context.Background(), service.SearchRequest{Question: "salud mental", Top: 10})
 	if err != nil {
 		t.Fatal(err)
 	}

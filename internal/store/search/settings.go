@@ -49,12 +49,8 @@ func (s Settings) Validate() error {
 // Overlay is one request's explicit knob writes. A nil pointer leaves the
 // value that config or the built-in default already chose.
 type Overlay struct {
-	Oversample     *int
-	RRFK           *int
-	MinVectorScore *float64
-	MaxRareTerms   *int
-	ParallelLegs   *bool
-	NoTemplates    bool
+	Oversample  *int
+	NoTemplates bool
 }
 
 // DefaultSettings is today's baked-in hybrid: oversample 100, RRF k=60,
@@ -95,18 +91,6 @@ func (s Settings) WithDefaults() Settings {
 func (s Settings) Apply(overlay Overlay) Settings {
 	if overlay.Oversample != nil {
 		s.Oversample = *overlay.Oversample
-	}
-	if overlay.RRFK != nil {
-		s.RRFK = *overlay.RRFK
-	}
-	if overlay.MinVectorScore != nil {
-		s.MinVectorScore = *overlay.MinVectorScore
-	}
-	if overlay.MaxRareTerms != nil {
-		s.MaxRareTerms = *overlay.MaxRareTerms
-	}
-	if overlay.ParallelLegs != nil {
-		s.ParallelLegs = *overlay.ParallelLegs
 	}
 	if overlay.NoTemplates {
 		s.Templates = TemplatesOff

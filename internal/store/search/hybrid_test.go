@@ -1,6 +1,7 @@
 package search_test
 
 import (
+	"math"
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/store/search"
@@ -69,6 +70,14 @@ func TestFuseRRFRewardsConsensusWithoutNormalizingLegScores(t *testing.T) {
 	}
 	if got[1].Score != 1.0/(60+1) {
 		t.Fatalf("vector-only score = %v", got[1].Score)
+	}
+}
+
+func TestFuseRRFAcceptsTheLargestIntegerKWithoutOverflow(t *testing.T) {
+	maxInt := int(^uint(0) >> 1)
+	got := search.FuseRRF([]search.RankedDoc{{Key: "corpus.memories.1", Rank: 1}}, nil, maxInt)
+	if len(got) != 1 || got[0].Score <= 0 || math.IsInf(got[0].Score, 0) || math.IsNaN(got[0].Score) {
+		t.Fatalf("fused score = %+v, want finite positive score", got)
 	}
 }
 
