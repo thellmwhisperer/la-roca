@@ -86,7 +86,10 @@ type ExecutionRecord struct {
 
 type MCPRecord struct {
 	CallRecord
-	Tool string `json:"tool"`
+	Tool    string `json:"tool"`
+	Agent   string `json:"agent,omitempty"`
+	Surface string `json:"surface,omitempty"`
+	Origin  string `json:"origin,omitempty"`
 }
 
 type RunRecord struct {

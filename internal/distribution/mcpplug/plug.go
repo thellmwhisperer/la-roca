@@ -250,9 +250,16 @@ func auditCalls(audit *logfile.Writer, warnings io.Writer) mcp.Middleware {
 					call.CorrelationID = logfile.NewCorrelationID()
 				}
 			}
-			appendErr := audit.AppendExisting(logfile.Executions, logfile.MCPRecord{
-				CallRecord: call, Tool: tool,
-			})
+			record := logfile.MCPRecord{CallRecord: call, Tool: tool}
+			if tool == storeTool.Name {
+				if callReq, ok := req.(*mcp.CallToolRequest); ok {
+					authorship := authorshipFromRequest(callReq)
+					record.Agent = authorship.Agent
+					record.Surface = authorship.Surface
+				}
+				record.Origin = firstNonEmpty(argumentString(args, "origin"), "agent")
+			}
+			appendErr := audit.AppendExisting(logfile.Executions, record)
 			if appendErr != nil {
 				warned.Do(func() {
 					fmt.Fprintf(warnings, "warning: MCP calls are not being written to the audit log: %v\n", appendErr)

@@ -184,6 +184,27 @@ func TestStoreDeduplicatesTheSameContentInTheSameScope(t *testing.T) {
 	}
 }
 
+func TestStoreDeduplicatesAcrossHistoricalSessionAgentAliases(t *testing.T) {
+	svc, _ := serviceWithPaths(t)
+	legacy := service.StoreRequest{
+		Layer: "discovery", Content: "historical MCP alias retry",
+		Authorship: service.Authorship{Agent: "claude-code", Model: "sonnet", Surface: service.SurfaceMCP},
+	}
+	first, err := svc.Store(t.Context(), legacy)
+	if err != nil {
+		t.Fatalf("legacy Store: %v", err)
+	}
+	canonical := legacy
+	canonical.Authorship.Agent = "claude"
+	second, err := svc.Store(t.Context(), canonical)
+	if err != nil {
+		t.Fatalf("canonical Store: %v", err)
+	}
+	if !second.Skipped || second.ID != first.ID {
+		t.Fatalf("canonical retry = %+v, want the historical row %d", second, first.ID)
+	}
+}
+
 func TestStoreDoesNotDeduplicateAcrossProjects(t *testing.T) {
 	svc, _ := serviceWithPaths(t)
 	ctx := context.Background()

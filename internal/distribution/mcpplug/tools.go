@@ -204,7 +204,7 @@ func authorshipFromRequest(req *mcp.CallToolRequest) service.Authorship {
 		return authorship
 	}
 	if name := strings.TrimSpace(req.Session.InitializeParams().ClientInfo.Name); name != "" {
-		authorship.Agent = name
+		authorship.Agent = service.CanonicalSessionAgent(name)
 	}
 	return authorship
 }

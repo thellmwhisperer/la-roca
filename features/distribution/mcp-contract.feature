@@ -59,6 +59,31 @@ Feature: The MCP is a thin plug over the same core
     And the identity card of that write declares it came from the plug
 
   @fast
+  Scenario Outline: A session handoff over MCP is accepted from the same harnesses the CLI accepts
+    When I open an MCP session as client "<client>"
+    And I store a session handoff over MCP with the same content the CLI accepts
+    Then the response is not an error
+    And that handoff is stored with agent "<agent>" and surface mcp
+    When I store the same session handoff through the CLI
+    Then the command exits with code 0
+    And the MCP store audit names agent, surface and origin
+
+    Examples:
+      | client         | agent  |
+      | claude-code    | claude |
+      | claude-desktop | claude |
+      | Claude Code    | claude |
+      | codex          | codex  |
+
+  @fast
+  Scenario: A worker progress note over MCP is refused with the reason named
+    When I open an MCP session as client "glm-5.2 (codex/slopslint-detector-a1)"
+    And I store a session handoff over MCP with the same content the CLI accepts
+    Then the response is a tool error
+    And the refusal names the agent, surface, origin and why it was refused
+    And the MCP store audit names agent, surface and origin
+
+  @fast
   Scenario: A missing argument is answered as a tool error, not as a crash
     When I open an MCP session over stdio against the binary
     And I call the query tool with no arguments
