@@ -919,10 +919,11 @@ gate = "after_ingest"
 ```
 
 Name collisions: later lexical files in `rides.d` win on a repeated ride name;
-`config.toml` then wins over the directory. An operator ride of the same name
-replaces every non-core plugin ride of that name. Plugin rides keep their own
-plugin identity unless replaced; operator rides use the reserved `operator`
-namespace. The built-in `core` ingest ride cannot be replaced.
+`config.toml` then wins over the directory. An operator `vector_delta` ride
+replaces only the bundled `roca-vector/vector_delta` ride; same-named rides from
+other plugins remain. Plugin rides keep their own plugin identity unless
+replaced; operator rides use the reserved `operator` namespace. The built-in
+`core` ingest ride cannot be replaced.
 
 `roca cron list` aggregates the built-in ride, installed plugin manifests, and
 operator declarations in stable plugin/ride order. `roca cron run [train]
