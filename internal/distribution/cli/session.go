@@ -317,16 +317,5 @@ func printUnknownPillHelp(env *cliEnv, err error, requestedProject string) {
 }
 
 func resolveProject(project string) (string, error) {
-	if project != "" {
-		return project, nil
-	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return "", fmt.Errorf("resolve the working directory: %w", err)
-	}
-	base := filepath.Base(cwd)
-	if base == "" || base == "." || base == string(filepath.Separator) {
-		return "", fmt.Errorf("a --project is required when the working directory has no basename")
-	}
-	return base, nil
+	return service.ResolveSessionProject(project)
 }

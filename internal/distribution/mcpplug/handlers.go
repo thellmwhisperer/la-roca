@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -72,18 +70,7 @@ func (p *plug) handoffLatest(ctx context.Context, _ *mcp.CallToolRequest,
 }
 
 func resolveSessionProject(project string) (string, error) {
-	if project != "" {
-		return project, nil
-	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return "", fmt.Errorf("resolve the working directory: %w", err)
-	}
-	base := filepath.Base(cwd)
-	if base == "" || base == "." || base == string(filepath.Separator) {
-		return "", fmt.Errorf("a project is required when the working directory has no basename")
-	}
-	return base, nil
+	return service.ResolveSessionProject(project)
 }
 
 func (p *plug) pillShow(ctx context.Context, _ *mcp.CallToolRequest,

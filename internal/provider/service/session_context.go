@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -12,6 +14,23 @@ import (
 
 	"github.com/thellmwhisperer/la-roca/internal/jsonid"
 )
+
+// ResolveSessionProject returns an explicit project or derives it from the
+// working directory for session-context commands.
+func ResolveSessionProject(project string) (string, error) {
+	if project != "" {
+		return project, nil
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("resolve the working directory: %w", err)
+	}
+	base := filepath.Base(cwd)
+	if base == "" || base == "." || base == string(filepath.Separator) {
+		return "", fmt.Errorf("a project is required when the working directory has no basename")
+	}
+	return base, nil
+}
 
 // MemoryRecord is one operational memory returned with its full content.
 type MemoryRecord struct {
