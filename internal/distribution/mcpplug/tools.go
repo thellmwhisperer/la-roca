@@ -125,6 +125,15 @@ func firstPositive(values ...int) int {
 	return 0
 }
 
+func firstNonZero(values ...int) int {
+	for _, value := range values {
+		if value != 0 {
+			return value
+		}
+	}
+	return 0
+}
+
 type handoffLatestArgs struct {
 	Project string `json:"project,omitempty" jsonschema:"project scope; omit to use the working-directory basename"`
 }

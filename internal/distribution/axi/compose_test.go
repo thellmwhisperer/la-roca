@@ -54,6 +54,16 @@ func TestQueryRendersTheRouteLineTOONRowsAndHelp(t *testing.T) {
 	}
 }
 
+func TestSearchKeepsHelpForOneHit(t *testing.T) {
+	got := axi.Search(service.SearchResult{
+		Question: "one exact hit", Engines: []string{"fts"},
+		Hits: []service.SearchHit{{Rank: 1, Source: "memory", Snippet: "one"}},
+	})
+	if !strings.Contains(got, "help[3]:") {
+		t.Fatalf("one-hit search lost contextual help:\n%s", got)
+	}
+}
+
 func TestQueryAndExecDeclareConsultedDatabases(t *testing.T) {
 	queryText := axi.Query(service.QueryResult{
 		Path: service.PathLLM, Match: service.MatchFound,
@@ -271,7 +281,7 @@ func TestSearchBudgetClipsSnippetsWithoutClippingCitations(t *testing.T) {
 					Hits: []service.SearchHit{{Rank: 1, Source: source, Legs: []string{"fts"}, Snippet: strings.Repeat("x", 1000)}},
 				})
 				want := "\n  1," + source + ",fts," + strings.Repeat("x", snippetBudget-1) + "…"
-				if !strings.HasSuffix(got, want) {
+				if !strings.Contains(got, want) {
 					t.Fatalf("search budget %d lost citation or snippet budget: %q", budget, got)
 				}
 			}

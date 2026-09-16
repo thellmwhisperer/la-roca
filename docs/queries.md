@@ -273,9 +273,9 @@ envelope, and there is no budget flag.
 that no other memory supersedes. With no limit (or `--limit 0`) it keeps the
 historical behavior: every current handoff is printed with complete content.
 A positive limit keeps only the first N handoffs in newest-first order, without
-clipping their content; negative limits are rejected. It chooses project
-handoffs after that filtering and falls back to unsuperseded global handoffs
-only when no project handoff remains. A later row alone does not supersede an
+clipping their content; negative limits are rejected. It chooses only project
+handoffs after that filtering; when none remain, it reports that the project has
+no handoff and names projects that do. A later row alone does not supersede an
 earlier handoff: a short worker receipt must name its predecessor to replace it.
 
 `roca handoff latest --all-projects [--since 30d] [--limit N]` prints one row per

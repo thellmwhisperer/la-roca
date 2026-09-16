@@ -350,6 +350,29 @@ func TestSearchToolsAcceptQuestionAndLimitAliases(t *testing.T) {
 	}
 }
 
+func TestUnknownPillThroughMCPListsKnownSlugsAndWorkingDirectoryScope(t *testing.T) {
+	svc := seededOpsService(t)
+	project, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = svc.Store(context.Background(), service.StoreRequest{
+		Layer: "pill", Content: "build instructions", Project: filepath.Base(project),
+		Metadata:   map[string]any{"pill_slug": "build"},
+		Authorship: service.Authorship{Surface: service.SurfaceMCP},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	refused := callToolExpectingError(t, connect(t, svc), "roca_pill_show", map[string]any{
+		"slug": "missing",
+	})
+	if !strings.Contains(refused, "known slugs:") ||
+		!strings.Contains(refused, "project scope came from the working directory") {
+		t.Fatalf("MCP pill miss lacks actionable help: %s", refused)
+	}
+}
+
 func TestStoreRefusalNamesAcceptedLayers(t *testing.T) {
 	refused := callToolExpectingError(t, connect(t, seededService(t)), "roca_store", map[string]any{
 		"layer": "handoff", "content": "token refresh done",

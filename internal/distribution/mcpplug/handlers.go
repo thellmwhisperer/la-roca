@@ -2,12 +2,15 @@ package mcpplug
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/axi"
+	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
 // The wrappers return any(nil) as the typed output so the SDK does not attach a
@@ -91,6 +94,19 @@ func (p *plug) pillShow(ctx context.Context, _ *mcp.CallToolRequest,
 	}
 	record, err := p.svc.ShowPill(ctx, project, in.Slug)
 	if err != nil {
+		var unknown *service.UnknownPillError
+		if errors.As(err, &unknown) {
+			var help []string
+			if len(unknown.Known) > 0 {
+				help = append(help, "known slugs: "+strings.Join(unknown.Known, ", "))
+			}
+			if in.Project == "" {
+				help = append(help, "project scope came from the working directory")
+			}
+			if len(help) > 0 {
+				return nil, nil, fmt.Errorf("%w\n%s", err, axi.RenderHelp(help...))
+			}
+		}
 		return nil, nil, err
 	}
 	return rendered(record, nil, axi.Pill)

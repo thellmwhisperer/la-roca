@@ -289,7 +289,7 @@ func searchText(res service.SearchResult, help []string) string {
 	if len(res.Hits) == 0 {
 		appendLine(&b, "no matches in memory for that search")
 	}
-	if len(help) > 0 && (len(res.Hits) != 1) {
+	if len(help) > 0 {
 		appendLine(&b, RenderHelp(help...))
 	}
 	return b.String()

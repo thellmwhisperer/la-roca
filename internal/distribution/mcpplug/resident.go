@@ -36,7 +36,7 @@ func (a vectorQueryArgs) queryText() string {
 }
 
 func (a vectorQueryArgs) hitCount() int {
-	return firstPositive(a.K, a.Limit, a.Top)
+	return firstNonZero(a.K, a.Limit, a.Top)
 }
 
 type residentVector struct {

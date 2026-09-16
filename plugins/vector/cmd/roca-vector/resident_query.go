@@ -104,40 +104,17 @@ func queryHelp(result vector.FederatedQuery) []string {
 
 func readHitHint(hits []vector.Result) string {
 	for _, hit := range hits {
-		if hit.Database == "" || hit.Table == "" || hit.ID == "" {
+		if hit.Alias == "" || hit.Table == "" || hit.ID == "" ||
+			hit.IDColumn == "" || len(hit.TextColumns) == 0 {
 			continue
 		}
-		alias := sqlAlias(hit.Database)
-		columns := textColumns(hit.Table)
 		return fmt.Sprintf(
-			"Run `roca exec \"SELECT %s FROM %s.%s WHERE id = %s\" --max-chars 2000` to read a hit in full",
-			columns, alias, hit.Table, hit.ID)
+			"Run `roca exec \"SELECT %s FROM %s.%s WHERE %s = %s\" --max-chars 2000` to read a hit in full",
+			strings.Join(hit.TextColumns, ", "), hit.Alias, hit.Table, hit.IDColumn, sqlLiteral(hit.ID))
 	}
 	return ""
 }
 
-func sqlAlias(database string) string {
-	switch {
-	case strings.HasPrefix(database, "plugin_"):
-		return database
-	case database == "corpus" || strings.Contains(database, "corpus"):
-		return "plugin_roca_corpus"
-	case database == "ops" || strings.Contains(database, "ops"):
-		return "plugin_roca_ops"
-	default:
-		return "plugin_roca_" + strings.ReplaceAll(database, "-", "_")
-	}
-}
-
-func textColumns(table string) string {
-	switch strings.ToLower(table) {
-	case "exchanges", "thinking_blocks":
-		return "human_text, agent_text"
-	case "memories":
-		return "content"
-	case "sessions":
-		return "title"
-	default:
-		return "human_text, agent_text"
-	}
+func sqlLiteral(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
 }

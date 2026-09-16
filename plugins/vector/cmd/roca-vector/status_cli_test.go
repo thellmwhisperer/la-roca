@@ -160,11 +160,24 @@ func TestStatusHelpSuggestsInstallOnlyWhenChunksAreMissing(t *testing.T) {
 
 func TestQueryHelpReadsAHitAndOffersToNarrow(t *testing.T) {
 	help := queryHelp(vector.FederatedQuery{Results: []vector.Result{{
-		Database: "corpus", Table: "exchanges", ID: "42",
+		Database: "corpus", Table: "exchanges", ID: "42", Alias: "plugin_roca_corpus",
+		IDColumn: "id", TextColumns: []string{"human_text", "agent_text"},
 	}}})
 	joined := strings.Join(help, "\n")
-	if !strings.Contains(joined, `SELECT human_text, agent_text FROM plugin_roca_corpus.exchanges WHERE id = 42`) ||
+	if !strings.Contains(joined, `SELECT human_text, agent_text FROM plugin_roca_corpus.exchanges WHERE id = '42'`) ||
 		!strings.Contains(joined, "--databases <one>") {
 		t.Fatalf("vector query help = %v", help)
+	}
+}
+
+func TestQueryHelpUsesDeclaredReadShapeAndEscapesTheHitID(t *testing.T) {
+	help := queryHelp(vector.FederatedQuery{Results: []vector.Result{{
+		Table: "records", ID: "a'b", Alias: "plugin_fixture_records",
+		IDColumn: "record_key", TextColumns: []string{"body", "title"},
+	}}})
+	joined := strings.Join(help, "\n")
+	want := `SELECT body, title FROM plugin_fixture_records.records WHERE record_key = 'a''b'`
+	if !strings.Contains(joined, want) {
+		t.Fatalf("vector query help = %v, want %q", help, want)
 	}
 }
