@@ -123,7 +123,7 @@ func TestDiscoverOperatorRidesIgnoresRideFreeConfig(t *testing.T) {
 	}
 }
 
-func TestDiscoverOperatorRidesPreservesIndependentRidesAfterRefusal(t *testing.T) {
+func TestDiscoverOperatorRidesRejectsAnUnusableFile(t *testing.T) {
 	ridesDir := t.TempDir()
 	for name, spec := range map[string]struct {
 		mode os.FileMode
@@ -138,15 +138,7 @@ func TestDiscoverOperatorRidesPreservesIndependentRidesAfterRefusal(t *testing.T
 		}
 	}
 
-	rides, warnings, err := plugin.DiscoverOperatorRides("", ridesDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rides) != 1 || rides[0].Name != "cleanup" ||
-		!strings.Contains(strings.Join(warnings, "\n"), "upload") ||
-		!strings.Contains(strings.Join(warnings, "\n"), "unknown field") {
-		t.Fatalf("filtered operator rides = %+v warnings = %v", rides, warnings)
-	}
+	requireOperatorRidesError(t, ridesDir, "operator ride file 10-export.toml is unusable")
 }
 
 func TestDiscoverOperatorRidesRejectsDuplicateNamesAcrossFiles(t *testing.T) {
@@ -158,14 +150,35 @@ func TestDiscoverOperatorRidesRejectsDuplicateNamesAcrossFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rides, warnings, err := plugin.DiscoverOperatorRides("", ridesDir)
-	if err == nil || rides != nil || len(warnings) != 0 ||
-		!strings.Contains(err.Error(), "duplicate operator ride") {
-		t.Fatalf("duplicate operator rides = rides=%+v warnings=%v err=%v", rides, warnings, err)
+	requireOperatorRidesError(t, ridesDir, "duplicate operator ride")
+}
+
+func TestDiscoverOperatorRidesRejectsDuplicateNamesWithinFile(t *testing.T) {
+	ridesDir := t.TempDir()
+	path := filepath.Join(ridesDir, "backup.toml")
+	body := `[ride.backup]
+command = "echo first"
+
+[ride.backup]
+command = "echo second"
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
 	}
+
+	requireOperatorRidesError(t, ridesDir, "operator ride file backup.toml is unusable")
 }
 
 func allowInstalledRideFixture(string, string) error { return nil }
+
+func requireOperatorRidesError(t *testing.T, ridesDir, want string) {
+	t.Helper()
+	rides, warnings, err := plugin.DiscoverOperatorRides("", ridesDir)
+	if err == nil || rides != nil || len(warnings) != 0 || !strings.Contains(err.Error(), want) {
+		t.Fatalf("operator rides = rides=%+v warnings=%v err=%v; want error containing %q",
+			rides, warnings, err, want)
+	}
+}
 
 func writeRides(t *testing.T, root, name, body string) {
 	t.Helper()
