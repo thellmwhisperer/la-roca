@@ -864,10 +864,6 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 			return config.SetServingLayout(paths.Config, config.LayoutLegacyServing)
 		}
 	}
-	vectorSearch := service.VectorSearchFunc(nil)
-	if file.Features.Vector {
-		vectorSearch = service.PluginVectorSearch(paths.DB)
-	}
 	svc, err := service.Open(service.Options{
 		DBPath:                    paths.DB,
 		ProviderProbe:             providerProbe(paths, readOnly),
@@ -877,6 +873,7 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 		Commit:                    env.build.Commit,
 		QueryTimeout:              time.Duration(file.Query.TimeoutMS) * time.Millisecond,
 		QueryTimeoutSet:           file.Query.TimeoutSet,
+		Query:                     file.Query.Settings(),
 		DisableMissingReferentAsk: !file.Features.AskMissingReferent,
 		PluginDir:                 pluginDir,
 		PluginsEnabled:            file.Features.Plugins,
@@ -890,7 +887,6 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 		ConfigExists: file.Exists,
 		Sources:      ingestSources(file, home, paths.Runner),
 		ReadOnly:     readOnly,
-		VectorSearch: vectorSearch,
 		Progress: func(line string) {
 			if !env.json && strings.HasPrefix(line, "index: rebuilding") {
 				env.initSay("%s", line)

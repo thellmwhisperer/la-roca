@@ -93,6 +93,8 @@ func TestDoctorNarratesAndAnswersJSON(t *testing.T) {
 	human := runRoot(t, contractBuild(), "doctor")
 	for _, want := range []string{
 		"roca " + contractVersion, "database:", "configuration:",
+		"query: oversample 100", "templates default", "rrf_k 60",
+		"min_vector_score 0.35", "max_rare_terms 5", "parallel_legs false",
 		"agents detected:", "agents not found:", "playground:",
 	} {
 		if !strings.Contains(human, want) {
@@ -101,7 +103,7 @@ func TestDoctorNarratesAndAnswersJSON(t *testing.T) {
 	}
 
 	doc := mustJSON(t, runRoot(t, contractBuild(), "doctor", "--json"))
-	for _, key := range []string{"version", "source_sha", "config_path", "memories"} {
+	for _, key := range []string{"version", "source_sha", "config_path", "memories", "query"} {
 		if _, ok := doc[key]; !ok {
 			t.Errorf("doctor --json is missing %q:\n%s", key, doc)
 		}
