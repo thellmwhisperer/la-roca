@@ -488,7 +488,7 @@ func queryCommand(env *environment) *cobra.Command {
 				return printJSON(map[string]any{"query": args[0], "k": k,
 					"results": results, "vector_executed": true,
 					"elapsed_ms": time.Since(started).Milliseconds(),
-					"help":        help})
+					"help":       help})
 			}
 			printResults(results)
 			if rendered := renderHelp(help); rendered != "" {
