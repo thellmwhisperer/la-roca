@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/thellmwhisperer/la-roca-vector/internal/vector"
+	"github.com/thellmwhisperer/la-roca/pkg/vectorhelp"
 	_ "modernc.org/sqlite"
 )
 
@@ -158,26 +160,47 @@ func TestStatusHelpSuggestsInstallOnlyWhenChunksAreMissing(t *testing.T) {
 	}
 }
 
-func TestQueryHelpReadsAHitAndOffersToNarrow(t *testing.T) {
-	help := queryHelp(vector.FederatedQuery{Results: []vector.Result{{
-		Database: "corpus", Table: "exchanges", ID: "42", Alias: "plugin_roca_corpus",
-		IDColumn: "id", TextColumns: []string{"human_text", "agent_text"},
-	}}})
-	joined := strings.Join(help, "\n")
-	if !strings.Contains(joined, `SELECT human_text, agent_text FROM plugin_roca_corpus.exchanges WHERE id = '42'`) ||
-		!strings.Contains(joined, "--databases <one>") {
-		t.Fatalf("vector query help = %v", help)
-	}
-}
-
-func TestQueryHelpUsesDeclaredReadShapeAndEscapesTheHitID(t *testing.T) {
-	help := queryHelp(vector.FederatedQuery{Results: []vector.Result{{
-		Table: "records", ID: "a'b", Alias: "plugin_fixture_records",
-		IDColumn: "record_key", TextColumns: []string{"body", "title"},
-	}}})
-	joined := strings.Join(help, "\n")
-	want := `SELECT body, title FROM plugin_fixture_records.records WHERE record_key = 'a''b'`
-	if !strings.Contains(joined, want) {
-		t.Fatalf("vector query help = %v, want %q", help, want)
+func TestQueryHelpUsesSharedHints(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		result vector.FederatedQuery
+		shared []vectorhelp.Hit
+		want   string
+	}{
+		{
+			name: "declared read shape",
+			result: vector.FederatedQuery{Results: []vector.Result{{
+				Database: "corpus", Table: "exchanges", ID: "42", Alias: "plugin_roca_corpus",
+				IDColumn: "id", TextColumns: []string{"human_text", "agent_text"},
+			}}},
+			shared: []vectorhelp.Hit{{
+				Alias: "plugin_roca_corpus", Table: "exchanges", ID: "42",
+				IDColumn: "id", TextColumns: []string{"human_text", "agent_text"},
+			}},
+			want: `SELECT human_text, agent_text FROM plugin_roca_corpus.exchanges WHERE id = '42'`,
+		},
+		{
+			name: "escaped id",
+			result: vector.FederatedQuery{Results: []vector.Result{{
+				Table: "records", ID: "a'b", Alias: "plugin_fixture_records",
+				IDColumn: "record_key", TextColumns: []string{"body", "title"},
+			}}},
+			shared: []vectorhelp.Hit{{
+				Alias: "plugin_fixture_records", Table: "records", ID: "a'b",
+				IDColumn: "record_key", TextColumns: []string{"body", "title"},
+			}},
+			want: `SELECT body, title FROM plugin_fixture_records.records WHERE record_key = 'a''b'`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			help := queryHelp(tc.result)
+			shared := vectorhelp.Query(tc.shared)
+			if !slices.Equal(help, shared) {
+				t.Fatalf("plugin help = %v, shared = %v", help, shared)
+			}
+			if !strings.Contains(strings.Join(help, "\n"), tc.want) {
+				t.Fatalf("vector query help = %v", help)
+			}
+		})
 	}
 }
