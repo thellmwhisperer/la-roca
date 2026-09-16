@@ -184,12 +184,8 @@ func (s *Service) Close() error {
 	return s.db.Close()
 }
 
-func (s *Service) List() ([]plugin.Ride, []string) {
-	rides, warnings, err := s.list()
-	if err != nil {
-		return []plugin.Ride{coreIngestRide()}, append(warnings, err.Error())
-	}
-	return rides, warnings
+func (s *Service) List() ([]plugin.Ride, []string, error) {
+	return s.list()
 }
 
 func (s *Service) list() ([]plugin.Ride, []string, error) {

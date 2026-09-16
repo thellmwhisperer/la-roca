@@ -123,7 +123,7 @@ func TestDiscoverOperatorRidesIgnoresRideFreeConfig(t *testing.T) {
 	}
 }
 
-func TestDiscoverOperatorRidesPreservesIndependentRidesAfterRefusal(t *testing.T) {
+func TestDiscoverOperatorRidesRejectsAnUnusableFile(t *testing.T) {
 	ridesDir := t.TempDir()
 	for name, spec := range map[string]struct {
 		mode os.FileMode
@@ -139,13 +139,9 @@ func TestDiscoverOperatorRidesPreservesIndependentRidesAfterRefusal(t *testing.T
 	}
 
 	rides, warnings, err := plugin.DiscoverOperatorRides("", ridesDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rides) != 1 || rides[0].Name != "cleanup" ||
-		!strings.Contains(strings.Join(warnings, "\n"), "upload") ||
-		!strings.Contains(strings.Join(warnings, "\n"), "unknown field") {
-		t.Fatalf("filtered operator rides = %+v warnings = %v", rides, warnings)
+	if err == nil || rides != nil || len(warnings) != 0 ||
+		!strings.Contains(err.Error(), "operator ride file 10-export.toml is unusable") {
+		t.Fatalf("unusable operator rides = %+v warnings = %v err = %v", rides, warnings, err)
 	}
 }
 
@@ -161,6 +157,26 @@ func TestDiscoverOperatorRidesRejectsDuplicateNamesAcrossFiles(t *testing.T) {
 	rides, warnings, err := plugin.DiscoverOperatorRides("", ridesDir)
 	if err == nil || rides != nil || len(warnings) != 0 ||
 		!strings.Contains(err.Error(), "duplicate operator ride") {
+		t.Fatalf("duplicate operator rides = rides=%+v warnings=%v err=%v", rides, warnings, err)
+	}
+}
+
+func TestDiscoverOperatorRidesRejectsDuplicateNamesWithinFile(t *testing.T) {
+	ridesDir := t.TempDir()
+	path := filepath.Join(ridesDir, "backup.toml")
+	body := `[ride.backup]
+command = "echo first"
+
+[ride.backup]
+command = "echo second"
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	rides, warnings, err := plugin.DiscoverOperatorRides("", ridesDir)
+	if err == nil || rides != nil || len(warnings) != 0 ||
+		!strings.Contains(err.Error(), "operator ride file backup.toml is unusable") {
 		t.Fatalf("duplicate operator rides = rides=%+v warnings=%v err=%v", rides, warnings, err)
 	}
 }
