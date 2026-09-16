@@ -216,9 +216,12 @@ func cronListCommand(env *cliEnv) *cobra.Command {
 				return err
 			}
 			defer service.Close()
-			rides, warnings := service.List()
+			rides, warnings, err := service.List()
 			for _, warning := range warnings {
 				fmt.Fprintf(env.errOut, "warning: %s\n", warning)
+			}
+			if err != nil {
+				return err
 			}
 			if env.json {
 				return env.printJSON(map[string]any{"rides": rides, "warnings": warnings})

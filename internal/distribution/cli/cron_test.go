@@ -87,7 +87,7 @@ func TestCronListAndDryRunRemainAvailableInReadOnlyMode(t *testing.T) {
 	}
 }
 
-func TestCronRunPrintsOperatorRideWarnings(t *testing.T) {
+func TestCronRunRejectsAnUnusableOperatorRideFile(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("ROCA_MODELS_ORDER", "none")
@@ -105,12 +105,8 @@ surprise = true
 
 	env, output, warnings := newCronTestEnv()
 	code, err := executeWithEnv(env, []string{"cron", "run", "--dry-run"}, nil)
-	if err != nil || code != ExitOK {
+	if err == nil || code == ExitOK || !strings.Contains(err.Error(), "unknown field") {
 		t.Fatalf("cron run = code %d err %v: %s%s", code, err, output.String(), warnings.String())
-	}
-	if !strings.Contains(warnings.String(), "warning:") ||
-		!strings.Contains(warnings.String(), "unknown field") {
-		t.Fatalf("cron warnings = %q", warnings.String())
 	}
 }
 

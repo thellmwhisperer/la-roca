@@ -65,7 +65,10 @@ gate = "after_ingest"
 		return 0, nil
 	})
 
-	registered, _ := service.List()
+	registered, _, err := service.List()
+	if err != nil {
+		t.Fatal(err)
+	}
 	report, err := service.Run(context.Background(), plugin.DefaultTrain, false)
 	if err != nil {
 		t.Fatal(err)
@@ -141,7 +144,10 @@ train = "hourly"
 command = "roca vector ingest --delta"
 `)
 	service := newService(t, root, database, nil)
-	rides, warnings := service.List()
+	rides, warnings, err := service.List()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(warnings) != 0 || len(rides) != 2 {
 		t.Fatalf("rides = %+v warnings = %v", rides, warnings)
 	}
@@ -164,7 +170,10 @@ func TestVectorRideFollowsFeatureAndOnlyItsBundledCollisionIsReplaced(t *testing
 	writeRides(t, root, "archive", manifest)
 
 	disabled := newService(t, root, filepath.Join(t.TempDir(), rocacron.DatabaseFilename), nil)
-	rides, warnings := disabled.List()
+	rides, warnings, err := disabled.List()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(warnings) != 0 || len(rides) != 2 || rides[1].Plugin != "archive" {
 		t.Fatalf("disabled vector rides = %+v warnings = %v", rides, warnings)
 	}
@@ -177,7 +186,10 @@ func TestVectorRideFollowsFeatureAndOnlyItsBundledCollisionIsReplaced(t *testing
 		PluginRoot: root, Database: filepath.Join(t.TempDir(), rocacron.DatabaseFilename),
 		ConfigPath: configPath, VectorEnabled: true,
 	})
-	rides, warnings = enabled.List()
+	rides, warnings, err = enabled.List()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(warnings) != 1 || !strings.Contains(warnings[0], "roca-vector/vector_delta") || len(rides) != 3 {
 		t.Fatalf("enabled vector rides = %+v warnings = %v", rides, warnings)
 	}
@@ -245,10 +257,10 @@ func TestListRejectsRidesWithoutVerifiedInstallerOwnership(t *testing.T) {
 			root := filepath.Join(t.TempDir(), "plugins")
 			test.prepare(t, root)
 			service := newService(t, root, filepath.Join(t.TempDir(), rocacron.DatabaseFilename), nil)
-			rides, warnings := service.List()
-			if len(rides) != 1 || rides[0].Plugin != "core" || len(warnings) != 1 ||
+			rides, warnings, err := service.List()
+			if err != nil || len(rides) != 1 || rides[0].Plugin != "core" || len(warnings) != 1 ||
 				!strings.Contains(warnings[0], test.want) {
-				t.Fatalf("rides = %+v warnings = %v", rides, warnings)
+				t.Fatalf("rides = %+v warnings = %v err = %v", rides, warnings, err)
 			}
 		})
 	}
@@ -264,7 +276,10 @@ gate = "after_compact"
 		t.Fatalf("an unresolvable gate was installed: %v", err)
 	}
 	service := newService(t, root, filepath.Join(t.TempDir(), rocacron.DatabaseFilename), nil)
-	rides, warnings := service.List()
+	rides, warnings, err := service.List()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(rides) != 1 || rides[0].Plugin != "core" || len(warnings) != 0 {
 		t.Fatalf("rides = %+v warnings = %v", rides, warnings)
 	}
@@ -461,7 +476,10 @@ gate = "after_ingest"
 			return 0, nil
 		},
 	})
-	rides, warnings := service.List()
+	rides, warnings, err := service.List()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(rides) != 3 {
 		t.Fatalf("rides = %+v warnings = %v", rides, warnings)
 	}
@@ -486,10 +504,10 @@ surprise = true
 `), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	rides, warnings = service.List()
-	if len(rides) != 3 || rides[2].Plugin != "roca-vector" ||
-		!strings.Contains(strings.Join(warnings, "\n"), "unknown field") {
-		t.Fatalf("invalid config rides = %+v warnings = %v", rides, warnings)
+	rides, warnings, err = service.List()
+	if err == nil || rides != nil || len(warnings) != 0 ||
+		!strings.Contains(err.Error(), "operator rides in "+configPath+" are unusable") {
+		t.Fatalf("invalid config rides = %+v warnings = %v err = %v", rides, warnings, err)
 	}
 }
 
