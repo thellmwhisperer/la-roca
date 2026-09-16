@@ -5,7 +5,6 @@ package rocavector
 import (
 	"bytes"
 	"crypto/sha256"
-	_ "embed"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -32,9 +31,6 @@ var (
 	trailerMagic = [16]byte{'R', 'O', 'C', 'A', '_', 'V', 'E', 'C', 'T', 'O', 'R', '_', 'V', '1'}
 	manifest     = []byte(`{"schema":1,"name":"roca-vector","version":"dev","kind":"executable","state_directory":"state"}`)
 )
-
-//go:embed rides.toml
-var rides []byte
 
 // ErrNoPayload reports that the running binary is not a release envelope and
 // carries no appended vector executable at all. It distinguishes that build
@@ -65,16 +61,15 @@ func bundleSpec(payload func() ([]byte, error)) bundledplugin.Spec {
 func bundledRides() []byte {
 	executable, err := os.Executable()
 	if err != nil {
-		return rides
+		executable = os.Args[0]
 	}
 	absolute, err := filepath.Abs(executable)
 	if err != nil {
-		return rides
+		absolute = executable
 	}
 	command := shellQuote(absolute) + " vector ingest --delta"
-	return bytes.Replace(rides,
-		[]byte(`command = "roca vector ingest --delta"`),
-		[]byte("command = "+strconv.Quote(command)), 1)
+	return []byte("[ride.vector_delta]\ncommand = " + strconv.Quote(command) +
+		"\ngate = \"after_ingest\"\n")
 }
 
 func shellQuote(value string) string {

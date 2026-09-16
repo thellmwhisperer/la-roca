@@ -26,7 +26,6 @@ type Ride struct {
 	Train   string `json:"train"`
 	Command string `json:"command"`
 	Gate    string `json:"gate,omitempty"`
-	Source  string `json:"-"`
 }
 
 type RideVerifier func(pluginName, directory string) error
@@ -261,7 +260,6 @@ func parseRideSource(pluginName, source string, raw []byte, configFile bool) ([]
 		}
 		rides = append(rides, Ride{
 			Name: name, Plugin: pluginName, Train: train, Command: command, Gate: gate,
-			Source: source,
 		})
 	}
 	slices.SortFunc(rides, func(a, b Ride) int { return strings.Compare(a.Name, b.Name) })

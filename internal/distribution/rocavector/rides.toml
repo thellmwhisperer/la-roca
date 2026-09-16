@@ -1,3 +1,0 @@
-[ride.vector_delta]
-command = "roca vector ingest --delta"
-gate = "after_ingest"

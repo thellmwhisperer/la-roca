@@ -74,21 +74,23 @@ command = "echo backup"
 	}
 
 	setDACL([]windows.EXPLICIT_ACCESS{ownerEntry(windows.FILE_GENERIC_READ | windows.FILE_GENERIC_WRITE)})
-	if err := CheckOperatorRideFile(path); err != nil {
-		t.Fatalf("owner-only DACL: %v", err)
+	if rides, warnings, err := DiscoverOperatorRides(path, ""); err != nil ||
+		len(rides) != 1 || len(warnings) != 0 {
+		t.Fatalf("owner-only DACL: rides=%+v warnings=%v err=%v", rides, warnings, err)
 	}
 	setDACL([]windows.EXPLICIT_ACCESS{
 		ownerEntry(windows.FILE_GENERIC_READ | windows.FILE_GENERIC_WRITE),
 		worldEntry(windows.FILE_GENERIC_READ),
 	})
-	if err := CheckOperatorRideFile(path); err != nil {
-		t.Fatalf("world-read DACL: %v", err)
+	if rides, warnings, err := DiscoverOperatorRides(path, ""); err != nil ||
+		len(rides) != 1 || len(warnings) != 0 {
+		t.Fatalf("world-read DACL: rides=%+v warnings=%v err=%v", rides, warnings, err)
 	}
 	setDACL([]windows.EXPLICIT_ACCESS{
 		ownerEntry(windows.FILE_GENERIC_READ | windows.FILE_GENERIC_WRITE),
 		worldEntry(windows.FILE_GENERIC_WRITE),
 	})
-	if err := CheckOperatorRideFile(path); err == nil ||
+	if _, _, err := DiscoverOperatorRides(path, ""); err == nil ||
 		!strings.Contains(err.Error(), "writable by group or others") {
 		t.Fatalf("world-write DACL: %v", err)
 	}
@@ -103,7 +105,7 @@ command = "echo backup"
 	); err != nil {
 		t.Fatal(err)
 	}
-	if err := CheckOperatorRideFile(path); err == nil {
+	if _, _, err := DiscoverOperatorRides(path, ""); err == nil {
 		t.Fatalf("null DACL: %v", err)
 	}
 }
