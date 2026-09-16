@@ -583,7 +583,7 @@ func tagFederatedResults(results []Result, database vectorDatabase) {
 		if results[index].Table == "" {
 			results[index].Table = results[index].Source
 		}
-		if table, ok := database.table(results[index].Table); ok {
+		if table, ok := (DeclaredCorpus{Database: database}).table(results[index].Table); ok {
 			results[index].Alias = database.Alias
 			results[index].IDColumn = table.IDColumn
 			results[index].TextColumns = append([]string(nil), table.TextColumns...)
