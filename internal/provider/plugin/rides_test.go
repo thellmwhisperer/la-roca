@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
+	"github.com/thellmwhisperer/la-roca/test/testfixture"
 )
 
 func TestDiscoverRidesReadsEveryInstalledPluginInDeterministicOrder(t *testing.T) {
@@ -81,6 +82,86 @@ command = "echo should-not-run"
 	if len(rides) != 0 || len(warnings) != 1 ||
 		!strings.Contains(warnings[0], "no installer proof") {
 		t.Fatalf("rides = %+v warnings = %v", rides, warnings)
+	}
+}
+
+func TestDiscoverOperatorRidesResolvesGatesAcrossFiles(t *testing.T) {
+	ridesDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(ridesDir, "10-export.toml"), []byte(`[ride.export]
+command = "echo export"
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ridesDir, "20-upload.toml"), []byte(`[ride.upload]
+command = "echo upload"
+gate = "after_export"
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	rides, warnings, err := plugin.DiscoverOperatorRides("", ridesDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warnings) != 0 || len(rides) != 2 {
+		t.Fatalf("rides = %+v warnings = %v", rides, warnings)
+	}
+	if rides[0].Name != "export" || rides[1].Name != "upload" || rides[1].Gate != "after_export" {
+		t.Fatalf("rides = %+v", rides)
+	}
+}
+
+func TestDiscoverOperatorRidesIgnoresRideFreeConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[features]\ncron = true\n"), 0o664); err != nil {
+		t.Fatal(err)
+	}
+
+	rides, warnings, err := plugin.DiscoverOperatorRides(path, "")
+	if err != nil || len(rides) != 0 || len(warnings) != 0 {
+		t.Fatalf("ride-free config = rides=%+v warnings=%v err=%v", rides, warnings, err)
+	}
+}
+
+func TestDiscoverOperatorRidesPreservesIndependentRidesAfterRefusal(t *testing.T) {
+	ridesDir := t.TempDir()
+	for name, spec := range map[string]struct {
+		mode os.FileMode
+		body string
+	}{
+		"10-export.toml":  {mode: 0o600, body: "[ride.export]\ncommand = \"echo export\"\nsurprise = true\n"},
+		"20-upload.toml":  {mode: 0o600, body: "[ride.upload]\ncommand = \"echo upload\"\ngate = \"after_export\"\n"},
+		"30-cleanup.toml": {mode: 0o600, body: "[ride.cleanup]\ncommand = \"echo cleanup\"\n"},
+	} {
+		if err := os.WriteFile(filepath.Join(ridesDir, name), []byte(spec.body), spec.mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	rides, warnings, err := plugin.DiscoverOperatorRides("", ridesDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rides) != 1 || rides[0].Name != "cleanup" ||
+		!strings.Contains(strings.Join(warnings, "\n"), "upload") ||
+		!strings.Contains(strings.Join(warnings, "\n"), "unknown field") {
+		t.Fatalf("filtered operator rides = %+v warnings = %v", rides, warnings)
+	}
+}
+
+func TestDiscoverOperatorRidesRejectsDuplicateNamesAcrossFiles(t *testing.T) {
+	ridesDir := t.TempDir()
+	if err := testfixture.WriteOperatorRideFiles(ridesDir, "backup", map[string]string{
+		"10-backup.toml": "echo first",
+		"20-backup.toml": "echo second",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rides, warnings, err := plugin.DiscoverOperatorRides("", ridesDir)
+	if err == nil || rides != nil || len(warnings) != 0 ||
+		!strings.Contains(err.Error(), "duplicate operator ride") {
+		t.Fatalf("duplicate operator rides = rides=%+v warnings=%v err=%v", rides, warnings, err)
 	}
 }
 
