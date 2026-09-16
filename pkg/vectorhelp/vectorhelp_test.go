@@ -14,12 +14,12 @@ func TestQueryReadsAHitAndOffersToNarrow(t *testing.T) {
 		want string
 	}{
 		{
-			name: "declared read shape",
+			name: "quoted identifiers",
 			hits: []vectorhelp.Hit{{
-				Alias: "plugin_roca_corpus", Table: "exchanges", ID: "42",
-				IDColumn: "id", TextColumns: []string{"human_text", "agent_text"},
+				Alias: "plugin_fixture_records", Table: "order", ID: "$(touch /tmp/pwned)",
+				IDColumn: "where", TextColumns: []string{"select", "from"},
 			}},
-			want: `SELECT human_text, agent_text FROM plugin_roca_corpus.exchanges WHERE id = '42'`,
+			want: `roca exec 'SELECT "select", "from" FROM "plugin_fixture_records"."order" WHERE "where" = '\''$(touch /tmp/pwned)'\''' --max-chars 2000`,
 		},
 		{
 			name: "escaped id and named columns",
@@ -27,7 +27,7 @@ func TestQueryReadsAHitAndOffersToNarrow(t *testing.T) {
 				Alias: "plugin_fixture_records", Table: "records", ID: "a'b",
 				IDColumn: "record_key", TextColumns: []string{"body", "title"},
 			}},
-			want: `SELECT body, title FROM plugin_fixture_records.records WHERE record_key = 'a''b'`,
+			want: `roca exec 'SELECT "body", "title" FROM "plugin_fixture_records"."records" WHERE "record_key" = '\''a'\'''\''b'\''' --max-chars 2000`,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
