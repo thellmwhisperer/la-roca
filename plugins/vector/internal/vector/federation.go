@@ -314,7 +314,17 @@ func (f Federation) Query(ctx context.Context, text string, k int, databaseList 
 // unions the KNN lists, applies minScore, and dedupes by stable source.
 func (f Federation) QueryExpanded(ctx context.Context, text string, k int,
 	databaseList string, minScore float64) (FederatedQuery, error) {
-	return f.queryTexts(ctx, ExpandedQueries(text), k, databaseList, minScore, false)
+	return f.QueryExpandedWith(ctx, text, k, databaseList, minScore, nil)
+}
+
+// QueryExpandedWith embeds the raw query plus templates. A nil template list
+// uses the built-in question wrappers.
+func (f Federation) QueryExpandedWith(ctx context.Context, text string, k int,
+	databaseList string, minScore float64, templates []string) (FederatedQuery, error) {
+	if templates == nil {
+		templates = QuestionTemplates
+	}
+	return f.queryTexts(ctx, ExpandWith(text, templates), k, databaseList, minScore, false)
 }
 
 func (f Federation) queryTexts(ctx context.Context, texts []string, k int, databaseList string,
@@ -399,10 +409,24 @@ func (f Federation) queryTexts(ctx context.Context, texts []string, k int, datab
 			result.noticeModelUnavailable(model, group, "embedding provider returned no query vector")
 			continue
 		}
-		for _, target := range group {
-			if err := f.searchTarget(ctx, &result, target, model, vectors, k, minScore); err != nil {
-				return result, err
+		targetResults := make([]FederatedQuery, len(group))
+		targetErrors := make([]error, len(group))
+		var targets sync.WaitGroup
+		for index, target := range group {
+			targets.Add(1)
+			go func() {
+				defer targets.Done()
+				targetResults[index].MixedModels = result.MixedModels
+				targetErrors[index] = f.searchTarget(
+					ctx, &targetResults[index], target, model, vectors, k, minScore)
+			}()
+		}
+		targets.Wait()
+		for index := range group {
+			if targetErrors[index] != nil {
+				return result, targetErrors[index]
 			}
+			mergeTargetQuery(&result, targetResults[index])
 		}
 	}
 	if result.MixedModels {
@@ -414,6 +438,29 @@ func (f Federation) queryTexts(ctx context.Context, texts []string, k int, datab
 	}
 	result.Results = finishFederatedHits(result.Results, k, trimToK)
 	return result, nil
+}
+
+func mergeTargetQuery(result *FederatedQuery, target FederatedQuery) {
+	result.VectorExecuted = result.VectorExecuted || target.VectorExecuted
+	result.Notices = append(result.Notices, target.Notices...)
+	if !result.MixedModels {
+		result.Results = unionFederatedHits(result.Results, target.Results)
+		return
+	}
+	for _, incoming := range target.DatabaseResults {
+		merged := false
+		for index := range result.DatabaseResults {
+			if result.DatabaseResults[index].Database == incoming.Database {
+				result.DatabaseResults[index].Results = unionFederatedHits(
+					result.DatabaseResults[index].Results, incoming.Results)
+				merged = true
+				break
+			}
+		}
+		if !merged {
+			result.DatabaseResults = append(result.DatabaseResults, incoming)
+		}
+	}
 }
 
 func (f Federation) searchTarget(ctx context.Context, result *FederatedQuery, target queryTarget,
