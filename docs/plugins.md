@@ -886,6 +886,13 @@ directory, a changed payload, or an installation whose manifest and checksums no
 longer agree contributes nothing. That check re-reads every declared payload
 except the plugin's own writable database.
 
+When `features.vector = true`, the bundled `roca-vector` plugin ships a
+`vector_delta` ride (`after_ingest`) so the nightly train schedules
+`roca vector ingest --delta` after ingest. Editing a bundled plugin directory is
+not the way to add or change a ride: that changes the checksum-verified payload
+and the plugin contributes nothing. Operator configuration lives outside the
+payload.
+
 ### Declaring rides
 
 A plugin opts in with `rides.toml`. Ride, train, and gate names are identifier
@@ -897,9 +904,33 @@ command = "roca-receipts import --delta"
 gate = "after_ingest"
 ```
 
-`roca cron list` aggregates the built-in and installed plugin manifests in
-stable plugin/ride order. `roca cron run [train] --dry-run` prints that order
-and each gate's current status without invoking or recording anything.
+The operator can declare the same fields outside any plugin payload. Write
+`[ride.<name>]` tables in `~/.roca/config.toml`, or drop `*.toml` files into
+`~/.roca/rides.d/`. Those files are operator configuration, not package
+payload, so `roca update` keeps working. Writing the file is the declaration:
+there is no consent command and no consent document. Those tables are ordinary
+operator configuration, like the rest of `config.toml`:
+
+```toml
+[ride.vector_delta]
+command = "roca vector ingest --delta"
+gate = "after_ingest"
+```
+
+Every selected `rides.d/*.toml` entry must resolve to a readable regular file
+and declare at least one valid ride. An unusable declaration makes `roca cron
+list` and `roca cron run` fail instead of running a partial operator
+configuration. Duplicate operator ride names, whether repeated in one source or
+across `config.toml` and `rides.d` files, are rejected. An operator
+`vector_delta` ride replaces only the bundled `roca-vector/vector_delta` ride;
+same-named rides from other plugins remain. Plugin rides keep their own plugin
+identity unless replaced; operator rides use the reserved `operator` namespace.
+The built-in `core` ingest ride cannot be replaced.
+
+`roca cron list` aggregates the built-in ride, installed plugin manifests, and
+operator declarations in stable plugin/ride order. `roca cron run [train]
+--dry-run` prints that order and each gate's current status without invoking or
+recording a journey.
 
 A gate named `after_<ride>` opens only when that dependency's latest recorded
 journey ended with exit code zero. The dependency is the ride of that name
@@ -939,10 +970,11 @@ whole: unlike the operational log, it is neither rotated nor pruned. See
 
 ### Calling it from system cron
 
-The train expects an ordinary crontab entry. The built-in ride addresses the
-running binary by its absolute path, so it survives cron's minimal environment;
-a plugin ride command is resolved by the shell, so give it an absolute path or
-declare `PATH` in the crontab:
+The train expects an ordinary crontab entry. The built-in ingest ride and the
+bundled `roca-vector` ride address the running binary by its absolute path, so
+they survive cron's minimal environment. Other plugin and operator ride
+commands are resolved by the shell, so give them absolute paths or declare
+`PATH` in the crontab:
 
 ```crontab
 PATH=/usr/bin:/bin:/home/you/.local/bin

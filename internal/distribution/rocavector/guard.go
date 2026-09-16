@@ -68,7 +68,7 @@ func migrationGuard(root string) (func() error, error) {
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return nil, fmt.Errorf("create plugin directory: %w", err)
 	}
-	releaseRelocation, busy, err := tryExclusiveFileLock(RelocationLockPath(root))
+	releaseRelocation, busy, err := tryExclusiveFileLock(RelocationLockPath(root), false)
 	if err != nil {
 		return nil, fmt.Errorf("lock vector relocation: %w", err)
 	}
@@ -118,7 +118,7 @@ func migrationGuard(root string) (func() error, error) {
 		}
 		reservations = append(reservations, reservation)
 		lockPath := filepath.Join(state, vectorDatabaseFilename+".index.lock")
-		releaseIndex, busy, err := tryExclusiveFileLock(lockPath)
+		releaseIndex, busy, err := tryExclusiveFileLock(lockPath, true)
 		if err != nil {
 			return fail(fmt.Errorf("lock vector index at %s: %w", lockPath, err))
 		}

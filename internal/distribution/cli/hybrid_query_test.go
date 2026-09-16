@@ -21,6 +21,75 @@ func TestPlaygroundHelpTeachesHumanSQLModes(t *testing.T) {
 	}
 }
 
+func TestQueryHelpNamesTheHybridKnobs(t *testing.T) {
+	var output strings.Builder
+	root := rootCommand(&cliEnv{})
+	root.SetOut(&output)
+	root.SetArgs([]string{"query", "--help"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"--oversample", "--no-templates", "--top"} {
+		if !strings.Contains(output.String(), want) {
+			t.Errorf("query help lacks %q:\n%s", want, output.String())
+		}
+	}
+	for _, removed := range []string{"--rrf-k", "--min-vector-score", "--max-rare-terms", "--parallel-legs"} {
+		if strings.Contains(output.String(), removed) {
+			t.Errorf("query help still exposes %q:\n%s", removed, output.String())
+		}
+	}
+}
+
+func TestQueryRejectsInvalidOversampleBeforeOpeningTheService(t *testing.T) {
+	for _, testCase := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "oversample below minimum", args: []string{"query", "--oversample", "0", "question"}, want: "oversample must be between 1 and 100"},
+		{name: "oversample above maximum", args: []string{"query", "--oversample", "101", "question"}, want: "oversample must be between 1 and 100"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			root := rootCommand(&cliEnv{})
+			root.SetArgs(testCase.args)
+			err := root.Execute()
+			if err == nil || !strings.Contains(err.Error(), testCase.want) {
+				t.Fatalf("error = %v, want %q", err, testCase.want)
+			}
+		})
+	}
+}
+
+func TestQueryRejectsUnsafeConfig(t *testing.T) {
+	fixture := fixtureInstallation(t)
+	for _, testCase := range []struct {
+		body string
+		want string
+	}{
+		{body: "[query]\ntemplates = []\n", want: "query.templates"},
+		{body: "[query]\ntemplates = [\"about\"]\n", want: "query.templates"},
+		{body: "[query]\nrrf_k = 4503599627370497\n", want: "query.rrf_k"},
+	} {
+		writeConfig(t, fixture.home, testCase.body)
+		_, err := runRootErr(t, contractBuild(), nil, "query", "lighthouse retention")
+		if err == nil || !strings.Contains(err.Error(), testCase.want) {
+			t.Fatalf("query with config %q returned error %v", testCase.body, err)
+		}
+	}
+}
+
+func TestDoctorPrintsConfiguredQueryKnobs(t *testing.T) {
+	fixture := fixtureInstallation(t)
+	writeConfig(t, fixture.home, "[query]\noversample = 30\ntemplates = false\nparallel_legs = true\n")
+	out := runRoot(t, contractBuild(), "doctor")
+	for _, want := range []string{"oversample 30", "templates false", "parallel_legs true", "rrf_k 60"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("doctor missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestQueryFTSOnlyReturnsLabeledHits(t *testing.T) {
 	fixtureInstallation(t)
 	runRoot(t, contractBuild(), "store", "--layer", "discovery",

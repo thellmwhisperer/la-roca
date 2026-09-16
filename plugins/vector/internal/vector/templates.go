@@ -11,16 +11,21 @@ var QuestionTemplates = []string{
 	"what was discussed about %s",
 }
 
-// ExpandedQueries is the raw query plus every question template wrapping it.
+// ExpandedQueries is the raw query plus every built-in question template.
 func ExpandedQueries(query string) []string {
+	return ExpandWith(query, QuestionTemplates)
+}
+
+// ExpandWith is the raw query plus every supplied template wrapping it.
+func ExpandWith(query string, templates []string) []string {
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return nil
 	}
-	out := make([]string, 0, 1+len(QuestionTemplates))
+	out := make([]string, 0, 1+len(templates))
 	out = append(out, query)
 	seen := map[string]bool{query: true}
-	for _, template := range QuestionTemplates {
+	for _, template := range templates {
 		text := strings.TrimSpace(strings.ReplaceAll(template, "%s", query))
 		if text == "" || seen[text] {
 			continue

@@ -5,6 +5,7 @@ package rocavector
 import (
 	"bytes"
 	"crypto/sha256"
+	_ "embed"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -15,6 +16,9 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/plugininstall"
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 )
+
+//go:embed rides.toml
+var bundledRides []byte
 
 const (
 	Name          = "roca-vector"
@@ -50,7 +54,8 @@ func BundleSpec() bundledplugin.Spec {
 func bundleSpec(payload func() ([]byte, error)) bundledplugin.Spec {
 	return bundledplugin.Spec{
 		Name: Name, LegacyName: LegacyName, Executable: executableFilename(),
-		Source: BundledSource, Manifest: manifest, Payload: payload, MigrationGuard: migrationGuard,
+		Source: BundledSource, Manifest: manifest, Rides: bundledRides, Payload: payload,
+		MigrationGuard: migrationGuard,
 	}
 }
 
