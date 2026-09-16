@@ -8,6 +8,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 )
 
 func TestOperatorRideFileRejectsWrongOwner(t *testing.T) {
@@ -51,5 +52,27 @@ command = "echo backup"
 	}
 	if len(rides) != 1 || len(warnings) != 0 || rides[0].Name != "backup" {
 		t.Fatalf("trusted symlink discovery = %+v warnings = %v", rides, warnings)
+	}
+}
+
+func TestOperatorRideFIFOIsRefusedWithoutBlocking(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "rides.toml")
+	if err := syscall.Mkfifo(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	result := make(chan error, 1)
+	go func() {
+		_, _, err := DiscoverOperatorRides("", directory)
+		result <- err
+	}()
+	select {
+	case err := <-result:
+		if err == nil || !strings.Contains(err.Error(), "not a regular file") {
+			t.Fatalf("FIFO discovery error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("FIFO discovery blocked")
 	}
 }

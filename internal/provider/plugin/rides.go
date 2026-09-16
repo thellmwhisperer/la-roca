@@ -185,7 +185,7 @@ func DiscoverOperatorRides(configPath, ridesDir string) ([]Ride, []string, error
 }
 
 func readOperatorRides(pluginName, path string, configFile bool) ([]Ride, error) {
-	file, err := os.Open(path)
+	file, err := openOperatorRide(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil

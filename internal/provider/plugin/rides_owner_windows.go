@@ -10,6 +10,10 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+func openOperatorRide(path string) (*os.File, error) {
+	return os.Open(path)
+}
+
 func operatorRideFilePermissionsAllowed(file *os.File, _ os.FileInfo) error {
 	if file == nil {
 		return os.ErrInvalid
