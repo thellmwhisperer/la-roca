@@ -27,9 +27,9 @@ Every new memory stores a system-stamped harness, model and write surface in
 `memories.source_agent`, `source_model` and `source_surface`. MCP takes the
 harness from the connected client's handshake `clientInfo`, trims and
 lowercases it, and maps known Claude Desktop, Cowork, Claude Code and Claude AI
-names to `claude`, Codex CLI to `codex`, Hermes Agent to `hermes`, and Pi Signed
-or Pi Launcher to `pi`. Names outside those alias sets remain the trimmed,
-lowercase client name.
+names to `claude`, Codex CLI to `codex`, Hermes Agent to `hermes`, Pi Signed
+or Pi Launcher to `pi`, Cursor IDE to `cursor`, and Qwen Code to `qwen`. Names
+outside those alias sets remain the trimmed, lowercase client name.
 The CLI's primary path is explicit `roca store --agent <harness> --model
 <model>`. Best-effort CLI environment and process detection accepts only one
 unambiguous harness and otherwise records `unknown`. Existing rows remain NULL
@@ -486,8 +486,9 @@ silent misses. Normal store writes use the same complete-payload law inside the
 serialized write transaction and return `skipped_duplicate: true` with that
 canonical ID on an exact retry. A difference in metadata, provenance, project,
 status, supersedes, expiry, or non-equivalent authorship is not a duplicate.
-For this retry check, the supplied source agent expands to the normalized
-aliases described under [Memory authorship](#memory-authorship).
+MCP retries expand the supplied source agent to the aliases described under
+[Memory authorship](#memory-authorship). CLI retries match the stored agent
+exactly, so distinct harness names stay distinct authors.
 
 ## Data directory
 
