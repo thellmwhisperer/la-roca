@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
+	"github.com/thellmwhisperer/la-roca/test/testfixture"
 )
 
 func TestDiscoverRidesReadsEveryInstalledPluginInDeterministicOrder(t *testing.T) {
@@ -84,7 +85,100 @@ command = "echo should-not-run"
 	}
 }
 
+func TestDiscoverOperatorRidesResolvesGatesAcrossFiles(t *testing.T) {
+	ridesDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(ridesDir, "10-export.toml"), []byte(`[ride.export]
+command = "echo export"
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ridesDir, "20-upload.toml"), []byte(`[ride.upload]
+command = "echo upload"
+gate = "after_export"
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	rides, warnings, err := plugin.DiscoverOperatorRides("", ridesDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warnings) != 0 || len(rides) != 2 {
+		t.Fatalf("rides = %+v warnings = %v", rides, warnings)
+	}
+	if rides[0].Name != "export" || rides[1].Name != "upload" || rides[1].Gate != "after_export" {
+		t.Fatalf("rides = %+v", rides)
+	}
+}
+
+func TestDiscoverOperatorRidesIgnoresRideFreeConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[features]\ncron = true\n"), 0o664); err != nil {
+		t.Fatal(err)
+	}
+
+	rides, warnings, err := plugin.DiscoverOperatorRides(path, "")
+	if err != nil || len(rides) != 0 || len(warnings) != 0 {
+		t.Fatalf("ride-free config = rides=%+v warnings=%v err=%v", rides, warnings, err)
+	}
+}
+
+func TestDiscoverOperatorRidesRejectsAnUnusableFile(t *testing.T) {
+	ridesDir := t.TempDir()
+	for name, spec := range map[string]struct {
+		mode os.FileMode
+		body string
+	}{
+		"10-export.toml":  {mode: 0o600, body: "[ride.export]\ncommand = \"echo export\"\nsurprise = true\n"},
+		"20-upload.toml":  {mode: 0o600, body: "[ride.upload]\ncommand = \"echo upload\"\ngate = \"after_export\"\n"},
+		"30-cleanup.toml": {mode: 0o600, body: "[ride.cleanup]\ncommand = \"echo cleanup\"\n"},
+	} {
+		if err := os.WriteFile(filepath.Join(ridesDir, name), []byte(spec.body), spec.mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	requireOperatorRidesError(t, ridesDir, "operator ride file 10-export.toml is unusable")
+}
+
+func TestDiscoverOperatorRidesRejectsDuplicateNamesAcrossFiles(t *testing.T) {
+	ridesDir := t.TempDir()
+	if err := testfixture.WriteOperatorRideFiles(ridesDir, "backup", map[string]string{
+		"10-backup.toml": "echo first",
+		"20-backup.toml": "echo second",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	requireOperatorRidesError(t, ridesDir, "duplicate operator ride")
+}
+
+func TestDiscoverOperatorRidesRejectsDuplicateNamesWithinFile(t *testing.T) {
+	ridesDir := t.TempDir()
+	path := filepath.Join(ridesDir, "backup.toml")
+	body := `[ride.backup]
+command = "echo first"
+
+[ride.backup]
+command = "echo second"
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	requireOperatorRidesError(t, ridesDir, "operator ride file backup.toml is unusable")
+}
+
 func allowInstalledRideFixture(string, string) error { return nil }
+
+func requireOperatorRidesError(t *testing.T, ridesDir, want string) {
+	t.Helper()
+	rides, warnings, err := plugin.DiscoverOperatorRides("", ridesDir)
+	if err == nil || rides != nil || len(warnings) != 0 || !strings.Contains(err.Error(), want) {
+		t.Fatalf("operator rides = rides=%+v warnings=%v err=%v; want error containing %q",
+			rides, warnings, err, want)
+	}
+}
 
 func writeRides(t *testing.T, root, name, body string) {
 	t.Helper()
