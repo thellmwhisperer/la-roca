@@ -400,16 +400,6 @@ func TestAValueOfTheWrongTypeKeepsTheDefaultAndWarns(t *testing.T) {
 			check: func(file File) bool { return !file.Query.OversampleSet },
 		},
 		{
-			name: "fractional rrf_k", body: "[query]\nrrf_k = 60.1\n",
-			wants: "query.rrf_k",
-			check: func(file File) bool { return !file.Query.RRFKSet },
-		},
-		{
-			name: "rrf_k above precision bound", body: "[query]\nrrf_k = 9007199254740993\n",
-			wants: "query.rrf_k",
-			check: func(file File) bool { return !file.Query.RRFKSet },
-		},
-		{
 			name: "fractional max_rare_terms", body: "[query]\nmax_rare_terms = 5.5\n",
 			wants: "query.max_rare_terms",
 			check: func(file File) bool { return !file.Query.MaxRareTermsSet },
@@ -418,21 +408,6 @@ func TestAValueOfTheWrongTypeKeepsTheDefaultAndWarns(t *testing.T) {
 			name: "non-finite min_vector_score", body: "[query]\nmin_vector_score = nan\n",
 			wants: "query.min_vector_score",
 			check: func(file File) bool { return !file.Query.MinVectorScoreSet },
-		},
-		{
-			name: "templates true", body: "[query]\ntemplates = true\n",
-			wants: "query.templates",
-			check: func(file File) bool { return !file.Query.TemplatesSet },
-		},
-		{
-			name: "empty templates", body: "[query]\ntemplates = []\n",
-			wants: "query.templates",
-			check: func(file File) bool { return !file.Query.TemplatesSet },
-		},
-		{
-			name: "template without question placeholder", body: "[query]\ntemplates = [\"about\"]\n",
-			wants: "query.templates",
-			check: func(file File) bool { return !file.Query.TemplatesSet },
 		},
 		{
 			name: "quoted parallel_legs", body: "[query]\nparallel_legs = \"true\"\n",
@@ -452,6 +427,44 @@ func TestAValueOfTheWrongTypeKeepsTheDefaultAndWarns(t *testing.T) {
 				t.Fatalf("warnings = %v, want one naming %q", file.Warnings, testCase.wants)
 			}
 		})
+	}
+}
+
+func TestInvalidQueryTemplatesAreConfigErrors(t *testing.T) {
+	for _, body := range []string{
+		"[query]\ntemplates = true\n",
+		"[query]\ntemplates = []\n",
+		"[query]\ntemplates = [\"about\"]\n",
+	} {
+		path := write(t, body)
+		_, err := LoadFile(path)
+		if err == nil {
+			t.Fatalf("invalid templates were accepted: %s", body)
+		}
+		for _, want := range []string{"query.templates", path, "non-empty", "%s"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error %q does not name %q", err, want)
+			}
+		}
+	}
+}
+
+func TestUnsafeRRFKValuesAreConfigErrors(t *testing.T) {
+	for _, body := range []string{
+		"[query]\nrrf_k = 0\n",
+		"[query]\nrrf_k = 60.1\n",
+		"[query]\nrrf_k = 4503599627370497\n",
+	} {
+		path := write(t, body)
+		_, err := LoadFile(path)
+		if err == nil {
+			t.Fatalf("unsafe rrf_k was accepted: %s", body)
+		}
+		for _, want := range []string{"query.rrf_k", path, "whole number"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error %q does not name %q", err, want)
+			}
+		}
 	}
 }
 

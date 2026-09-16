@@ -409,10 +409,24 @@ func (f Federation) queryTexts(ctx context.Context, texts []string, k int, datab
 			result.noticeModelUnavailable(model, group, "embedding provider returned no query vector")
 			continue
 		}
-		for _, target := range group {
-			if err := f.searchTarget(ctx, &result, target, model, vectors, k, minScore); err != nil {
-				return result, err
+		targetResults := make([]FederatedQuery, len(group))
+		targetErrors := make([]error, len(group))
+		var targets sync.WaitGroup
+		for index, target := range group {
+			targets.Add(1)
+			go func() {
+				defer targets.Done()
+				targetResults[index].MixedModels = result.MixedModels
+				targetErrors[index] = f.searchTarget(
+					ctx, &targetResults[index], target, model, vectors, k, minScore)
+			}()
+		}
+		targets.Wait()
+		for index := range group {
+			if targetErrors[index] != nil {
+				return result, targetErrors[index]
 			}
+			mergeTargetQuery(&result, targetResults[index])
 		}
 	}
 	if result.MixedModels {
@@ -424,6 +438,29 @@ func (f Federation) queryTexts(ctx context.Context, texts []string, k int, datab
 	}
 	result.Results = finishFederatedHits(result.Results, k, trimToK)
 	return result, nil
+}
+
+func mergeTargetQuery(result *FederatedQuery, target FederatedQuery) {
+	result.VectorExecuted = result.VectorExecuted || target.VectorExecuted
+	result.Notices = append(result.Notices, target.Notices...)
+	if !result.MixedModels {
+		result.Results = unionFederatedHits(result.Results, target.Results)
+		return
+	}
+	for _, incoming := range target.DatabaseResults {
+		merged := false
+		for index := range result.DatabaseResults {
+			if result.DatabaseResults[index].Database == incoming.Database {
+				result.DatabaseResults[index].Results = unionFederatedHits(
+					result.DatabaseResults[index].Results, incoming.Results)
+				merged = true
+				break
+			}
+		}
+		if !merged {
+			result.DatabaseResults = append(result.DatabaseResults, incoming)
+		}
+	}
 }
 
 func (f Federation) searchTarget(ctx context.Context, result *FederatedQuery, target queryTarget,

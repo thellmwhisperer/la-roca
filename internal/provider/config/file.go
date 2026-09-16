@@ -871,7 +871,10 @@ func LoadFile(path string) (File, error) {
 		}
 	}
 	query, _ := document["query"].(map[string]any)
-	file.Query = readQuery(query, path, &file.Warnings)
+	file.Query, err = readQuery(query, path, &file.Warnings)
+	if err != nil {
+		return file, err
+	}
 	features, _ := document["features"].(map[string]any)
 	file.Features = readFeatures(features, path, &file.Warnings)
 	layout, _ := document["layout"].(map[string]any)
@@ -915,7 +918,7 @@ func CommandPlaceholders(command []string) []string {
 	return placeholders
 }
 
-func readQuery(section map[string]any, path string, warnings *[]string) QueryConfig {
+func readQuery(section map[string]any, path string, warnings *[]string) (QueryConfig, error) {
 	var query QueryConfig
 	for _, key := range sortedKeys(section) {
 		switch key {
@@ -946,9 +949,9 @@ func readQuery(section map[string]any, path string, warnings *[]string) QueryCon
 		case "rrf_k":
 			value, ok := readNumber(section[key])
 			if !ok || value < 1 || uint64(value) > search.MaxRRFK {
-				*warnings = append(*warnings, invalidValue("query.rrf_k", path,
-					fmt.Sprintf("a whole number from 1 to %d", search.MaxRRFK)))
-				continue
+				return query, fmt.Errorf(
+					"the key query.rrf_k of %s must be a whole number from 1 to %d",
+					path, search.MaxRRFK)
 			}
 			query.RRFK = value
 			query.RRFKSet = true
@@ -981,9 +984,9 @@ func readQuery(section map[string]any, path string, warnings *[]string) QueryCon
 		case "templates":
 			off, list, ok := readTemplates(section[key])
 			if !ok {
-				*warnings = append(*warnings, invalidValue("query.templates", path,
-					"false, or a list of question templates"))
-				continue
+				return query, fmt.Errorf(
+					"the key query.templates of %s must be false or a non-empty list of question wrappers that each contain %%s",
+					path)
 			}
 			query.TemplatesSet = true
 			query.TemplatesOff = off
@@ -994,7 +997,7 @@ func readQuery(section map[string]any, path string, warnings *[]string) QueryCon
 			}
 		}
 	}
-	return query
+	return query, nil
 }
 
 func readTemplates(value any) (off bool, list []string, ok bool) {

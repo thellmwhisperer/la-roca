@@ -61,6 +61,24 @@ func TestQueryRejectsInvalidOversampleBeforeOpeningTheService(t *testing.T) {
 	}
 }
 
+func TestQueryRejectsUnsafeConfig(t *testing.T) {
+	fixture := fixtureInstallation(t)
+	for _, testCase := range []struct {
+		body string
+		want string
+	}{
+		{body: "[query]\ntemplates = []\n", want: "query.templates"},
+		{body: "[query]\ntemplates = [\"about\"]\n", want: "query.templates"},
+		{body: "[query]\nrrf_k = 4503599627370497\n", want: "query.rrf_k"},
+	} {
+		writeConfig(t, fixture.home, testCase.body)
+		_, err := runRootErr(t, contractBuild(), nil, "query", "lighthouse retention")
+		if err == nil || !strings.Contains(err.Error(), testCase.want) {
+			t.Fatalf("query with config %q returned error %v", testCase.body, err)
+		}
+	}
+}
+
 func TestDoctorPrintsConfiguredQueryKnobs(t *testing.T) {
 	fixture := fixtureInstallation(t)
 	writeConfig(t, fixture.home, "[query]\noversample = 30\ntemplates = false\nparallel_legs = true\n")
