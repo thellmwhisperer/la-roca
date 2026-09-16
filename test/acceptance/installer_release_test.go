@@ -72,14 +72,9 @@ func TestTheInstallerPlacesBundledVectorBesideACustomPrefix(t *testing.T) {
 
 func TestTheInstallerUpdatesWhenAZeroByteLockIsPresent(t *testing.T) {
 	m := releaseInstallerWorld(t)
-	if err := m.iRunTheInstaller(); err != nil || m.last.code != 0 {
-		t.Fatalf("initial install: %v, code %d:\n%s%s", err, m.last.code, m.last.stdout, m.last.stderr)
-	}
+	requireInitialInstall(t, m)
 	lock := filepath.Join(m.home, ".roca", "plugins", "roca-vector", "state", "vector.db.index.lock")
-	if err := os.MkdirAll(filepath.Dir(lock), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(lock, nil, 0o600); err != nil {
+	if err := writeFixture(lock, ""); err != nil {
 		t.Fatal(err)
 	}
 	lockInfo, err := os.Stat(lock)
@@ -104,9 +99,7 @@ func TestTheInstallerUpdatesWhenAZeroByteLockIsPresent(t *testing.T) {
 
 func TestTheInstallerRestoresThePreviousBinaryWhenBundledPlacementFails(t *testing.T) {
 	m := releaseInstallerWorld(t)
-	if err := m.iRunTheInstaller(); err != nil || m.last.code != 0 {
-		t.Fatalf("initial install: %v, code %d:\n%s%s", err, m.last.code, m.last.stdout, m.last.stderr)
-	}
+	requireInitialInstall(t, m)
 	manifest := filepath.Join(m.home, ".roca", "plugins", "roca-vector", ".roca-plugin.json")
 	body, err := os.ReadFile(manifest)
 	if err != nil {
@@ -148,4 +141,11 @@ func releaseInstallerWorld(t *testing.T) *world {
 	m := &world{binary: binary, home: home}
 	t.Cleanup(m.closeTheChannel)
 	return m
+}
+
+func requireInitialInstall(t *testing.T, m *world) {
+	t.Helper()
+	if err := m.iRunTheInstaller(); err != nil || m.last.code != 0 {
+		t.Fatalf("initial install: %v, code %d:\n%s%s", err, m.last.code, m.last.stdout, m.last.stderr)
+	}
 }

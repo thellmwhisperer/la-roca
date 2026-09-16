@@ -16,17 +16,7 @@ func TestDoctorPrintsChownForForeignOwnedState(t *testing.T) {
 	// a disposable installation while replacing only filesystem owner lookup.
 	fixture := fixtureInstallation(t)
 	lock := filepath.Join(fixture.home, ".roca", "plugins", "roca-vector", "state", "vector.db.index.lock")
-	if err := os.MkdirAll(filepath.Dir(lock), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(lock, nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	restore := securefile.OverrideIdentityLookups(
-		securefile.Identity{UID: 501, Name: "operator"},
-		map[string]securefile.Identity{lock: {UID: 0, Name: "root"}},
-	)
-	t.Cleanup(restore)
+	setForeignOwnedLock(t, lock)
 
 	want := "sudo chown -h operator '" + lock + "'"
 	human := runRoot(t, contractBuild(), "doctor")
@@ -73,17 +63,7 @@ func TestDoctorReportsOwnershipWhenServiceCannotOpenState(t *testing.T) {
 	// forbidden sudo setup, while the CLI and its pre-open ordering remain real.
 	home := hermeticHome(t)
 	lock := filepath.Join(home, ".roca", "vector.db.index.lock")
-	if err := os.MkdirAll(filepath.Dir(lock), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(lock, nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	restore := securefile.OverrideIdentityLookups(
-		securefile.Identity{UID: 501, Name: "operator"},
-		map[string]securefile.Identity{lock: {UID: 0, Name: "root"}},
-	)
-	t.Cleanup(restore)
+	setForeignOwnedLock(t, lock)
 
 	out, err := runRootErr(t, contractBuild(), nil, "doctor")
 	if err == nil {
@@ -186,4 +166,14 @@ func TestCLISharedBoundaryGuardsParsingAndReadOnlyInvocations(t *testing.T) {
 			}
 		})
 	}
+}
+
+func setForeignOwnedLock(t *testing.T, lock string) {
+	t.Helper()
+	writeFile(t, lock, "")
+	restore := securefile.OverrideIdentityLookups(
+		securefile.Identity{UID: 501, Name: "operator"},
+		map[string]securefile.Identity{lock: {UID: 0, Name: "root"}},
+	)
+	t.Cleanup(restore)
 }

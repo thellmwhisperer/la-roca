@@ -324,17 +324,15 @@ func TestInstallerRefusesRootOverUserOwnedState(t *testing.T) {
 	// Execute the real installer in a disposable HOME while replacing only the
 	// two OS identity probes. The symlink case also proves stat dereferences the
 	// state root before deciding who owns it.
-	for _, testCase := range []struct {
-		name    string
-		symlink bool
-	}{
-		{name: "directory"},
-		{name: "symlink", symlink: true},
-	} {
-		t.Run(testCase.name, func(t *testing.T) {
+	for _, symlink := range []bool{false, true} {
+		name := "directory"
+		if symlink {
+			name = "symlink"
+		}
+		t.Run(name, func(t *testing.T) {
 			home := t.TempDir()
 			state := filepath.Join(home, ".roca")
-			if testCase.symlink {
+			if symlink {
 				if err := os.Symlink(t.TempDir(), state); err != nil {
 					t.Fatal(err)
 				}
