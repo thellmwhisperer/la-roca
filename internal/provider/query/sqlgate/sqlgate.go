@@ -92,6 +92,22 @@ func IsHiddenTable(name string) bool {
 		strings.HasPrefix(lower, "pragma_")
 }
 
+func qualifiedFTSColumn(column string) (alias, table string, ok bool) {
+	if !strings.Contains(column, ".") {
+		return "", "", false
+	}
+	table = unqualify(column)
+	if !strings.HasSuffix(strings.ToLower(table), "_fts") &&
+		!strings.EqualFold(table, "documents_search") {
+		return "", "", false
+	}
+	alias = strings.TrimSuffix(column, "."+table)
+	if alias == "" {
+		return "", "", false
+	}
+	return alias, table, true
+}
+
 func unqualify(name string) string {
 	if index := strings.LastIndex(name, "."); index >= 0 {
 		return name[index+1:]
@@ -356,9 +372,65 @@ func (g *Gate) validate(stmt string, limitRows bool) (string, error) {
 		clean = stmt
 	}
 	if err := g.engine.prepare(clean); err != nil {
-		return "", err
+		return "", g.explain(clean, err)
 	}
 	return clean, nil
+}
+
+func (g *Gate) explain(stmt string, err error) error {
+	if err == nil {
+		return nil
+	}
+	message := err.Error()
+	if strings.Contains(message, "does not exist in the referenced tables") &&
+		!strings.Contains(message, "columns:") {
+		if columns := g.referencedColumns(stmt); columns != "" {
+			return fmt.Errorf("%s; columns: %s", message, columns)
+		}
+	}
+	return err
+}
+
+func (g *Gate) referencedColumns(stmt string) string {
+	if g == nil {
+		return ""
+	}
+	lower := strings.ToLower(stmt)
+	var parts []string
+	seen := map[string]bool{}
+	for _, schema := range g.schemas {
+		for _, table := range schema.Tables {
+			if IsHiddenTable(table.Name) || len(table.Columns) == 0 {
+				continue
+			}
+			qualified := strings.ToLower(schema.Name + "." + table.Name)
+			if !strings.Contains(lower, qualified) && !tableToken(lower, table.Name) {
+				continue
+			}
+			label := schema.Name + "." + table.Name + " (" + strings.Join(table.Columns, ", ") + ")"
+			if seen[strings.ToLower(label)] {
+				continue
+			}
+			seen[strings.ToLower(label)] = true
+			parts = append(parts, label)
+		}
+	}
+	return strings.Join(parts, "; ")
+}
+
+func tableToken(sql, table string) bool {
+	table = strings.ToLower(table)
+	for _, prefix := range []string{"from ", "join "} {
+		for _, suffix := range []string{" ", "\n", "\t", ";", ")"} {
+			if strings.Contains(sql, prefix+table+suffix) {
+				return true
+			}
+		}
+		if strings.HasSuffix(sql, prefix+table) {
+			return true
+		}
+	}
+	return false
 }
 
 // IsRowCount reports whether the statement's sole result is COUNT(*). It uses
@@ -392,6 +464,11 @@ func translate(message string) string {
 	}
 	if i := strings.Index(message, "no such column: "); i >= 0 {
 		column := strings.TrimSpace(strings.TrimSuffix(message[i+len("no such column: "):], " (1)"))
+		column = strings.Trim(column, `"'`)
+		if alias, table, ok := qualifiedFTSColumn(column); ok {
+			return fmt.Sprintf("MATCH takes the bare FTS table name: FROM %s.%s WHERE %s MATCH '...'",
+				alias, table, table)
+		}
 		return fmt.Sprintf("no such column: %q does not exist in the referenced tables", column)
 	}
 	if i := strings.Index(message, "no such function: "); i >= 0 {

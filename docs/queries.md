@@ -317,5 +317,6 @@ in read-only mode.
 
 Success prints `deleted: N`, the number of removed rows, even with `--json`.
 An unknown slug exits non-zero and lists the known pill slugs in `help[]`
-when any exist. Verify destructive behavior only against copied or laboratory
-state, never the live operator store.
+when any exist. `roca pill show` does the same, and says when the project
+scope came from the working directory. Verify destructive behavior only against
+copied or laboratory state, never the live operator store.

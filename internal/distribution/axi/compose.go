@@ -192,7 +192,13 @@ func MCPExec(res service.ExecResult) string {
 // Search renders the zero-inference hybrid query envelope: which engines ran,
 // the rarity-selected terms, labeled hits, and the next deterministic commands.
 func Search(res service.SearchResult) string {
+	databases := searchDatabases(res)
+	topic := res.Question
+	if topic == "" {
+		topic = "<topic>"
+	}
 	return searchText(res, []string{
+		"Run `roca vector query " + shellArg(topic) + " 20 --databases " + databases + "` for the fast semantic leg alone (this command adds the full-text leg and fusion)",
 		"Run `roca query " + shellArg(res.Question) + " --json` for the complete result envelope",
 		"Run `roca query " + shellArg(res.Question) + " --require-both` to keep only dual-confirmed hits",
 	})
@@ -200,10 +206,32 @@ func Search(res service.SearchResult) string {
 
 // MCPSearch is the same envelope with MCP-native next steps.
 func MCPSearch(res service.SearchResult) string {
-	return searchText(res, []string{
+	help := []string{
+		"Call roca_vector_query for the fast semantic leg alone",
 		"Call roca_query again with require_both to keep only dual-confirmed hits",
 		"Call roca_exec with a SELECT to frame a cited source",
-	})
+	}
+	if mentionsHandoff(res.Question) {
+		help = append([]string{
+			"Call roca_handoff_latest for the current project handoff",
+			"Call roca_pill_show with a slug when the question is about an inbox or pill",
+		}, help...)
+	}
+	return searchText(res, help)
+}
+
+func searchDatabases(res service.SearchResult) string {
+	if len(res.Databases) == 0 {
+		return "corpus,ops"
+	}
+	return strings.Join(res.Databases, ",")
+}
+
+func mentionsHandoff(question string) bool {
+	lower := strings.ToLower(question)
+	return strings.Contains(lower, "handoff") ||
+		strings.Contains(lower, "handover") ||
+		strings.Contains(lower, "inbox")
 }
 
 func searchText(res service.SearchResult, help []string) string {

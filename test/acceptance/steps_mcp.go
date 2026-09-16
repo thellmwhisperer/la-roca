@@ -29,7 +29,8 @@ import (
 // that adding or withdrawing a tool has to be a decision somebody takes in two
 // places, not a diff nobody read.
 var theDecidedSurface = []string{
-	"roca_exec", "roca_health", "roca_query", "roca_store",
+	"roca_exec", "roca_handoff_latest", "roca_health", "roca_pill_show",
+	"roca_query", "roca_store",
 }
 
 // theWithdrawnTools are the ones the pruning took out, with the command line

@@ -2,8 +2,12 @@ package mcpplug
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"path/filepath"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/axi"
 )
 
 // The wrappers return any(nil) as the typed output so the SDK does not attach a
@@ -29,7 +33,11 @@ func (p *plug) explore(ctx context.Context, _ *mcp.CallToolRequest,
 
 func (p *plug) query(ctx context.Context, _ *mcp.CallToolRequest,
 	in queryArgs) (*mcp.CallToolResult, any, error) {
-	return searchText(p.svc.Search(ctx, in.request()))
+	req := in.request()
+	if req.Question == "" {
+		return nil, nil, fmt.Errorf("a query is required")
+	}
+	return searchText(p.svc.Search(ctx, req))
 }
 
 func (p *plug) sql(ctx context.Context, _ *mcp.CallToolRequest,
@@ -45,4 +53,45 @@ func (p *plug) store(ctx context.Context, req *mcp.CallToolRequest,
 func (p *plug) health(ctx context.Context, _ *mcp.CallToolRequest,
 	in healthArgs) (*mcp.CallToolResult, any, error) {
 	return healthText(p.svc.Health(ctx, in.request()))
+}
+
+func (p *plug) handoffLatest(ctx context.Context, _ *mcp.CallToolRequest,
+	in handoffLatestArgs) (*mcp.CallToolResult, any, error) {
+	project, err := resolveSessionProject(in.Project)
+	if err != nil {
+		return nil, nil, err
+	}
+	list, err := p.svc.LatestHandoffs(ctx, project)
+	if err != nil {
+		return nil, nil, err
+	}
+	return rendered(list, nil, axi.Handoffs)
+}
+
+func resolveSessionProject(project string) (string, error) {
+	if project != "" {
+		return project, nil
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("resolve the working directory: %w", err)
+	}
+	base := filepath.Base(cwd)
+	if base == "" || base == "." || base == string(filepath.Separator) {
+		return "", fmt.Errorf("a project is required when the working directory has no basename")
+	}
+	return base, nil
+}
+
+func (p *plug) pillShow(ctx context.Context, _ *mcp.CallToolRequest,
+	in pillShowArgs) (*mcp.CallToolResult, any, error) {
+	project, err := resolveSessionProject(in.Project)
+	if err != nil {
+		return nil, nil, err
+	}
+	record, err := p.svc.ShowPill(ctx, project, in.Slug)
+	if err != nil {
+		return nil, nil, err
+	}
+	return rendered(record, nil, axi.Pill)
 }

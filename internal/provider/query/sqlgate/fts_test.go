@@ -142,6 +142,44 @@ func TestTheGateStillDeniesWritingToTheIndex(t *testing.T) {
 	}
 }
 
+func TestQualifiedFTSMatchNamesTheBareTable(t *testing.T) {
+	gate, err := sqlgate.OpenWithSchemas([]sqlgate.Schema{{
+		Name: "plugin_roca_ops",
+		Tables: []sqlgate.Table{
+			{Name: "memories", Columns: []string{"id", "content", "layer"}},
+			{Name: "memories_fts", Columns: []string{"content"}, FTS5: true},
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { gate.Close() })
+	_, err = gate.Validate(`SELECT content FROM plugin_roca_ops.memories_fts WHERE plugin_roca_ops.memories_fts MATCH 'x'`)
+	if err == nil || !strings.Contains(err.Error(), "MATCH takes the bare FTS table name") ||
+		!strings.Contains(err.Error(), "FROM plugin_roca_ops.memories_fts WHERE memories_fts MATCH") {
+		t.Fatalf("qualified MATCH hint = %v", err)
+	}
+}
+
+func TestUnknownColumnListsReferencedTableColumns(t *testing.T) {
+	gate, err := sqlgate.OpenWithSchemas([]sqlgate.Schema{{
+		Name: "plugin_roca_ops",
+		Tables: []sqlgate.Table{
+			{Name: "memories", Columns: []string{"id", "content", "layer"}},
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { gate.Close() })
+	_, err = gate.Validate(`SELECT nombre FROM plugin_roca_ops.memories LIMIT 1`)
+	if err == nil || !strings.Contains(err.Error(), `no such column: "nombre"`) ||
+		!strings.Contains(err.Error(), "plugin_roca_ops.memories") ||
+		!strings.Contains(err.Error(), "content") {
+		t.Fatalf("unknown column hint = %v", err)
+	}
+}
+
 func open(t *testing.T) *sqlgate.Gate {
 	t.Helper()
 	gate, err := sqlgate.Open()

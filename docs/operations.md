@@ -194,14 +194,15 @@ below to query retained records without restoring an ops audit destination.
 
 ## Streams and contents
 
-The dated `executions`, `mcp-audit`, `ingest`, and `migrations` JSONL streams
-retain at most 30 days. Each file is capped at 5 MiB and each stream keeps at
-most six files, so a busy installation cannot grow a stream beyond 30 MiB.
+CLI and MCP calls share one `executions` JSONL stream. Retention is three
+months. Each file is capped at 5 MiB and the stream keeps at most 200 files.
+Older `mcp-audit-*.jsonl` files are still read by `roca doctor` and removed on
+uninstall. `ingest` and `migrations` stay separate housekeeping streams.
 Consumers should glob `<stream>-*.jsonl`; rotated segments have the same prefix.
 An individual record larger than the file cap is dropped under the same
 non-failing writer contract. Rotation and redaction are unchanged.
 
-`executions` and `mcp-audit` share one top-level call contract. Surface-specific
+`executions` carries one top-level call contract for both surfaces. Surface-specific
 fields are `command` plus `flags` for CLI and `tool` for MCP:
 
 ```json
@@ -267,7 +268,8 @@ repairs, and failure. Both streams are plain files beside the call audit.
 
 ## Reading query failures
 
-Doctor reads retained `executions` and `mcp-audit` JSONL segments directly.
+Doctor reads retained `executions` JSONL segments, plus leftover `mcp-audit`
+files from earlier builds.
 Malformed lines and unreadable files remain visible as gaps in that sample.
 
 Doctor reports the number of failed query calls in the last 24 hours, on either

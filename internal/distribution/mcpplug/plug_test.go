@@ -22,7 +22,8 @@ import (
 // The surface this version decided, and no other. `roca_list_runs` is out
 // because `runs` is v2: a tool with no table behind it is a tool that lies.
 var theDecidedSurface = []string{
-	"roca_exec", "roca_health", "roca_query", "roca_store",
+	"roca_exec", "roca_handoff_latest", "roca_health", "roca_pill_show",
+	"roca_query", "roca_store",
 }
 
 // The tools the pruning withdrew. They are named here so that reintroducing one
@@ -147,7 +148,7 @@ func TestEveryToolCallWritesACredentialFreeAuditRecord(t *testing.T) {
 	callTool(t, connect(t, svc), "roca_exec", map[string]any{
 		"sql": "SELECT 'token=private-value' AS text",
 	})
-	raw := readSingleLog(t, svc.DataDir(), logfile.MCPAudit)
+	raw := readSingleLog(t, svc.DataDir(), logfile.Executions)
 	text := string(raw)
 	for _, want := range []string{`"tool":"roca_exec"`, `"ok":true`, `"row_count":1`, `"duration_ms":`} {
 		if !strings.Contains(text, want) {
@@ -181,7 +182,7 @@ func TestMalformedToolCallIsAuditedAsAFailure(t *testing.T) {
 	if err != nil || !result.IsError {
 		t.Fatalf("malformed call result=%v err=%v", result, err)
 	}
-	matches, err := filepath.Glob(filepath.Join(svc.DataDir(), logfile.DirName, "mcp-audit-*.jsonl"))
+	matches, err := filepath.Glob(filepath.Join(svc.DataDir(), logfile.DirName, "executions-*.jsonl"))
 	if err != nil || len(matches) != 1 {
 		t.Fatalf("MCP audit logs = %v, err=%v", matches, err)
 	}
@@ -331,6 +332,31 @@ func TestTheHandshakeAnnouncesTheProductAndItsVersion(t *testing.T) {
 	}
 	if version := session.InitializeResult().ProtocolVersion; version == "" {
 		t.Error("the handshake declares no protocol version")
+	}
+	instructions := session.InitializeResult().Instructions
+	if !strings.Contains(instructions, "Search with roca_vector_query (fast, semantic)") ||
+		!strings.Contains(instructions, "Use roca_query only when exact terms matter") {
+		t.Fatalf("instructions are not vector-first: %s", instructions)
+	}
+}
+
+func TestSearchToolsAcceptQuestionAndLimitAliases(t *testing.T) {
+	session := connect(t, seededService(t))
+	result := callTool(t, session, "roca_query", map[string]any{
+		"question": "adoption compares structure", "limit": 3,
+	})
+	if text := renderedText(result); !strings.Contains(text, "adoption") && !strings.Contains(text, "search") {
+		t.Fatalf("question alias did not search: %s", text)
+	}
+}
+
+func TestStoreRefusalNamesAcceptedLayers(t *testing.T) {
+	refused := callToolExpectingError(t, connect(t, seededService(t)), "roca_store", map[string]any{
+		"layer": "handoff", "content": "token refresh done",
+	})
+	if !strings.Contains(refused, "accepted layers for this surface") ||
+		!strings.Contains(refused, "layer=discovery") {
+		t.Fatalf("store refusal lacks a working example: %s", refused)
 	}
 }
 
