@@ -45,10 +45,13 @@ var theWithdrawnTools = map[string]string{
 
 // plugWorld is the scenario's protocol session and what it last got back.
 type plugWorld struct {
-	session *mcp.ClientSession
-	tools   *mcp.ListToolsResult
-	last    *mcp.CallToolResult
+	session    *mcp.ClientSession
+	tools      *mcp.ListToolsResult
+	last       *mcp.CallToolResult
+	clientName string
 }
+
+const sessionHandoffContent = "branch: fixture\ndone: recorded\nstate: stored\nnext: continue"
 
 func registerMCPSteps(ctx *godog.ScenarioContext, m *world) {
 	ctx.Given(`^La Roca is in read-only mode$`, m.inReadOnlyMode)
@@ -56,6 +59,11 @@ func registerMCPSteps(ctx *godog.ScenarioContext, m *world) {
 		m.anAgentWithItsOwnConfiguration)
 
 	ctx.When(`^I open an MCP session over stdio against the binary$`, m.openThePlug)
+	ctx.When(`^I open an MCP session as client "([^"]*)"$`, m.iOpenAnMCPSessionAsClient)
+	ctx.When(`^I store a session handoff over MCP with the same content the CLI accepts$`,
+		m.iStoreASessionHandoffOverMCP)
+	ctx.When(`^I store the same session handoff through the CLI$`,
+		m.iStoreTheSameSessionHandoffThroughTheCLI)
 	ctx.When(`^I send "initialize"$`, m.iSendInitialize)
 	ctx.When(`^I send "tools/list"$`, m.iAskForTheTools)
 	ctx.When(`^I call the query tool with the question "([^"]*)"$`, m.iCallQuery)
@@ -88,6 +96,12 @@ func registerMCPSteps(ctx *godog.ScenarioContext, m *world) {
 	ctx.Then(`^the count has gone up by one$`, m.theCountHasGoneUpByOne)
 	ctx.Then(`^the identity card of that write declares it came from the plug$`,
 		m.theIdentityCardSaysItCameFromThePlug)
+	ctx.Then(`^that handoff is stored with agent "([^"]*)" and surface mcp$`,
+		m.theHandoffIsStoredWithAgent)
+	ctx.Then(`^the refusal names the agent, surface, origin and why it was refused$`,
+		m.theRefusalNamesTheHandoffWriter)
+	ctx.Then(`^the MCP store audit names agent, surface and origin$`,
+		m.theMCPStoreAuditNamesAuthorship)
 	ctx.Then(`^that error says the same as the command line said$`, m.bothSurfacesRefuseAlike)
 	ctx.Then(`^the output names read-only mode and the refused operation$`,
 		m.itNamesReadOnlyModeAndTheOperation)
@@ -104,21 +118,51 @@ func registerMCPSteps(ctx *godog.ScenarioContext, m *world) {
 // openThePlug launches the real binary as an agent would and speaks MCP to it
 // over its standard input and output.
 func (m *world) openThePlug() error {
-	if m.plug.session != nil {
+	if m.plug.clientName == "" {
+		m.plug.clientName = "acceptance"
+	}
+	return m.openThePlugAs(m.plug.clientName)
+}
+
+func (m *world) iOpenAnMCPSessionAsClient(name string) error {
+	return m.openThePlugAs(name)
+}
+
+func (m *world) openThePlugAs(name string) error {
+	if m.plug.session != nil && m.plug.clientName == name {
 		return nil
+	}
+	if m.plug.session != nil {
+		m.closeThePlug()
 	}
 	command := exec.Command(m.binary, "mcp", "serve")
 	command.Env = m.environment()
 	command.Stderr = os.Stderr
 
-	client := mcp.NewClient(&mcp.Implementation{Name: "acceptance", Version: "1"}, nil)
+	client := mcp.NewClient(&mcp.Implementation{Name: name, Version: "1"}, nil)
 	session, err := client.Connect(context.Background(),
 		&mcp.CommandTransport{Command: command}, nil)
 	if err != nil {
 		return fmt.Errorf("open the MCP session: %w", err)
 	}
 	m.plug.session = session
+	m.plug.clientName = name
 	return nil
+}
+
+func (m *world) iStoreASessionHandoffOverMCP() error {
+	return m.callTool("roca_store", map[string]any{
+		"layer":   "handoff",
+		"content": sessionHandoffContent,
+	})
+}
+
+func (m *world) iStoreTheSameSessionHandoffThroughTheCLI() error {
+	_, err := m.runWith("roca store session handoff", []string{
+		"store", "--layer", "handoff", "--content", sessionHandoffContent,
+		"--origin", "agent", "--agent", "claude", "--model", "sonnet",
+	})
+	return err
 }
 
 // iSendInitialize is a no-op with a purpose: connecting is what performs the
@@ -387,6 +431,63 @@ func (m *world) theIdentityCardSaysItCameFromThePlug() error {
 	}
 	if surface != "mcp" {
 		return fmt.Errorf("the identity card says surface %q, not mcp", surface)
+	}
+	return nil
+}
+
+func (m *world) theHandoffIsStoredWithAgent(agent string) error {
+	db, err := m.openRocaOpsDB()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	var storedAgent, surface string
+	err = db.QueryRow(
+		`SELECT source_agent, source_surface FROM memories WHERE content = ? ORDER BY id DESC LIMIT 1`,
+		sessionHandoffContent).Scan(&storedAgent, &surface)
+	if err != nil {
+		return fmt.Errorf("read the stored handoff: %w", err)
+	}
+	if storedAgent != agent || surface != "mcp" {
+		return fmt.Errorf("stored authorship = %q via %q, want %q via mcp", storedAgent, surface, agent)
+	}
+	return nil
+}
+
+func (m *world) theRefusalNamesTheHandoffWriter() error {
+	refused := renderedText(m.plug.last)
+	agent := strings.ToLower(m.plug.clientName)
+	want := fmt.Sprintf(`handoff refused: agent=%q surface=%q origin=%q`, agent, "mcp", "agent")
+	for _, phrase := range []string{want, "session writers are", "tasks-axi"} {
+		if !strings.Contains(refused, phrase) {
+			return fmt.Errorf("the refusal does not name %q: %s", phrase, refused)
+		}
+	}
+	return nil
+}
+
+func (m *world) theMCPStoreAuditNamesAuthorship() error {
+	matches, err := filepath.Glob(filepath.Join(m.home, ".roca", "logs", "executions-*.jsonl"))
+	if err != nil || len(matches) == 0 {
+		return fmt.Errorf("MCP audit logs = %v, err=%v", matches, err)
+	}
+	raw, err := os.ReadFile(matches[len(matches)-1])
+	if err != nil {
+		return err
+	}
+	var lastStore string
+	for _, line := range strings.Split(string(raw), "\n") {
+		if strings.Contains(line, `"tool":"roca_store"`) {
+			lastStore = line
+		}
+	}
+	if lastStore == "" {
+		return fmt.Errorf("no roca_store audit row in %s", raw)
+	}
+	for _, field := range []string{`"agent":`, `"surface":`, `"origin":`} {
+		if !strings.Contains(lastStore, field) {
+			return fmt.Errorf("store audit lacks %s: %s", field, lastStore)
+		}
 	}
 	return nil
 }

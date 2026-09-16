@@ -1,6 +1,7 @@
 package service_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -14,26 +15,30 @@ func TestStoreRefusesAHandoffFromANonSessionWriter(t *testing.T) {
 	tests := []struct {
 		name    string
 		request service.StoreRequest
+		agent   string
+		surface string
+		origin  string
 	}{
-		{"unknown authorship", service.StoreRequest{Layer: "handoff", Content: content}},
+		{"unknown authorship", service.StoreRequest{Layer: "handoff", Content: content},
+			"unknown", "unknown", "agent"},
 		{"cron origin", service.StoreRequest{
 			Layer: "handoff", Content: content, Origin: "cron",
 			Authorship: service.Authorship{Agent: "claude", Model: "sonnet", Surface: service.SurfaceCLI},
-		}},
+		}, "claude", service.SurfaceCLI, "cron"},
 		{"plugin origin", service.StoreRequest{
 			Layer: "handoff", Content: content, Origin: "plugin:demo",
 			Authorship: service.Authorship{Agent: "claude", Model: "sonnet", Surface: service.SurfaceCLI},
-		}},
+		}, "claude", service.SurfaceCLI, "plugin:demo"},
 		{"unknown surface", service.StoreRequest{
 			Layer: "handoff", Content: content,
 			Authorship: service.Authorship{Agent: "claude", Model: "sonnet"},
-		}},
+		}, "claude", "unknown", "agent"},
 		{"worker-named agent", service.StoreRequest{
 			Layer: "handoff", Content: content,
 			Authorship: service.Authorship{
 				Agent: "glm-5.2 (codex/slopslint-detector-a1)", Model: "glm", Surface: service.SurfaceCLI,
 			},
-		}},
+		}, "glm-5.2 (codex/slopslint-detector-a1)", service.SurfaceCLI, "agent"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -41,8 +46,18 @@ func TestStoreRefusesAHandoffFromANonSessionWriter(t *testing.T) {
 			if err == nil {
 				t.Fatal("store accepted a handoff from a writer that is not a session harness")
 			}
-			for _, want := range []string{"tasks-axi", "pr", "decision", "expires_at", "accepted layers for this surface", "layer=discovery"} {
-				if !strings.Contains(err.Error(), want) {
+			got := err.Error()
+			wantPrefix := fmt.Sprintf("handoff refused: agent=%q surface=%q origin=%q",
+				test.agent, test.surface, test.origin)
+			if !strings.Contains(got, wantPrefix) {
+				t.Errorf("refusal does not name what it saw (%s): %v", wantPrefix, err)
+			}
+			for _, want := range []string{
+				"session writers are", "tasks-axi", "pr", "decision", "expires_at",
+				"accepted layers for this surface", "layer=discovery",
+				"branch/scope:", "done:", "state:", "next:", "layer=handoff",
+			} {
+				if !strings.Contains(got, want) {
 					t.Errorf("refusal does not name %q: %v", want, err)
 				}
 			}
@@ -52,17 +67,30 @@ func TestStoreRefusesAHandoffFromANonSessionWriter(t *testing.T) {
 
 func TestStoreRefusesAHandoffThatOmitsTheRequiredShape(t *testing.T) {
 	svc, _ := serviceWithPaths(t)
-	_, err := svc.Store(t.Context(), service.StoreRequest{
-		Layer: "handoff", Content: "token refresh done, retry pending",
-		Authorship: sessionWriter(),
-	})
-	if err == nil {
-		t.Fatal("store accepted a handoff without branch, done, state and next")
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{"unlabeled prose", "token refresh done, retry pending"},
+		{"near labels", "DONE (verified): recorded\nSTATUS: stored\nSUPERSEDE 42\nbranch: fixture\nnext: continue"},
 	}
-	for _, want := range []string{"branch", "done", "state", "next", "supersedes"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("shape refusal does not name %q: %v", want, err)
-		}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := svc.Store(t.Context(), service.StoreRequest{
+				Layer: "handoff", Content: test.content, Authorship: sessionWriter(),
+			})
+			if err == nil {
+				t.Fatal("store accepted a handoff without the accepted labels")
+			}
+			for _, want := range []string{
+				"branch/scope:", "done:", "state:", "current state:", "next:",
+				"SUPERSEDE", "--supersedes",
+			} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("shape refusal does not name %q: %v", want, err)
+				}
+			}
+		})
 	}
 }
 
@@ -89,6 +117,47 @@ func TestStoreAcceptsASessionHandoffWithTheRequiredShape(t *testing.T) {
 	}
 	if result.ID == 0 || result.Layer != "handoff" {
 		t.Fatalf("accepted write = %+v", result)
+	}
+}
+
+func TestCanonicalSessionAgentMapsRuntimeAliases(t *testing.T) {
+	tests := []struct {
+		in, want string
+	}{
+		{"claude-desktop", "claude"},
+		{"cowork", "claude"},
+		{"Claude Code", "claude"},
+		{"claude-ai", "claude"},
+		{"claude-code", "claude"},
+		{"codex", "codex"},
+		{"Codex CLI", "codex"},
+		{"hermes-agent", "hermes"},
+		{"glm-5.2 (codex/slopslint-detector-a1)", "glm-5.2 (codex/slopslint-detector-a1)"},
+		{"", ""},
+	}
+	for _, test := range tests {
+		if got := service.CanonicalSessionAgent(test.in); got != test.want {
+			t.Errorf("CanonicalSessionAgent(%q) = %q, want %q", test.in, got, test.want)
+		}
+	}
+}
+
+func TestStoreAcceptsHandoffsFromAliasedSessionWriters(t *testing.T) {
+	svc, _ := serviceWithPaths(t)
+	content := shapedHandoff("aliased session writer")
+	for _, agent := range []string{"claude-desktop", "cowork", "Claude Code", "claude-ai", "codex"} {
+		t.Run(agent, func(t *testing.T) {
+			result, err := svc.Store(t.Context(), service.StoreRequest{
+				Layer: "handoff", Content: content + "\n" + agent,
+				Authorship: service.Authorship{Agent: agent, Model: "sonnet", Surface: service.SurfaceMCP},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.ID == 0 || result.Layer != "handoff" {
+				t.Fatalf("accepted write = %+v", result)
+			}
+		})
 	}
 }
 

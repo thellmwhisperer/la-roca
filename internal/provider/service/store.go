@@ -84,9 +84,10 @@ type StoreResult struct {
 // Store writes one memory. It is the write half of the product, and the same
 // object the plug's `roca_store` and the shell's `roca store` both call.
 //
-// Deduplication compares the complete persisted payload. A near duplicate is
-// independent evidence and remains independent even when only one provenance,
-// metadata, lifecycle, project, or authorship field differs.
+// Deduplication compares the complete persisted payload, expanding the supplied
+// source agent across the known session aliases. A near duplicate is independent
+// evidence and remains independent when provenance, metadata, lifecycle,
+// project, or non-equivalent authorship differs.
 func (s *Service) Store(ctx context.Context, req StoreRequest) (result StoreResult, err error) {
 	defer func() {
 		if err != nil {
@@ -249,14 +250,19 @@ type memoryPayload struct {
 
 func identicalMemory(ctx context.Context, db memoryQuerier, payload memoryPayload,
 	withExpiry bool) (int64, bool, error) {
+	agentCandidates := sessionAgentCandidates(payload.sourceAgent)
+	agentPlaceholders := strings.TrimRight(strings.Repeat("?,", len(agentCandidates)), ",")
 	statement := `SELECT id FROM memories
 		 WHERE layer IS ? AND content IS ? AND metadata IS ? AND origin IS ?
-		   AND source_agent IS ? AND source_model IS ? AND source_surface IS ?
+		   AND source_agent IN (` + agentPlaceholders + `) AND source_model IS ? AND source_surface IS ?
 		   AND source_session IS NULL AND source_sequence IS NULL
 		   AND project IS ? AND status IS ? AND supersedes IS ?`
-	arguments := []any{payload.layer, payload.content, payload.metadata, payload.origin,
-		payload.sourceAgent, payload.sourceModel, payload.sourceSurface,
-		payload.project, payload.status, payload.supersedes}
+	arguments := []any{payload.layer, payload.content, payload.metadata, payload.origin}
+	for _, candidate := range agentCandidates {
+		arguments = append(arguments, candidate)
+	}
+	arguments = append(arguments, payload.sourceModel, payload.sourceSurface,
+		payload.project, payload.status, payload.supersedes)
 	if withExpiry {
 		statement += " AND expires_at IS ?"
 		arguments = append(arguments, payload.expiresAt)
