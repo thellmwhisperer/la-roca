@@ -46,7 +46,7 @@ func scanForeignOwned(root string, current Identity, lookup func(string) (Identi
 		current.Name = fmt.Sprintf("%d", current.UID)
 	}
 	var found []Repair
-	_ = filepath.WalkDir(resolved, func(path string, _ os.DirEntry, err error) error {
+	_ = filepath.WalkDir(resolved, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
@@ -58,10 +58,14 @@ func scanForeignOwned(root string, current Identity, lookup func(string) (Identi
 		if name == "" {
 			name = fmt.Sprintf("%d", owner.UID)
 		}
+		command := fmt.Sprintf("sudo chown %s %s", current.Name, shellQuote(path))
+		if entry.Type()&os.ModeSymlink != 0 {
+			command = fmt.Sprintf("sudo chown -h %s %s", current.Name, shellQuote(path))
+		}
 		found = append(found, Repair{
 			Path:    path,
 			Owner:   name,
-			Command: fmt.Sprintf("sudo chown %s %s", current.Name, shellQuote(path)),
+			Command: command,
 		})
 		return nil
 	})

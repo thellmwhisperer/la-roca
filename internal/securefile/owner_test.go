@@ -119,4 +119,23 @@ func TestStateOwnershipScenarios(t *testing.T) {
 			t.Fatal("root over symlinked user state was accepted")
 		}
 	})
+	t.Run("scan emits no-follow chown for a symlink", func(t *testing.T) {
+		target := filepath.Join(root, "real-lock")
+		link := filepath.Join(root, "link-lock")
+		if err := os.WriteFile(target, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, link); err != nil {
+			t.Fatal(err)
+		}
+		got := scanForeignOwned(root, operator, func(path string) (Identity, error) {
+			if path == link {
+				return rootOwner, nil
+			}
+			return operator, nil
+		})
+		if len(got) != 1 || got[0].Command != "sudo chown -h operator '"+link+"'" {
+			t.Fatalf("symlink repair = %#v", got)
+		}
+	})
 }

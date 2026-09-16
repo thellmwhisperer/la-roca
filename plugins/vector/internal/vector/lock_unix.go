@@ -12,15 +12,33 @@ import (
 )
 
 func lockFile(path string) (func() error, error) {
-	return lock(path, os.O_CREATE|os.O_RDWR)
+	if err := ensureLockFilePlatform(path); err != nil {
+		return nil, err
+	}
+	return lock(path, os.O_RDWR|unix.O_NOFOLLOW)
 }
 
-func alignLockOwner(path string) error {
-	parent, err := os.Stat(filepath.Dir(path))
+func ensureLockFilePlatform(path string) error {
+	created, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR|unix.O_NOFOLLOW, 0o600)
+	if err == nil {
+		if err := alignCreatedLockOwner(path, created); err != nil {
+			_ = created.Close()
+			return err
+		}
+		return created.Close()
+	}
+	if !os.IsExist(err) {
+		return err
+	}
+	existing, err := os.OpenFile(path, os.O_RDWR|unix.O_NOFOLLOW, 0o600)
 	if err != nil {
 		return err
 	}
-	current, err := os.Stat(path)
+	return existing.Close()
+}
+
+func alignCreatedLockOwner(path string, file *os.File) error {
+	parent, err := os.Stat(filepath.Dir(path))
 	if err != nil {
 		return err
 	}
@@ -28,11 +46,7 @@ func alignLockOwner(path string) error {
 	if !ok {
 		return nil
 	}
-	currentStat, ok := current.Sys().(*syscall.Stat_t)
-	if !ok || parentStat.Uid == currentStat.Uid {
-		return nil
-	}
-	return os.Chown(path, int(parentStat.Uid), -1)
+	return file.Chown(int(parentStat.Uid), -1)
 }
 
 func lockSharedFile(path string) (func() error, error) {
@@ -59,7 +73,7 @@ func lockSharedFile(path string) (func() error, error) {
 }
 
 func tryLockExisting(path string) (func() error, bool, error) {
-	file, err := os.OpenFile(path, os.O_RDWR, 0o600)
+	file, err := os.OpenFile(path, os.O_RDWR|unix.O_NOFOLLOW, 0o600)
 	if err != nil {
 		return nil, false, err
 	}
