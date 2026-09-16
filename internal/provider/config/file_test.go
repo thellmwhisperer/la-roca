@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thellmwhisperer/la-roca/internal/store/search"
 )
 
 func write(t *testing.T, body string) string {
@@ -247,6 +249,61 @@ func TestTheQueryCostBudgetIsReadFromConfig(t *testing.T) {
 	}
 }
 
+func TestQueryHybridKnobsResolveFlagOverConfigOverDefault(t *testing.T) {
+	absent, err := LoadFile(write(t, "[query]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaults := absent.Query.Settings()
+	if defaults.Oversample != 100 || defaults.RRFK != 60 || defaults.MinVectorScore != 0.35 ||
+		defaults.MaxRareTerms != 5 || defaults.ParallelLegs || defaults.Templates != search.TemplatesDefault {
+		t.Fatalf("absent [query] settings = %+v, want baked-in defaults", defaults)
+	}
+
+	file, err := LoadFile(write(t, `[query]
+oversample = 30
+templates = false
+rrf_k = 40
+min_vector_score = 0.2
+max_rare_terms = 3
+parallel_legs = true
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(file.Warnings) != 0 {
+		t.Fatalf("warnings = %v", file.Warnings)
+	}
+	configured := file.Query.Settings()
+	if configured.Oversample != 30 || configured.RRFK != 40 || configured.MinVectorScore != 0.2 ||
+		configured.MaxRareTerms != 3 || !configured.ParallelLegs || configured.Templates != search.TemplatesOff {
+		t.Fatalf("configured settings = %+v", configured)
+	}
+	unfiltered, err := LoadFile(write(t, "[query]\nmin_vector_score = 0\n"))
+	if err != nil || len(unfiltered.Warnings) != 0 {
+		t.Fatalf("zero vector floor load = %v, warnings = %v", err, unfiltered.Warnings)
+	}
+	unfilteredSettings := unfiltered.Query.Settings()
+	if unfilteredSettings.MinVectorScore != 0 || !unfilteredSettings.MinVectorScoreSet {
+		t.Fatalf("zero vector floor settings = %+v", unfilteredSettings)
+	}
+	oversample := 50
+	overridden := configured.Apply(search.Overlay{Oversample: &oversample})
+	if overridden.Oversample != 50 || overridden.RRFK != 40 || !overridden.ParallelLegs {
+		t.Fatalf("flag overlay = %+v, want oversample 50 on top of config", overridden)
+	}
+
+	custom, err := LoadFile(write(t, "[query]\ntemplates = [\"about %s\"]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	customSettings := custom.Query.Settings()
+	if customSettings.Templates != search.TemplatesCustom || len(customSettings.TemplateList) != 1 ||
+		customSettings.TemplateList[0] != "about %s" {
+		t.Fatalf("custom templates = %+v", customSettings)
+	}
+}
+
 func TestQueryTimeoutDistinguishesAbsentFromExplicitZero(t *testing.T) {
 	absent, err := LoadFile(write(t, "[query]\n"))
 	if err != nil {
@@ -327,6 +384,36 @@ func TestAValueOfTheWrongTypeKeepsTheDefaultAndWarns(t *testing.T) {
 			wants: "features.strict_input",
 			check: func(file File) bool { return file.Features.StrictInput },
 		},
+		{
+			name: "quoted oversample", body: "[query]\noversample = \"30\"\n",
+			wants: "query.oversample",
+			check: func(file File) bool { return !file.Query.OversampleSet },
+		},
+		{
+			name: "oversample above 100", body: "[query]\noversample = 200\n",
+			wants: "query.oversample",
+			check: func(file File) bool { return !file.Query.OversampleSet },
+		},
+		{
+			name: "fractional oversample", body: "[query]\noversample = 30.9\n",
+			wants: "query.oversample",
+			check: func(file File) bool { return !file.Query.OversampleSet },
+		},
+		{
+			name: "fractional max_rare_terms", body: "[query]\nmax_rare_terms = 5.5\n",
+			wants: "query.max_rare_terms",
+			check: func(file File) bool { return !file.Query.MaxRareTermsSet },
+		},
+		{
+			name: "non-finite min_vector_score", body: "[query]\nmin_vector_score = nan\n",
+			wants: "query.min_vector_score",
+			check: func(file File) bool { return !file.Query.MinVectorScoreSet },
+		},
+		{
+			name: "quoted parallel_legs", body: "[query]\nparallel_legs = \"true\"\n",
+			wants: "query.parallel_legs",
+			check: func(file File) bool { return !file.Query.ParallelLegsSet },
+		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			file, err := LoadFile(write(t, testCase.body))
@@ -340,6 +427,44 @@ func TestAValueOfTheWrongTypeKeepsTheDefaultAndWarns(t *testing.T) {
 				t.Fatalf("warnings = %v, want one naming %q", file.Warnings, testCase.wants)
 			}
 		})
+	}
+}
+
+func TestInvalidQueryTemplatesAreConfigErrors(t *testing.T) {
+	for _, body := range []string{
+		"[query]\ntemplates = true\n",
+		"[query]\ntemplates = []\n",
+		"[query]\ntemplates = [\"about\"]\n",
+	} {
+		path := write(t, body)
+		_, err := LoadFile(path)
+		if err == nil {
+			t.Fatalf("invalid templates were accepted: %s", body)
+		}
+		for _, want := range []string{"query.templates", path, "non-empty", "%s"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error %q does not name %q", err, want)
+			}
+		}
+	}
+}
+
+func TestUnsafeRRFKValuesAreConfigErrors(t *testing.T) {
+	for _, body := range []string{
+		"[query]\nrrf_k = 0\n",
+		"[query]\nrrf_k = 60.1\n",
+		"[query]\nrrf_k = 4503599627370497\n",
+	} {
+		path := write(t, body)
+		_, err := LoadFile(path)
+		if err == nil {
+			t.Fatalf("unsafe rrf_k was accepted: %s", body)
+		}
+		for _, want := range []string{"query.rrf_k", path, "whole number"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error %q does not name %q", err, want)
+			}
+		}
 	}
 }
 

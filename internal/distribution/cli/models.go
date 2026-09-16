@@ -2,9 +2,10 @@ package cli
 
 import (
 	"context"
-
+	"fmt"
 	"os"
-
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -143,6 +144,7 @@ func renderDoctor(env *cliEnv, report service.DoctorReport) {
 	} else {
 		env.print("configuration: %s (does not exist: defaults in use)", report.ConfigPath)
 	}
+	env.print("%s", renderQueryKnobs(report.Query))
 	env.print("agents detected: %s", detectedAgentsLine(report.DetectedAgents))
 	env.print("agents not found: %s", missingAgentsLine(report.DetectedAgents))
 	env.print("authentication: local agent models use their own CLI sessions; La Roca stores no secrets")
@@ -177,6 +179,18 @@ func renderDoctor(env *cliEnv, report service.DoctorReport) {
 			env.print("  - %s", proposal)
 		}
 	}
+}
+
+func renderQueryKnobs(query service.QueryDoctor) string {
+	templates := "default"
+	if !query.ExpandTemplates {
+		templates = "false"
+	} else if len(query.Templates) > 0 {
+		templates = strings.Join(query.Templates, ", ")
+	}
+	return fmt.Sprintf("query: oversample %d · templates %s · rrf_k %d · min_vector_score %s · max_rare_terms %d · parallel_legs %t",
+		query.Oversample, templates, query.RRFK, strconv.FormatFloat(query.MinVectorScore, 'f', -1, 64),
+		query.MaxRareTerms, query.ParallelLegs)
 }
 
 func orDash(value string) string {

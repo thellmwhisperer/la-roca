@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
+	"github.com/thellmwhisperer/la-roca/internal/store/search"
 )
 
 // DoctorReport is the installation's diagnosis: where its data is, what it
@@ -72,6 +73,19 @@ type DoctorReport struct {
 	// CapabilityProposals are open post-update configuration choices. The CLI
 	// fills them from the reconciliation registry before rendering this report.
 	CapabilityProposals []string `json:"capability_proposals,omitempty"`
+	// Query is the effective hybrid retrieval knobs after config and defaults.
+	Query QueryDoctor `json:"query"`
+}
+
+// QueryDoctor is the effective [query] hybrid knobs `roca doctor` prints.
+type QueryDoctor struct {
+	Oversample      int      `json:"oversample"`
+	ExpandTemplates bool     `json:"expand_templates"`
+	Templates       []string `json:"templates,omitempty"`
+	RRFK            int      `json:"rrf_k"`
+	MinVectorScore  float64  `json:"min_vector_score"`
+	MaxRareTerms    int      `json:"max_rare_terms"`
+	ParallelLegs    bool     `json:"parallel_legs"`
 }
 
 // DoctorProvider is one provider's verdict.
@@ -107,6 +121,7 @@ func (s *Service) Doctor(ctx context.Context) (DoctorReport, error) {
 
 		PromptPath:   promptPath,
 		PromptExists: promptErr == nil && promptInfo.Mode().IsRegular(),
+		Query:        queryDoctor(s.QuerySettings()),
 	}
 	unregistered, err := s.unregisteredLayers(ctx)
 	if err != nil {
@@ -123,6 +138,21 @@ func (s *Service) Doctor(ctx context.Context) (DoctorReport, error) {
 		}
 	}
 	return report, nil
+}
+
+func queryDoctor(settings search.Settings) QueryDoctor {
+	report := QueryDoctor{
+		Oversample:      settings.Oversample,
+		ExpandTemplates: settings.ExpandTemplates(),
+		RRFK:            settings.RRFK,
+		MinVectorScore:  settings.MinVectorScore,
+		MaxRareTerms:    settings.MaxRareTerms,
+		ParallelLegs:    settings.ParallelLegs,
+	}
+	if settings.Templates == search.TemplatesCustom {
+		report.Templates = append([]string(nil), settings.TemplateList...)
+	}
+	return report
 }
 
 func shellQuoted(value string) string {

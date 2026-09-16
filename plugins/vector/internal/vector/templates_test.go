@@ -25,6 +25,17 @@ func TestExpandedQueriesWrapTheRawQueryInStaticTemplates(t *testing.T) {
 	}
 }
 
+func TestExpandWithUsesTheSuppliedTemplatesOrNone(t *testing.T) {
+	got := ExpandWith("huerto urbano", []string{"about %s"})
+	if len(got) != 2 || got[0] != "huerto urbano" || got[1] != "about huerto urbano" {
+		t.Fatalf("custom expansion = %v", got)
+	}
+	raw := ExpandWith("huerto urbano", nil)
+	if len(raw) != 1 || raw[0] != "huerto urbano" {
+		t.Fatalf("empty templates should keep the raw query: %v", raw)
+	}
+}
+
 func TestExpandedQueriesSkipEmptyInput(t *testing.T) {
 	if got := ExpandedQueries("  "); got != nil {
 		t.Fatalf("empty expansion = %v", got)

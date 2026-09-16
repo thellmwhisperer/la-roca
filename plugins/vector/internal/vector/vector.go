@@ -513,7 +513,17 @@ func (i Index) Query(ctx context.Context, text string, k int) ([]Result, error) 
 }
 
 func (i Index) QueryExpanded(ctx context.Context, text string, k int, minScore float64) ([]Result, error) {
-	return i.queryTexts(ctx, ExpandedQueries(text), k, minScore, false)
+	return i.QueryExpandedWith(ctx, text, k, minScore, nil)
+}
+
+// QueryExpandedWith embeds the raw query plus templates. A nil template list
+// uses the built-in question wrappers.
+func (i Index) QueryExpandedWith(ctx context.Context, text string, k int,
+	minScore float64, templates []string) ([]Result, error) {
+	if templates == nil {
+		templates = QuestionTemplates
+	}
+	return i.queryTexts(ctx, ExpandWith(text, templates), k, minScore, false)
 }
 
 func (i Index) queryTexts(ctx context.Context, texts []string, k int,

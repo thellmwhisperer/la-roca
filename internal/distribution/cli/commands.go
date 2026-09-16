@@ -643,13 +643,24 @@ func indexCommand(env *cliEnv) *cobra.Command {
 func queryCommand(env *cliEnv) *cobra.Command {
 	var req service.SearchRequest
 	var databases string
+	var oversample int
+	var noTemplates bool
 	cmd := &cobra.Command{
 		Use:   "query <question>",
 		Short: "Hybrid FTS and vector search with labeled evidence",
 		Long: "Zero-inference hybrid search: rarity-selected full-text plus template-expanded " +
 			"vector neighbors, fused with RRF. Without a vector index the same command runs " +
-			"full-text alone. Questions must contain text and may be at most 1000 characters.",
+			"full-text alone. Questions must contain text and may be at most 1000 characters. " +
+			"Supported flags override their corresponding config.toml [query] values, which " +
+			"override the built-in defaults.",
 		Args: cobra.MinimumNArgs(1),
+		PreRunE: func(cmd *cobra.Command, _ []string) error {
+			settings := search.DefaultSettings().Apply(queryFlagOverlay(cmd, oversample, noTemplates))
+			if err := settings.Validate(); err != nil {
+				return fmt.Errorf("invalid query flag: %w", err)
+			}
+			return nil
+		},
 		RunE: env.serviceRunE(func(cmd *cobra.Command, args []string, svc *service.Service) error {
 			req.Question = strings.Join(args, " ")
 			names, err := service.ParseDatabaseList(databases)
@@ -657,6 +668,7 @@ func queryCommand(env *cliEnv) *cobra.Command {
 				return err
 			}
 			req.Databases = names
+			req.Overlay = queryFlagOverlay(cmd, oversample, noTemplates)
 			result, err := svc.Search(cmd.Context(), req)
 			if err != nil {
 				return err
@@ -669,11 +681,24 @@ func queryCommand(env *cliEnv) *cobra.Command {
 			return nil
 		}),
 	}
-	cmd.Flags().IntVar(&req.Top, "top", 10, "number of fused hits to return")
+	cmd.Flags().IntVar(&req.Top, "top", search.DefaultTop, "number of fused hits to return")
+	cmd.Flags().IntVar(&oversample, "oversample", search.HybridOversample,
+		"candidates each retrieval leg gathers before fusion")
+	cmd.Flags().BoolVar(&noTemplates, "no-templates", false,
+		"embed only the raw question, without question wrappers")
 	cmd.Flags().BoolVar(&req.RequireBoth, "require-both", false, "keep only hits found by both FTS and vector")
 	cmd.Flags().IntVar(&req.MaxChars, "max-chars", service.DefaultMaxChars, "character budget per snippet")
 	addDatabaseFlag(cmd, &databases)
 	return cmd
+}
+
+func queryFlagOverlay(cmd *cobra.Command, oversample int, noTemplates bool) search.Overlay {
+	var overlay search.Overlay
+	if cmd.Flags().Changed("oversample") {
+		overlay.Oversample = &oversample
+	}
+	overlay.NoTemplates = noTemplates
+	return overlay
 }
 
 func addDatabaseFlag(cmd *cobra.Command, dest *string) {

@@ -1,6 +1,7 @@
 package search_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/store/search"
@@ -72,6 +73,14 @@ func TestFuseRRFRewardsConsensusWithoutNormalizingLegScores(t *testing.T) {
 	}
 }
 
+func TestSettingsRejectRRFKThatCannotPreserveCandidateRankPrecision(t *testing.T) {
+	settings := search.DefaultSettings()
+	settings.RRFK = search.MaxRRFK + 1
+	if err := settings.Validate(); err == nil || !strings.Contains(err.Error(), "rrf-k must be no greater than") {
+		t.Fatalf("settings validation = %v", err)
+	}
+}
+
 func TestCollapseBestRankKeepsTheBestChunkOfOneSource(t *testing.T) {
 	got := search.CollapseBestRank([]search.RankedDoc{
 		{Database: "corpus", Table: "exchanges", ID: "10", Rank: 4, Score: 0.40, Snippet: "later chunk"},
@@ -83,6 +92,29 @@ func TestCollapseBestRankKeepsTheBestChunkOfOneSource(t *testing.T) {
 	}
 }
 
+func TestSettingsApplyFlagOverDefaultAndKeepUnsetKnobs(t *testing.T) {
+	oversample := 30
+	got := search.DefaultSettings().Apply(search.Overlay{Oversample: &oversample, NoTemplates: true})
+	if got.Oversample != 30 || got.RRFK != search.RRFK || got.Templates != search.TemplatesOff {
+		t.Fatalf("overlay = %+v", got)
+	}
+	if search.DefaultSettings().Apply(search.Overlay{}).Oversample != search.HybridOversample {
+		t.Fatal("empty overlay changed a default")
+	}
+}
+
+func TestSettingsWithDefaultsPreservesAnExplicitZeroVectorFloor(t *testing.T) {
+	settings := search.DefaultSettings()
+	settings.MinVectorScore = 0
+	settings.MinVectorScoreSet = true
+	if got := settings.WithDefaults(); got.MinVectorScore != 0 {
+		t.Fatalf("explicit zero floor = %v, want zero", got.MinVectorScore)
+	}
+	if got := (search.Settings{}).WithDefaults(); got.MinVectorScore != search.MinVectorScore {
+		t.Fatalf("unset floor = %v, want %v", got.MinVectorScore, search.MinVectorScore)
+	}
+}
+
 func TestApplyVectorFloorDropsWeakNeighbors(t *testing.T) {
 	got := search.ApplyVectorFloor([]search.RankedDoc{
 		{Key: "corpus.exchanges.122300", Rank: 1, Score: 0.47},
@@ -90,5 +122,15 @@ func TestApplyVectorFloorDropsWeakNeighbors(t *testing.T) {
 	}, 0.35)
 	if len(got) != 1 || got[0].Key != "corpus.exchanges.122300" {
 		t.Fatalf("floor = %+v", got)
+	}
+}
+
+func TestApplyVectorFloorKeepsAllNeighborsWhenDisabled(t *testing.T) {
+	got := search.ApplyVectorFloor([]search.RankedDoc{
+		{Key: "corpus.exchanges.1", Rank: 1, Score: 0.10},
+		{Key: "corpus.exchanges.2", Rank: 2, Score: 0.90},
+	}, 0)
+	if len(got) != 2 {
+		t.Fatalf("disabled floor = %+v, want all neighbors", got)
 	}
 }
