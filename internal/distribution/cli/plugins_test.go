@@ -11,6 +11,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocavector"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
+	"github.com/thellmwhisperer/la-roca/internal/securefile"
 )
 
 func TestPluginsResolveFromAControlledPathAndNeverTheCurrentDirectory(t *testing.T) {
@@ -36,6 +37,36 @@ func TestPluginsResolveFromAControlledPathAndNeverTheCurrentDirectory(t *testing
 	plugins := listPlugins(config.FeaturesConfig{})
 	if len(plugins) != 2 || plugins[0].Name != "demo" || plugins[1].Name != "version" {
 		t.Fatalf("plugins = %+v", plugins)
+	}
+}
+
+func TestPluginDispatchRefusesRootOverUserState(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".roca"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	restore := securefile.OverrideEffectiveUID(0)
+	t.Cleanup(restore)
+
+	env := &cliEnv{out: &strings.Builder{}, errOut: &strings.Builder{}}
+	_, err := executeWithOptions(env, []string{"vector", "install"}, nil, true)
+	if err == nil || !strings.Contains(err.Error(), "running as root") {
+		t.Fatalf("plugin dispatch error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".roca", "logs")); !os.IsNotExist(err) {
+		t.Fatalf("root refusal created execution logs: %v", err)
+	}
+}
+
+func TestPluginHelpDoesNotCreateExecutionLogs(t *testing.T) {
+	home, env, _ := syntheticPluginInstallation(t, 0)
+	code, err := executeWithOptions(env, []string{"synthetic-plugin", "--help"}, nil, true)
+	if code != ExitOK || err != nil {
+		t.Fatalf("plugin help = code %d err %v", code, err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".roca", "logs")); !os.IsNotExist(err) {
+		t.Fatalf("plugin help created execution logs: %v", err)
 	}
 }
 

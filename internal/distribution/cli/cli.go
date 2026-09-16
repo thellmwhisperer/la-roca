@@ -26,6 +26,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
+	"github.com/thellmwhisperer/la-roca/internal/securefile"
 )
 
 // Build is what the linker put inside the binary.
@@ -100,13 +101,28 @@ func executeWithEnv(env *cliEnv, args []string, in io.Reader) (int, error) {
 }
 
 func executeWithOptions(env *cliEnv, args []string, in io.Reader, plugins bool) (int, error) {
+	exempt := rootGuardExemptInvocation(args)
 	env.skipExecutionLog = false
+	if exempt {
+		env.skipExecutionLog = true
+		previousSkipReconciliation := env.skipReconciliation
+		env.skipReconciliation = true
+		defer func() { env.skipReconciliation = previousSkipReconciliation }()
+	}
 	started := env.started
 	if started.IsZero() {
 		started = time.Now()
 		env.started = started
 	}
-	env.loadCommandFeatures()
+	if !exempt {
+		if err := env.refuseRootOverUserStatePath(); err != nil {
+			env.skipExecutionLog = true
+			return ExitError, logfile.Correlate(err)
+		}
+	}
+	if !doctorInvocation(args) {
+		env.loadCommandFeatures()
+	}
 	root := rootCommand(env)
 	if plugins {
 		if handled, code, err := dispatchPlugin(env, root, args, env.features); handled {
@@ -121,9 +137,11 @@ func executeWithOptions(env *cliEnv, args []string, in io.Reader, plugins bool) 
 				// minted for the audit record and read back through `roca doctor`.
 				env.correlationID()
 			}
-			if logErr := env.logExecution(nil, started, code, err); logErr != nil {
-				fmt.Fprintf(env.errOut,
-					"warning: this run is not in the execution log: %v\n", logErr)
+			if !env.skipExecutionLog && !env.forceReadOnly {
+				if logErr := env.logExecution(nil, started, code, err); logErr != nil {
+					fmt.Fprintf(env.errOut,
+						"warning: this run is not in the execution log: %v\n", logErr)
+				}
 			}
 			return code, err
 		}
@@ -174,6 +192,54 @@ func executeWithOptions(env *cliEnv, args []string, in io.Reader, plugins bool) 
 	return code, err
 }
 
+func rootGuardExemptInvocation(args []string) bool {
+	commandSeen := false
+	for index := 0; index < len(args); index++ {
+		argument := args[index]
+		switch {
+		case argument == "--version" || argument == "--help" || argument == "-h":
+			return true
+		case argument == "--db-path":
+			if index+1 >= len(args) {
+				return false
+			}
+			index++
+		case argument == "--json" || argument == "--read-only" ||
+			strings.HasPrefix(argument, "--db-path="):
+			continue
+		case strings.HasPrefix(argument, "-"):
+			return false
+		default:
+			if !commandSeen {
+				commandSeen = true
+				if argument == "version" || argument == "help" {
+					return true
+				}
+			}
+		}
+	}
+	return !commandSeen
+}
+
+func doctorInvocation(args []string) bool {
+	for index := 0; index < len(args); index++ {
+		argument := args[index]
+		switch {
+		case argument == "--db-path":
+			index++
+			continue
+		case argument == "--json" || argument == "--read-only" ||
+			strings.HasPrefix(argument, "--db-path="):
+			continue
+		case strings.HasPrefix(argument, "-"):
+			continue
+		default:
+			return argument == "doctor"
+		}
+	}
+	return false
+}
+
 func rootCommand(env *cliEnv) *cobra.Command {
 	root := &cobra.Command{
 		Use:   "roca",
@@ -186,6 +252,9 @@ func rootCommand(env *cliEnv) *cobra.Command {
 			"questions use zero-inference FTS and vector search. Optional human answering belongs to roca-playground.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+			return env.refuseRootOverUserState(cmd)
+		},
 		// `roca --version` is the health check `install.sh` and `roca update` run
 		// before they trust a
 		// binary. It answers exactly what `roca version` answers: the same
@@ -709,6 +778,29 @@ func (env *cliEnv) resolvePaths() (config.Paths, error) {
 		Home:      home,
 		ConfigEnv: os.Getenv(config.EnvConfig),
 	})
+}
+
+func (env *cliEnv) refuseRootOverUserState(cmd *cobra.Command) error {
+	switch cmd.Name() {
+	case "roca", "version", "help":
+		return nil
+	}
+	if flag := cmd.Flags().Lookup("help"); flag != nil && flag.Changed {
+		return nil
+	}
+	err := env.refuseRootOverUserStatePath()
+	if err != nil {
+		env.skipExecutionLog = true
+	}
+	return err
+}
+
+func (env *cliEnv) refuseRootOverUserStatePath() error {
+	paths, err := env.resolvePaths()
+	if err != nil || paths.Home == "" {
+		return err
+	}
+	return securefile.RefuseRootOverUserState(filepath.Join(paths.Home, config.DirOwn))
 }
 
 // loadCommandFeatures resolves only the switches that decide whether a command

@@ -46,7 +46,12 @@ write include its SQLite WAL and shared-memory files when present.
 Lock status is `live` when held, `stale` when the file exists but is unheld,
 or `absent`. A lock that cannot be inspected renders as `unknown` and is
 omitted from JSON. Ingest and compact can acquire a stale lock without manual
-file deletion. The compaction flag recommends reclaiming sparse embedding
+file deletion. On Unix, a newly created index lock takes the UID of its state
+directory through the open file descriptor; an existing lock is opened without
+being re-owned. An ownership error is separate from lock status and is repaired
+with the exact command from
+[State ownership diagnosis](operations.md#state-ownership-diagnosis), not by
+deleting the lock. The compaction flag recommends reclaiming sparse embedding
 pages based on page and live chunk counts, not file size alone. A false flag
 does not prove there is no reclaimable space, including when page counts are
 unavailable. JSON also includes `embedding_pages` when readable. See

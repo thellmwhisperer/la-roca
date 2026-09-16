@@ -563,10 +563,14 @@ func Attach(ctx context.Context, executor statementExecutor, databases []Databas
 	return attached, nil
 }
 
-func Detach(ctx context.Context, executor statementExecutor, schemas []string) {
+func Detach(ctx context.Context, executor statementExecutor, schemas []string) error {
+	var result error
 	for index := len(schemas) - 1; index >= 0; index-- {
-		_, _ = executor.ExecContext(ctx, "DETACH DATABASE "+quoteIdentifier(schemas[index]))
+		if _, err := executor.ExecContext(ctx, "DETACH DATABASE "+quoteIdentifier(schemas[index])); err != nil {
+			result = errors.Join(result, fmt.Errorf("detach database %s: %w", schemas[index], err))
+		}
 	}
+	return result
 }
 
 // Hub is the kernel's database-neutral attach point. Its main schema is an

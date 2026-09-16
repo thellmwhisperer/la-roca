@@ -12,6 +12,14 @@ func lockFile(path string) (func() error, error) {
 	return lock(path, windows.OPEN_ALWAYS)
 }
 
+func ensureLockFilePlatform(path string) error {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return err
+	}
+	return file.Close()
+}
+
 func lockSharedFile(path string) (func() error, error) {
 	name, err := windows.UTF16PtrFromString(path)
 	if err != nil {

@@ -5,12 +5,61 @@ package vector
 import (
 	"errors"
 	"os"
+	"path/filepath"
+	"syscall"
 
 	"golang.org/x/sys/unix"
 )
 
+var chownCreatedLock = func(file *os.File, uid, gid int) error {
+	return file.Chown(uid, gid)
+}
+
 func lockFile(path string) (func() error, error) {
-	return lock(path, os.O_CREATE|os.O_RDWR)
+	if err := ensureLockFilePlatform(path); err != nil {
+		return nil, err
+	}
+	return lock(path, os.O_RDWR|unix.O_NOFOLLOW)
+}
+
+func ensureLockFilePlatform(path string) error {
+	created, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR|unix.O_NOFOLLOW, 0o600)
+	if err == nil {
+		if err := alignCreatedLockOwner(path, created); err != nil {
+			removeCreatedLock(path, created)
+			return err
+		}
+		return created.Close()
+	}
+	if !os.IsExist(err) {
+		return err
+	}
+	existing, err := os.OpenFile(path, os.O_RDWR|unix.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return err
+	}
+	return existing.Close()
+}
+
+func removeCreatedLock(path string, file *os.File) {
+	createdInfo, statErr := file.Stat()
+	currentInfo, currentErr := os.Stat(path)
+	if statErr == nil && currentErr == nil && os.SameFile(createdInfo, currentInfo) {
+		_ = os.Remove(path)
+	}
+	_ = file.Close()
+}
+
+func alignCreatedLockOwner(path string, file *os.File) error {
+	parent, err := os.Stat(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	parentStat, ok := parent.Sys().(*syscall.Stat_t)
+	if !ok {
+		return nil
+	}
+	return chownCreatedLock(file, int(parentStat.Uid), -1)
 }
 
 func lockSharedFile(path string) (func() error, error) {
@@ -37,7 +86,7 @@ func lockSharedFile(path string) (func() error, error) {
 }
 
 func tryLockExisting(path string) (func() error, bool, error) {
-	file, err := os.OpenFile(path, os.O_RDWR, 0o600)
+	file, err := os.OpenFile(path, os.O_RDWR|unix.O_NOFOLLOW, 0o600)
 	if err != nil {
 		return nil, false, err
 	}
