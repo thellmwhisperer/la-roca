@@ -15,7 +15,7 @@ func TestFirstTTYCommandOffersOpenCapabilitiesOnceForTheBuild(t *testing.T) {
 		interactive          bool
 		args                 []string
 	}{
-		{name: "successful TTY command", input: "n\n", interactive: true, args: []string{"version"}},
+		{name: "successful TTY command", input: "n\n", interactive: true, args: []string{"plugins"}},
 		{name: "failed non-TTY command", wantErr: "no Roca database", args: []string{"query", "what changed?"}},
 	}
 	for _, tc := range cases {

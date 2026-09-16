@@ -58,34 +58,6 @@ func TestStateOwnershipScenarios(t *testing.T) {
 			t.Fatalf("root over missing state: %v", err)
 		}
 	})
-	t.Run("lock chowns to the directory owner", func(t *testing.T) {
-		var gotPath string
-		var gotUID, gotGID int
-		err := alignToParentOwner(lock, func(name string) (Identity, error) {
-			if name == root {
-				return operator, nil
-			}
-			return rootOwner, nil
-		}, func(name string, uid, gid int) error {
-			gotPath, gotUID, gotGID = name, uid, gid
-			return nil
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if gotPath != lock || gotUID != 501 || gotGID != -1 {
-			t.Fatalf("chown(%q, %d, %d), want (%q, 501, -1)", gotPath, gotUID, gotGID, lock)
-		}
-	})
-	t.Run("lock skips chown when owners match", func(t *testing.T) {
-		err := alignToParentOwner(lock, sameLookup, func(string, int, int) error {
-			t.Fatal("chown called for matching owner")
-			return nil
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-	})
 	t.Run("scan follows a symlinked state root", func(t *testing.T) {
 		target := t.TempDir()
 		targetLock := filepath.Join(target, "vector.db.index.lock")

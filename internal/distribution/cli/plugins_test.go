@@ -59,6 +59,17 @@ func TestPluginDispatchRefusesRootOverUserState(t *testing.T) {
 	}
 }
 
+func TestPluginHelpDoesNotCreateExecutionLogs(t *testing.T) {
+	home, env, _ := syntheticPluginInstallation(t, 0)
+	code, err := executeWithOptions(env, []string{"synthetic-plugin", "--help"}, nil, true)
+	if code != ExitOK || err != nil {
+		t.Fatalf("plugin help = code %d err %v", code, err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".roca", "logs")); !os.IsNotExist(err) {
+		t.Fatalf("plugin help created execution logs: %v", err)
+	}
+}
+
 func TestVectorExecutableLifecycleRemainsReachableWhenSearchIsDisabled(t *testing.T) {
 	pluginRoot, directory := filepath.Join(t.TempDir(), "plugins"), filepath.Join(t.TempDir(), "bin")
 	if _, err := rocavector.EnsureWithPayload(

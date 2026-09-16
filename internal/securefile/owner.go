@@ -25,7 +25,6 @@ var (
 	lookupOwner     = realStatIdentity
 	currentIdentity = realCurrentIdentity
 	currentEUID     = os.Geteuid
-	chownPath       = os.Chown
 )
 
 // ScanForeignOwned walks root and reports every path whose owner is not the
@@ -116,30 +115,6 @@ func refuseRootOverUserState(root string, euid int, lookup func(string) (Identit
 		root, name, name)
 }
 
-// AlignToParentOwner gives path the uid of its parent directory. A lock created
-// while the process is root then stays the operator's, not root's.
-func AlignToParentOwner(path string) error {
-	return alignToParentOwner(path, lookupOwner, chownPath)
-}
-
-func alignToParentOwner(path string, lookup func(string) (Identity, error), chown func(string, int, int) error) error {
-	if path == "" {
-		return nil
-	}
-	parent, err := lookup(filepath.Dir(path))
-	if err != nil {
-		return err
-	}
-	current, err := lookup(path)
-	if err != nil {
-		return err
-	}
-	if parent.UID == current.UID {
-		return nil
-	}
-	return chown(path, int(parent.UID), -1)
-}
-
 func resolveStateRoot(root string) (string, error) {
 	info, err := os.Lstat(root)
 	if err != nil {
@@ -188,12 +163,4 @@ func OverrideEffectiveUID(euid int) func() {
 	previous := currentEUID
 	currentEUID = func() int { return euid }
 	return func() { currentEUID = previous }
-}
-
-// OverrideChown replaces chown for tests. The returned function restores the
-// previous function.
-func OverrideChown(chown func(string, int, int) error) func() {
-	previous := chownPath
-	chownPath = chown
-	return func() { chownPath = previous }
 }

@@ -8,8 +8,6 @@ import (
 	"path/filepath"
 	"syscall"
 	"testing"
-
-	"github.com/thellmwhisperer/la-roca/internal/securefile"
 )
 
 func TestIndexLockTakesTheStateDirectoryOwner(t *testing.T) {
@@ -49,17 +47,13 @@ func TestExistingIndexLockIsNotReowned(t *testing.T) {
 	if err := os.WriteFile(path, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	restoreIdentity := securefile.OverrideIdentityLookups(
-		securefile.Identity{UID: 501, Name: "operator"},
-		map[string]securefile.Identity{path: {UID: 0, Name: "root"}},
-	)
-	t.Cleanup(restoreIdentity)
 	chownCalled := false
-	restoreChown := securefile.OverrideChown(func(string, int, int) error {
+	previousChown := chownCreatedLock
+	chownCreatedLock = func(*os.File, int, int) error {
 		chownCalled = true
 		return nil
-	})
-	t.Cleanup(restoreChown)
+	}
+	t.Cleanup(func() { chownCreatedLock = previousChown })
 
 	release, busy, err := tryExclusiveFileLock(path, true)
 	if err != nil || busy {
@@ -76,11 +70,6 @@ func TestExistingIndexLockIsNotReowned(t *testing.T) {
 func TestCreatedIndexLockIsRemovedWhenOwnershipAlignmentFails(t *testing.T) {
 	state := t.TempDir()
 	path := filepath.Join(state, "vector.db.index.lock")
-	restoreIdentity := securefile.OverrideIdentityLookups(
-		securefile.Identity{UID: 501, Name: "operator"},
-		map[string]securefile.Identity{path: {UID: 0, Name: "root"}},
-	)
-	t.Cleanup(restoreIdentity)
 	previousChown := chownCreatedLock
 	chownCreatedLock = func(*os.File, int, int) error { return errors.New("chown failed") }
 	t.Cleanup(func() { chownCreatedLock = previousChown })

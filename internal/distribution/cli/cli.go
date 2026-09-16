@@ -101,16 +101,20 @@ func executeWithEnv(env *cliEnv, args []string, in io.Reader) (int, error) {
 }
 
 func executeWithOptions(env *cliEnv, args []string, in io.Reader, plugins bool) (int, error) {
+	exempt := rootGuardExemptInvocation(args)
 	env.skipExecutionLog = false
-	if rootGuardExemptInvocation(args) {
+	if exempt {
 		env.skipExecutionLog = true
+		previousSkipReconciliation := env.skipReconciliation
+		env.skipReconciliation = true
+		defer func() { env.skipReconciliation = previousSkipReconciliation }()
 	}
 	started := env.started
 	if started.IsZero() {
 		started = time.Now()
 		env.started = started
 	}
-	if !rootGuardExemptInvocation(args) {
+	if !exempt {
 		if err := env.refuseRootOverUserStatePath(); err != nil {
 			env.skipExecutionLog = true
 			return ExitError, logfile.Correlate(err)
@@ -133,9 +137,11 @@ func executeWithOptions(env *cliEnv, args []string, in io.Reader, plugins bool) 
 				// minted for the audit record and read back through `roca doctor`.
 				env.correlationID()
 			}
-			if logErr := env.logExecution(nil, started, code, err); logErr != nil {
-				fmt.Fprintf(env.errOut,
-					"warning: this run is not in the execution log: %v\n", logErr)
+			if !env.skipExecutionLog && !env.forceReadOnly {
+				if logErr := env.logExecution(nil, started, code, err); logErr != nil {
+					fmt.Fprintf(env.errOut,
+						"warning: this run is not in the execution log: %v\n", logErr)
+				}
 			}
 			return code, err
 		}
