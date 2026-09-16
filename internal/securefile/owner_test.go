@@ -13,8 +13,8 @@ func TestStateOwnershipScenarios(t *testing.T) {
 	if err := os.WriteFile(lock, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	operator := Identity{UID: 501, GID: 20, Name: "operator"}
-	rootOwner := Identity{UID: 0, GID: 0, Name: "root"}
+	operator := Identity{UID: 501, Name: "operator"}
+	rootOwner := Identity{UID: 0, Name: "root"}
 	sameLookup := func(string) (Identity, error) { return operator, nil }
 
 	t.Run("scan reports exact chown for a foreign owner", func(t *testing.T) {
@@ -24,7 +24,7 @@ func TestStateOwnershipScenarios(t *testing.T) {
 			}
 			return operator, nil
 		})
-		want := "chown operator " + lock
+		want := "sudo chown operator '" + lock + "'"
 		if len(got) != 1 || got[0].Command != want || got[0].Owner != "root" || got[0].Path != lock {
 			t.Fatalf("repair = %#v, want command %q", got, want)
 		}
@@ -73,8 +73,8 @@ func TestStateOwnershipScenarios(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if gotPath != lock || gotUID != 501 || gotGID != 20 {
-			t.Fatalf("chown(%q, %d, %d), want (%q, 501, 20)", gotPath, gotUID, gotGID, lock)
+		if gotPath != lock || gotUID != 501 || gotGID != -1 {
+			t.Fatalf("chown(%q, %d, %d), want (%q, 501, -1)", gotPath, gotUID, gotGID, lock)
 		}
 	})
 	t.Run("lock skips chown when owners match", func(t *testing.T) {
@@ -84,6 +84,39 @@ func TestStateOwnershipScenarios(t *testing.T) {
 		})
 		if err != nil {
 			t.Fatal(err)
+		}
+	})
+	t.Run("scan follows a symlinked state root", func(t *testing.T) {
+		target := t.TempDir()
+		targetLock := filepath.Join(target, "vector.db.index.lock")
+		if err := os.WriteFile(targetLock, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		link := filepath.Join(t.TempDir(), "state")
+		if err := os.Symlink(target, link); err != nil {
+			t.Fatal(err)
+		}
+		resolvedTarget, err := filepath.EvalSymlinks(target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resolvedTargetLock := filepath.Join(resolvedTarget, "vector.db.index.lock")
+		got := scanForeignOwned(link, operator, func(path string) (Identity, error) {
+			if path == resolvedTargetLock {
+				return rootOwner, nil
+			}
+			return operator, nil
+		})
+		if len(got) != 1 || got[0].Path != resolvedTargetLock {
+			t.Fatalf("symlink scan = %#v, want %q", got, resolvedTargetLock)
+		}
+		if err := refuseRootOverUserState(link, 0, func(path string) (Identity, error) {
+			if path == resolvedTarget {
+				return operator, nil
+			}
+			return rootOwner, nil
+		}); err == nil {
+			t.Fatal("root over symlinked user state was accepted")
 		}
 	})
 }

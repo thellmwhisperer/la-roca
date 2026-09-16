@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -57,7 +58,8 @@ func doctorCommand(env *cliEnv) *cobra.Command {
 				env.skipExecutionLog = true
 				return env.runDoctorReport(cmd.Context())
 			}
-			return env.serviceRunE(func(cmd *cobra.Command, _ []string, svc *service.Service) error {
+			foreignOwned := env.collectForeignOwnedState()
+			err := env.serviceRunE(func(cmd *cobra.Command, _ []string, svc *service.Service) error {
 				report, err := svc.Doctor(cmd.Context())
 				if err != nil {
 					return err
@@ -79,7 +81,7 @@ func doctorCommand(env *cliEnv) *cobra.Command {
 				answer := doctorReport{DoctorReport: report, QueryFailures: failures,
 					Vector:            env.collectVectorDoctor(cmd.Context()),
 					ReadOnlySnapshots: collectSnapshotDoctor(),
-					ForeignOwned:      env.collectForeignOwnedState()}
+					ForeignOwned:      foreignOwned}
 				if env.json {
 					return env.printJSON(answer)
 				}
@@ -96,6 +98,10 @@ func doctorCommand(env *cliEnv) *cobra.Command {
 				}
 				return err
 			})(cmd, args)
+			if err != nil && len(foreignOwned) > 0 {
+				renderForeignOwnedStateTo(env.errOut, foreignOwned)
+			}
+			return err
 		},
 	}
 	cmd.Flags().BoolVar(&support, "report", false,
@@ -227,8 +233,12 @@ func (env *cliEnv) collectForeignOwnedState() []stateOwnership {
 }
 
 func renderForeignOwnedState(env *cliEnv, found []stateOwnership) {
+	renderForeignOwnedStateTo(env.out, found)
+}
+
+func renderForeignOwnedStateTo(out io.Writer, found []stateOwnership) {
 	for _, item := range found {
-		env.print("state file owned by %s: %s", item.Owner, item.Path)
-		env.print("      remedy: %s", item.Command)
+		fmt.Fprintf(out, "state file owned by %s: %s\n", item.Owner, item.Path)
+		fmt.Fprintf(out, "      remedy: %s\n", item.Command)
 	}
 }

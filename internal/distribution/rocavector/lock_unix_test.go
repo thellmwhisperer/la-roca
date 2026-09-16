@@ -12,7 +12,7 @@ import (
 func TestIndexLockTakesTheStateDirectoryOwner(t *testing.T) {
 	state := t.TempDir()
 	path := filepath.Join(state, "vector.db.index.lock")
-	release, busy, err := tryExclusiveFileLock(path)
+	release, busy, err := tryExclusiveFileLock(path, true)
 	if err != nil || busy {
 		t.Fatalf("lock: busy=%v err=%v", busy, err)
 	}

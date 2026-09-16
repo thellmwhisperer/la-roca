@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Identity is a filesystem owner: numeric ids plus the login name when known.
 type Identity struct {
 	UID  uint32
-	GID  uint32
 	Name string
 }
 
@@ -38,11 +38,15 @@ func scanForeignOwned(root string, current Identity, lookup func(string) (Identi
 	if root == "" {
 		return nil
 	}
+	resolved, err := resolveStateRoot(root)
+	if err != nil || resolved == "" {
+		return nil
+	}
 	if current.Name == "" {
 		current.Name = fmt.Sprintf("%d", current.UID)
 	}
 	var found []Repair
-	_ = filepath.WalkDir(root, func(path string, _ os.DirEntry, err error) error {
+	_ = filepath.WalkDir(resolved, func(path string, _ os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
@@ -57,7 +61,7 @@ func scanForeignOwned(root string, current Identity, lookup func(string) (Identi
 		found = append(found, Repair{
 			Path:    path,
 			Owner:   name,
-			Command: fmt.Sprintf("chown %s %s", current.Name, path),
+			Command: fmt.Sprintf("sudo chown %s %s", current.Name, shellQuote(path)),
 		})
 		return nil
 	})
@@ -75,17 +79,21 @@ func refuseRootOverUserState(root string, euid int, lookup func(string) (Identit
 	if euid != 0 || root == "" {
 		return nil
 	}
-	info, err := os.Lstat(root)
+	resolved, err := resolveStateRoot(root)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
+		return err
+	}
+	if resolved == "" {
+		return nil
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
 		return err
 	}
 	if !info.IsDir() {
 		return nil
 	}
-	owner, err := lookup(root)
+	owner, err := lookup(resolved)
 	if err != nil {
 		return err
 	}
@@ -100,8 +108,8 @@ func refuseRootOverUserState(root string, euid int, lookup func(string) (Identit
 		root, name, name)
 }
 
-// AlignToParentOwner gives path the uid and gid of its parent directory. A lock
-// created while the process is root then stays the operator's, not root's.
+// AlignToParentOwner gives path the uid of its parent directory. A lock created
+// while the process is root then stays the operator's, not root's.
 func AlignToParentOwner(path string) error {
 	return alignToParentOwner(path, lookupOwner, chownPath)
 }
@@ -118,10 +126,35 @@ func alignToParentOwner(path string, lookup func(string) (Identity, error), chow
 	if err != nil {
 		return err
 	}
-	if parent.UID == current.UID && parent.GID == current.GID {
+	if parent.UID == current.UID {
 		return nil
 	}
-	return chown(path, int(parent.UID), int(parent.GID))
+	return chown(path, int(parent.UID), -1)
+}
+
+func resolveStateRoot(root string) (string, error) {
+	info, err := os.Lstat(root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		return root, nil
+	}
+	resolved, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	return resolved, nil
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
 // OverrideIdentityLookups replaces owner resolution for tests. The returned

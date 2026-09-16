@@ -19,7 +19,7 @@ func realStatIdentity(path string) (Identity, error) {
 	if !ok {
 		return Identity{}, fmt.Errorf("stat %s: no unix owner", path)
 	}
-	return Identity{UID: stat.Uid, GID: stat.Gid, Name: nameForUID(stat.Uid)}, nil
+	return Identity{UID: stat.Uid, Name: nameForUID(stat.Uid)}, nil
 }
 
 func realCurrentIdentity() Identity {
@@ -27,7 +27,7 @@ func realCurrentIdentity() Identity {
 	if uid < 0 {
 		return Identity{}
 	}
-	return Identity{UID: uint32(uid), GID: uint32(os.Getegid()), Name: nameForUID(uint32(uid))}
+	return Identity{UID: uint32(uid), Name: nameForUID(uint32(uid))}
 }
 
 func nameForUID(uid uint32) string {

@@ -22,10 +22,6 @@ func lock(path string, flags int) (func() error, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := AlignToParentOwner(path); err != nil {
-		file.Close()
-		return nil, err
-	}
 	if err := file.Chmod(0o600); err != nil {
 		file.Close()
 		return nil, err

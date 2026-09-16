@@ -25,7 +25,7 @@ func TestDoctorPrintsChownForForeignOwnedState(t *testing.T) {
 	)
 	t.Cleanup(restore)
 
-	want := "chown operator " + lock
+	want := "sudo chown operator '" + lock + "'"
 	human := runRoot(t, contractBuild(), "doctor")
 	for _, fragment := range []string{"state file owned by root: " + lock, want} {
 		if !strings.Contains(human, fragment) {
@@ -41,6 +41,31 @@ func TestDoctorPrintsChownForForeignOwnedState(t *testing.T) {
 	row, _ := owned[0].(map[string]any)
 	if row["chown"] != want || row["owner"] != "root" || row["path"] != lock {
 		t.Fatalf("foreign_owned row = %#v, want chown %q", row, want)
+	}
+}
+
+func TestDoctorReportsOwnershipWhenServiceCannotOpenState(t *testing.T) {
+	home := hermeticHome(t)
+	lock := filepath.Join(home, ".roca", "vector.db.index.lock")
+	if err := os.MkdirAll(filepath.Dir(lock), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(lock, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	restore := securefile.OverrideIdentityLookups(
+		securefile.Identity{UID: 501, Name: "operator"},
+		map[string]securefile.Identity{lock: {UID: 0, Name: "root"}},
+	)
+	t.Cleanup(restore)
+
+	out, err := runRootErr(t, contractBuild(), nil, "doctor")
+	if err == nil {
+		t.Fatal("doctor unexpectedly opened an uninitialized state")
+	}
+	want := "sudo chown operator '" + lock + "'"
+	if !strings.Contains(out, want) {
+		t.Fatalf("doctor error path missing %q:\n%s", want, out)
 	}
 }
 
