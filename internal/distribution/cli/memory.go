@@ -265,6 +265,9 @@ func cronRunCommand(env *cliEnv) *cobra.Command {
 				}
 				return env.printJSON(report)
 			}
+			for _, warning := range report.Warnings {
+				fmt.Fprintf(env.errOut, "warning: %s\n", warning)
+			}
 			for _, ride := range report.Rides {
 				exit := "-"
 				if ride.ExitCode != nil {

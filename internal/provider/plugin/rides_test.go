@@ -110,6 +110,18 @@ gate = "after_export"
 	}
 }
 
+func TestDiscoverOperatorRidesIgnoresTrustGateForRideFreeConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[features]\ncron = true\n"), 0o664); err != nil {
+		t.Fatal(err)
+	}
+
+	rides, warnings, err := plugin.DiscoverOperatorRides(path, "")
+	if err != nil || len(rides) != 0 || len(warnings) != 0 {
+		t.Fatalf("ride-free config = rides=%+v warnings=%v err=%v", rides, warnings, err)
+	}
+}
+
 func TestDiscoverOperatorRidesPreservesIndependentRidesAfterRefusal(t *testing.T) {
 	ridesDir := t.TempDir()
 	for name, spec := range map[string]struct {

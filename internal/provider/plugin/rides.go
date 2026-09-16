@@ -205,14 +205,21 @@ func readOperatorRides(pluginName, path string, configFile bool) ([]Ride, error)
 	if !os.SameFile(pathInfo, info) {
 		return nil, fmt.Errorf("%w: operator ride file %s changed while it was opened; refuse to run its rides", ErrUntrustedOperatorRide, path)
 	}
-	if err := operatorRideFileAllowed(path, file, info, os.Geteuid()); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrUntrustedOperatorRide, err)
-	}
 	raw, err := io.ReadAll(file)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
-	return parseRideSource(pluginName, path, raw, configFile)
+	rides, err := parseRideSource(pluginName, path, raw, configFile)
+	if err != nil {
+		return nil, err
+	}
+	if len(rides) == 0 {
+		return nil, nil
+	}
+	if err := operatorRideFileAllowed(path, file, info, os.Geteuid()); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrUntrustedOperatorRide, err)
+	}
+	return rides, nil
 }
 
 func parseRideSource(pluginName, source string, raw []byte, configFile bool) ([]Ride, error) {

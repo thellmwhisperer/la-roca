@@ -89,6 +89,34 @@ func TestCronListAndDryRunRemainAvailableInReadOnlyMode(t *testing.T) {
 	}
 }
 
+func TestCronRunPrintsOperatorRideWarnings(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("ROCA_MODELS_ORDER", "none")
+	writeConfig(t, home, "[features]\ncron = true\n")
+	ridesDir := filepath.Join(home, ".roca", "rides.d")
+	if err := os.MkdirAll(ridesDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ridesDir, "broken.toml"), []byte(`[ride.backup]
+command = "echo backup"
+surprise = true
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var output, warnings strings.Builder
+	env := &cliEnv{build: Build{Version: "test"}, out: &output, errOut: &warnings}
+	code, err := executeWithEnv(env, []string{"cron", "run", "--dry-run"}, nil)
+	if err != nil || code != ExitOK {
+		t.Fatalf("cron run = code %d err %v: %s%s", code, err, output.String(), warnings.String())
+	}
+	if !strings.Contains(warnings.String(), "warning:") ||
+		!strings.Contains(warnings.String(), "unknown field") {
+		t.Fatalf("cron warnings = %q", warnings.String())
+	}
+}
+
 func TestCronCommandDoesNotExistUntilItsFeatureIsEnabled(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
