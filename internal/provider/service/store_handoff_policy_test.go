@@ -73,6 +73,7 @@ func TestStoreRefusesAHandoffThatOmitsTheRequiredShape(t *testing.T) {
 	}{
 		{"unlabeled prose", "token refresh done, retry pending"},
 		{"near labels", "DONE (verified): recorded\nSTATUS: stored\nSUPERSEDE 42\nbranch: fixture\nnext: continue"},
+		{"next step alias", "branch: fixture\ndone: recorded\nstate: stored\nnext step: ship"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -132,6 +133,9 @@ func TestCanonicalSessionAgentMapsRuntimeAliases(t *testing.T) {
 		{"codex", "codex"},
 		{"Codex CLI", "codex"},
 		{"hermes-agent", "hermes"},
+		{"ZCode", "zcode"},
+		{"cursor-ide", "cursor"},
+		{"qwen-code", "qwen"},
 		{"glm-5.2 (codex/slopslint-detector-a1)", "glm-5.2 (codex/slopslint-detector-a1)"},
 		{"", ""},
 	}
@@ -145,7 +149,10 @@ func TestCanonicalSessionAgentMapsRuntimeAliases(t *testing.T) {
 func TestStoreAcceptsHandoffsFromAliasedSessionWriters(t *testing.T) {
 	svc, _ := serviceWithPaths(t)
 	content := shapedHandoff("aliased session writer")
-	for _, agent := range []string{"claude-desktop", "cowork", "Claude Code", "claude-ai", "codex"} {
+	for _, agent := range []string{
+		"claude-desktop", "cowork", "Claude Code", "claude-ai", "codex",
+		"ZCode", "zcode", "opencode", "hermes", "pi", "cursor", "grok", "qwen",
+	} {
 		t.Run(agent, func(t *testing.T) {
 			result, err := svc.Store(t.Context(), service.StoreRequest{
 				Layer: "handoff", Content: content + "\n" + agent,
@@ -158,6 +165,50 @@ func TestStoreAcceptsHandoffsFromAliasedSessionWriters(t *testing.T) {
 				t.Fatalf("accepted write = %+v", result)
 			}
 		})
+	}
+}
+
+func TestMCPLegacyAliasRetryIsTheSameMemory(t *testing.T) {
+	svc, _ := serviceWithPaths(t)
+	content := "legacy MCP alias retry fixture"
+	first, err := svc.Store(t.Context(), service.StoreRequest{
+		Layer: "discovery", Content: content,
+		Authorship: service.Authorship{Agent: "Claude Code", Model: "sonnet", Surface: service.SurfaceMCP},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	retry, err := svc.Store(t.Context(), service.StoreRequest{
+		Layer: "discovery", Content: content,
+		Authorship: service.Authorship{Agent: "claude", Model: "sonnet", Surface: service.SurfaceMCP},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !retry.Skipped || retry.ID != first.ID {
+		t.Fatalf("MCP alias retry = %+v, want skipped id %d", retry, first.ID)
+	}
+}
+
+func TestCLIHarnessNamesStayDistinctAuthors(t *testing.T) {
+	svc, _ := serviceWithPaths(t)
+	content := "cli harness names stay distinct"
+	first, err := svc.Store(t.Context(), service.StoreRequest{
+		Layer: "discovery", Content: content,
+		Authorship: service.Authorship{Agent: "claude-code", Model: "sonnet", Surface: service.SurfaceCLI},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := svc.Store(t.Context(), service.StoreRequest{
+		Layer: "discovery", Content: content,
+		Authorship: service.Authorship{Agent: "claude", Model: "sonnet", Surface: service.SurfaceCLI},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Skipped || second.ID == first.ID {
+		t.Fatalf("CLI harness names collapsed: first=%d second=%+v", first.ID, second)
 	}
 }
 

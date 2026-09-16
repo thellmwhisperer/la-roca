@@ -14,6 +14,7 @@ var sessionHandoffHarnesses = map[string]bool{
 	"claude": true, "claude-code": true,
 	"codex": true, "cursor": true, "grok": true,
 	"hermes": true, "opencode": true, "pi": true, "qwen": true,
+	"zcode": true,
 }
 
 // sessionAgentAliases map MCP clientInfo names and other runtime aliases onto
@@ -33,6 +34,9 @@ var sessionAgentAliases = map[string]string{
 	"hermes-agent":   "hermes",
 	"pi-signed":      "pi",
 	"pi-launcher":    "pi",
+	"cursor-ide":     "cursor",
+	"qwen-code":      "qwen",
+	"qwencode":       "qwen",
 }
 
 var sessionHandoffSurfaces = map[string]bool{
@@ -41,7 +45,7 @@ var sessionHandoffSurfaces = map[string]bool{
 }
 
 var handoffShapeLabel = regexp.MustCompile(
-	`(?i)\b(branch/scope|branch|scope|done|current\s+state|state|next\s+step|next)\s*:`,
+	`(?i)\b(branch/scope|branch|scope|done|current\s+state|state|next)\s*:`,
 )
 
 var requiredHandoffFields = []string{"branch/scope", "done", "state", "next"}
@@ -64,23 +68,22 @@ func CanonicalSessionAgent(name string) string {
 	return agent
 }
 
-func sessionAgentCandidates(agent string) []string {
-	trimmed := strings.TrimSpace(agent)
-	candidates := []string{trimmed}
-	canonical := CanonicalSessionAgent(trimmed)
-	known := false
+// mcpAgentLookupNames are the lowercase agent identities that count as the
+// same MCP writer. CLI writes stay exact: a differing harness name is a
+// different author.
+func mcpAgentLookupNames(agent string) []string {
+	canonical := CanonicalSessionAgent(agent)
+	names := []string{strings.ToLower(strings.TrimSpace(agent))}
+	if canonical != "" {
+		names = append(names, canonical)
+	}
 	for alias, target := range sessionAgentAliases {
 		if target == canonical {
-			known = true
-			candidates = append(candidates, alias)
+			names = append(names, alias)
 		}
 	}
-	if !known {
-		return candidates
-	}
-	candidates = append(candidates, canonical)
-	slices.Sort(candidates)
-	return slices.Compact(candidates)
+	slices.Sort(names)
+	return slices.Compact(names)
 }
 
 func refuseHandoffWrite(physical string, origin string, authorship Authorship, content string) error {
@@ -135,7 +138,7 @@ func refuseHandoffShape(content string) error {
 			populated["branch/scope"] = true
 		case "current state", "state":
 			populated["state"] = true
-		case "next step", "next":
+		case "next":
 			populated["next"] = true
 		default:
 			populated[label] = true

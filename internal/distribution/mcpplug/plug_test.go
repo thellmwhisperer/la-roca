@@ -296,6 +296,7 @@ func TestMCPHandoffAcceptsSessionAliasesAndRefusesAWorkerNote(t *testing.T) {
 		{"Claude Code", "claude", true},
 		{"claude-ai", "claude", true},
 		{"codex", "codex", true},
+		{"ZCode", "zcode", true},
 		{"glm-5.2 (codex/slopslint-detector-a1)", "glm-5.2 (codex/slopslint-detector-a1)", false},
 	}
 	for _, test := range tests {

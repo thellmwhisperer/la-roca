@@ -74,6 +74,7 @@ Feature: The MCP is a thin plug over the same core
       | claude-desktop | claude |
       | Claude Code    | claude |
       | codex          | codex  |
+      | ZCode          | zcode  |
 
   @fast
   Scenario: A worker progress note over MCP is refused with the reason named
