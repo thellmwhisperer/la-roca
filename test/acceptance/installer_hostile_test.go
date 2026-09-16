@@ -325,8 +325,16 @@ func TestInstallerRefusesRootOverUserOwnedState(t *testing.T) {
 		t.Fatal(err)
 	}
 	fake := t.TempDir()
-	script := "#!/bin/sh\n[ \"$1\" = \"-u\" ] && echo 0 && exit 0\nexit 1\n"
-	if err := os.WriteFile(filepath.Join(fake, "id"), []byte(script), 0o755); err != nil {
+	idScript := "#!/bin/sh\n[ \"$1\" = \"-u\" ] && echo 0 && exit 0\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(fake, "id"), []byte(idScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	statScript := "#!/bin/sh\n" +
+		"[ \"$1\" = \"--version\" ] && exit 1\n" +
+		"[ \"$3\" = \"%u\" ] && echo 501 && exit 0\n" +
+		"[ \"$3\" = \"%Su\" ] && echo operator && exit 0\n" +
+		"exit 1\n"
+	if err := os.WriteFile(filepath.Join(fake, "stat"), []byte(statScript), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	command := exec.Command("sh", theInstallerPath(), "--repo", "owner/name")
@@ -341,6 +349,7 @@ func TestInstallerRefusesRootOverUserOwnedState(t *testing.T) {
 			t.Fatalf("root refusal missing %q:\n%s", want, text)
 		}
 	}
+	t.Logf("installer root-over-user refusal:\n%s", strings.ReplaceAll(text, home, "$HOME"))
 }
 
 // --- helpers ---

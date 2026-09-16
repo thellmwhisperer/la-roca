@@ -39,6 +39,8 @@ func TestIndexLockTakesTheStateDirectoryOwner(t *testing.T) {
 		t.Fatalf("lock owner %d:%d, want directory owner %d:%d",
 			lockStat.Uid, lockStat.Gid, dirStat.Uid, dirStat.Gid)
 	}
+	t.Logf("state directory owner: %d:%d; created lock owner: %d:%d",
+		dirStat.Uid, dirStat.Gid, lockStat.Uid, lockStat.Gid)
 }
 
 func TestExistingIndexLockIsNotReowned(t *testing.T) {

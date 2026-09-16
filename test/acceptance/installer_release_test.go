@@ -82,6 +82,10 @@ func TestTheInstallerUpdatesWhenAZeroByteLockIsPresent(t *testing.T) {
 	if err := os.WriteFile(lock, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	lockInfo, err := os.Stat(lock)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if err := m.iRunTheInstallerOfTheNewVersion(); err != nil {
 		t.Fatal(err)
@@ -89,9 +93,13 @@ func TestTheInstallerUpdatesWhenAZeroByteLockIsPresent(t *testing.T) {
 	if m.last.code != 0 {
 		t.Fatalf("upgrade with a 0-byte lock exited %d:\n%s%s", m.last.code, m.last.stdout, m.last.stderr)
 	}
+	upgrade := m.last
 	if err := m.theVersionIsTheNewOne(); err != nil {
 		t.Fatalf("the binary was not updated: %v", err)
 	}
+	installerOutput := strings.ReplaceAll(upgrade.stdout+upgrade.stderr, m.home, "$HOME")
+	t.Logf("zero-byte lock size: %d bytes\ninstaller output:\n%sinstalled version:\n%s",
+		lockInfo.Size(), installerOutput, m.last.stdout)
 }
 
 func TestTheInstallerRestoresThePreviousBinaryWhenBundledPlacementFails(t *testing.T) {

@@ -11,6 +11,10 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+var chownCreatedLock = func(file *os.File, uid, gid int) error {
+	return file.Chown(uid, gid)
+}
+
 func lockFile(path string) (func() error, error) {
 	if err := ensureLockFilePlatform(path); err != nil {
 		return nil, err
@@ -55,7 +59,7 @@ func alignCreatedLockOwner(path string, file *os.File) error {
 	if !ok {
 		return nil
 	}
-	return file.Chown(int(parentStat.Uid), -1)
+	return chownCreatedLock(file, int(parentStat.Uid), -1)
 }
 
 func lockSharedFile(path string) (func() error, error) {

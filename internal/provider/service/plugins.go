@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"regexp"
@@ -400,7 +401,12 @@ func (s *Service) openQueryConnectionOn(ctx context.Context, target *store.DB) (
 
 func closeQueryConnection(connection *sql.Conn, attached []string) {
 	hideLayerRegistry(connection)
-	plugin.Detach(context.Background(), connection, attached)
+	if err := plugin.Detach(context.Background(), connection, attached); err != nil {
+		// A cancelled query can keep SQLite from detaching immediately. Do not
+		// return that contaminated connection to the pool, where the next attach
+		// would fail because the schema name is still in use.
+		_ = connection.Raw(func(any) error { return driver.ErrBadConn })
+	}
 	_ = connection.Close()
 }
 

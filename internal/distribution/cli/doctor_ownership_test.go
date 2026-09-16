@@ -32,6 +32,9 @@ func TestDoctorPrintsChownForForeignOwnedState(t *testing.T) {
 			t.Fatalf("doctor narration missing %q:\n%s", fragment, human)
 		}
 	}
+	redactedHuman := strings.ReplaceAll(human, fixture.home, "$HOME")
+	redactedHuman = strings.ReplaceAll(redactedHuman, os.TempDir(), "$TMPDIR")
+	t.Logf("local doctor ownership diagnosis:\n%s", redactedHuman)
 
 	doc := mustJSON(t, runRoot(t, contractBuild(), "doctor", "--json"))
 	owned, _ := doc["foreign_owned"].([]any)
@@ -52,6 +55,7 @@ func TestDoctorPrintsChownForForeignOwnedState(t *testing.T) {
 	if !strings.Contains(report, "state ownership findings: 1") {
 		t.Fatalf("support report omitted ownership count:\n%s", report)
 	}
+	t.Logf("privacy-safe doctor support report:\n%s", report)
 	reportJSON := mustJSON(t, runRoot(t, contractBuild(), "doctor", "--report", "--json"))
 	if reportJSON["foreign_owned_count"] != float64(1) {
 		t.Fatalf("support report foreign_owned_count = %#v, want 1", reportJSON["foreign_owned_count"])
@@ -94,7 +98,11 @@ func TestCLIRefusesRootOverUserOwnedState(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(home, ".roca"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	restore := securefile.OverrideEffectiveUID(0)
+	state := filepath.Join(home, ".roca")
+	restore := securefile.OverrideIdentityLookups(
+		securefile.Identity{UID: 0, Name: "root"},
+		map[string]securefile.Identity{state: {UID: 501, Name: "operator"}},
+	)
 	t.Cleanup(restore)
 
 	_, err := runRootErr(t, contractBuild(), nil, "init")
@@ -106,6 +114,7 @@ func TestCLIRefusesRootOverUserOwnedState(t *testing.T) {
 			t.Fatalf("refuse error %q does not carry %q", err, want)
 		}
 	}
+	t.Logf("CLI root-over-user refusal: %s", strings.ReplaceAll(err.Error(), home, "$HOME"))
 
 	version := runRoot(t, contractBuild(), "--version")
 	if !strings.Contains(version, "roca") {
