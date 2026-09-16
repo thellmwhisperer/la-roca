@@ -25,8 +25,8 @@ func operatorRideFileAllowed(path string, file *os.File, info os.FileInfo, euid 
 	if !info.Mode().IsRegular() {
 		return fmt.Errorf("operator ride file %s is not a regular file; refuse to run its rides", path)
 	}
-	if info.Mode().Perm()&0o022 != 0 {
-		return fmt.Errorf("operator ride file %s is writable by group or others; refuse to run its rides", path)
+	if err := operatorRideFilePermissionsAllowed(file, info); err != nil {
+		return fmt.Errorf("operator ride file %s %w", path, err)
 	}
 	owned, err := operatorRideFileOwnedByUser(file, info, euid)
 	if err != nil {
