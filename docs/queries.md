@@ -208,11 +208,11 @@ prints the effective values.
 
 | Knob | Default | Flag | What it trades off |
 |---|---|---|---|
-| `oversample` | 100 | `--oversample` | Candidates each leg gathers before fusion. Higher values can improve recall at the cost of more candidate reads, rescoring, and FTS ranking; they do not add embeddings. The vector plugin caps `k` at 100. |
-| `templates` | the three built-in question wrappers | `--no-templates` | Extra embeddings of the question as "qué se habló sobre…", "cómo afectó…", and "what was discussed about…". A list replaces those wrappers. `false` (or `--no-templates`) embeds only the raw question: faster, weaker on bare nouns. |
-| `rrf_k` | 60 | config only | Reciprocal Rank Fusion `k`. Smaller `k` rewards top ranks more sharply; larger `k` flattens the two lists together. |
-| `min_vector_score` | 0.35 | config only | Cosine floor on vector neighbors. Higher is stricter and may drop a useful near-miss; lower admits noise. |
-| `max_rare_terms` | 5 | config only | Rarest FTS tokens kept for the AND-connected `MATCH`. More terms narrow recall while potentially improving precision; fewer terms broaden recall but may admit noise. |
+| `oversample` | 100 | `--oversample` | Whole number from 1 to 100: candidates each leg gathers before fusion. Higher values can improve recall at the cost of more candidate reads, rescoring, and FTS ranking; they do not add embeddings. |
+| `templates` | the three built-in question wrappers | `--no-templates` | Extra embeddings of the question as "qué se habló sobre…", "cómo afectó…", and "what was discussed about…". A non-empty list replaces those wrappers; every wrapper must contain `%s`, where the raw question is inserted. `false` (or `--no-templates`) embeds only the raw question: faster, weaker on bare nouns. |
+| `rrf_k` | 60 | config only | Whole number from 1 through 2^52. Smaller values reward top ranks more sharply; larger values flatten the two lists together. |
+| `min_vector_score` | 0.35 | config only | Finite non-negative cosine floor on vector neighbors. Higher is stricter and may drop a useful near-miss; lower admits noise; `0` disables filtering. |
+| `max_rare_terms` | 5 | config only | Whole number of 1 or more: the rarest FTS tokens kept for the AND-connected `MATCH`. More terms narrow recall while potentially improving precision; fewer terms broaden recall but may admit noise. |
 | `parallel_legs` | false | config only | Run the complete FTS leg and vector leg at the same time. Changes latency, never the fused set or order. |
 
 `timeout_ms` stays the SQL statement budget for `roca exec` and the playground;

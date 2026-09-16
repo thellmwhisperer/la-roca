@@ -87,18 +87,6 @@ probe_ms   = 3000
 # value that is not a whole number of milliseconds, zero or more, is warned
 # about and the default applies.
 timeout_ms = 5000
-# Hybrid retrieval knobs for `roca query`. Absent keys keep the baked-in
-# defaults (oversample 100, built-in question templates, rrf_k 60,
-# min_vector_score 0.35, max_rare_terms 5, sequential legs). `templates` is a
-# list of wrappers or false to embed only the raw question. `--oversample` and
-# `--no-templates` override their settings for one invocation; `roca doctor`
-# prints the effective values. Tradeoffs live in docs/queries.md#hybrid-retrieval.
-# oversample = 100
-# templates = false
-# rrf_k = 60
-# min_vector_score = 0.35
-# max_rare_terms = 5
-# parallel_legs = false
 
 [features]
 # The two playground switches are enabled by default and each one is its own
@@ -130,6 +118,9 @@ keep_alive = "10m"
 # interpretation from seconds into minutes. Turn it back on only to debug.
 think      = false
 ```
+
+The `[query]` hybrid retrieval keys, defaults, accepted values, flags, and
+tradeoffs are owned by [Hybrid retrieval](queries.md#hybrid-retrieval).
 
 With no explicit `models.order`, the effective order is the detected shipped
 agent CLI binaries first and `ollama` last. For example, a machine where two
