@@ -64,6 +64,25 @@ func CanonicalSessionAgent(name string) string {
 	return agent
 }
 
+func sessionAgentCandidates(agent string) []string {
+	trimmed := strings.TrimSpace(agent)
+	candidates := []string{trimmed}
+	canonical := CanonicalSessionAgent(trimmed)
+	known := false
+	for alias, target := range sessionAgentAliases {
+		if target == canonical {
+			known = true
+			candidates = append(candidates, alias)
+		}
+	}
+	if !known {
+		return candidates
+	}
+	candidates = append(candidates, canonical)
+	slices.Sort(candidates)
+	return slices.Compact(candidates)
+}
+
 func refuseHandoffWrite(physical string, origin string, authorship Authorship, content string) error {
 	if physical != "handoff" {
 		return nil
