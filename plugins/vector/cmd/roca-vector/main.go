@@ -411,6 +411,11 @@ func queryCommand(env *environment) *cobra.Command {
 			if len(templates) > 0 && !expandTemplates {
 				return fmt.Errorf("--template requires --expand-templates")
 			}
+			for _, template := range templates {
+				if strings.TrimSpace(template) == "" || !strings.Contains(template, "%s") {
+					return fmt.Errorf("--template must be a non-empty question wrapper containing %%s")
+				}
+			}
 			return nil
 		},
 		RunE: func(command *cobra.Command, args []string) error {

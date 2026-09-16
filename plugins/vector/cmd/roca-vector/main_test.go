@@ -81,6 +81,16 @@ func TestQueryRejectsTemplatesWithoutExpansion(t *testing.T) {
 	}
 }
 
+func TestQueryRejectsInvalidTemplateWrappers(t *testing.T) {
+	for _, template := range []string{"", "   ", "about"} {
+		root := rootCommand(&environment{dbPath: "/synthetic/roca.db"})
+		root.SetArgs([]string{"query", "--expand-templates", "--template", template, "synthetic question"})
+		if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "non-empty question wrapper") {
+			t.Fatalf("query with invalid template %q = %v", template, err)
+		}
+	}
+}
+
 func TestQueryStartsBackgroundModelDownloadWithoutWaiting(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
