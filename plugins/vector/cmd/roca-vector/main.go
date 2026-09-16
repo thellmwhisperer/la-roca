@@ -402,6 +402,7 @@ func queryCommand(env *environment) *cobra.Command {
 	var databases string
 	var expandTemplates bool
 	var minScore float64
+	var templates []string
 	command := &cobra.Command{
 		Use:   "query <text> [k]",
 		Short: "Search routed database sidecars by semantic similarity",
@@ -430,16 +431,19 @@ func queryCommand(env *environment) *cobra.Command {
 			started := time.Now()
 			federation, federationErr := env.federationWithEmbedder("", nil, nil)
 			if federationErr == nil {
-				if result, used, residentErr := env.queryThroughResident(command.Context(), args[0], k, databases, expandTemplates, minScore); used {
-					if residentErr != nil {
-						return residentErr
+				useResident := len(templates) == 0
+				if useResident {
+					if result, used, residentErr := env.queryThroughResident(command.Context(), args[0], k, databases, expandTemplates, minScore); used {
+						if residentErr != nil {
+							return residentErr
+						}
+						return printFederatedQuery(env, args[0], k, started, result)
 					}
-					return printFederatedQuery(env, args[0], k, started, result)
 				}
 				federation.Embedder, federation.Events = env.queryEmbedder()
 				var result vector.FederatedQuery
 				if expandTemplates {
-					result, err = federation.QueryExpanded(command.Context(), args[0], k, databases, minScore)
+					result, err = federation.QueryExpandedWith(command.Context(), args[0], k, databases, minScore, templatesOrNil(templates))
 				} else {
 					result, err = federation.Query(command.Context(), args[0], k, databases)
 				}
@@ -461,7 +465,7 @@ func queryCommand(env *environment) *cobra.Command {
 			}
 			var results []vector.Result
 			if expandTemplates {
-				results, err = index.QueryExpanded(command.Context(), args[0], k, minScore)
+				results, err = index.QueryExpandedWith(command.Context(), args[0], k, minScore, templatesOrNil(templates))
 			} else {
 				results, err = index.Query(command.Context(), args[0], k)
 			}
@@ -481,9 +485,18 @@ func queryCommand(env *environment) *cobra.Command {
 		"comma list of attached database names to narrow the default federation, or all")
 	command.Flags().BoolVar(&expandTemplates, "expand-templates", false,
 		"embed the query plus static question templates and union the neighbors")
+	command.Flags().StringArrayVar(&templates, "template", nil,
+		"override a static question template; repeatable; requires --expand-templates")
 	command.Flags().Float64Var(&minScore, "min-score", 0,
 		"drop vector hits below this cosine when expanding templates")
 	return command
+}
+
+func templatesOrNil(templates []string) []string {
+	if len(templates) == 0 {
+		return nil
+	}
+	return templates
 }
 
 func printResults(results []vector.Result) {

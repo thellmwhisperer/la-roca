@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
+	"github.com/thellmwhisperer/la-roca/internal/store/search"
 )
 
 func TestSearchRunsFTSAloneWhenVectorIsAbsent(t *testing.T) {
@@ -61,6 +63,91 @@ func TestSearchFusesVectorAndFTSAndCanRequireBoth(t *testing.T) {
 		if !hit.Consensus {
 			t.Fatalf("require-both leaked a single-leg hit: %+v", hit)
 		}
+	}
+}
+
+func TestSearchDefaultKnobsMatchAFixedQuestion(t *testing.T) {
+	svc := seededHybridService(t,
+		func(_ context.Context, question string, k int, _ string) (service.VectorHits, error) {
+			if k != search.HybridOversample {
+				t.Fatalf("default oversample k = %d, want %d", k, search.HybridOversample)
+			}
+			return service.VectorHits{Executed: true, Results: []service.VectorHit{
+				{Rank: 1, Score: 0.51, Database: "core", Table: "memories", ID: "1",
+					Text: "a private note about salud mental in therapy"},
+			}}, nil
+		})
+	first := mustHybridSearch(t, svc, "salud mental", false)
+	second := mustHybridSearch(t, svc, "salud mental", false)
+	if got, want := stableSearchView(t, first), stableSearchView(t, second); got != want {
+		t.Fatalf("default search was not stable:\n%s\n%s", got, want)
+	}
+	if strings.Join(first.Engines, ",") != "fts,vector" {
+		t.Fatalf("engines = %v", first.Engines)
+	}
+	if first.Top != search.DefaultTop {
+		t.Fatalf("top = %d, want %d", first.Top, search.DefaultTop)
+	}
+	explicit := initialized(t, freshPaths(t), func(options *service.Options) {
+		options.Query = search.DefaultSettings()
+		options.VectorSearch = func(_ context.Context, _ string, k int, _ string) (service.VectorHits, error) {
+			return service.VectorHits{Executed: true, Results: []service.VectorHit{
+				{Rank: 1, Score: 0.51, Database: "core", Table: "memories", ID: "1",
+					Text: "a private note about salud mental in therapy"},
+			}}, nil
+		}
+	})
+	seedHybridCorpus(t, explicit)
+	got := mustHybridSearch(t, explicit, "salud mental", false)
+	if stableSearchView(t, got) != stableSearchView(t, first) {
+		t.Fatalf("explicit defaults drifted from zero-config search:\n%s\n%s",
+			stableSearchView(t, got), stableSearchView(t, first))
+	}
+}
+
+func TestSearchParallelLegsFusesTheSameHits(t *testing.T) {
+	vector := func(_ context.Context, _ string, _ int, _ string) (service.VectorHits, error) {
+		time.Sleep(15 * time.Millisecond)
+		return service.VectorHits{Executed: true, Results: []service.VectorHit{
+			{Rank: 1, Score: 0.51, Database: "core", Table: "memories", ID: "1",
+				Text: "a private note about salud mental in therapy"},
+			{Rank: 2, Score: 0.44, Database: "core", Table: "sessions", ID: "session-salud",
+				Text: "Therapy notes\n\nrecovery"},
+		}}, nil
+	}
+	svc := seededHybridService(t, vector)
+	sequential, err := svc.Search(context.Background(), service.SearchRequest{Question: "salud mental", Top: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parallelOn := true
+	parallel, err := svc.Search(context.Background(), service.SearchRequest{
+		Question: "salud mental", Top: 10,
+		Overlay: search.Overlay{ParallelLegs: &parallelOn},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := stableSearchView(t, parallel), stableSearchView(t, sequential); got != want {
+		t.Fatalf("parallel fusion drifted:\n%s\n%s", got, want)
+	}
+}
+
+func TestSearchOversampleFlagReachesTheVectorLeg(t *testing.T) {
+	gotK := 0
+	svc := seededHybridService(t,
+		func(_ context.Context, _ string, k int, _ string) (service.VectorHits, error) {
+			gotK = k
+			return service.VectorHits{Executed: true}, nil
+		})
+	k := 30
+	if _, err := svc.Search(context.Background(), service.SearchRequest{
+		Question: "salud mental", Overlay: search.Overlay{Oversample: &k},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if gotK != 30 {
+		t.Fatalf("vector k = %d, want 30", gotK)
 	}
 }
 
@@ -433,6 +520,29 @@ func hybridHitContains(result service.SearchResult, text string) bool {
 		}
 	}
 	return false
+}
+
+func stableSearchView(t *testing.T, result service.SearchResult) string {
+	t.Helper()
+	type view struct {
+		Question  string
+		Engines   []string
+		Terms     []string
+		Top       int
+		Hits      []service.SearchHit
+		RowCount  int
+		Notices   []string
+		Databases []string
+	}
+	body, err := json.Marshal(view{
+		Question: result.Question, Engines: result.Engines, Terms: result.Terms,
+		Top: result.Top, Hits: result.Hits, RowCount: result.RowCount,
+		Notices: result.Notices, Databases: result.Databases,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(body)
 }
 
 func containsTerm(terms []string, want string) bool {

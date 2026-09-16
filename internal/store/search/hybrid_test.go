@@ -83,6 +83,17 @@ func TestCollapseBestRankKeepsTheBestChunkOfOneSource(t *testing.T) {
 	}
 }
 
+func TestSettingsApplyFlagOverDefaultAndKeepUnsetKnobs(t *testing.T) {
+	oversample := 30
+	got := search.DefaultSettings().Apply(search.Overlay{Oversample: &oversample, NoTemplates: true})
+	if got.Oversample != 30 || got.RRFK != search.RRFK || got.Templates != search.TemplatesOff {
+		t.Fatalf("overlay = %+v", got)
+	}
+	if search.DefaultSettings().Apply(search.Overlay{}).Oversample != search.HybridOversample {
+		t.Fatal("empty overlay changed a default")
+	}
+}
+
 func TestApplyVectorFloorDropsWeakNeighbors(t *testing.T) {
 	got := search.ApplyVectorFloor([]search.RankedDoc{
 		{Key: "corpus.exchanges.122300", Rank: 1, Score: 0.47},

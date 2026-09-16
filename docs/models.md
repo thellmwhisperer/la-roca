@@ -87,6 +87,18 @@ probe_ms   = 3000
 # value that is not a whole number of milliseconds, zero or more, is warned
 # about and the default applies.
 timeout_ms = 5000
+# Hybrid retrieval knobs for `roca query`. Absent keys keep the baked-in
+# defaults (oversample 100, built-in question templates, rrf_k 60,
+# min_vector_score 0.35, max_rare_terms 5, sequential legs). `templates` is a
+# list of wrappers or false to embed only the raw question. `roca query`
+# flags override these for one invocation; `roca doctor` prints the effective
+# values. Tradeoffs live in docs/queries.md#hybrid-retrieval.
+# oversample = 100
+# templates = false
+# rrf_k = 60
+# min_vector_score = 0.35
+# max_rare_terms = 5
+# parallel_legs = false
 
 [features]
 # The two playground switches are enabled by default and each one is its own

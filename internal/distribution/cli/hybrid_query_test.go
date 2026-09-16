@@ -21,6 +21,33 @@ func TestPlaygroundHelpTeachesHumanSQLModes(t *testing.T) {
 	}
 }
 
+func TestQueryHelpNamesTheHybridKnobs(t *testing.T) {
+	var output strings.Builder
+	root := rootCommand(&cliEnv{})
+	root.SetOut(&output)
+	root.SetArgs([]string{"query", "--help"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"--oversample", "--no-templates", "--top", "--rrf-k",
+		"--min-vector-score", "--max-rare-terms", "--parallel-legs"} {
+		if !strings.Contains(output.String(), want) {
+			t.Errorf("query help lacks %q:\n%s", want, output.String())
+		}
+	}
+}
+
+func TestDoctorPrintsConfiguredQueryKnobs(t *testing.T) {
+	fixture := fixtureInstallation(t)
+	writeConfig(t, fixture.home, "[query]\noversample = 30\ntemplates = false\nparallel_legs = true\n")
+	out := runRoot(t, contractBuild(), "doctor")
+	for _, want := range []string{"oversample 30", "templates false", "parallel_legs true", "rrf_k 60"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("doctor missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestQueryFTSOnlyReturnsLabeledHits(t *testing.T) {
 	fixtureInstallation(t)
 	runRoot(t, contractBuild(), "store", "--layer", "discovery",

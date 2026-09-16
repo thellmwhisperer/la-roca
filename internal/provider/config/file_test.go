@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thellmwhisperer/la-roca/internal/store/search"
 )
 
 func write(t *testing.T, body string) string {
@@ -247,6 +249,53 @@ func TestTheQueryCostBudgetIsReadFromConfig(t *testing.T) {
 	}
 }
 
+func TestQueryHybridKnobsResolveFlagOverConfigOverDefault(t *testing.T) {
+	absent, err := LoadFile(write(t, "[query]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaults := absent.Query.Settings()
+	if defaults.Oversample != 100 || defaults.RRFK != 60 || defaults.MinVectorScore != 0.35 ||
+		defaults.MaxRareTerms != 5 || defaults.ParallelLegs || defaults.Templates != search.TemplatesDefault {
+		t.Fatalf("absent [query] settings = %+v, want baked-in defaults", defaults)
+	}
+
+	file, err := LoadFile(write(t, `[query]
+oversample = 30
+templates = false
+rrf_k = 40
+min_vector_score = 0.2
+max_rare_terms = 3
+parallel_legs = true
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(file.Warnings) != 0 {
+		t.Fatalf("warnings = %v", file.Warnings)
+	}
+	configured := file.Query.Settings()
+	if configured.Oversample != 30 || configured.RRFK != 40 || configured.MinVectorScore != 0.2 ||
+		configured.MaxRareTerms != 3 || !configured.ParallelLegs || configured.Templates != search.TemplatesOff {
+		t.Fatalf("configured settings = %+v", configured)
+	}
+	oversample := 50
+	overridden := configured.Apply(search.Overlay{Oversample: &oversample})
+	if overridden.Oversample != 50 || overridden.RRFK != 40 || !overridden.ParallelLegs {
+		t.Fatalf("flag overlay = %+v, want oversample 50 on top of config", overridden)
+	}
+
+	custom, err := LoadFile(write(t, "[query]\ntemplates = [\"about %s\"]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	customSettings := custom.Query.Settings()
+	if customSettings.Templates != search.TemplatesCustom || len(customSettings.TemplateList) != 1 ||
+		customSettings.TemplateList[0] != "about %s" {
+		t.Fatalf("custom templates = %+v", customSettings)
+	}
+}
+
 func TestQueryTimeoutDistinguishesAbsentFromExplicitZero(t *testing.T) {
 	absent, err := LoadFile(write(t, "[query]\n"))
 	if err != nil {
@@ -326,6 +375,26 @@ func TestAValueOfTheWrongTypeKeepsTheDefaultAndWarns(t *testing.T) {
 			name: "numeric strict_input", body: "[features]\nstrict_input = 0\n",
 			wants: "features.strict_input",
 			check: func(file File) bool { return file.Features.StrictInput },
+		},
+		{
+			name: "quoted oversample", body: "[query]\noversample = \"30\"\n",
+			wants: "query.oversample",
+			check: func(file File) bool { return !file.Query.OversampleSet },
+		},
+		{
+			name: "oversample above 100", body: "[query]\noversample = 200\n",
+			wants: "query.oversample",
+			check: func(file File) bool { return !file.Query.OversampleSet },
+		},
+		{
+			name: "templates true", body: "[query]\ntemplates = true\n",
+			wants: "query.templates",
+			check: func(file File) bool { return !file.Query.TemplatesSet },
+		},
+		{
+			name: "quoted parallel_legs", body: "[query]\nparallel_legs = \"true\"\n",
+			wants: "query.parallel_legs",
+			check: func(file File) bool { return !file.Query.ParallelLegsSet },
 		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {

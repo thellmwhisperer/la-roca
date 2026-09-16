@@ -314,7 +314,17 @@ func (f Federation) Query(ctx context.Context, text string, k int, databaseList 
 // unions the KNN lists, applies minScore, and dedupes by stable source.
 func (f Federation) QueryExpanded(ctx context.Context, text string, k int,
 	databaseList string, minScore float64) (FederatedQuery, error) {
-	return f.queryTexts(ctx, ExpandedQueries(text), k, databaseList, minScore, false)
+	return f.QueryExpandedWith(ctx, text, k, databaseList, minScore, nil)
+}
+
+// QueryExpandedWith embeds the raw query plus templates. A nil template list
+// uses the built-in question wrappers.
+func (f Federation) QueryExpandedWith(ctx context.Context, text string, k int,
+	databaseList string, minScore float64, templates []string) (FederatedQuery, error) {
+	if templates == nil {
+		templates = QuestionTemplates
+	}
+	return f.queryTexts(ctx, ExpandWith(text, templates), k, databaseList, minScore, false)
 }
 
 func (f Federation) queryTexts(ctx context.Context, texts []string, k int, databaseList string,

@@ -11,6 +11,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/thellmwhisperer/la-roca/internal/securefile"
+	"github.com/thellmwhisperer/la-roca/internal/store/search"
 )
 
 type ChangeKind string
@@ -685,10 +686,55 @@ type LayoutConfig struct {
 
 func defaultLayout() LayoutConfig { return LayoutConfig{Serving: LayoutLegacyServing} }
 
-// QueryConfig bounds execution of SQL that passed the read-only gate.
+// QueryConfig bounds execution of SQL that passed the read-only gate and
+// tunes hybrid retrieval. Unset knobs keep the baked-in search defaults.
 type QueryConfig struct {
 	TimeoutMS  int  `toml:"timeout_ms"`
 	TimeoutSet bool `toml:"-"`
+
+	Oversample        int
+	OversampleSet     bool
+	RRFK              int
+	RRFKSet           bool
+	MinVectorScore    float64
+	MinVectorScoreSet bool
+	MaxRareTerms      int
+	MaxRareTermsSet   bool
+	ParallelLegs      bool
+	ParallelLegsSet   bool
+	Templates         []string
+	TemplatesOff      bool
+	TemplatesSet      bool
+}
+
+// Settings resolves [query] hybrid knobs onto today's baked-in defaults.
+func (q QueryConfig) Settings() search.Settings {
+	settings := search.DefaultSettings()
+	if q.OversampleSet {
+		settings.Oversample = q.Oversample
+	}
+	if q.RRFKSet {
+		settings.RRFK = q.RRFK
+	}
+	if q.MinVectorScoreSet {
+		settings.MinVectorScore = q.MinVectorScore
+	}
+	if q.MaxRareTermsSet {
+		settings.MaxRareTerms = q.MaxRareTerms
+	}
+	if q.ParallelLegsSet {
+		settings.ParallelLegs = q.ParallelLegs
+	}
+	if q.TemplatesSet {
+		if q.TemplatesOff {
+			settings.Templates = search.TemplatesOff
+			settings.TemplateList = nil
+		} else {
+			settings.Templates = search.TemplatesCustom
+			settings.TemplateList = append([]string(nil), q.Templates...)
+		}
+	}
+	return settings
 }
 
 // FeaturesConfig contains operational escape hatches and experimental
@@ -779,7 +825,10 @@ var knownProviderKeys = map[string]bool{
 	"api_key": true, "api_key_env": true,
 }
 
-var knownQueryKeys = map[string]bool{"timeout_ms": true}
+var knownQueryKeys = map[string]bool{
+	"timeout_ms": true, "oversample": true, "templates": true, "rrf_k": true,
+	"min_vector_score": true, "max_rare_terms": true, "parallel_legs": true,
+}
 
 func KnownProviderKey(key string) bool { return knownProviderKeys[key] }
 
@@ -883,6 +932,60 @@ func readQuery(section map[string]any, path string, warnings *[]string) QueryCon
 			}
 			query.TimeoutMS = milliseconds
 			query.TimeoutSet = true
+		case "oversample":
+			value, ok := readNumber(section[key])
+			if !ok || value < 1 || value > 100 {
+				*warnings = append(*warnings, invalidValue("query.oversample", path,
+					"a whole number from 1 to 100"))
+				continue
+			}
+			query.Oversample = value
+			query.OversampleSet = true
+		case "rrf_k":
+			value, ok := readNumber(section[key])
+			if !ok || value < 1 {
+				*warnings = append(*warnings, invalidValue("query.rrf_k", path,
+					"a whole number of 1 or more"))
+				continue
+			}
+			query.RRFK = value
+			query.RRFKSet = true
+		case "min_vector_score":
+			value, ok := readFloat(section[key])
+			if !ok || value <= 0 {
+				*warnings = append(*warnings, invalidValue("query.min_vector_score", path,
+					"a positive number"))
+				continue
+			}
+			query.MinVectorScore = value
+			query.MinVectorScoreSet = true
+		case "max_rare_terms":
+			value, ok := readNumber(section[key])
+			if !ok || value < 1 {
+				*warnings = append(*warnings, invalidValue("query.max_rare_terms", path,
+					"a whole number of 1 or more"))
+				continue
+			}
+			query.MaxRareTerms = value
+			query.MaxRareTermsSet = true
+		case "parallel_legs":
+			written, ok := section[key].(bool)
+			if !ok {
+				*warnings = append(*warnings, invalidValue("query.parallel_legs", path, "true or false"))
+				continue
+			}
+			query.ParallelLegs = written
+			query.ParallelLegsSet = true
+		case "templates":
+			off, list, ok := readTemplates(section[key])
+			if !ok {
+				*warnings = append(*warnings, invalidValue("query.templates", path,
+					"false, or a list of question templates"))
+				continue
+			}
+			query.TemplatesSet = true
+			query.TemplatesOff = off
+			query.Templates = list
 		default:
 			if !knownQueryKeys[key] {
 				*warnings = append(*warnings, unknownKey("query."+key, path))
@@ -890,6 +993,32 @@ func readQuery(section map[string]any, path string, warnings *[]string) QueryCon
 		}
 	}
 	return query
+}
+
+func readTemplates(value any) (off bool, list []string, ok bool) {
+	switch typed := value.(type) {
+	case bool:
+		if typed {
+			return false, nil, false
+		}
+		return true, nil, true
+	case []any:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			text, isText := item.(string)
+			text = strings.TrimSpace(text)
+			if !isText || text == "" {
+				return false, nil, false
+			}
+			out = append(out, text)
+		}
+		if len(out) == 0 {
+			return true, nil, true
+		}
+		return false, out, true
+	default:
+		return false, nil, false
+	}
 }
 
 func readFeatures(section map[string]any, path string, warnings *[]string) FeaturesConfig {
@@ -1138,6 +1267,16 @@ func readNumber(value any) (int, bool) {
 		return int(typed), true
 	case float64:
 		return int(typed), true
+	}
+	return 0, false
+}
+
+func readFloat(value any) (float64, bool) {
+	switch typed := value.(type) {
+	case int64:
+		return float64(typed), true
+	case float64:
+		return typed, true
 	}
 	return 0, false
 }

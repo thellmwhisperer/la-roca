@@ -8,7 +8,10 @@ First-time path: [install and initialize search](lifecycle.md#install).
 rare full-text terms, embeds the question plus static question templates when
 a vector index exists, fuses the two lists with RRF, and labels which legs
 found each hit. Without a vector index the same command runs full-text alone.
-`--top N` (default 10) controls the fused result count, `--require-both` keeps
+`--top N` (default 10) controls the fused result count, `--oversample`,
+`--no-templates`, `--rrf-k`, `--min-vector-score`, `--max-rare-terms`, and
+`--parallel-legs` try a retrieval knob before it lands in
+[`config.toml` `[query]`](models.md#the-configuration), `--require-both` keeps
 only dual-confirmed hits, and `--databases` narrows the default (every attached
 plugin database, including ops). Vector coverage follows the
 [sidecar selection rules](vector.md#first-query). `--json` returns the complete
@@ -194,6 +197,33 @@ normalizing either leg's native scores. If vector search is unavailable,
 missing, or still downloading, the same envelope reports the notice and contains
 the federated FTS results alone. The query never waits on the embedding model
 download.
+
+## Hybrid retrieval
+
+`roca query` fuses two independent legs with Reciprocal Rank Fusion. The knobs
+below are the ones that used to be constants in the binary. Each one has a
+built-in default; `config.toml` `[query]` overrides that default; an explicit
+`roca query` flag overrides the file. `roca doctor` prints the effective
+values.
+
+| Knob | Default | Flag | What it trades off |
+|---|---|---|---|
+| `oversample` | 100 | `--oversample` | Candidates each leg gathers before fusion. Higher recalls more and costs more embeddings and FTS ranking. The vector plugin caps `k` at 100. |
+| `templates` | the three built-in question wrappers | `--no-templates` | Extra embeddings of the question as "qué se habló sobre…", "cómo afectó…", and "what was discussed about…". A list replaces those wrappers. `false` (or `--no-templates`) embeds only the raw question: faster, weaker on bare nouns. |
+| `rrf_k` | 60 | `--rrf-k` | Reciprocal Rank Fusion `k`. Smaller `k` rewards top ranks more sharply; larger `k` flattens the two lists together. |
+| `min_vector_score` | 0.35 | `--min-vector-score` | Cosine floor on vector neighbors. Higher is stricter and may drop a useful near-miss; lower admits noise. |
+| `max_rare_terms` | 5 | `--max-rare-terms` | Rarest FTS tokens kept for `MATCH`. More terms broaden recall and can drown a rare name in common words. |
+| `parallel_legs` | false | `--parallel-legs` | Run FTS and vector at the same time. Changes only latency, never the fused set or order. |
+
+`timeout_ms` stays the SQL statement budget for `roca exec` and the playground;
+it is not a retrieval knob.
+
+```toml
+[query]
+oversample = 30
+templates = false
+parallel_legs = true
+```
 
 ## The playground's two readers
 
