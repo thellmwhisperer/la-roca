@@ -4,10 +4,13 @@ For human answering, see [optional playground installation](plugins.md#optional-
 
 First-time path: [install and initialize search](lifecycle.md#install).
 
-`roca query` is hybrid search with no answering-model inference: it selects
-rare full-text terms, embeds the question plus static question templates when
-a vector index exists, fuses the two lists with RRF, and labels which legs
-found each hit. Without a vector index the same command runs full-text alone.
+Start with `roca vector query "<topic>" 20 --databases corpus,ops` for the fast
+semantic leg. Use `roca query` when exact terms matter and the result needs the
+full-text leg and fusion too. The hybrid command uses no answering-model
+inference: it selects rare full-text terms, embeds the question plus static
+question templates when a vector index exists, fuses the two lists with RRF,
+and labels which legs found each hit. Without a vector index the same command
+runs full-text alone.
 `--top N` (default 10) controls the fused result count. `--oversample` and
 `--no-templates` try those retrieval knobs before they land in
 [`config.toml` `[query]`](models.md#the-configuration); the remaining knobs are
@@ -104,6 +107,13 @@ still contain bare table names. Before submitting it to `exec`, inspect those
 references and qualify them for the intended database; compilation alone does
 not establish that the statement passes the authored-SQL check.
 
+FTS5 `MATCH` is the exception on the right side of the predicate: qualify the
+table after `FROM`, but use its bare name for `MATCH`, for example
+`FROM plugin_roca_ops.memories_fts WHERE memories_fts MATCH 'handoff'`. If the
+right operand is qualified, the gate prints this form. When an authored query
+names an unknown column, the error also lists the visible columns of the tables
+that query referenced.
+
 For a common authored query, see the README's
 [exact SQL example](../README.md#drop-to-exact-sql-whenever-you-want).
 
@@ -186,6 +196,10 @@ terms[3]: stale, lock, error
 rows[2]{rank,source,legs,consensus,vector_score,vector_rank,fts_rank,snippet}:
   1,corpus.exchanges.912,vector+fts,true,0.61,2,1,"fixed: stale .lock left by a killed run; remove it and rerun"
   2,corpus.memories.207,vector+fts,true,0.57,4,2,"Pattern: a killed ingest can leave its lock file behind"
+help[3]:
+  - "Run `roca vector query \"have I fixed a stale lock error before\" 20 --databases core,corpus,ops` for the fast semantic leg alone (this command adds the full-text leg and fusion)"
+  - "Run `roca query \"have I fixed a stale lock error before\" --json` for the complete result envelope"
+  - "Run `roca query \"have I fixed a stale lock error before\" --require-both` to keep only dual-confirmed hits"
 ```
 
 The FTS leg measures each token against the selected live indexes, removes
@@ -255,6 +269,12 @@ also reads the rows. The longer model, repair, and routing contracts live in
 `roca_query`, `roca_sql`, and `roca_exec` equivalents.
 
 ## Session context
+
+Running `roca` with no subcommand renders the laboratory menu: the newest
+current handoff head for every project, the active pills for the working
+directory's project, and help that orders semantic vector search, checked SQL,
+then hybrid query. `--json` returns the same two lab and pill sections as an
+object.
 
 The session-context reads (`roca pill`, `roca pill show`, and `roca handoff
 latest`) default `--project` to the basename of the working directory;

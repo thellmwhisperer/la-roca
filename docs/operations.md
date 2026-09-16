@@ -163,6 +163,9 @@ with `expires_at`.
 `roca store --layer <name>` accepts only a name in the live layer registry and
 lists the registered layers when it refuses a write. This validation is shared
 by the CLI and MCP store paths.
+Every rejected MCP `roca_store` call also names the accepted layers for that
+surface and includes a valid `discovery` example, including requests rejected
+before the shared store service can inspect their payload.
 Use the `roca layers` registry commands for the supported catalogue surface.
 For direct SQL, follow the [authored-SQL table-name contract](queries.md#table-names-in-authored-sql);
 explicitly qualified physical references such as `main.layers` intentionally
@@ -282,6 +285,9 @@ in `malformed_lines`, and a segment that cannot be read is skipped and counted
 in `unreadable_files`: the count and the five newest errors still describe
 everything that could be read, and the read failure is a warning, not a failed
 diagnosis.
+When one of those recent failures timed out, human output suggests running
+`roca vector query` for the semantic leg alone and raising `query.timeout_ms`
+only when the hybrid path is required.
 
 ## State ownership diagnosis
 
