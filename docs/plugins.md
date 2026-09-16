@@ -910,7 +910,10 @@ The operator can declare the same fields outside any plugin payload. Write
 payload, so `roca update` keeps working. Editing the file is the consent: there
 is no consent command and no consent document. The train runs a ride from that
 file only when the user executing `roca cron` owns it and group and other
-cannot write it; otherwise that ride is refused with a clear error:
+cannot write it; otherwise that ride is refused with a clear error. That
+check is POSIX ownership and mode only. An extended ACL on macOS, or a
+non-basic allow ACE on Windows, can grant another user write access that this
+gate does not see:
 
 ```toml
 [ride.vector_delta]
