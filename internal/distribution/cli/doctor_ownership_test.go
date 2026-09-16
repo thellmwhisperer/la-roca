@@ -11,6 +11,9 @@ import (
 )
 
 func TestDoctorPrintsChownForForeignOwnedState(t *testing.T) {
+	// CI cannot create a foreign-owned state tree without sudo, and the issue
+	// contract forbids touching the operator's real ~/.roca. Exercise doctor on
+	// a disposable installation while replacing only filesystem owner lookup.
 	fixture := fixtureInstallation(t)
 	lock := filepath.Join(fixture.home, ".roca", "plugins", "roca-vector", "state", "vector.db.index.lock")
 	if err := os.MkdirAll(filepath.Dir(lock), 0o700); err != nil {
@@ -66,6 +69,8 @@ func TestDoctorPrintsChownForForeignOwnedState(t *testing.T) {
 }
 
 func TestDoctorReportsOwnershipWhenServiceCannotOpenState(t *testing.T) {
+	// Use the same ownership seam: a real root-owned fixture would require the
+	// forbidden sudo setup, while the CLI and its pre-open ordering remain real.
 	home := hermeticHome(t)
 	lock := filepath.Join(home, ".roca", "vector.db.index.lock")
 	if err := os.MkdirAll(filepath.Dir(lock), 0o700); err != nil {
@@ -94,31 +99,55 @@ func TestCLIRefusesRootOverUserOwnedState(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("root-over-user refusal is a unix check")
 	}
-	home := hermeticHome(t)
-	if err := os.MkdirAll(filepath.Join(home, ".roca"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	state := filepath.Join(home, ".roca")
-	restore := securefile.OverrideIdentityLookups(
-		securefile.Identity{UID: 0, Name: "root"},
-		map[string]securefile.Identity{state: {UID: 501, Name: "operator"}},
-	)
-	t.Cleanup(restore)
+	// A real foreign owner would require sudo and violate the issue contract.
+	// Keep HOME disposable and replace only identity lookup while exercising the
+	// shared CLI boundary for both a directory and a dereferenced state symlink.
+	for _, testCase := range []struct {
+		name    string
+		symlink bool
+	}{
+		{name: "directory"},
+		{name: "symlink", symlink: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			home := hermeticHome(t)
+			state := filepath.Join(home, ".roca")
+			ownedPath := state
+			if testCase.symlink {
+				ownedPath = t.TempDir()
+				if err := os.Symlink(ownedPath, state); err != nil {
+					t.Fatal(err)
+				}
+				resolved, err := filepath.EvalSymlinks(ownedPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				ownedPath = resolved
+			} else if err := os.MkdirAll(state, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			restore := securefile.OverrideIdentityLookups(
+				securefile.Identity{UID: 0, Name: "root"},
+				map[string]securefile.Identity{ownedPath: {UID: 501, Name: "operator"}},
+			)
+			defer restore()
 
-	_, err := runRootErr(t, contractBuild(), nil, "init")
-	if err == nil {
-		t.Fatal("root over user-owned state was accepted")
-	}
-	for _, want := range []string{"running as root", filepath.Join(home, ".roca")} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("refuse error %q does not carry %q", err, want)
-		}
-	}
-	t.Logf("CLI root-over-user refusal: %s", strings.ReplaceAll(err.Error(), home, "$HOME"))
+			_, err := runRootErr(t, contractBuild(), nil, "init")
+			if err == nil {
+				t.Fatal("root over user-owned state was accepted")
+			}
+			for _, want := range []string{"running as root", state} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("refuse error %q does not carry %q", err, want)
+				}
+			}
+			t.Logf("CLI root-over-user refusal: %s", strings.ReplaceAll(err.Error(), home, "$HOME"))
 
-	version := runRoot(t, contractBuild(), "--version")
-	if !strings.Contains(version, "roca") {
-		t.Fatalf("version as root should still answer: %s", version)
+			version := runRoot(t, contractBuild(), "--version")
+			if !strings.Contains(version, "roca") {
+				t.Fatalf("version as root should still answer: %s", version)
+			}
+		})
 	}
 }
 

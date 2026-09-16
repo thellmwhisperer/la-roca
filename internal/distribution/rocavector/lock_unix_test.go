@@ -11,6 +11,9 @@ import (
 )
 
 func TestIndexLockTakesTheStateDirectoryOwner(t *testing.T) {
+	// Creating a temporary directory owned by another UID would require sudo,
+	// which the issue contract forbids. Exercise the real filesystem path here;
+	// the descriptor chown seam below covers the privileged divergent-UID path.
 	state := t.TempDir()
 	path := filepath.Join(state, "vector.db.index.lock")
 	release, busy, err := tryExclusiveFileLock(path, true)

@@ -319,37 +319,57 @@ func TestInstallerRefusesRootOverUserOwnedState(t *testing.T) {
 	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
 		t.Skip("root-over-user refusal is a unix installer check")
 	}
-	home := t.TempDir()
-	state := filepath.Join(home, ".roca")
-	if err := os.MkdirAll(state, 0o700); err != nil {
-		t.Fatal(err)
+	// CI cannot become root or create a foreign-owned fixture without sudo,
+	// and the issue contract forbids touching the operator's real ~/.roca.
+	// Execute the real installer in a disposable HOME while replacing only the
+	// two OS identity probes. The symlink case also proves stat dereferences the
+	// state root before deciding who owns it.
+	for _, testCase := range []struct {
+		name    string
+		symlink bool
+	}{
+		{name: "directory"},
+		{name: "symlink", symlink: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			home := t.TempDir()
+			state := filepath.Join(home, ".roca")
+			if testCase.symlink {
+				if err := os.Symlink(t.TempDir(), state); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.MkdirAll(state, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			fake := t.TempDir()
+			idScript := "#!/bin/sh\n[ \"$1\" = \"-u\" ] && echo 0 && exit 0\nexit 1\n"
+			if err := os.WriteFile(filepath.Join(fake, "id"), []byte(idScript), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			statScript := "#!/bin/sh\n" +
+				"[ \"$1\" = \"--version\" ] && exit 1\n" +
+				"[ \"$1\" = \"-L\" ] || exit 1\n" +
+				"[ \"$3\" = \"%u\" ] && echo 501 && exit 0\n" +
+				"[ \"$3\" = \"%Su\" ] && echo operator && exit 0\n" +
+				"exit 1\n"
+			if err := os.WriteFile(filepath.Join(fake, "stat"), []byte(statScript), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			command := exec.Command("sh", theInstallerPath(), "--repo", "owner/name")
+			command.Env = append(os.Environ(), "HOME="+home, "PATH="+fake+":"+os.Getenv("PATH"))
+			output, err := command.CombinedOutput()
+			if err == nil {
+				t.Fatalf("root install over user-owned state succeeded:\n%s", output)
+			}
+			text := string(output)
+			for _, want := range []string{"install.sh:", "running as root", state} {
+				if !strings.Contains(text, want) {
+					t.Fatalf("root refusal missing %q:\n%s", want, text)
+				}
+			}
+			t.Logf("installer root-over-user refusal:\n%s", strings.ReplaceAll(text, home, "$HOME"))
+		})
 	}
-	fake := t.TempDir()
-	idScript := "#!/bin/sh\n[ \"$1\" = \"-u\" ] && echo 0 && exit 0\nexit 1\n"
-	if err := os.WriteFile(filepath.Join(fake, "id"), []byte(idScript), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	statScript := "#!/bin/sh\n" +
-		"[ \"$1\" = \"--version\" ] && exit 1\n" +
-		"[ \"$3\" = \"%u\" ] && echo 501 && exit 0\n" +
-		"[ \"$3\" = \"%Su\" ] && echo operator && exit 0\n" +
-		"exit 1\n"
-	if err := os.WriteFile(filepath.Join(fake, "stat"), []byte(statScript), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	command := exec.Command("sh", theInstallerPath(), "--repo", "owner/name")
-	command.Env = append(os.Environ(), "HOME="+home, "PATH="+fake+":"+os.Getenv("PATH"))
-	output, err := command.CombinedOutput()
-	if err == nil {
-		t.Fatalf("root install over user-owned state succeeded:\n%s", output)
-	}
-	text := string(output)
-	for _, want := range []string{"install.sh:", "running as root", state} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("root refusal missing %q:\n%s", want, text)
-		}
-	}
-	t.Logf("installer root-over-user refusal:\n%s", strings.ReplaceAll(text, home, "$HOME"))
 }
 
 // --- helpers ---

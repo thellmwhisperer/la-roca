@@ -11,6 +11,9 @@ import (
 )
 
 func TestCreatedIndexLockTakesStateDirectoryOwnerThroughDescriptor(t *testing.T) {
+	// CI cannot assign a disposable directory a foreign UID without sudo, which
+	// the issue contract forbids. Keep the filesystem real and intercept only
+	// fchown so the test still proves the open descriptor is the chown target.
 	directory := t.TempDir()
 	path := filepath.Join(directory, "index.lock")
 	called := false
