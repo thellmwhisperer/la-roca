@@ -26,12 +26,21 @@ var (
 	}
 	queryTool = &mcp.Tool{
 		Name: "roca_query",
-		Description: "Hybrid FTS and vector search over La Roca, the local memory of past " +
-			"conversations, decisions and learnings. Zero answering-model inference: rarity-selected " +
-			"full-text plus template-expanded vector neighbors, fused with RRF. Without a vector " +
-			"index the same tool runs full-text alone.\n\n" +
-			"Good questions are short and specific. The hard input cap is 1000 characters. " +
-			"Each hit names which legs found it. Use require_both for dual-confirmed precision.",
+		Description: "Hybrid full-text plus vector search with labeled evidence. Use this " +
+			"only when exact terms matter; start with roca_vector_query for the fast semantic " +
+			"leg. This tool adds the full-text leg and fusion. Good questions are short and " +
+			"specific. The hard input cap is 1000 characters. Each hit names which legs found it.",
+	}
+	handoffLatestTool = &mcp.Tool{
+		Name: "roca_handoff_latest",
+		Description: "Load the current unsuperseded handoff for one project. Omit project " +
+			"to use the working-directory basename. An unknown project names the projects " +
+			"that do have handoffs and returns nothing else.",
+	}
+	pillShowTool = &mcp.Tool{
+		Name: "roca_pill_show",
+		Description: "Load one complete pill by slug for a project. Omit project to use " +
+			"the working-directory basename. An unknown slug lists the known slugs.",
 	}
 	sqlTool = &mcp.Tool{
 		Name: "roca_sql",
@@ -67,8 +76,12 @@ func (a execArgs) request() service.ExecRequest {
 // queryArgs is what an agent sends to ask a question. A zero budget reaches the
 // service, where the shared default is applied for every surface.
 type queryArgs struct {
-	Query       string `json:"query" jsonschema:"non-empty natural-language question, preferably under 15 words, maximum 1000 characters"`
+	Query       string `json:"query,omitempty" jsonschema:"non-empty natural-language question, preferably under 15 words, maximum 1000 characters"`
+	Question    string `json:"question,omitempty" jsonschema:"alias of query"`
+	Text        string `json:"text,omitempty" jsonschema:"alias of query"`
 	Top         int    `json:"top,omitempty" jsonschema:"number of fused hits to return, default 10"`
+	K           int    `json:"k,omitempty" jsonschema:"alias of top"`
+	Limit       int    `json:"limit,omitempty" jsonschema:"alias of top"`
 	RequireBoth bool   `json:"require_both,omitempty" jsonschema:"keep only hits found by both FTS and vector"`
 	MaxChars    int    `json:"max_chars,omitempty" jsonschema:"character budget per snippet"`
 	Databases   string `json:"databases,omitempty" jsonschema:"comma list of attached database names (corpus,ops), or all"`
@@ -86,12 +99,48 @@ type exploreArgs struct {
 
 func (a queryArgs) request() service.SearchRequest {
 	return service.SearchRequest{
-		Question:    a.Query,
-		Top:         a.Top,
+		Question:    firstNonEmpty(a.Query, a.Question, a.Text),
+		Top:         firstPositive(a.Top, a.K, a.Limit),
 		RequireBoth: a.RequireBoth,
 		MaxChars:    a.MaxChars,
 		Databases:   mustParseDatabases(a.Databases),
 	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func firstPositive(values ...int) int {
+	for _, value := range values {
+		if value > 0 {
+			return value
+		}
+	}
+	return 0
+}
+
+func firstNonZero(values ...int) int {
+	for _, value := range values {
+		if value != 0 {
+			return value
+		}
+	}
+	return 0
+}
+
+type handoffLatestArgs struct {
+	Project string `json:"project,omitempty" jsonschema:"project scope; omit to use the working-directory basename"`
+}
+
+type pillShowArgs struct {
+	Slug    string `json:"slug" jsonschema:"pill slug to load"`
+	Project string `json:"project,omitempty" jsonschema:"project scope; omit to use the working-directory basename"`
 }
 
 func mustParseDatabases(raw string) []string {

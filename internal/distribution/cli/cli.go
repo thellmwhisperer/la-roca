@@ -262,7 +262,7 @@ func rootCommand(env *cliEnv) *cobra.Command {
 		Version:           env.build.Version,
 		CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return cmd.Help()
+			return runLabMenu(cmd.Context(), env)
 		},
 	}
 	root.SetVersionTemplate(versionLine(env.build) + "\n")

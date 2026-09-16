@@ -86,6 +86,37 @@ func HandoffLab(lab service.HandoffLab) string {
 	}) + "\n"
 }
 
+// LabMenu is the bare `roca` roster: last handoff per project and the active
+// pills of the working-directory project.
+type LabMenu struct {
+	Lab   service.HandoffLab `json:"lab"`
+	Pills service.PillList   `json:"pills"`
+}
+
+// RenderLabMenu paints the laboratory menu and the vector-first next commands.
+func RenderLabMenu(menu LabMenu) string {
+	var b strings.Builder
+	if len(menu.Lab.Rows) > 0 {
+		appendLine(&b, strings.TrimRight(HandoffLab(menu.Lab), "\n"))
+	} else {
+		appendLine(&b, "lab[0]:")
+	}
+	if menu.Pills.Project != "" {
+		appendLine(&b, "project: "+fullToonString(menu.Pills.Project))
+	}
+	if len(menu.Pills.Pills) > 0 {
+		appendLine(&b, fullRecords("pills", memoryColumns(), memoryRows(menu.Pills.Pills)))
+	} else {
+		appendLine(&b, "no active pills")
+	}
+	appendLine(&b, RenderHelp(
+		"Run `roca vector query \"<topic>\" 20 --databases corpus,ops` to find the nearby rows",
+		"Run `roca exec \"SELECT human_text, agent_text FROM plugin_roca_corpus.exchanges WHERE id = <id>\" --max-chars 2000` to read a cited row",
+		"Run `roca query \"<topic>\"` only when you need the full-text leg and fusion as well",
+	))
+	return b.String()
+}
+
 func memoryColumns() []string {
 	return []string{"slug", "id", "project", "created_at", "content"}
 }

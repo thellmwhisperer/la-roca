@@ -9,20 +9,23 @@ did on this machine: every session, decision, fix, and note that you and
 your sibling agents wrote to disk and forgot. After the steps below, you
 can answer questions about that history with proof.
 
-## Step one: install, initialize, and get the first answer
+## Step one: install, initialize, and learn the first search
 
 `roca init` creates the database, reads the agent history already on this
 machine, writes the skills into the runtimes it finds, and does not return
 until word search works. The last thing it does is prove it: it takes a word
 out of your user's own history and asks the index for it.
 
-Then, in that same run, it asks one question. There is no second command to
-learn: see below.
+After init, bare `roca` opens the laboratory menu and teaches the next commands
+in order: fast semantic search, checked SQL, then hybrid search when exact terms
+matter. If the optional semantic index is still building, word search and SQL
+already work.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/thellmwhisperer/la-roca/main/install.sh | sh
 roca init      # imports agent history; no answering model required
-roca query "what did we decide about <something your user cares about>"
+roca           # project handoffs, active pills, and vector-first help
+roca vector query "what did we decide about <something your user cares about>" 20 --databases corpus,ops
 ```
 
 `roca init` runs the first ingest. Later, `roca ingest` picks up whatever is
@@ -78,11 +81,13 @@ docs/vector.md.
 
 ## How to search well
 
-Read `roca-operations` before your first real search. Write the SQL yourself
-against the semantic catalog and run it with `roca exec`. That is the craft.
-`roca query` is hybrid search (FTS plus vector, zero answering-model
-inference). Anything that spends inference is last resort: `roca playground`
-and `roca explore`, supplied by the optional [roca-playground plugin](docs/plugins.md#optional-human-answering). `--full` is for humans; agents do not use it.
+Read `roca-operations` before your first real search. When the vector index is
+ready, start with `roca vector query`, then frame the evidence with SQL from the
+semantic catalog through `roca exec`. Use `roca query` when exact terms matter
+and you need the full-text leg fused in. Anything that spends inference is last
+resort: `roca playground` and `roca explore`, supplied by the optional
+[roca-playground plugin](docs/plugins.md#optional-human-answering). `--full` is
+for humans; agents do not use it.
 
 A fresh install has no vector index. Exec still works. When the index exists,
 that same skill makes the hybrid loop mandatory: vector search finds the

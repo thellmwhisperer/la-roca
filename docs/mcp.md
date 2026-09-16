@@ -11,10 +11,12 @@ the data, compact TOON rows, bounded text previews, and deterministic next
 commands in every answer. An agent never has to guess what it just got or
 what to run next.
 
-`roca_query` is the same deterministic hybrid search as the CLI: it uses
-full-text plus an optional template-expanded vector leg and never calls an
-answering model. The model-backed `roca_sql` and `roca_explore` tools require
-the [optional playground plugin](plugins.md#optional-human-answering).
+`roca_vector_query` is the fast semantic search. `roca_query` is the hybrid
+path: full-text plus an optional template-expanded vector leg, used when exact
+terms matter. Neither calls an answering model. The model-backed `roca_sql` and
+`roca_explore` tools require the [optional playground plugin](plugins.md#optional-human-answering).
+`roca_handoff_latest` and `roca_pill_show` load session-continuity records
+without hybrid retrieval.
 
 ---
 
@@ -90,15 +92,24 @@ session, which is why every diagnostic in this path writes to standard error.
 
 | Tool | What it does | The caller that defends it |
 |---|---|---|
+| `roca_vector_query` (vector companion) | Returns fast semantic evidence from selected local indexes; `k`, `limit`, or `top` sets the hit count | An agent's first memory search when meaning is enough |
 | `roca_exec` | Runs a SELECT under the same gate and [table-name contract](queries.md#table-names-in-authored-sql) as `roca exec` | Agents that received SQL from `roca_sql` and have no shell |
-| `roca_explore` (playground plugin) | Runs plain or deep investigation with prose, terrain, next probes, and generated SQL | Agents following evidence without a shell |
+| `roca_handoff_latest` | Loads the current unsuperseded handoff for one project without hybrid retrieval | A session resuming project work |
+| `roca_pill_show` | Loads one complete project pill by slug without hybrid retrieval | A session following a known operating instruction |
 | `roca_query` | Returns labeled hybrid FTS/vector evidence; `top`, `require_both`, and `databases` match the CLI | An agent searching memory without a shell |
 | `roca_store` | Writes one memory back | The other half of the same job |
 | `roca_health` | The non-destructive checks over live data | An agent that cannot run `roca doctor` |
+| `roca_explore` (playground plugin) | Runs plain or deep investigation with prose, terrain, next probes, and generated SQL | Agents following evidence without a shell |
 | `roca_sql` (playground plugin) | Compiles a question into SQL without running it | Agents that need to inspect the SQL before `roca_exec` runs it |
 
 `roca_store` applies the same [handoff write policy](operations.md#handoff-writes)
 as the CLI, including session-writer, required-field, and supersession checks.
+`roca_handoff_latest` and `roca_pill_show` follow the
+[session-context contract](queries.md#session-context): omitting `project` uses
+the working-directory basename, and a miss names the available projects or pill
+slugs. When a `roca_query` question mentions a handoff, handover, or inbox, its
+help points to these direct session-context tools before the generic search
+follow-ups.
 
 With semantic search enabled and its companion available, the same server also
 exposes `roca_vector_query`. It searches selected local indexes by meaning and
@@ -107,6 +118,8 @@ available whether or not semantic search is enabled. `roca_sql` and
 `roca_explore` are registered only when the playground executable is installed
 at server startup; restart the MCP server after installing it.
 
+The two search tools accept the same input aliases: `query`, `question`, or
+`text` for the search text, and `k`, `limit`, or `top` for the result count.
 `roca_query`, `roca_explore`, and `roca_sql` reject empty questions and share
 the CLI's generous 1000-character cap before work begins. The model-backed
 tools also follow the playground input and SQL gate:
@@ -208,7 +221,7 @@ An agent learns La Roca three different ways. They stack; none replaces another.
 |---|---|---|
 | **Prompt** | The generated `prompt.md` block for agent instructions | Automatic on every init |
 | **Skill** | Three embedded skills (`roca`, `roca-operations`, `roca-vector`) plus `roca-semantica`, the semantic catalog generated from the installed plugin manifests | `roca init` installs all four (the three embedded skills plus `roca-semantica`) into every detected skill seat and names `roca` and `roca-operations` as must-read; `roca skill install <runtime>` or `--all` writes the same four as registered, zoned files |
-| **MCP** | Six passthrough tools for agents with no shell | `roca mcp install <runtime>` |
+| **MCP** | Core passthrough tools for agents with no shell, plus conditional semantic-search and playground tools | `roca mcp install <runtime>` |
 
 ```
 roca skill                 # list runtimes and where the skill would land
