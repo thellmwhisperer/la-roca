@@ -28,6 +28,7 @@ type Spec struct {
 	Source           string
 	Semantic         []byte
 	Manifest         []byte
+	Rides            []byte
 	ApplySchema      func(string) error
 	Payload          func() ([]byte, error)
 	MigrationGuard   func(string) (func() error, error)
@@ -495,6 +496,9 @@ func materialize(root, version string, spec Spec) (plugininstall.Candidate, func
 		}
 		payload[spec.Executable] = executable
 	}
+	if len(spec.Rides) > 0 {
+		payload[plugin.RidesFilename] = spec.Rides
+	}
 	for name, body := range payload {
 		mode := os.FileMode(0o600)
 		if name == spec.Executable {
@@ -519,6 +523,9 @@ func materialize(root, version string, spec Spec) (plugininstall.Candidate, func
 	}
 	if spec.Executable != "" {
 		names = append(names, spec.Executable)
+	}
+	if len(spec.Rides) > 0 {
+		names = append(names, plugin.RidesFilename)
 	}
 	sort.Strings(names)
 	var checksums strings.Builder

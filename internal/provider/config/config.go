@@ -46,6 +46,7 @@ const (
 	FileDB     = "roca.db"
 	DirBackups = "backups"
 	DirRunner  = "runner"
+	DirRides   = "rides.d"
 	EnvDBPath  = "ROCA_DB_PATH"
 )
 

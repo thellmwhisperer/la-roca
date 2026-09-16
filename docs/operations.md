@@ -281,14 +281,42 @@ in `unreadable_files`: the count and the five newest errors still describe
 everything that could be read, and the read failure is a warning, not a failed
 diagnosis.
 
+## State ownership diagnosis
+
+`roca doctor` scans the resolved `~/.roca` state tree before opening the
+service. A path owned by a user other than the current operator is an ownership
+failure, not evidence that an index lock is stale. Local human output names the
+path and owner and prints the exact repair command. `roca doctor --json`
+exposes the same local details under `foreign_owned` as `path`, `owner`, and
+`chown`. If the service itself cannot open the state, human doctor still emits
+the repair on its error stream.
+
+Each foreign-owned directory is reported once with a recursive repair for its
+whole subtree:
+
+```sh
+sudo chown -R <current-user> '<foreign-directory>'
+```
+
+A file or symlink gets a no-follow leaf repair so a later symlink substitution
+cannot redirect `chown` to another target:
+
+```sh
+sudo chown -h <current-user> '<foreign-path>'
+```
+
+Run the printed command locally, then rerun doctor. Do not delete an index lock
+to repair ownership.
+
 ## Support report
 
 `roca doctor --report` is the shareable diagnosis for a remote maintainer. It
-prints one fenced text block with a generation timestamp; `roca doctor --report
---json` emits the same snapshot as JSON. The collector is read-only: it does
-not install plugins, adopt schema, prepare the federation hub, or change
-`layout.serving`; it also writes no audit record and makes no
-network calls.
+prints one fenced text block with a generation timestamp; when ownership
+findings exist, a count after the block directs the operator to run local
+doctor for the exact commands. `roca doctor --report --json` emits the same
+snapshot and an optional `foreign_owned_count`. The collector is read-only: it
+does not install plugins, adopt schema, prepare the federation hub, or change
+`layout.serving`; it also writes no audit record and makes no network calls.
 Support-only database observation uses short, context-aware lock waits, so a
 locked store is reported as unreadable instead of delaying the snapshot. All
 support queries share a bounded observer context; timed-out health checks are
@@ -338,9 +366,10 @@ size:
    timestamp. Supported timestamp forms are normalized to UTC; malformed text
    is reported only as `invalid`. No source paths.
 
-The report never includes conversation text, memory bodies, file paths outside
-the `~/.roca` layout names, or person names. Corpus-scale totals are the only
-counts.
+The report never includes conversation text, memory bodies, raw filesystem
+paths, local account names, or person names. Ownership findings expose only
+their count: exact paths, owners, and repair commands remain in local doctor
+output. Corpus totals remain scale-only.
 
 ## Query one day of call history with SQL
 

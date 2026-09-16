@@ -268,6 +268,26 @@ sha256_of() {
 PLATFORM=$(detect_platform)
 TARGET="$PREFIX/$BINARY"
 
+# A sudo install over a user-owned ~/.roca leaves root-owned state the operator
+# cannot open. The next upgrade then dies on "permission denied" and can look
+# like a stale-lock failure. Refuse before any write.
+refuse_root_over_user_state() {
+  uid=$(id -u 2>/dev/null) || return 0
+  [ "$uid" -eq 0 ] || return 0
+  state="${HOME}/.roca"
+  [ -e "$state" ] || return 0
+  if stat --version >/dev/null 2>&1; then
+    owner=$(stat -L -c %u "$state")
+    owner_name=$(stat -L -c %U "$state")
+  else
+    owner=$(stat -L -f %u "$state")
+    owner_name=$(stat -L -f %Su "$state")
+  fi
+  [ "$owner" = "0" ] && return 0
+  die "running as root over $state owned by $owner_name would leave root-owned state files. Re-run as $owner_name"
+}
+refuse_root_over_user_state
+
 # Whether this operator can write where they asked for the binary, asked before
 # a single byte is downloaded.
 #
