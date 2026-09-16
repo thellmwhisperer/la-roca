@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
@@ -22,6 +23,8 @@ type SearchRequest struct {
 	Top         int
 	RequireBoth bool
 	MaxChars    int
+	// Overlay is the flag write on top of the service's resolved [query] knobs.
+	Overlay search.Overlay
 }
 
 // SearchHit is one fused source with the evidence that placed it.
@@ -76,8 +79,17 @@ type VectorHits struct {
 }
 
 // VectorSearchFunc runs the vector leg. Tests inject it; production shells to
-// the existing `roca-vector query` plumbing.
+// the existing `roca-vector query` plumbing when VectorEnabled is set.
 type VectorSearchFunc func(ctx context.Context, question string, k int, databases string) (VectorHits, error)
+
+// VectorLeg is one PluginVectorQuery invocation.
+type VectorLeg struct {
+	K         int
+	Databases string
+	Expand    bool
+	Templates []string
+	MinScore  float64
+}
 
 type searchSurface struct {
 	Database    string
@@ -94,6 +106,10 @@ type searchSurface struct {
 func (s *Service) Search(ctx context.Context, req SearchRequest) (SearchResult, error) {
 	start := time.Now()
 	if err := query.ValidateQuestion(req.Question); err != nil {
+		return SearchResult{}, err
+	}
+	settings := s.QuerySettings().Apply(req.Overlay)
+	if err := settings.Validate(); err != nil {
 		return SearchResult{}, err
 	}
 	top := req.Top
@@ -128,39 +144,17 @@ func (s *Service) Search(ctx context.Context, req SearchRequest) (SearchResult, 
 
 	surfaces := collectSurfaces(route)
 	tokens := uniqueTokens(search.Tokenize(req.Question))
-	terms, termErr := s.selectTerms(ctx, route, surfaces, tokens, maxChars)
-	if termErr != nil {
-		return result, termErr
+	legs, legsErr := s.runSearchLegs(ctx, req, route, surfaces, tokens, maxChars, settings)
+	result.Terms = legs.terms
+	if legsErr != nil {
+		return result, legsErr
 	}
-	result.Terms = terms
-
-	ftsDocs, ftsErr := s.searchFTS(ctx, route, surfaces, terms, maxChars)
-	if ftsErr != nil {
-		return result, ftsErr
-	}
-	if len(surfaces) > 0 && len(terms) > 0 {
+	if legs.ftsRan {
 		result.Engines = append(result.Engines, search.LegFTS)
 	}
-
-	var vectorDocs []search.RankedDoc
-	if s.opts.VectorSearch != nil {
-		hits, searchErr := s.opts.VectorSearch(ctx, req.Question, search.HybridOversample,
-			strings.Join(req.Databases, ","))
-		if searchErr != nil {
-			result.Notices = append(result.Notices, "vector search unavailable: "+searchErr.Error())
-		} else {
-			result.Notices = append(result.Notices, hits.Notices...)
-			if hits.MixedModels {
-				result.Notices = append(result.Notices,
-					"mixed-model vector results cannot be fused; continuing with FTS-only")
-			} else if hits.Executed || len(hits.Results) > 0 {
-				vectorDocs = vectorRanked(hits.Results)
-				result.Engines = append(result.Engines, search.LegVector)
-			}
-		}
-	} else {
-		result.Notices = append(result.Notices,
-			"vector index is not installed; continuing with FTS-only")
+	result.Notices = append(result.Notices, legs.notices...)
+	if legs.vectorOK {
+		result.Engines = append(result.Engines, search.LegVector)
 	}
 	if len(result.Engines) == 0 && len(surfaces) > 0 {
 		// A zero-DF query has no MATCH expression to execute. When vectors are
@@ -169,7 +163,7 @@ func (s *Service) Search(ctx context.Context, req SearchRequest) (SearchResult, 
 		result.Engines = append(result.Engines, search.LegFTS)
 	}
 
-	fused := search.FuseRRF(vectorDocs, ftsDocs, search.RRFK)
+	fused := search.FuseRRF(legs.vectorDocs, legs.ftsDocs, settings.RRFK)
 	if req.RequireBoth {
 		kept := make([]search.FusedDoc, 0, len(fused))
 		for _, doc := range fused {
@@ -223,7 +217,7 @@ func uniqueTokens(tokens []string) []string {
 	return out
 }
 
-func vectorRanked(hits []VectorHit) []search.RankedDoc {
+func vectorRanked(hits []VectorHit, minScore float64) []search.RankedDoc {
 	docs := make([]search.RankedDoc, 0, len(hits))
 	for _, hit := range hits {
 		table := hit.Table
@@ -240,7 +234,108 @@ func vectorRanked(hits []VectorHit) []search.RankedDoc {
 			Snippet:  hit.Text,
 		})
 	}
-	return search.ApplyVectorFloor(docs, search.MinVectorScore)
+	return search.ApplyVectorFloor(docs, minScore)
+}
+
+type searchLegs struct {
+	terms      []string
+	ftsDocs    []search.RankedDoc
+	ftsRan     bool
+	vectorDocs []search.RankedDoc
+	vectorOK   bool
+	notices    []string
+}
+
+func (s *Service) runSearchLegs(ctx context.Context, req SearchRequest, route PluginRoute,
+	surfaces []searchSurface, tokens []string, maxChars int, settings search.Settings) (searchLegs, error) {
+	runFTS := func(runCtx context.Context) ([]search.RankedDoc, bool, []string, error) {
+		terms, err := s.selectTerms(runCtx, route, surfaces, tokens, maxChars, settings)
+		if err != nil {
+			return nil, false, nil, err
+		}
+		docs, err := s.searchFTS(runCtx, route, surfaces, terms, maxChars, settings)
+		if err != nil {
+			return nil, false, terms, err
+		}
+		return docs, len(surfaces) > 0 && len(terms) > 0, terms, nil
+	}
+	runVector := func(runCtx context.Context) ([]search.RankedDoc, []string, bool) {
+		hits, notices, ok, err := s.searchVector(runCtx, req, settings)
+		if err != nil {
+			return nil, []string{"vector search unavailable: " + err.Error()}, false
+		}
+		if !ok {
+			return nil, notices, false
+		}
+		return vectorRanked(hits, settings.MinVectorScore), notices, true
+	}
+	if !settings.ParallelLegs {
+		ftsDocs, ftsRan, terms, err := runFTS(ctx)
+		if err != nil {
+			return searchLegs{terms: terms}, err
+		}
+		vectorDocs, notices, vectorOK := runVector(ctx)
+		return searchLegs{terms: terms, ftsDocs: ftsDocs, ftsRan: ftsRan, vectorDocs: vectorDocs,
+			vectorOK: vectorOK, notices: notices}, nil
+	}
+	parallelCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	var (
+		ftsDocs    []search.RankedDoc
+		ftsRan     bool
+		terms      []string
+		ftsErr     error
+		vectorDocs []search.RankedDoc
+		notices    []string
+		vectorOK   bool
+		wg         sync.WaitGroup
+	)
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		ftsDocs, ftsRan, terms, ftsErr = runFTS(parallelCtx)
+		if ftsErr != nil {
+			cancel()
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		vectorDocs, notices, vectorOK = runVector(parallelCtx)
+	}()
+	wg.Wait()
+	return searchLegs{terms: terms, ftsDocs: ftsDocs, ftsRan: ftsRan, vectorDocs: vectorDocs,
+		vectorOK: vectorOK, notices: notices}, ftsErr
+}
+
+func (s *Service) searchVector(ctx context.Context, req SearchRequest, settings search.Settings) (
+	[]VectorHit, []string, bool, error) {
+	databases := strings.Join(req.Databases, ",")
+	var hits VectorHits
+	var err error
+	switch {
+	case s.opts.VectorSearch != nil:
+		hits, err = s.opts.VectorSearch(ctx, req.Question, settings.Oversample, databases)
+	case s.opts.VectorEnabled:
+		hits, err = PluginVectorQuery(ctx, s.opts.DBPath, req.Question, VectorLeg{
+			K: settings.Oversample, Databases: databases,
+			Expand: settings.ExpandTemplates(), Templates: settings.TemplateList,
+			MinScore: settings.MinVectorScore,
+		})
+	default:
+		return nil, []string{"vector index is not installed; continuing with FTS-only"}, false, nil
+	}
+	if err != nil {
+		return nil, nil, false, err
+	}
+	if hits.MixedModels {
+		notices := append(append([]string{}, hits.Notices...),
+			"mixed-model vector results cannot be fused; continuing with FTS-only")
+		return nil, notices, false, nil
+	}
+	if hits.Executed || len(hits.Results) > 0 {
+		return hits.Results, hits.Notices, true, nil
+	}
+	return nil, hits.Notices, false, nil
 }
 
 func collectSurfaces(route PluginRoute) []searchSurface {
@@ -395,7 +490,7 @@ func inferIDColumn(columns []string) string {
 }
 
 func (s *Service) selectTerms(ctx context.Context, route PluginRoute, surfaces []searchSurface,
-	tokens []string, maxChars int) ([]string, error) {
+	tokens []string, maxChars int, settings search.Settings) ([]string, error) {
 	if len(tokens) == 0 || len(surfaces) == 0 {
 		return nil, nil
 	}
@@ -440,11 +535,11 @@ func (s *Service) selectTerms(ctx context.Context, route PluginRoute, surfaces [
 			stats = append(stats, search.TermStat{Term: token, Docs: documentCounts[index]})
 		}
 	}
-	return search.SelectRareTerms(stats, corpusDocs, search.MaxDFRatio, search.MaxRareTerms), nil
+	return search.SelectRareTerms(stats, corpusDocs, search.MaxDFRatio, settings.MaxRareTerms), nil
 }
 
 func (s *Service) searchFTS(ctx context.Context, route PluginRoute, surfaces []searchSurface,
-	terms []string, maxChars int) ([]search.RankedDoc, error) {
+	terms []string, maxChars int, settings search.Settings) ([]search.RankedDoc, error) {
 	if len(terms) == 0 || len(surfaces) == 0 {
 		return nil, nil
 	}
@@ -458,7 +553,7 @@ func (s *Service) searchFTS(ctx context.Context, route PluginRoute, surfaces []s
 	}
 	statement := "SELECT database, \"table\", id, snippet, rango FROM (" +
 		strings.Join(branches, " UNION ALL ") + ") ORDER BY rango LIMIT " +
-		strconv.Itoa(search.HybridOversample)
+		strconv.Itoa(settings.Oversample)
 	rows, err := s.runSearchSQL(ctx, route, statement, maxChars)
 	if err != nil {
 		return nil, err
@@ -563,40 +658,53 @@ func (s *Service) runSearchSQL(ctx context.Context, route PluginRoute, statement
 // PluginVectorSearch shells out to `roca-vector query --expand-templates`.
 func PluginVectorSearch(dbPath string) VectorSearchFunc {
 	return func(ctx context.Context, question string, k int, databases string) (VectorHits, error) {
-		path, err := exec.LookPath("roca-vector")
-		if err != nil {
-			return VectorHits{Notices: []string{
-				"vector plugin is not installed; continuing with FTS-only",
-			}}, nil
-		}
-		args := []string{"--json", "query", "--expand-templates",
-			"--min-score", strconv.FormatFloat(search.MinVectorScore, 'f', -1, 64)}
-		if strings.TrimSpace(databases) != "" {
-			args = append(args, "--databases", databases)
-		}
-		args = append(args, question, strconv.Itoa(k))
-		if strings.TrimSpace(dbPath) != "" {
-			args = append([]string{"--db-path", dbPath}, args...)
-		}
-		cmd := exec.CommandContext(ctx, path, args...)
-		out, runErr := cmd.Output()
-		if runErr != nil {
-			message := runErr.Error()
-			if exit, ok := runErr.(*exec.ExitError); ok && len(exit.Stderr) > 0 {
-				message = strings.TrimSpace(string(exit.Stderr))
-			}
-			return VectorHits{Notices: []string{"vector search unavailable: " + message}}, nil
-		}
-		var envelope struct {
-			Results        []VectorHit `json:"results"`
-			Notices        []string    `json:"notices"`
-			VectorExecuted bool        `json:"vector_executed"`
-			MixedModels    bool        `json:"mixed_models"`
-		}
-		if err := json.Unmarshal(out, &envelope); err != nil {
-			return VectorHits{}, fmt.Errorf("decode vector query: %w", err)
-		}
-		return VectorHits{Results: envelope.Results, Notices: envelope.Notices,
-			Executed: envelope.VectorExecuted, MixedModels: envelope.MixedModels}, nil
+		return PluginVectorQuery(ctx, dbPath, question, VectorLeg{
+			K: k, Databases: databases, Expand: true, MinScore: search.MinVectorScore,
+		})
 	}
+}
+
+// PluginVectorQuery shells out to `roca-vector query` with the resolved knobs.
+func PluginVectorQuery(ctx context.Context, dbPath, question string, leg VectorLeg) (VectorHits, error) {
+	path, err := exec.LookPath("roca-vector")
+	if err != nil {
+		return VectorHits{Notices: []string{
+			"vector plugin is not installed; continuing with FTS-only",
+		}}, nil
+	}
+	args := []string{"--json", "query"}
+	if leg.Expand {
+		args = append(args, "--expand-templates")
+		for _, template := range leg.Templates {
+			args = append(args, "--template", template)
+		}
+	}
+	args = append(args, "--min-score", strconv.FormatFloat(leg.MinScore, 'f', -1, 64))
+	if strings.TrimSpace(leg.Databases) != "" {
+		args = append(args, "--databases", leg.Databases)
+	}
+	args = append(args, question, strconv.Itoa(leg.K))
+	if strings.TrimSpace(dbPath) != "" {
+		args = append([]string{"--db-path", dbPath}, args...)
+	}
+	cmd := exec.CommandContext(ctx, path, args...)
+	out, runErr := cmd.Output()
+	if runErr != nil {
+		message := runErr.Error()
+		if exit, ok := runErr.(*exec.ExitError); ok && len(exit.Stderr) > 0 {
+			message = strings.TrimSpace(string(exit.Stderr))
+		}
+		return VectorHits{Notices: []string{"vector search unavailable: " + message}}, nil
+	}
+	var envelope struct {
+		Results        []VectorHit `json:"results"`
+		Notices        []string    `json:"notices"`
+		VectorExecuted bool        `json:"vector_executed"`
+		MixedModels    bool        `json:"mixed_models"`
+	}
+	if err := json.Unmarshal(out, &envelope); err != nil {
+		return VectorHits{}, fmt.Errorf("decode vector query: %w", err)
+	}
+	return VectorHits{Results: envelope.Results, Notices: envelope.Notices,
+		Executed: envelope.VectorExecuted, MixedModels: envelope.MixedModels}, nil
 }
