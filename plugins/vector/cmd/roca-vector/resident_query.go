@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/thellmwhisperer/la-roca-vector/internal/vector"
+	"github.com/thellmwhisperer/la-roca/pkg/vectorhelp"
 	"github.com/thellmwhisperer/la-roca/pkg/vectorresident"
 )
 
@@ -94,27 +95,16 @@ func queryHelp(result vector.FederatedQuery) []string {
 			hits = append(hits, database.Results...)
 		}
 	}
-	var lines []string
-	if hint := readHitHint(hits); hint != "" {
-		lines = append(lines, hint)
-	}
-	lines = append(lines, "Run the same query with `--databases <one>` to narrow, or a larger k to widen")
-	return lines
+	return vectorhelp.Query(vectorHelpHits(hits))
 }
 
-func readHitHint(hits []vector.Result) string {
-	for _, hit := range hits {
-		if hit.Alias == "" || hit.Table == "" || hit.ID == "" ||
-			hit.IDColumn == "" || len(hit.TextColumns) == 0 {
-			continue
+func vectorHelpHits(hits []vector.Result) []vectorhelp.Hit {
+	out := make([]vectorhelp.Hit, len(hits))
+	for i, hit := range hits {
+		out[i] = vectorhelp.Hit{
+			Alias: hit.Alias, Table: hit.Table, ID: hit.ID,
+			IDColumn: hit.IDColumn, TextColumns: hit.TextColumns,
 		}
-		return fmt.Sprintf(
-			"Run `roca exec \"SELECT %s FROM %s.%s WHERE %s = %s\" --max-chars 2000` to read a hit in full",
-			strings.Join(hit.TextColumns, ", "), hit.Alias, hit.Table, hit.IDColumn, sqlLiteral(hit.ID))
 	}
-	return ""
-}
-
-func sqlLiteral(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
+	return out
 }
