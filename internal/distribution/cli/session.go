@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -51,6 +52,7 @@ func pillShowCommand(env *cliEnv, project *string) *cobra.Command {
 			defer svc.Close()
 			record, err := svc.ShowPill(cmd.Context(), resolved, args[0])
 			if err != nil {
+				printUnknownPillHelp(env, err, *project)
 				return err
 			}
 			if env.json {
@@ -177,6 +179,11 @@ func runSessionContext[T any](ctx context.Context, env *cliEnv, project string,
 	}
 	defer svc.Close()
 	result, err := load(svc, ctx, resolved)
+	var missing *service.NoHandoffError
+	if errors.As(err, &missing) {
+		env.print("%s", missing.Error())
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -271,17 +278,44 @@ func (env *cliEnv) openSessionContextServiceReadOnly(readOnly bool) (*service.Se
 	return scoped.openService()
 }
 
+func runLabMenu(ctx context.Context, env *cliEnv) error {
+	menu := axi.LabMenu{}
+	if svc, _, err := env.openSessionContextService(); err == nil {
+		defer svc.Close()
+		if lab, err := svc.LatestHandoffsByProject(ctx, time.Time{}, claudeHandoffHeadChars); err == nil {
+			menu.Lab = lab
+		}
+		if project, err := resolveProject(""); err == nil {
+			if pills, err := svc.ListPills(ctx, project); err == nil {
+				menu.Pills = pills
+			}
+		}
+	}
+	if env.json {
+		return env.printJSON(menu)
+	}
+	env.print("%s", axi.RenderLabMenu(menu))
+	return nil
+}
+
+func printUnknownPillHelp(env *cliEnv, err error, requestedProject string) {
+	var unknown *service.UnknownPillError
+	if !errors.As(err, &unknown) {
+		return
+	}
+	var lines []string
+	if len(unknown.Known) > 0 {
+		lines = append(lines, "known slugs: "+strings.Join(unknown.Known, ", "))
+	}
+	if requestedProject == "" {
+		lines = append(lines, "project scope came from the working directory")
+	}
+	if len(lines) == 0 {
+		return
+	}
+	env.print("%s\n", axi.RenderHelp(lines...))
+}
+
 func resolveProject(project string) (string, error) {
-	if project != "" {
-		return project, nil
-	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return "", fmt.Errorf("resolve the working directory: %w", err)
-	}
-	base := filepath.Base(cwd)
-	if base == "" || base == "." || base == string(filepath.Separator) {
-		return "", fmt.Errorf("a --project is required when the working directory has no basename")
-	}
-	return base, nil
+	return service.ResolveSessionProject(project)
 }

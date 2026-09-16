@@ -162,7 +162,15 @@ func (e *engine) authorize(action int32, arg1, arg2, schema string) int32 {
 		if e.matchPending {
 			e.matchPending = false
 			if !e.ftsTables[identity] || !strings.EqualFold(arg1, arg2) {
-				e.note("MATCH is allowed only on a declared FTS5 table")
+				if alias, table, ok := qualifiedFTSColumn(arg2); ok {
+					e.note(fmt.Sprintf("MATCH takes the bare FTS table name: FROM %s.%s WHERE %s MATCH '...'",
+						alias, table, table))
+				} else if strings.Contains(arg2, ".") && identity.schema != "" && identity.table != "" {
+					e.note(fmt.Sprintf("MATCH takes the bare FTS table name: FROM %s.%s WHERE %s MATCH '...'",
+						identity.schema, identity.table, identity.table))
+				} else {
+					e.note("MATCH is allowed only on a declared FTS5 table")
+				}
 				return sqlite3.SQLITE_DENY
 			}
 		}

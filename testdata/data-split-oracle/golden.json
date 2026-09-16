@@ -63,7 +63,7 @@
       "operation": "store",
       "exit_code": 1,
       "output": "",
-      "stderr": "error: La Roca is in read-only mode: this operation writes (operation: store) (correlation_id: <correlation_id>)\n"
+      "stderr": "error: La Roca is in read-only mode: this operation writes (operation: store); accepted layers for this surface: user, feedback, project, pattern, pill, discovery, handoff, handover, question, review, issue, protocol; example: layer=discovery content=\"found that X\" (correlation_id: <correlation_id>)\n"
     },
     {
       "name": "cli.store.read-only-count",
@@ -91,7 +91,7 @@
       "name": "mcp.query",
       "surface": "mcp",
       "operation": "query",
-      "output": "search fts · engines fts · <duration>\ndatabases: core, corpus\nnotice: vector index is not installed; continuing with FTS-only\nterms[2]: alder, the\nrows[1]{rank,source,legs,fts_rank,snippet}:\n  1,core.memories.101,fts,1,Quartz orchard launch plan for the synthetic Alder team.\n"
+      "output": "search fts · engines fts · <duration>\ndatabases: core, corpus\nnotice: vector index is not installed; continuing with FTS-only\nterms[2]: alder, the\nrows[1]{rank,source,legs,fts_rank,snippet}:\n  1,core.memories.101,fts,1,Quartz orchard launch plan for the synthetic Alder team.\nhelp[3]:\n  - Call roca_vector_query for the fast semantic leg alone\n  - Call roca_query again with require_both to keep only dual-confirmed hits\n  - Call roca_exec with a SELECT to frame a cited source\n"
     },
     {
       "name": "mcp.exec",
@@ -116,14 +116,14 @@
       "surface": "mcp",
       "operation": "failure",
       "is_error": true,
-      "output": "validating \"arguments\": validating root: required: missing properties: [\"query\"]\ncorrelation_id: <correlation_id>\n"
+      "output": "a query is required\ncorrelation_id: <correlation_id>\n"
     },
     {
       "name": "mcp.store.read-only",
       "surface": "mcp",
       "operation": "store",
       "is_error": true,
-      "output": "La Roca is in read-only mode: this operation writes (operation: store)\ncorrelation_id: <correlation_id>\n"
+      "output": "La Roca is in read-only mode: this operation writes (operation: store); accepted layers for this surface: user, feedback, project, pattern, pill, discovery, handoff, handover, question, review, issue, protocol; example: layer=discovery content=\"found that X\"\ncorrelation_id: <correlation_id>\n"
     },
     {
       "name": "mcp.store.read-only-count",

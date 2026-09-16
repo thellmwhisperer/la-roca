@@ -36,8 +36,9 @@ const ServerName = "roca"
 // `roca_sql` to answer a question `roca_query` answers whole.
 const instructions = "La Roca is local semantic memory for agent fleets: it answers " +
 	"natural-language questions about what the agents on this machine have left " +
-	"behind. Search with roca_query and use roca_exec " +
-	"for checked SQL. Write back what is worth remembering with roca_store. The optional playground plugin adds roca_sql and roca_explore."
+	"behind. Search with roca_vector_query (fast, semantic). Use roca_query only " +
+	"when exact terms matter. Use roca_exec for checked SQL. Write back what is " +
+	"worth remembering with roca_store. The optional playground plugin adds roca_sql and roca_explore."
 
 // Build is what the linker put inside the binary. The version the handshake
 // declares is the product's, never the SDK's: an agent that reports a library
@@ -81,6 +82,9 @@ func newServer(svc *service.Service, build Build, resident *residentVector) *mcp
 	if err != nil {
 		panic(fmt.Sprintf("invalid bundled ops manifest: %v", err))
 	}
+	if resident != nil {
+		mcp.AddTool(server, vectorQueryTool, sanitizing(resident.call, dbPath, dataDir))
+	}
 	if manifest.HasVerb(service.ExecVerb) {
 		mcp.AddTool(server, execTool, sanitizing(p.exec, dbPath, dataDir))
 	}
@@ -95,12 +99,61 @@ func newServer(svc *service.Service, build Build, resident *residentVector) *mcp
 
 	if manifest.HasVerb(service.StoreVerb) {
 		mcp.AddTool(server, storeTool, sanitizing(p.store, dbPath, dataDir))
+		mcp.AddTool(server, handoffLatestTool, sanitizing(p.handoffLatest, dbPath, dataDir))
+		mcp.AddTool(server, pillShowTool, sanitizing(p.pillShow, dbPath, dataDir))
 	}
-	if resident != nil {
-		mcp.AddTool(server, vectorQueryTool, sanitizing(resident.call, dbPath, dataDir))
-	}
+	server.AddReceivingMiddleware(vectorQueryFirst)
+	server.AddReceivingMiddleware(storeRejectionGuidance)
 	server.AddReceivingMiddleware(auditCalls(audit, os.Stderr))
 	return server
+}
+
+func vectorQueryFirst(next mcp.MethodHandler) mcp.MethodHandler {
+	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+		result, err := next(ctx, method, req)
+		if err != nil || method != "tools/list" {
+			return result, err
+		}
+		listed, ok := result.(*mcp.ListToolsResult)
+		if !ok {
+			return result, nil
+		}
+		for index, tool := range listed.Tools {
+			if tool.Name == vectorQueryTool.Name {
+				copy(listed.Tools[1:index+1], listed.Tools[:index])
+				listed.Tools[0] = tool
+				break
+			}
+		}
+		return listed, nil
+	}
+}
+
+func storeRejectionGuidance(next mcp.MethodHandler) mcp.MethodHandler {
+	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+		result, err := next(ctx, method, req)
+		tool, _ := toolCall(req)
+		refused, ok := result.(*mcp.CallToolResult)
+		if err != nil || method != "tools/call" || tool != storeTool.Name ||
+			!ok || refused == nil || !refused.IsError {
+			return result, err
+		}
+		cause := refused.GetError()
+		if cause == nil {
+			cause = errors.New(resultErrorText(refused))
+		}
+		guided := service.StoreErrorWithGuidance(cause)
+		for _, content := range refused.Content {
+			if text, ok := content.(*mcp.TextContent); ok {
+				text.Text = guided.Error()
+				refused.SetError(guided)
+				return result, nil
+			}
+		}
+		refused.Content = append(refused.Content, &mcp.TextContent{Text: guided.Error()})
+		refused.SetError(guided)
+		return result, nil
+	}
 }
 
 // sanitizing wraps a tool handler so that its error never carries the database
@@ -168,8 +221,8 @@ func auditCalls(audit *logfile.Writer, warnings io.Writer) mcp.Middleware {
 				InterpretationModel:       metaValue[string](result, "interpretation_model"),
 				InterpretationMS:          resultMilliseconds(result, "interpretation_ms"),
 			}
-			if call.Question == "" && (tool == "roca_query" || tool == "roca_sql" || tool == "roca_explore") {
-				call.Question = argumentString(args, "query")
+			if call.Question == "" && (tool == "roca_query" || tool == "roca_sql" || tool == "roca_explore" || tool == "roca_vector_query") {
+				call.Question = firstArgumentString(args, "query", "question", "text")
 			}
 			if tool == "roca_query" || tool == "roca_sql" || tool == "roca_explore" {
 				modelSQL := metaValue[string](result, "model_sql")
@@ -197,7 +250,7 @@ func auditCalls(audit *logfile.Writer, warnings io.Writer) mcp.Middleware {
 					call.CorrelationID = logfile.NewCorrelationID()
 				}
 			}
-			appendErr := audit.AppendExisting(logfile.MCPAudit, logfile.MCPRecord{
+			appendErr := audit.AppendExisting(logfile.Executions, logfile.MCPRecord{
 				CallRecord: call, Tool: tool,
 			})
 			if appendErr != nil {
@@ -225,6 +278,15 @@ func argumentString(value any, key string) string {
 	}
 	text, _ := fields[key].(string)
 	return text
+}
+
+func firstArgumentString(value any, keys ...string) string {
+	for _, key := range keys {
+		if text := strings.TrimSpace(argumentString(value, key)); text != "" {
+			return text
+		}
+	}
+	return ""
 }
 
 func resultErrorText(value any) string {

@@ -119,14 +119,17 @@ type IngestProgress struct {
 }
 
 type Result struct {
-	Rank     int     `json:"rank"`
-	Score    float64 `json:"score"`
-	Database string  `json:"database,omitempty"`
-	Table    string  `json:"table,omitempty"`
-	ID       string  `json:"id,omitempty"`
-	Source   string  `json:"source"`
-	SourceID string  `json:"source_id"`
-	Text     string  `json:"text"`
+	Rank        int      `json:"rank"`
+	Score       float64  `json:"score"`
+	Database    string   `json:"database,omitempty"`
+	Table       string   `json:"table,omitempty"`
+	ID          string   `json:"id,omitempty"`
+	Source      string   `json:"source"`
+	SourceID    string   `json:"source_id"`
+	Text        string   `json:"text"`
+	Alias       string   `json:"alias,omitempty"`
+	IDColumn    string   `json:"id_column,omitempty"`
+	TextColumns []string `json:"text_columns,omitempty"`
 }
 
 type sourceRow struct {

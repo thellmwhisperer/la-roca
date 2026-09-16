@@ -34,8 +34,7 @@ func statusHelp(report vector.Vectorization) []string {
 	var stale []string
 	var live []string
 	for _, row := range report.Databases {
-		switch row.State {
-		case vector.StateEmpty, vector.StateOutdated, vector.StateBuilding:
+		if needsVectorInstall(row) {
 			needsInstall = true
 		}
 		name := row.Plugin
@@ -62,9 +61,19 @@ func statusHelp(report vector.Vectorization) []string {
 		lines = append(lines, "index.lock is held on "+strings.Join(live, ", "))
 	}
 	if len(stale) > 0 {
-		lines = append(lines, "index.lock is stale on "+strings.Join(stale, ", ")+"; ingest and compact can take it")
+		lines = append(lines, "stale lock; the next ingest or compact takes it, nothing to do")
 	}
 	return lines
+}
+
+func needsVectorInstall(row vector.DatabaseVectorization) bool {
+	if strings.EqualFold(row.State, "missing") {
+		return true
+	}
+	if row.EmbeddedChunks != nil && *row.EmbeddedChunks == 0 {
+		return true
+	}
+	return row.EmbeddedChunks == nil && row.State == vector.StateEmpty
 }
 
 func renderVectorization(report vector.Vectorization, help []string) string {

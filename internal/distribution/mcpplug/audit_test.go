@@ -153,7 +153,7 @@ func TestAuditPersistsTheFullQueryFailureAndCorrelatesToolErrors(t *testing.T) {
 // under the data directory it was handed.
 func readAuditLog(t *testing.T, root string) string {
 	t.Helper()
-	matches, err := filepath.Glob(filepath.Join(root, logfile.DirName, "mcp-audit-*.jsonl"))
+	matches, err := filepath.Glob(filepath.Join(root, logfile.DirName, "executions-*.jsonl"))
 	if err != nil || len(matches) != 1 {
 		t.Fatalf("audit files = %v, err=%v", matches, err)
 	}

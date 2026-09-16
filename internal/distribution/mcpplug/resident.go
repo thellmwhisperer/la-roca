@@ -15,20 +15,37 @@ import (
 
 var vectorQueryTool = &mcp.Tool{
 	Name: "roca_vector_query",
-	Description: "Search local memory by meaning. Same job as `roca vector query`: " +
-		"pass a short first-person phrase or a bare word, and how many hits (default 10, max 100). " +
-		"The machine keeps one shared embedding process so every MCP session reuses it.",
+	Description: "Fast semantic search over local memory. Pass a short first-person " +
+		"phrase or a bare word, and how many hits (default 10, max 100). This is the " +
+		"semantic leg alone: no full-text scan and no fusion. Use roca_query only when " +
+		"exact terms matter.",
 }
 
 type vectorQueryArgs struct {
-	Query     string `json:"query" jsonschema:"short first-person phrase or bare word"`
+	Query     string `json:"query,omitempty" jsonschema:"short first-person phrase or bare word"`
+	Question  string `json:"question,omitempty" jsonschema:"alias of query"`
+	Text      string `json:"text,omitempty" jsonschema:"alias of query"`
 	K         int    `json:"k,omitempty" jsonschema:"number of nearest results, default 10, max 100"`
+	Limit     int    `json:"limit,omitempty" jsonschema:"alias of k"`
+	Top       int    `json:"top,omitempty" jsonschema:"alias of k"`
 	Databases string `json:"databases,omitempty" jsonschema:"comma list of attached database names (corpus,ops), or all"`
+}
+
+func (a vectorQueryArgs) queryText() string {
+	return firstNonEmpty(a.Query, a.Question, a.Text)
+}
+
+func (a vectorQueryArgs) hitCount() int {
+	return firstNonZero(a.K, a.Limit, a.Top)
 }
 
 type residentVector struct {
 	*vectorresident.Client
 }
+
+// MCP already dials the shared resident socket. The 6.9s vs 1.4s CLI gap
+// from the help audit is left out of scope: the spawn-or-reuse path is the
+// same, and a deeper process-sharing fix is not a bounded change.
 
 func startResidentVector(ctx context.Context, svc *service.Service) (*residentVector, error) {
 	binary := vectorresident.PayloadPath()
@@ -95,7 +112,11 @@ func (r *residentVector) call(ctx context.Context, _ *mcp.CallToolRequest,
 	if err := r.WaitReady(ctx); err != nil {
 		return nil, nil, err
 	}
-	raw, err := r.Query(ctx, vectorresident.Request{Query: in.Query, K: in.K, Databases: in.Databases})
+	query := in.queryText()
+	if query == "" {
+		return nil, nil, fmt.Errorf("a query is required")
+	}
+	raw, err := r.Query(ctx, vectorresident.Request{Query: query, K: in.hitCount(), Databases: in.Databases})
 	if err != nil {
 		return nil, nil, err
 	}

@@ -22,7 +22,8 @@ import (
 // The surface this version decided, and no other. `roca_list_runs` is out
 // because `runs` is v2: a tool with no table behind it is a tool that lies.
 var theDecidedSurface = []string{
-	"roca_exec", "roca_health", "roca_query", "roca_store",
+	"roca_exec", "roca_handoff_latest", "roca_health", "roca_pill_show",
+	"roca_query", "roca_store",
 }
 
 // The tools the pruning withdrew. They are named here so that reintroducing one
@@ -147,7 +148,7 @@ func TestEveryToolCallWritesACredentialFreeAuditRecord(t *testing.T) {
 	callTool(t, connect(t, svc), "roca_exec", map[string]any{
 		"sql": "SELECT 'token=private-value' AS text",
 	})
-	raw := readSingleLog(t, svc.DataDir(), logfile.MCPAudit)
+	raw := readSingleLog(t, svc.DataDir(), logfile.Executions)
 	text := string(raw)
 	for _, want := range []string{`"tool":"roca_exec"`, `"ok":true`, `"row_count":1`, `"duration_ms":`} {
 		if !strings.Contains(text, want) {
@@ -181,7 +182,7 @@ func TestMalformedToolCallIsAuditedAsAFailure(t *testing.T) {
 	if err != nil || !result.IsError {
 		t.Fatalf("malformed call result=%v err=%v", result, err)
 	}
-	matches, err := filepath.Glob(filepath.Join(svc.DataDir(), logfile.DirName, "mcp-audit-*.jsonl"))
+	matches, err := filepath.Glob(filepath.Join(svc.DataDir(), logfile.DirName, "executions-*.jsonl"))
 	if err != nil || len(matches) != 1 {
 		t.Fatalf("MCP audit logs = %v, err=%v", matches, err)
 	}
@@ -331,6 +332,71 @@ func TestTheHandshakeAnnouncesTheProductAndItsVersion(t *testing.T) {
 	}
 	if version := session.InitializeResult().ProtocolVersion; version == "" {
 		t.Error("the handshake declares no protocol version")
+	}
+	instructions := session.InitializeResult().Instructions
+	if !strings.Contains(instructions, "Search with roca_vector_query (fast, semantic)") ||
+		!strings.Contains(instructions, "Use roca_query only when exact terms matter") {
+		t.Fatalf("instructions are not vector-first: %s", instructions)
+	}
+}
+
+func TestSearchToolsAcceptQuestionAndLimitAliases(t *testing.T) {
+	session := connect(t, seededService(t))
+	result := callTool(t, session, "roca_query", map[string]any{
+		"question": "adoption compares structure", "limit": 3,
+	})
+	if text := renderedText(result); !strings.Contains(text, "adoption") && !strings.Contains(text, "search") {
+		t.Fatalf("question alias did not search: %s", text)
+	}
+}
+
+func TestUnknownPillThroughMCPListsKnownSlugsAndWorkingDirectoryScope(t *testing.T) {
+	svc := seededOpsService(t)
+	project, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = svc.Store(context.Background(), service.StoreRequest{
+		Layer: "pill", Content: "build instructions", Project: filepath.Base(project),
+		Metadata:   map[string]any{"pill_slug": "build"},
+		Authorship: service.Authorship{Surface: service.SurfaceMCP},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	refused := callToolExpectingError(t, connect(t, svc), "roca_pill_show", map[string]any{
+		"slug": "missing",
+	})
+	if !strings.Contains(refused, "known slugs:") ||
+		!strings.Contains(refused, "project scope came from the working directory") {
+		t.Fatalf("MCP pill miss lacks actionable help: %s", refused)
+	}
+}
+
+func TestStoreRefusalNamesAcceptedLayers(t *testing.T) {
+	refused := callToolExpectingError(t, connect(t, seededService(t)), "roca_store", map[string]any{
+		"layer": "handoff", "content": "token refresh done",
+	})
+	if !strings.Contains(refused, "accepted layers for this surface") ||
+		!strings.Contains(refused, "layer=discovery") {
+		t.Fatalf("store refusal lacks a working example: %s", refused)
+	}
+}
+
+func TestStoreSchemaRefusalsNameAcceptedLayers(t *testing.T) {
+	session := connect(t, seededService(t))
+	for name, arguments := range map[string]map[string]any{
+		"missing layer":   {"content": "found that X"},
+		"missing content": {"layer": "discovery"},
+		"missing both":    {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			refused := callToolExpectingError(t, session, "roca_store", arguments)
+			if !strings.Contains(refused, "accepted layers for this surface") ||
+				!strings.Contains(refused, `layer=discovery content="found that X"`) {
+				t.Fatalf("store schema refusal lacks layer guidance: %s", refused)
+			}
+		})
 	}
 }
 

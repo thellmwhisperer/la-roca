@@ -15,16 +15,16 @@ import (
 )
 
 const (
-	DirName       = "logs"
-	RetentionDays = 30
-	Executions    = "executions"
-	MCPAudit      = "mcp-audit"
-	Ingest        = "ingest"
-	Migrations    = "migrations"
-	Companions    = "companions"
-	lockName      = ".roca.lock"
-	maxFileBytes  = int64(5 << 20)
-	maxFiles      = 6
+	DirName         = "logs"
+	RetentionMonths = 3
+	Executions      = "executions"
+	MCPAudit        = "mcp-audit"
+	Ingest          = "ingest"
+	Migrations      = "migrations"
+	Companions      = "companions"
+	lockName        = ".roca.lock"
+	maxFileBytes    = int64(5 << 20)
+	maxFiles        = 200
 )
 
 type Writer struct {
@@ -230,7 +230,7 @@ func (w *Writer) prune(stream string, now time.Time) {
 	if err != nil {
 		return
 	}
-	cutoff := now.AddDate(0, 0, -(RetentionDays - 1)).Format(time.DateOnly)
+	cutoff := now.AddDate(0, -RetentionMonths, 0).Format(time.DateOnly)
 	for _, path := range matches {
 		name := strings.TrimPrefix(filepath.Base(path), stream+"-")
 		if len(name) < len(time.DateOnly) {

@@ -84,7 +84,7 @@ func TestIssue336CLICompactsStaleSidecarWithoutLosingResults(t *testing.T) {
 		t.Fatalf("sparse sidecar status: %+v", before)
 	}
 	text := string(run("status"))
-	if !strings.Contains(text, "roca vector compact") || !strings.Contains(text, "index.lock is stale") {
+	if !strings.Contains(text, "roca vector compact") || !strings.Contains(text, "stale lock") {
 		t.Fatalf("missing user remedies: %s", text)
 	}
 	query := func(stage string) []Result {

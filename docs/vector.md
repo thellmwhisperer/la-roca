@@ -84,6 +84,11 @@ complete envelope; `help[]` names the next command. Registry or command errors
 return a non-zero exit status; unreadable facts for an individual database
 remain in the successful envelope as unknown.
 
+The help recommends `roca vector install` only when a database is missing or
+has zero embedded chunks. A stale index lock instead says that the next ingest
+or compact takes it and that there is nothing to do; an existing partial index
+is not treated as absent work.
+
 ```sh
 roca vector status
 ```
@@ -364,6 +369,12 @@ Same-model scores merge into one top-N. If selected sidecars use different
 models, results stay grouped per database with a notice because their scores
 are not comparable. Every hit carries database, table, and source id. `k` is
 optional (default 10) and capped at 100.
+
+After a federated hit whose declaration supplies its database alias, ID column,
+and text columns, `help[]` prints an exact `roca exec "SELECT ..." --max-chars
+2000` command for reading that hit in full; JSON exposes the same shape as
+`alias`, `id_column`, and `text_columns`. Every result also suggests repeating
+the query with one `--databases` value to narrow it or a larger `k` to widen it.
 
 Query setup reads model and dimension metadata without loading every stored
 chunk's bookkeeping. Search and reranking still depend on the index size.

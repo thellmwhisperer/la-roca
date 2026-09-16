@@ -34,18 +34,21 @@ Do not read a manual. Tell your agent:
 > Install https://github.com/thellmwhisperer/la-roca and learn to use it.
 
 The repository teaches your agent the rest: [`AGENTS.md`](AGENTS.md) tells
-it what this is, how to install it, and how to search well. Three commands
-later it is answering questions about everything your agents ever did:
+it what this is, how to install it, and how to search well. After init, bare
+`roca` opens the laboratory menu: the latest handoff for each project, the
+current project's active pills, and vector-first next commands. When the
+optional semantic index is ready, the fast first search is:
 
 ```text
 $ curl -fsSL https://raw.githubusercontent.com/thellmwhisperer/la-roca/main/install.sh | sh
 $ roca init
-$ roca query "what did we decide about the retention window"
-search hybrid · engines fts,vector · 24 ms
-terms[2]: retention, window
-rows[1]{rank,source,legs,consensus,snippet}:
-  1,corpus.memories.202,vector+fts,true,"30 days and out. I do not want eternal logs."
+$ roca
+$ roca vector query "what did we decide about the retention window" 20 --databases corpus,ops
 ```
+
+Federated vector results with a declared read shape teach the exact `roca exec`
+command for reading a hit in full. Use `roca query` when exact terms matter and
+you need the full-text leg fused with the semantic results.
 
 Init installs the skills into every runtime it detects. If your runtime was not
 detected, use `roca skill install codex` (or `claude`, `opencode`, `pi`,

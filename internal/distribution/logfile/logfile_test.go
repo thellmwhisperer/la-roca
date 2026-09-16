@@ -17,10 +17,10 @@ func TestAppendWritesOneCredentialFreeDatedLine(t *testing.T) {
 		Timestamp: writer.now(), Source: "mcp", OK: true,
 		Args: map[string]any{"content": "token=top-secret", "api_key": "sk-private123"},
 	}, Tool: "roca_store"}
-	if err := writer.Append(MCPAudit, record); err != nil {
+	if err := writer.Append(Executions, record); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(root, DirName, "mcp-audit-2026-08-10.jsonl")
+	path := filepath.Join(root, DirName, "executions-2026-08-10.jsonl")
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -73,8 +73,8 @@ func TestAppendPrunesFilesOutsideTheRetentionWindow(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	expired := filepath.Join(dir, "executions-2026-07-11.jsonl")
-	kept := filepath.Join(dir, "executions-2026-07-12.jsonl")
+	expired := filepath.Join(dir, "executions-2026-05-09.jsonl")
+	kept := filepath.Join(dir, "executions-2026-05-10.jsonl")
 	for _, path := range []string{expired, kept} {
 		if err := os.WriteFile(path, []byte("{}\n"), 0o600); err != nil {
 			t.Fatal(err)

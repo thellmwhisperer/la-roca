@@ -8,7 +8,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"slices"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -520,7 +520,7 @@ func TestCompactRebuildsDenseEquivalentStoreAndRefusesAnActiveIngest(t *testing.
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !slices.Equal(resultsBefore, resultsAfter) {
+		if !reflect.DeepEqual(resultsBefore, resultsAfter) {
 			t.Fatalf("query changed from %+v to %+v", resultsBefore, resultsAfter)
 		}
 		embeddingCalls = embedder.calls

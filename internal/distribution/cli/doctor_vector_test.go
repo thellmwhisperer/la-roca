@@ -22,7 +22,7 @@ func TestRenderVectorDoctorSurfacesCompactAndStaleLock(t *testing.T) {
 		},
 		Remedies: []string{
 			"Run `roca vector compact` to reclaim empty embedding pages on roca-corpus/corpus",
-			"index.lock is stale on roca-corpus/corpus; ingest and compact can take it",
+			"stale lock; the next ingest or compact takes it, nothing to do",
 		},
 	})
 	got := out.String()
@@ -32,7 +32,7 @@ func TestRenderVectorDoctorSurfacesCompactAndStaleLock(t *testing.T) {
 		"compact recommended",
 		"lock stale",
 		"Run `roca vector compact`",
-		"index.lock is stale",
+		"stale lock",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("doctor vector narration missing %q:\n%s", want, got)

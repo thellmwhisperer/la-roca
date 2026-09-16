@@ -60,13 +60,15 @@ func (env *environment) residentQueryOptions() vectorresident.Options {
 }
 
 func printFederatedQuery(env *environment, query string, k int, started time.Time, result vector.FederatedQuery) error {
+	help := queryHelp(result)
 	if env.json {
 		return printJSON(map[string]any{"query": query, "k": k,
 			"databases": result.Databases, "model": result.Model,
 			"mixed_models": result.MixedModels, "results": result.Results,
 			"database_results": result.DatabaseResults, "notices": result.Notices,
 			"vector_executed": result.VectorExecuted,
-			"elapsed_ms":      time.Since(started).Milliseconds()})
+			"elapsed_ms":      time.Since(started).Milliseconds(),
+			"help":            help})
 	}
 	for _, notice := range result.Notices {
 		fmt.Fprintln(os.Stderr, "notice:", notice)
@@ -76,8 +78,43 @@ func printFederatedQuery(env *environment, query string, k int, started time.Tim
 			fmt.Printf("database %s · model %s\n", database.Database, database.Model)
 			printResults(database.Results)
 		}
-		return nil
+	} else {
+		printResults(result.Results)
 	}
-	printResults(result.Results)
+	if rendered := renderHelp(help); rendered != "" {
+		fmt.Println(rendered)
+	}
 	return nil
+}
+
+func queryHelp(result vector.FederatedQuery) []string {
+	hits := result.Results
+	if result.MixedModels {
+		for _, database := range result.DatabaseResults {
+			hits = append(hits, database.Results...)
+		}
+	}
+	var lines []string
+	if hint := readHitHint(hits); hint != "" {
+		lines = append(lines, hint)
+	}
+	lines = append(lines, "Run the same query with `--databases <one>` to narrow, or a larger k to widen")
+	return lines
+}
+
+func readHitHint(hits []vector.Result) string {
+	for _, hit := range hits {
+		if hit.Alias == "" || hit.Table == "" || hit.ID == "" ||
+			hit.IDColumn == "" || len(hit.TextColumns) == 0 {
+			continue
+		}
+		return fmt.Sprintf(
+			"Run `roca exec \"SELECT %s FROM %s.%s WHERE %s = %s\" --max-chars 2000` to read a hit in full",
+			strings.Join(hit.TextColumns, ", "), hit.Alias, hit.Table, hit.IDColumn, sqlLiteral(hit.ID))
+	}
+	return ""
+}
+
+func sqlLiteral(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
 }

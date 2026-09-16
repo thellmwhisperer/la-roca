@@ -493,7 +493,7 @@ func (f Federation) searchTarget(ctx context.Context, result *FederatedQuery, ta
 			return fmt.Errorf("close vector sidecar %s: %w", target.database.owner(), closeErr)
 		}
 		result.VectorExecuted = true
-		tagFederatedResults(hits, target.database.Database)
+		tagFederatedResults(hits, target.database)
 		hits = filterVectorFloor(hits, minScore)
 		if result.MixedModels {
 			merged := false
@@ -577,11 +577,16 @@ func (r *FederatedQuery) noticeModelUnavailable(model string, targets []queryTar
 	}
 }
 
-func tagFederatedResults(results []Result, database string) {
+func tagFederatedResults(results []Result, database vectorDatabase) {
 	for index := range results {
-		results[index].Database = database
+		results[index].Database = database.Database
 		if results[index].Table == "" {
 			results[index].Table = results[index].Source
+		}
+		if table, ok := (DeclaredCorpus{Database: database}).table(results[index].Table); ok {
+			results[index].Alias = database.Alias
+			results[index].IDColumn = table.IDColumn
+			results[index].TextColumns = append([]string(nil), table.TextColumns...)
 		}
 	}
 }

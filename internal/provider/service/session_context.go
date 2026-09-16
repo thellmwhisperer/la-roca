@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -12,6 +14,23 @@ import (
 
 	"github.com/thellmwhisperer/la-roca/internal/jsonid"
 )
+
+// ResolveSessionProject returns an explicit project or derives it from the
+// working directory for session-context commands.
+func ResolveSessionProject(project string) (string, error) {
+	if project != "" {
+		return project, nil
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("resolve the working directory: %w", err)
+	}
+	base := filepath.Base(cwd)
+	if base == "" || base == "." || base == string(filepath.Separator) {
+		return "", fmt.Errorf("a project is required when the working directory has no basename")
+	}
+	return base, nil
+}
 
 // MemoryRecord is one operational memory returned with its full content.
 type MemoryRecord struct {
@@ -125,7 +144,25 @@ func (s *Service) ShowPill(ctx context.Context, project, slug string) (MemoryRec
 			return pill, nil
 		}
 	}
-	return MemoryRecord{}, fmt.Errorf("no active pill with slug %q for project %q", slug, project)
+	known := make([]string, 0, len(list.Pills))
+	for _, pill := range list.Pills {
+		known = append(known, pill.Slug)
+	}
+	return MemoryRecord{}, &UnknownPillError{Slug: slug, Project: project, Known: known}
+}
+
+// UnknownPillError is a show miss: the project roster is known and the slug is not.
+type UnknownPillError struct {
+	Slug    string
+	Project string
+	Known   []string
+}
+
+func (e *UnknownPillError) Error() string {
+	if e == nil {
+		return "no active pill"
+	}
+	return fmt.Sprintf("no active pill with slug %q for project %q", e.Slug, e.Project)
 }
 
 // DeletePill removes every ops-store version of a pill slug. It is intentionally
@@ -202,8 +239,8 @@ func (s *Service) DeletePill(ctx context.Context, slug string) (PillDeleteResult
 
 // LatestHandoffs loads active handoffs for the project that no other memory has
 // superseded. It is not newest-by-clock: a later row that does not name a
-// predecessor leaves that predecessor current. When the project has none, it
-// falls back to global handoffs (project IS NULL).
+// predecessor leaves that predecessor current. A named project that has none
+// does not fall back to another project's rows or to globals.
 func (s *Service) LatestHandoffs(ctx context.Context, project string) (HandoffList, error) {
 	rows, err := s.loadCurrentHandoffs(ctx, project)
 	if err != nil {
@@ -218,11 +255,45 @@ func (s *Service) LatestHandoffs(ctx context.Context, project string) (HandoffLi
 			globals = append(globals, row.MemoryRecord)
 		}
 	}
-	if len(result.Handoffs) == 0 {
+	if project == "" {
 		result.Handoffs = globals
-		result.GlobalFallback = project != ""
+		return result, nil
+	}
+	if len(result.Handoffs) == 0 {
+		return result, s.noHandoffForProject(ctx, project)
 	}
 	return result, nil
+}
+
+// NoHandoffError is a latest miss: this project has no current handoff.
+// The message names the projects that do, and nothing else.
+type NoHandoffError struct {
+	Project string
+	Known   []string
+}
+
+func (e *NoHandoffError) Error() string {
+	if e == nil {
+		return "no handoff for project"
+	}
+	if len(e.Known) == 0 {
+		return fmt.Sprintf("no handoff for project %s; projects with handoffs: (none)", e.Project)
+	}
+	return fmt.Sprintf("no handoff for project %s; projects with handoffs: %s",
+		e.Project, strings.Join(e.Known, ", "))
+}
+
+func (s *Service) noHandoffForProject(ctx context.Context, project string) error {
+	lab, err := s.LatestHandoffsByProject(ctx, time.Time{}, 0)
+	if err != nil {
+		return &NoHandoffError{Project: project}
+	}
+	names := make([]string, 0, len(lab.Rows))
+	for _, row := range lab.Rows {
+		names = append(names, row.Project)
+	}
+	sort.Strings(names)
+	return &NoHandoffError{Project: project, Known: names}
 }
 
 // LatestHandoffsByProject loads the newest active, unsuperseded handoff for

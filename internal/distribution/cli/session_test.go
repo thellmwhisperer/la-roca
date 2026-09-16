@@ -226,16 +226,23 @@ func TestHandoffLatestRejectsUnsupportedSince(t *testing.T) {
 	}
 }
 
-func TestHandoffLatestFallsBackToGlobal(t *testing.T) {
+func TestHandoffLatestUnknownProjectNamesProjectsWithHandoffs(t *testing.T) {
 	home := sessionHome(t)
+	insertOpsMemory(t, home, opsMemory{
+		layer: "handoff", project: "alpha", createdAt: "2026-08-01 00:00:00",
+		content: "alpha close",
+	})
 	insertOpsMemory(t, home, opsMemory{
 		layer: "handoff", createdAt: "2026-08-01 00:00:00",
 		content: "global close",
 	})
 
 	out := runRoot(t, contractBuild(), "handoff", "latest", "--project", "demo")
-	if !strings.Contains(out, "global close") {
-		t.Fatalf("global fallback missing:\n%s", out)
+	if !strings.Contains(out, "no handoff for project demo") || !strings.Contains(out, "alpha") {
+		t.Fatalf("unknown project message = %q", out)
+	}
+	if strings.Contains(out, "alpha close") || strings.Contains(out, "global close") {
+		t.Fatalf("unknown project printed other handoffs:\n%s", out)
 	}
 }
 
@@ -409,6 +416,60 @@ func assertOpsPillSlugCount(t *testing.T, home, slug string, want int) {
 	}
 	if count != want {
 		t.Fatalf("pill slug %q count = %d, want %d", slug, count, want)
+	}
+}
+
+func TestPillShowUnknownSlugListsKnownAndWorkingDirectoryScope(t *testing.T) {
+	home := sessionHome(t)
+	insertOpsMemory(t, home, opsMemory{
+		layer: "pill", project: "demo", createdAt: "2026-06-01 00:00:00",
+		content: "build pill", metadata: map[string]any{"pill_slug": "build"},
+	})
+
+	out, err := runRootErr(t, contractBuild(), nil, "pill", "show", "missing", "--project", "demo")
+	if err == nil || !strings.Contains(err.Error(), `no active pill with slug "missing"`) {
+		t.Fatalf("unknown slug error = %v", err)
+	}
+	if !strings.Contains(out, "help[") || !strings.Contains(out, "build") {
+		t.Fatalf("known slug help missing:\n%s", out)
+	}
+	if strings.Contains(out, "working directory") {
+		t.Fatalf("explicit --project should not claim the working directory:\n%s", out)
+	}
+
+	cwdOut, cwdErr := runRootErr(t, contractBuild(), nil, "pill", "show", "missing")
+	if cwdErr == nil {
+		t.Fatal("cwd unknown slug succeeded")
+	}
+	if !strings.Contains(cwdOut, "project scope came from the working directory") {
+		t.Fatalf("cwd scope hint missing:\n%s", cwdOut)
+	}
+}
+
+func TestBareRocaPrintsTheLabMenuVectorFirst(t *testing.T) {
+	home := sessionHome(t)
+	insertOpsMemory(t, home, opsMemory{
+		layer: "handoff", project: "alpha", createdAt: "2026-08-01 00:00:00",
+		content: "alpha close",
+	})
+	out := runRoot(t, contractBuild())
+	if strings.Contains(out, "Available Commands") || strings.Contains(out, "Hybrid FTS") {
+		t.Fatalf("bare roca still printed the Cobra list:\n%s", out)
+	}
+	for _, want := range []string{
+		"lab[", "alpha close",
+		"roca vector query", "20 --databases corpus,ops",
+		"roca exec", "roca query",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("lab menu missing %q:\n%s", want, out)
+		}
+	}
+	vectorAt := strings.Index(out, "roca vector query")
+	execAt := strings.Index(out, "roca exec")
+	queryAt := strings.LastIndex(out, "roca query")
+	if vectorAt < 0 || execAt < vectorAt || queryAt < execAt {
+		t.Fatalf("help is not vector, exec, then query:\n%s", out)
 	}
 }
 
