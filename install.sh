@@ -268,9 +268,9 @@ sha256_of() {
 PLATFORM=$(detect_platform)
 TARGET="$PREFIX/$BINARY"
 
-# A sudo install over a user-owned ~/.roca leaves root-owned locks the operator
-# cannot open. The next upgrade then dies on "permission denied" and looks like
-# a stale lock. Refuse before any write.
+# A sudo install over a user-owned ~/.roca leaves root-owned state the operator
+# cannot open. The next upgrade then dies on "permission denied" and can look
+# like a stale-lock failure. Refuse before any write.
 refuse_root_over_user_state() {
   uid=$(id -u 2>/dev/null) || return 0
   [ "$uid" -eq 0 ] || return 0

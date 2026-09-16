@@ -13,8 +13,8 @@ type Identity struct {
 	Name string
 }
 
-// Repair is the exact chown that returns a foreign-owned state path to the
-// current user. Doctor prints Command as-is.
+// Repair is the exact chown that returns a foreign-owned state path or subtree
+// to the current user. Doctor prints Command as-is.
 type Repair struct {
 	Path    string
 	Owner   string
@@ -27,8 +27,9 @@ var (
 	currentEUID     = os.Geteuid
 )
 
-// ScanForeignOwned walks root and reports every path whose owner is not the
-// current user. It is read-only: it never chowns, creates, or deletes.
+// ScanForeignOwned walks root and reports each highest path whose owner is not
+// the current user. A reported directory carries one recursive repair for its
+// subtree. The scan is read-only: it never chowns, creates, or deletes.
 func ScanForeignOwned(root string) []Repair {
 	return scanForeignOwned(root, currentIdentity(), lookupOwner)
 }
@@ -75,9 +76,9 @@ func scanForeignOwned(root string, current Identity, lookup func(string) (Identi
 	return found
 }
 
-// RefuseRootOverUserState errors when the process is root and root already
+// RefuseRootOverUserState errors when the process is root and the state root
 // belongs to a different user. Running as root there is what leaves root-owned
-// locks and other state the operator can no longer open.
+// state the operator can no longer open.
 func RefuseRootOverUserState(root string) error {
 	return refuseRootOverUserState(root, currentEUID(), lookupOwner)
 }

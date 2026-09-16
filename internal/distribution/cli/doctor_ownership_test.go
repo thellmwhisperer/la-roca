@@ -93,6 +93,11 @@ func TestDoctorReportsOwnershipWhenServiceCannotOpenState(t *testing.T) {
 	if !strings.Contains(out, want) {
 		t.Fatalf("doctor error path missing %q:\n%s", want, out)
 	}
+
+	report := runRoot(t, contractBuild(), "doctor", "--report")
+	if !strings.Contains(report, "state ownership findings: 1") {
+		t.Fatalf("doctor --report on uninitialized state omitted the privacy-safe ownership count:\n%s", report)
+	}
 }
 
 func TestCLIRefusesRootOverUserOwnedState(t *testing.T) {
