@@ -194,6 +194,11 @@ func (s *Service) List() ([]plugin.Ride, []string) {
 
 func (s *Service) list() ([]plugin.Ride, []string, error) {
 	discovered, warnings := plugin.DiscoverRides(s.pluginRoot, verifyInstalledRides)
+	for index := range discovered {
+		if discovered[index].Plugin == "roca-vector" && discovered[index].Name == "vector_delta" {
+			discovered[index].Command = coreCommand("vector ingest --delta")
+		}
+	}
 	if !s.vectorEnabled {
 		discovered = slices.DeleteFunc(discovered, func(ride plugin.Ride) bool {
 			return ride.Plugin == "roca-vector" && ride.Name == "vector_delta"
