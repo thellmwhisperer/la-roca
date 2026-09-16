@@ -50,30 +50,32 @@ var schema string
 type CommandRunner func(context.Context, string, io.Writer, io.Writer) (int, error)
 
 type Options struct {
-	PluginRoot  string
-	Database    string
-	LockPath    string
-	ConfigPath string
-	RidesDir   string
-	ReadOnly   bool
-	Now         func() time.Time
-	RunCommand  CommandRunner
-	Out         io.Writer
-	ErrOut      io.Writer
+	PluginRoot    string
+	Database      string
+	LockPath      string
+	ConfigPath    string
+	RidesDir      string
+	VectorEnabled bool
+	ReadOnly      bool
+	Now           func() time.Time
+	RunCommand    CommandRunner
+	Out           io.Writer
+	ErrOut        io.Writer
 }
 
 type Service struct {
-	db          *sql.DB
-	pluginRoot  string
-	lockPath    string
-	configPath string
-	ridesDir   string
-	now        func() time.Time
-	runCommand  CommandRunner
-	out         io.Writer
-	errOut      io.Writer
-	readOnly    bool
-	LockFree    func(string) (bool, error)
+	db            *sql.DB
+	pluginRoot    string
+	lockPath      string
+	configPath    string
+	ridesDir      string
+	vectorEnabled bool
+	now           func() time.Time
+	runCommand    CommandRunner
+	out           io.Writer
+	errOut        io.Writer
+	readOnly      bool
+	LockFree      func(string) (bool, error)
 }
 
 type RideResult struct {
@@ -152,7 +154,8 @@ func Open(options Options) (*Service, error) {
 	return &Service{
 		db: db, pluginRoot: options.PluginRoot, lockPath: options.LockPath,
 		configPath: options.ConfigPath, ridesDir: options.RidesDir,
-		now: now, runCommand: runner, out: out, errOut: errOut,
+		vectorEnabled: options.VectorEnabled,
+		now:           now, runCommand: runner, out: out, errOut: errOut,
 		readOnly: options.ReadOnly, LockFree: coreLockFree,
 	}, nil
 }
@@ -183,6 +186,11 @@ func (s *Service) Close() error {
 
 func (s *Service) List() ([]plugin.Ride, []string) {
 	discovered, warnings := plugin.DiscoverRides(s.pluginRoot, verifyInstalledRides)
+	if !s.vectorEnabled {
+		discovered = slices.DeleteFunc(discovered, func(ride plugin.Ride) bool {
+			return ride.Plugin == "roca-vector" && ride.Name == "vector_delta"
+		})
+	}
 	operator, operatorWarnings := plugin.DiscoverOperatorRides(s.configPath, s.ridesDir)
 	warnings = append(warnings, operatorWarnings...)
 	merged, mergeWarnings := mergeOperatorRides(discovered, operator)
@@ -320,12 +328,6 @@ func (s *Service) runRide(ctx context.Context, ride plugin.Ride, declared map[st
 	if !open {
 		return result, s.recordDeferred(ride, status, "the gated dependency has no latest successful journey")
 	}
-	if ride.Plugin == plugin.OperatorPlugin {
-		if err := plugin.CheckOperatorRideFile(ride.Source); err != nil {
-			return result, err
-		}
-	}
-
 	started := s.now().UTC()
 	var stdout, stderr excerpt
 	exitCode, runErr := s.runCommand(ctx, ride.Command,
@@ -398,7 +400,7 @@ func mergeOperatorRides(pluginRides, operatorRides []plugin.Ride) ([]plugin.Ride
 	var warnings []string
 	kept := make([]plugin.Ride, 0, len(pluginRides)+len(operatorRides))
 	for _, ride := range pluginRides {
-		if overridden[ride.Name] {
+		if overridden[ride.Name] && ride.Plugin == "roca-vector" && ride.Name == "vector_delta" {
 			warnings = append(warnings, fmt.Sprintf(
 				"operator ride %s overrides plugin %s/%s", ride.Name, ride.Plugin, ride.Name))
 			continue

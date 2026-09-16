@@ -157,6 +157,36 @@ command = "roca vector ingest --delta"
 	}
 }
 
+func TestVectorRideFollowsFeatureAndOnlyItsBundledCollisionIsReplaced(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "plugins")
+	manifest := "[ride.vector_delta]\ncommand = \"echo bundled\"\n"
+	writeRides(t, root, "roca-vector", manifest)
+	writeRides(t, root, "archive", manifest)
+
+	disabled := newService(t, root, filepath.Join(t.TempDir(), rocacron.DatabaseFilename), nil)
+	rides, warnings := disabled.List()
+	if len(warnings) != 0 || len(rides) != 2 || rides[1].Plugin != "archive" {
+		t.Fatalf("disabled vector rides = %+v warnings = %v", rides, warnings)
+	}
+
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(configPath, []byte("[ride.vector_delta]\ncommand = \"echo operator\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	enabled := mustOpenCron(t, rocacron.Options{
+		PluginRoot: root, Database: filepath.Join(t.TempDir(), rocacron.DatabaseFilename),
+		ConfigPath: configPath, VectorEnabled: true,
+	})
+	rides, warnings = enabled.List()
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "roca-vector/vector_delta") || len(rides) != 3 {
+		t.Fatalf("enabled vector rides = %+v warnings = %v", rides, warnings)
+	}
+	if rides[1].Plugin != "archive" || rides[2].Plugin != plugin.OperatorPlugin ||
+		rides[2].Command != "echo operator" {
+		t.Fatalf("collision merge = %+v", rides)
+	}
+}
+
 func TestListRejectsRidesWithoutVerifiedInstallerOwnership(t *testing.T) {
 	for _, test := range []struct {
 		name    string
@@ -399,7 +429,9 @@ func TestTheRealCoreLockProbeNeitherCreatesNorKeepsTheLock(t *testing.T) {
 }
 
 func TestOperatorRidesMergeWithPluginManifestsAndHonorFileGate(t *testing.T) {
-	root, database := cronWorld(t, `[ride.vector_delta]
+	root := filepath.Join(t.TempDir(), "plugins")
+	database := filepath.Join(t.TempDir(), rocacron.DatabaseFilename)
+	writeRides(t, root, "roca-vector", `[ride.vector_delta]
 command = "roca vector ingest --delta"
 gate = "after_ingest"
 `)
@@ -428,6 +460,7 @@ gate = "after_ingest"
 	var invoked []string
 	service := mustOpenCron(t, rocacron.Options{
 		PluginRoot: root, Database: database, ConfigPath: configPath, RidesDir: ridesDir,
+		VectorEnabled: true,
 		RunCommand: func(_ context.Context, command string, _, _ io.Writer) (int, error) {
 			invoked = append(invoked, command)
 			return 0, nil
@@ -459,7 +492,7 @@ surprise = true
 		t.Fatal(err)
 	}
 	rides, warnings = service.List()
-	if len(rides) != 3 || rides[2].Plugin != "vector" ||
+	if len(rides) != 3 || rides[2].Plugin != "roca-vector" ||
 		!strings.Contains(strings.Join(warnings, "\n"), "unknown field") {
 		t.Fatalf("invalid config rides = %+v warnings = %v", rides, warnings)
 	}
@@ -473,7 +506,7 @@ gate = "after_ingest"
 		t.Fatal(err)
 	}
 	rides, warnings = service.List()
-	if len(rides) != 3 || rides[2].Plugin != "vector" ||
+	if len(rides) != 3 || rides[2].Plugin != "roca-vector" ||
 		!strings.Contains(strings.Join(warnings, "\n"), "writable by group or others") {
 		t.Fatalf("group-writable config rides = %+v warnings = %v", rides, warnings)
 	}

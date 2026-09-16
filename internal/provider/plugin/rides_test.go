@@ -107,6 +107,32 @@ gate = "after_export"
 	}
 }
 
+func TestDiscoverOperatorRidesPreservesIndependentRidesAfterRefusal(t *testing.T) {
+	ridesDir := t.TempDir()
+	for name, spec := range map[string]struct {
+		mode os.FileMode
+		body string
+	}{
+		"10-export.toml":  {mode: 0o664, body: "[ride.export]\ncommand = \"echo export\"\n"},
+		"20-upload.toml":  {mode: 0o600, body: "[ride.upload]\ncommand = \"echo upload\"\ngate = \"after_export\"\n"},
+		"30-cleanup.toml": {mode: 0o600, body: "[ride.cleanup]\ncommand = \"echo cleanup\"\n"},
+	} {
+		if err := os.WriteFile(filepath.Join(ridesDir, name), []byte(spec.body), spec.mode); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(filepath.Join(ridesDir, name), spec.mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	rides, warnings := plugin.DiscoverOperatorRides("", ridesDir)
+	if len(rides) != 1 || rides[0].Name != "cleanup" ||
+		!strings.Contains(strings.Join(warnings, "\n"), "upload") ||
+		!strings.Contains(strings.Join(warnings, "\n"), "writable by group or others") {
+		t.Fatalf("filtered operator rides = %+v warnings = %v", rides, warnings)
+	}
+}
+
 func allowInstalledRideFixture(string, string) error { return nil }
 
 func writeRides(t *testing.T, root, name, body string) {

@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -104,8 +105,7 @@ func readRides(pluginName, path string) ([]Ride, error) {
 }
 
 // DiscoverOperatorRides reads operator-owned ride tables from config.toml and
-// rides.d. Later lexical rides.d files win on a repeated name; config.toml
-// then wins over the directory.
+// rides.d.
 func DiscoverOperatorRides(configPath, ridesDir string) ([]Ride, []string) {
 	byName := map[string]Ride{}
 	sourceOf := map[string]string{}
@@ -128,13 +128,10 @@ func DiscoverOperatorRides(configPath, ridesDir string) ([]Ride, []string) {
 			slices.Sort(names)
 			for _, name := range names {
 				path := filepath.Join(directory, name)
-				found, err := readRides(OperatorPlugin, path)
+				found, err := readOperatorRides(OperatorPlugin, path, false)
 				if err != nil {
 					warnings = append(warnings,
 						fmt.Sprintf("operator ride file %s is unusable: %v", name, err))
-					continue
-				}
-				if err := refuseUntrustedOperatorRides(path, found, &warnings); err != nil {
 					continue
 				}
 				for _, ride := range found {
@@ -150,11 +147,11 @@ func DiscoverOperatorRides(configPath, ridesDir string) ([]Ride, []string) {
 	}
 
 	if path := strings.TrimSpace(configPath); path != "" {
-		found, err := readConfigRides(path)
+		found, err := readOperatorRides(OperatorPlugin, path, true)
 		if err != nil {
 			warnings = append(warnings,
 				fmt.Sprintf("operator rides in %s are unusable: %v", path, err))
-		} else if err := refuseUntrustedOperatorRides(path, found, &warnings); err == nil {
+		} else {
 			label := filepath.Base(path)
 			for _, ride := range found {
 				if previous, ok := sourceOf[ride.Name]; ok {
@@ -171,34 +168,40 @@ func DiscoverOperatorRides(configPath, ridesDir string) ([]Ride, []string) {
 	for _, ride := range byName {
 		rides = append(rides, ride)
 	}
-	if err := validateRideDependencies("operator rides", rides); err != nil {
-		warnings = append(warnings, err.Error())
-		return nil, warnings
-	}
+	rides, dependencyWarnings := filterRideDependencies(rides)
+	warnings = append(warnings, dependencyWarnings...)
 	slices.SortFunc(rides, func(a, b Ride) int { return strings.Compare(a.Name, b.Name) })
 	return rides, warnings
 }
 
-func readConfigRides(path string) ([]Ride, error) {
-	raw, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
+func readOperatorRides(pluginName, path string, configFile bool) ([]Ride, error) {
+	file, err := os.Open(path)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
 		return nil, err
 	}
-	return parseRideSource(OperatorPlugin, path, raw, true)
-}
-
-func refuseUntrustedOperatorRides(path string, rides []Ride, warnings *[]string) error {
-	if len(rides) == 0 {
-		return nil
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("inspect %s: %w", path, err)
 	}
-	if err := CheckOperatorRideFile(path); err != nil {
-		*warnings = append(*warnings, err.Error())
-		return err
+	pathInfo, err := os.Lstat(path)
+	if err != nil {
+		return nil, fmt.Errorf("inspect %s: %w", path, err)
 	}
-	return nil
+	if pathInfo.Mode()&os.ModeSymlink != 0 || !os.SameFile(pathInfo, info) {
+		return nil, fmt.Errorf("operator ride file %s changed while it was opened; refuse to run its rides", path)
+	}
+	if err := operatorRideFileAllowed(path, info, os.Geteuid()); err != nil {
+		return nil, err
+	}
+	raw, err := io.ReadAll(file)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", path, err)
+	}
+	return parseRideSource(pluginName, path, raw, configFile)
 }
 
 func parseRideSource(pluginName, source string, raw []byte, configFile bool) ([]Ride, error) {
@@ -263,4 +266,43 @@ func validateRideDependencies(source string, rides []Ride) error {
 		}
 	}
 	return nil
+}
+
+func filterRideDependencies(rides []Ride) ([]Ride, []string) {
+	slices.SortFunc(rides, func(a, b Ride) int { return strings.Compare(a.Name, b.Name) })
+	declared := make(map[string]struct{}, len(rides))
+	for _, ride := range rides {
+		declared[ride.Name] = struct{}{}
+	}
+	var warnings []string
+	for {
+		removed := false
+		for _, ride := range rides {
+			if _, admitted := declared[ride.Name]; !admitted {
+				continue
+			}
+			dependency, gated := strings.CutPrefix(ride.Gate, "after_")
+			if !gated || dependency == "ingest" {
+				continue
+			}
+			if _, ok := declared[dependency]; ok {
+				continue
+			}
+			delete(declared, ride.Name)
+			warnings = append(warnings, fmt.Sprintf(
+				"operator ride %s/%s omitted because gate %q has no admitted dependency",
+				ride.Plugin, ride.Name, ride.Gate))
+			removed = true
+		}
+		if !removed {
+			break
+		}
+	}
+	kept := make([]Ride, 0, len(declared))
+	for _, ride := range rides {
+		if _, ok := declared[ride.Name]; ok {
+			kept = append(kept, ride)
+		}
+	}
+	return kept, warnings
 }

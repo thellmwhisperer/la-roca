@@ -886,11 +886,12 @@ directory, a changed payload, or an installation whose manifest and checksums no
 longer agree contributes nothing. That check re-reads every declared payload
 except the plugin's own writable database.
 
-The bundled `roca-vector` plugin ships a `vector_delta` ride (`after_ingest`) so
-a fresh install already schedules `roca vector ingest --delta` after the nightly
-ingest. Editing a bundled plugin directory is not the way to add or change a
-ride: that changes the checksum-verified payload and the plugin contributes
-nothing. Operator configuration lives outside the payload.
+When `features.vector = true`, the bundled `roca-vector` plugin ships a
+`vector_delta` ride (`after_ingest`) so the nightly train schedules
+`roca vector ingest --delta` after ingest. Editing a bundled plugin directory is
+not the way to add or change a ride: that changes the checksum-verified payload
+and the plugin contributes nothing. Operator configuration lives outside the
+payload.
 
 ### Declaring rides
 

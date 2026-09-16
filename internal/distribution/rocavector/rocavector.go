@@ -10,7 +10,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
+	"strconv"
+	"strings"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/bundledplugin"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/plugininstall"
@@ -54,9 +57,31 @@ func BundleSpec() bundledplugin.Spec {
 func bundleSpec(payload func() ([]byte, error)) bundledplugin.Spec {
 	return bundledplugin.Spec{
 		Name: Name, LegacyName: LegacyName, Executable: executableFilename(),
-		Source: BundledSource, Manifest: manifest, Rides: rides, Payload: payload,
+		Source: BundledSource, Manifest: manifest, Rides: bundledRides(), Payload: payload,
 		MigrationGuard: migrationGuard,
 	}
+}
+
+func bundledRides() []byte {
+	executable, err := os.Executable()
+	if err != nil {
+		return rides
+	}
+	absolute, err := filepath.Abs(executable)
+	if err != nil {
+		return rides
+	}
+	command := shellQuote(absolute) + " vector ingest --delta"
+	return bytes.Replace(rides,
+		[]byte(`command = "roca vector ingest --delta"`),
+		[]byte("command = "+strconv.Quote(command)), 1)
+}
+
+func shellQuote(value string) string {
+	if runtime.GOOS == "windows" {
+		return `"` + strings.ReplaceAll(value, `"`, `""`) + `"`
+	}
+	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
 }
 
 func executableFilename() string {

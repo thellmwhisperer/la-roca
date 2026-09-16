@@ -322,10 +322,22 @@ func installVectorFixture(t *testing.T) vectorFixture {
 	if _, err := plugininstall.VerifyInstalledPayload(rocavector.Name, directory); err != nil {
 		t.Fatal(err)
 	}
+	binary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary, err = filepath.Abs(binary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := "'" + strings.ReplaceAll(binary, "'", "'\\''") + "' vector ingest --delta"
+	if runtime.GOOS == "windows" {
+		command = `"` + strings.ReplaceAll(binary, `"`, `""`) + `" vector ingest --delta`
+	}
 	rides, err := plugin.InspectRides(rocavector.Name, directory)
 	if err != nil || len(rides) != 1 || rides[0].Name != "vector_delta" ||
 		rides[0].Train != plugin.DefaultTrain || rides[0].Gate != "after_ingest" ||
-		rides[0].Command != "roca vector ingest --delta" {
+		rides[0].Command != command {
 		t.Fatalf("bundled vector rides = %+v, %v", rides, err)
 	}
 	return fixture
