@@ -918,8 +918,8 @@ command = "roca vector ingest --delta"
 gate = "after_ingest"
 ```
 
-Name collisions: later lexical files in `rides.d` win on a repeated ride name;
-`config.toml` then wins over the directory. An operator `vector_delta` ride
+Duplicate operator ride names from different declaration files are rejected.
+An operator `vector_delta` ride
 replaces only the bundled `roca-vector/vector_delta` ride; same-named rides from
 other plugins remain. Plugin rides keep their own plugin identity unless
 replaced; operator rides use the reserved `operator` namespace. The built-in

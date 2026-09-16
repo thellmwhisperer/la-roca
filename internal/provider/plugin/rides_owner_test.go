@@ -49,15 +49,19 @@ command = "echo backup"
 		}
 	}
 
-	rides, warnings := DiscoverOperatorRides(path, "")
+	rides, warnings, err := DiscoverOperatorRides(path, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(rides) != 1 || len(warnings) != 0 || rides[0].Name != "backup" {
 		t.Fatalf("trusted discovery = %+v warnings = %v", rides, warnings)
 	}
 	if err := os.Chmod(path, 0o664); err != nil {
 		t.Fatal(err)
 	}
-	rides, warnings = DiscoverOperatorRides(path, "")
-	if len(rides) != 0 || !strings.Contains(strings.Join(warnings, "\n"), "writable by group or others") {
-		t.Fatalf("untrusted discovery = %+v warnings = %v", rides, warnings)
+	rides, warnings, err = DiscoverOperatorRides(path, "")
+	if err == nil || len(rides) != 0 || len(warnings) != 0 ||
+		!strings.Contains(err.Error(), "writable by group or others") {
+		t.Fatalf("untrusted discovery = rides=%+v warnings=%v err=%v", rides, warnings, err)
 	}
 }

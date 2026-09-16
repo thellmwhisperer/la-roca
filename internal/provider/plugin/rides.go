@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -10,6 +11,8 @@ import (
 
 	"github.com/BurntSushi/toml"
 )
+
+var ErrUntrustedOperatorRide = errors.New("untrusted operator ride file")
 
 const (
 	RidesFilename  = "rides.toml"
@@ -106,7 +109,7 @@ func readRides(pluginName, path string) ([]Ride, error) {
 
 // DiscoverOperatorRides reads operator-owned ride tables from config.toml and
 // rides.d.
-func DiscoverOperatorRides(configPath, ridesDir string) ([]Ride, []string) {
+func DiscoverOperatorRides(configPath, ridesDir string) ([]Ride, []string, error) {
 	byName := map[string]Ride{}
 	sourceOf := map[string]string{}
 	var warnings []string
@@ -130,14 +133,18 @@ func DiscoverOperatorRides(configPath, ridesDir string) ([]Ride, []string) {
 				path := filepath.Join(directory, name)
 				found, err := readOperatorRides(OperatorPlugin, path, false)
 				if err != nil {
+					if errors.Is(err, ErrUntrustedOperatorRide) {
+						return nil, warnings, err
+					}
 					warnings = append(warnings,
 						fmt.Sprintf("operator ride file %s is unusable: %v", name, err))
 					continue
 				}
 				for _, ride := range found {
 					if previous, ok := sourceOf[ride.Name]; ok {
-						warnings = append(warnings, fmt.Sprintf(
-							"operator ride %s in %s overrides %s", ride.Name, name, previous))
+						return nil, warnings, fmt.Errorf(
+							"duplicate operator ride %q declared in %s and %s",
+							ride.Name, previous, name)
 					}
 					byName[ride.Name] = ride
 					sourceOf[ride.Name] = name
@@ -149,14 +156,18 @@ func DiscoverOperatorRides(configPath, ridesDir string) ([]Ride, []string) {
 	if path := strings.TrimSpace(configPath); path != "" {
 		found, err := readOperatorRides(OperatorPlugin, path, true)
 		if err != nil {
+			if errors.Is(err, ErrUntrustedOperatorRide) {
+				return nil, warnings, err
+			}
 			warnings = append(warnings,
 				fmt.Sprintf("operator rides in %s are unusable: %v", path, err))
 		} else {
 			label := filepath.Base(path)
 			for _, ride := range found {
 				if previous, ok := sourceOf[ride.Name]; ok {
-					warnings = append(warnings, fmt.Sprintf(
-						"operator ride %s in %s overrides %s", ride.Name, label, previous))
+					return nil, warnings, fmt.Errorf(
+						"duplicate operator ride %q declared in %s and %s",
+						ride.Name, previous, label)
 				}
 				byName[ride.Name] = ride
 				sourceOf[ride.Name] = label
@@ -171,7 +182,7 @@ func DiscoverOperatorRides(configPath, ridesDir string) ([]Ride, []string) {
 	rides, dependencyWarnings := filterRideDependencies(rides)
 	warnings = append(warnings, dependencyWarnings...)
 	slices.SortFunc(rides, func(a, b Ride) int { return strings.Compare(a.Name, b.Name) })
-	return rides, warnings
+	return rides, warnings, nil
 }
 
 func readOperatorRides(pluginName, path string, configFile bool) ([]Ride, error) {
@@ -192,10 +203,10 @@ func readOperatorRides(pluginName, path string, configFile bool) ([]Ride, error)
 		return nil, fmt.Errorf("inspect %s: %w", path, err)
 	}
 	if pathInfo.Mode()&os.ModeSymlink != 0 || !os.SameFile(pathInfo, info) {
-		return nil, fmt.Errorf("operator ride file %s changed while it was opened; refuse to run its rides", path)
+		return nil, fmt.Errorf("%w: operator ride file %s changed while it was opened; refuse to run its rides", ErrUntrustedOperatorRide, path)
 	}
 	if err := operatorRideFileAllowed(path, info, os.Geteuid()); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", ErrUntrustedOperatorRide, err)
 	}
 	raw, err := io.ReadAll(file)
 	if err != nil {

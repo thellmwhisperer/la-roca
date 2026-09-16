@@ -440,11 +440,6 @@ gate = "after_ingest"
 	if err := os.Mkdir(ridesDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(ridesDir, "10-early.toml"), []byte(`[ride.extra]
-command = "from-early"
-`), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	if err := os.WriteFile(filepath.Join(ridesDir, "90-late.toml"), []byte(`[ride.extra]
 command = "echo extra"
 `), 0o600); err != nil {
@@ -475,7 +470,7 @@ gate = "after_ingest"
 		rides[2].Name != "vector_delta" || rides[2].Command != "echo operator-vector-delta" {
 		t.Fatalf("merged rides = %+v", rides)
 	}
-	if len(warnings) != 2 {
+	if len(warnings) != 1 {
 		t.Fatalf("merge warnings = %v", warnings)
 	}
 	report, err := service.Run(context.Background(), plugin.DefaultTrain, false)
@@ -506,20 +501,43 @@ gate = "after_ingest"
 		t.Fatal(err)
 	}
 	rides, warnings = service.List()
-	if len(rides) != 3 || rides[2].Plugin != "roca-vector" ||
+	if len(rides) != 1 ||
 		!strings.Contains(strings.Join(warnings, "\n"), "writable by group or others") {
 		t.Fatalf("group-writable config rides = %+v warnings = %v", rides, warnings)
 	}
-	for _, name := range []string{"10-early.toml", "90-late.toml"} {
-		if err := os.Chmod(filepath.Join(ridesDir, name), 0o664); err != nil {
-			t.Fatal(err)
-		}
+	if err := os.Chmod(filepath.Join(ridesDir, "90-late.toml"), 0o664); err != nil {
+		t.Fatal(err)
 	}
 	invoked = invoked[:0]
 	report, err = service.Run(context.Background(), plugin.DefaultTrain, false)
-	if err != nil || slices.Contains(invoked, "echo extra") ||
-		!strings.Contains(strings.Join(report.Warnings, "\n"), "writable by group or others") {
+	if err == nil || len(report.Rides) != 0 || len(invoked) != 0 ||
+		!strings.Contains(err.Error(), "writable by group or others") {
 		t.Fatalf("group-writable operator ride run = %+v invoked = %v err = %v", report, invoked, err)
+	}
+}
+
+func TestRunRejectsDuplicateOperatorRides(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "plugins")
+	ridesDir := filepath.Join(t.TempDir(), "rides.d")
+	if err := os.Mkdir(ridesDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for name, command := range map[string]string{
+		"10-backup.toml": "echo first",
+		"20-backup.toml": "echo second",
+	} {
+		if err := os.WriteFile(filepath.Join(ridesDir, name),
+			[]byte(fmt.Sprintf("[ride.backup]\ncommand = %q\n", command)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	service := mustOpenCron(t, rocacron.Options{
+		PluginRoot: root, Database: filepath.Join(t.TempDir(), rocacron.DatabaseFilename),
+		RidesDir: ridesDir,
+	})
+	if _, err := service.Run(context.Background(), plugin.DefaultTrain, true); err == nil ||
+		!strings.Contains(err.Error(), "duplicate operator ride") {
+		t.Fatalf("duplicate operator ride run error = %v", err)
 	}
 }
 

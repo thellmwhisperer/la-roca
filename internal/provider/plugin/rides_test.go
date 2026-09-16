@@ -98,7 +98,10 @@ gate = "after_export"
 		t.Fatal(err)
 	}
 
-	rides, warnings := plugin.DiscoverOperatorRides("", ridesDir)
+	rides, warnings, err := plugin.DiscoverOperatorRides("", ridesDir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(warnings) != 0 || len(rides) != 2 {
 		t.Fatalf("rides = %+v warnings = %v", rides, warnings)
 	}
@@ -113,23 +116,42 @@ func TestDiscoverOperatorRidesPreservesIndependentRidesAfterRefusal(t *testing.T
 		mode os.FileMode
 		body string
 	}{
-		"10-export.toml":  {mode: 0o664, body: "[ride.export]\ncommand = \"echo export\"\n"},
+		"10-export.toml":  {mode: 0o600, body: "[ride.export]\ncommand = \"echo export\"\nsurprise = true\n"},
 		"20-upload.toml":  {mode: 0o600, body: "[ride.upload]\ncommand = \"echo upload\"\ngate = \"after_export\"\n"},
 		"30-cleanup.toml": {mode: 0o600, body: "[ride.cleanup]\ncommand = \"echo cleanup\"\n"},
 	} {
 		if err := os.WriteFile(filepath.Join(ridesDir, name), []byte(spec.body), spec.mode); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.Chmod(filepath.Join(ridesDir, name), spec.mode); err != nil {
+	}
+
+	rides, warnings, err := plugin.DiscoverOperatorRides("", ridesDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rides) != 1 || rides[0].Name != "cleanup" ||
+		!strings.Contains(strings.Join(warnings, "\n"), "upload") ||
+		!strings.Contains(strings.Join(warnings, "\n"), "unknown field") {
+		t.Fatalf("filtered operator rides = %+v warnings = %v", rides, warnings)
+	}
+}
+
+func TestDiscoverOperatorRidesRejectsDuplicateNamesAcrossFiles(t *testing.T) {
+	ridesDir := t.TempDir()
+	for name, command := range map[string]string{
+		"10-backup.toml": "echo first",
+		"20-backup.toml": "echo second",
+	} {
+		if err := os.WriteFile(filepath.Join(ridesDir, name),
+			[]byte(fmt.Sprintf("[ride.backup]\ncommand = %q\n", command)), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	rides, warnings := plugin.DiscoverOperatorRides("", ridesDir)
-	if len(rides) != 1 || rides[0].Name != "cleanup" ||
-		!strings.Contains(strings.Join(warnings, "\n"), "upload") ||
-		!strings.Contains(strings.Join(warnings, "\n"), "writable by group or others") {
-		t.Fatalf("filtered operator rides = %+v warnings = %v", rides, warnings)
+	rides, warnings, err := plugin.DiscoverOperatorRides("", ridesDir)
+	if err == nil || rides != nil || len(warnings) != 0 ||
+		!strings.Contains(err.Error(), "duplicate operator ride") {
+		t.Fatalf("duplicate operator rides = rides=%+v warnings=%v err=%v", rides, warnings, err)
 	}
 }
 

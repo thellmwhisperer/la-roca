@@ -185,17 +185,28 @@ func (s *Service) Close() error {
 }
 
 func (s *Service) List() ([]plugin.Ride, []string) {
+	rides, warnings, err := s.list()
+	if err != nil {
+		return []plugin.Ride{coreIngestRide()}, append(warnings, err.Error())
+	}
+	return rides, warnings
+}
+
+func (s *Service) list() ([]plugin.Ride, []string, error) {
 	discovered, warnings := plugin.DiscoverRides(s.pluginRoot, verifyInstalledRides)
 	if !s.vectorEnabled {
 		discovered = slices.DeleteFunc(discovered, func(ride plugin.Ride) bool {
 			return ride.Plugin == "roca-vector" && ride.Name == "vector_delta"
 		})
 	}
-	operator, operatorWarnings := plugin.DiscoverOperatorRides(s.configPath, s.ridesDir)
+	operator, operatorWarnings, err := plugin.DiscoverOperatorRides(s.configPath, s.ridesDir)
 	warnings = append(warnings, operatorWarnings...)
+	if err != nil {
+		return nil, warnings, err
+	}
 	merged, mergeWarnings := mergeOperatorRides(discovered, operator)
 	warnings = append(warnings, mergeWarnings...)
-	return append([]plugin.Ride{coreIngestRide()}, merged...), warnings
+	return append([]plugin.Ride{coreIngestRide()}, merged...), warnings, nil
 }
 
 // verifyInstalledRides admits a payload the installer still owns and whose
@@ -259,7 +270,10 @@ func (s *Service) Run(ctx context.Context, train string, dryRun bool) (Report, e
 	if train == "" {
 		train = plugin.DefaultTrain
 	}
-	all, warnings := s.List()
+	all, warnings, err := s.list()
+	if err != nil {
+		return Report{}, err
+	}
 	declared := make(map[string]bool, len(all))
 	for _, ride := range all {
 		declared[rideKey(ride.Plugin, ride.Name)] = true
