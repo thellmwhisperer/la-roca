@@ -719,6 +719,7 @@ func (q QueryConfig) Settings() search.Settings {
 	}
 	if q.MinVectorScoreSet {
 		settings.MinVectorScore = q.MinVectorScore
+		settings.MinVectorScoreSet = true
 	}
 	if q.MaxRareTermsSet {
 		settings.MaxRareTerms = q.MaxRareTerms
@@ -944,18 +945,18 @@ func readQuery(section map[string]any, path string, warnings *[]string) QueryCon
 			query.OversampleSet = true
 		case "rrf_k":
 			value, ok := readNumber(section[key])
-			if !ok || value < 1 {
+			if !ok || value < 1 || uint64(value) > search.MaxRRFK {
 				*warnings = append(*warnings, invalidValue("query.rrf_k", path,
-					"a whole number of 1 or more"))
+					fmt.Sprintf("a whole number from 1 to %d", search.MaxRRFK)))
 				continue
 			}
 			query.RRFK = value
 			query.RRFKSet = true
 		case "min_vector_score":
 			value, ok := readFloat(section[key])
-			if !ok || value <= 0 {
+			if !ok || value < 0 {
 				*warnings = append(*warnings, invalidValue("query.min_vector_score", path,
-					"a finite positive number"))
+					"a finite non-negative number"))
 				continue
 			}
 			query.MinVectorScore = value

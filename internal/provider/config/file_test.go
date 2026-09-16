@@ -279,6 +279,14 @@ parallel_legs = true
 		configured.MaxRareTerms != 3 || !configured.ParallelLegs || configured.Templates != search.TemplatesOff {
 		t.Fatalf("configured settings = %+v", configured)
 	}
+	unfiltered, err := LoadFile(write(t, "[query]\nmin_vector_score = 0\n"))
+	if err != nil || len(unfiltered.Warnings) != 0 {
+		t.Fatalf("zero vector floor load = %v, warnings = %v", err, unfiltered.Warnings)
+	}
+	unfilteredSettings := unfiltered.Query.Settings()
+	if unfilteredSettings.MinVectorScore != 0 || !unfilteredSettings.MinVectorScoreSet {
+		t.Fatalf("zero vector floor settings = %+v", unfilteredSettings)
+	}
 	oversample := 50
 	overridden := configured.Apply(search.Overlay{Oversample: &oversample})
 	if overridden.Oversample != 50 || overridden.RRFK != 40 || !overridden.ParallelLegs {
@@ -393,6 +401,11 @@ func TestAValueOfTheWrongTypeKeepsTheDefaultAndWarns(t *testing.T) {
 		},
 		{
 			name: "fractional rrf_k", body: "[query]\nrrf_k = 60.1\n",
+			wants: "query.rrf_k",
+			check: func(file File) bool { return !file.Query.RRFKSet },
+		},
+		{
+			name: "rrf_k above precision bound", body: "[query]\nrrf_k = 9007199254740993\n",
 			wants: "query.rrf_k",
 			check: func(file File) bool { return !file.Query.RRFKSet },
 		},

@@ -1,7 +1,7 @@
 package search_test
 
 import (
-	"math"
+	"strings"
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/store/search"
@@ -73,11 +73,11 @@ func TestFuseRRFRewardsConsensusWithoutNormalizingLegScores(t *testing.T) {
 	}
 }
 
-func TestFuseRRFAcceptsTheLargestIntegerKWithoutOverflow(t *testing.T) {
-	maxInt := int(^uint(0) >> 1)
-	got := search.FuseRRF([]search.RankedDoc{{Key: "corpus.memories.1", Rank: 1}}, nil, maxInt)
-	if len(got) != 1 || got[0].Score <= 0 || math.IsInf(got[0].Score, 0) || math.IsNaN(got[0].Score) {
-		t.Fatalf("fused score = %+v, want finite positive score", got)
+func TestSettingsRejectRRFKThatCannotPreserveCandidateRankPrecision(t *testing.T) {
+	settings := search.DefaultSettings()
+	settings.RRFK = search.MaxRRFK + 1
+	if err := settings.Validate(); err == nil || !strings.Contains(err.Error(), "rrf-k must be no greater than") {
+		t.Fatalf("settings validation = %v", err)
 	}
 }
 
@@ -103,6 +103,18 @@ func TestSettingsApplyFlagOverDefaultAndKeepUnsetKnobs(t *testing.T) {
 	}
 }
 
+func TestSettingsWithDefaultsPreservesAnExplicitZeroVectorFloor(t *testing.T) {
+	settings := search.DefaultSettings()
+	settings.MinVectorScore = 0
+	settings.MinVectorScoreSet = true
+	if got := settings.WithDefaults(); got.MinVectorScore != 0 {
+		t.Fatalf("explicit zero floor = %v, want zero", got.MinVectorScore)
+	}
+	if got := (search.Settings{}).WithDefaults(); got.MinVectorScore != search.MinVectorScore {
+		t.Fatalf("unset floor = %v, want %v", got.MinVectorScore, search.MinVectorScore)
+	}
+}
+
 func TestApplyVectorFloorDropsWeakNeighbors(t *testing.T) {
 	got := search.ApplyVectorFloor([]search.RankedDoc{
 		{Key: "corpus.exchanges.122300", Rank: 1, Score: 0.47},
@@ -110,5 +122,15 @@ func TestApplyVectorFloorDropsWeakNeighbors(t *testing.T) {
 	}, 0.35)
 	if len(got) != 1 || got[0].Key != "corpus.exchanges.122300" {
 		t.Fatalf("floor = %+v", got)
+	}
+}
+
+func TestApplyVectorFloorKeepsAllNeighborsWhenDisabled(t *testing.T) {
+	got := search.ApplyVectorFloor([]search.RankedDoc{
+		{Key: "corpus.exchanges.1", Rank: 1, Score: 0.10},
+		{Key: "corpus.exchanges.2", Rank: 2, Score: 0.90},
+	}, 0)
+	if len(got) != 2 {
+		t.Fatalf("disabled floor = %+v, want all neighbors", got)
 	}
 }

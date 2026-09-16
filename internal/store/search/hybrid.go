@@ -12,6 +12,7 @@ const (
 	RRFK             = 60
 	HybridOversample = 100
 	MaxOversample    = 100
+	MaxRRFK          = (1 << 53) - MaxOversample
 	MaxRareTerms     = 5
 	MaxDFRatio       = 0.02
 	MinVectorScore   = 0.35
@@ -234,7 +235,7 @@ func FuseRRF(vector, fts []RankedDoc, k int) []FusedDoc {
 // ApplyVectorFloor drops vector candidates whose cosine is below minScore.
 func ApplyVectorFloor(docs []RankedDoc, minScore float64) []RankedDoc {
 	if minScore <= 0 {
-		minScore = MinVectorScore
+		return CollapseBestRank(docs)
 	}
 	out := make([]RankedDoc, 0, len(docs))
 	for _, doc := range docs {

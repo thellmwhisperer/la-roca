@@ -21,13 +21,14 @@ const (
 // Settings are the hybrid retrieval knobs. Zero values in Overlay mean "leave
 // the current setting"; Settings itself is always a complete, resolved set.
 type Settings struct {
-	Oversample     int
-	RRFK           int
-	MinVectorScore float64
-	MaxRareTerms   int
-	ParallelLegs   bool
-	Templates      TemplateMode
-	TemplateList   []string
+	Oversample        int
+	RRFK              int
+	MinVectorScore    float64
+	MinVectorScoreSet bool
+	MaxRareTerms      int
+	ParallelLegs      bool
+	Templates         TemplateMode
+	TemplateList      []string
 }
 
 // Validate checks the operator-controlled numeric retrieval knobs.
@@ -37,8 +38,10 @@ func (s Settings) Validate() error {
 		return fmt.Errorf("oversample must be between 1 and %d", MaxOversample)
 	case s.RRFK < 1:
 		return fmt.Errorf("rrf-k must be 1 or greater")
-	case s.MinVectorScore <= 0 || math.IsNaN(s.MinVectorScore) || math.IsInf(s.MinVectorScore, 0):
-		return fmt.Errorf("min-vector-score must be a finite positive number")
+	case uint64(s.RRFK) > MaxRRFK:
+		return fmt.Errorf("rrf-k must be no greater than %d", MaxRRFK)
+	case s.MinVectorScore < 0 || math.IsNaN(s.MinVectorScore) || math.IsInf(s.MinVectorScore, 0):
+		return fmt.Errorf("min-vector-score must be a finite non-negative number")
 	case s.MaxRareTerms < 1:
 		return fmt.Errorf("max-rare-terms must be 1 or greater")
 	default:
@@ -65,8 +68,8 @@ func DefaultSettings() Settings {
 	}
 }
 
-// WithDefaults fills any non-positive numeric knob with the baked-in value.
-// Template mode and ParallelLegs stay as written, including an explicit off.
+// WithDefaults fills unset numeric knobs with the baked-in value. Template
+// mode and ParallelLegs stay as written, including an explicit off.
 func (s Settings) WithDefaults() Settings {
 	if s.Oversample <= 0 {
 		s.Oversample = HybridOversample
@@ -74,7 +77,7 @@ func (s Settings) WithDefaults() Settings {
 	if s.RRFK <= 0 {
 		s.RRFK = RRFK
 	}
-	if s.MinVectorScore <= 0 {
+	if !s.MinVectorScoreSet && s.MinVectorScore <= 0 {
 		s.MinVectorScore = MinVectorScore
 	}
 	if s.MaxRareTerms <= 0 {
