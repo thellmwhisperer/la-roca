@@ -103,6 +103,7 @@ func newServer(svc *service.Service, build Build, resident *residentVector) *mcp
 		mcp.AddTool(server, pillShowTool, sanitizing(p.pillShow, dbPath, dataDir))
 	}
 	server.AddReceivingMiddleware(vectorQueryFirst)
+	server.AddReceivingMiddleware(storeRejectionGuidance)
 	server.AddReceivingMiddleware(auditCalls(audit, os.Stderr))
 	return server
 }
@@ -125,6 +126,33 @@ func vectorQueryFirst(next mcp.MethodHandler) mcp.MethodHandler {
 			}
 		}
 		return listed, nil
+	}
+}
+
+func storeRejectionGuidance(next mcp.MethodHandler) mcp.MethodHandler {
+	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+		result, err := next(ctx, method, req)
+		tool, _ := toolCall(req)
+		refused, ok := result.(*mcp.CallToolResult)
+		if err != nil || method != "tools/call" || tool != storeTool.Name ||
+			!ok || refused == nil || !refused.IsError {
+			return result, err
+		}
+		cause := refused.GetError()
+		if cause == nil {
+			cause = errors.New(resultErrorText(refused))
+		}
+		guided := service.StoreErrorWithGuidance(cause)
+		for _, content := range refused.Content {
+			if text, ok := content.(*mcp.TextContent); ok {
+				text.Text = guided.Error()
+				refused.SetError(guided)
+				return result, nil
+			}
+		}
+		refused.Content = append(refused.Content, &mcp.TextContent{Text: guided.Error()})
+		refused.SetError(guided)
+		return result, nil
 	}
 }
 

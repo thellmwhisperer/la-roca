@@ -90,7 +90,7 @@ type StoreResult struct {
 func (s *Service) Store(ctx context.Context, req StoreRequest) (result StoreResult, err error) {
 	defer func() {
 		if err != nil {
-			err = withStoreGuidance(err)
+			err = StoreErrorWithGuidance(err)
 		}
 	}()
 	if s.opts.ReadOnly {
@@ -373,7 +373,10 @@ func valueOr(value, fallback string) string {
 	return cmp.Or(strings.TrimSpace(value), fallback)
 }
 
-func withStoreGuidance(err error) error {
+// StoreErrorWithGuidance teaches a rejected writer the accepted layers and one
+// valid retry. Protocol adapters use it for rejections that happen before
+// Store can inspect the request.
+func StoreErrorWithGuidance(err error) error {
 	if err == nil || strings.Contains(err.Error(), "accepted layers for this surface") {
 		return err
 	}

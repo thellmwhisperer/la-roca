@@ -383,6 +383,23 @@ func TestStoreRefusalNamesAcceptedLayers(t *testing.T) {
 	}
 }
 
+func TestStoreSchemaRefusalsNameAcceptedLayers(t *testing.T) {
+	session := connect(t, seededService(t))
+	for name, arguments := range map[string]map[string]any{
+		"missing layer":   {"content": "found that X"},
+		"missing content": {"layer": "discovery"},
+		"missing both":    {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			refused := callToolExpectingError(t, session, "roca_store", arguments)
+			if !strings.Contains(refused, "accepted layers for this surface") ||
+				!strings.Contains(refused, `layer=discovery content="found that X"`) {
+				t.Fatalf("store schema refusal lacks layer guidance: %s", refused)
+			}
+		})
+	}
+}
+
 // The plug keeps nothing between calls. Two
 // sessions of the same server see exactly the same thing, in either order.
 func TestTheServerKeepsNoStateBetweenSessions(t *testing.T) {
