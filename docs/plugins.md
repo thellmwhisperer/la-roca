@@ -968,10 +968,11 @@ whole: unlike the operational log, it is neither rotated nor pruned. See
 
 ### Calling it from system cron
 
-The train expects an ordinary crontab entry. The built-in ride addresses the
-running binary by its absolute path, so it survives cron's minimal environment;
-a plugin ride command is resolved by the shell, so give it an absolute path or
-declare `PATH` in the crontab:
+The train expects an ordinary crontab entry. The built-in ingest ride and the
+bundled `roca-vector` ride address the running binary by its absolute path, so
+they survive cron's minimal environment. Other plugin and operator ride
+commands are resolved by the shell, so give them absolute paths or declare
+`PATH` in the crontab:
 
 ```crontab
 PATH=/usr/bin:/bin:/home/you/.local/bin
