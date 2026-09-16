@@ -34,12 +34,7 @@ func TestSearchRunsFTSAloneWhenVectorIsAbsent(t *testing.T) {
 func TestSearchFusesVectorAndFTSAndCanRequireBoth(t *testing.T) {
 	svc := seededHybridService(t,
 		func(_ context.Context, _ string, _ int, _ string) (service.VectorHits, error) {
-			return service.VectorHits{Results: []service.VectorHit{
-				{Rank: 1, Score: 0.51, Database: "core", Table: "memories", ID: "1",
-					Text: "a private note about salud mental in therapy"},
-				{Rank: 2, Score: 0.44, Database: "core", Table: "sessions", ID: "session-salud",
-					Text: "Therapy notes\n\nrecovery"},
-			}}, nil
+			return service.VectorHits{Results: hybridVectorFixture()}, nil
 		})
 	result := mustHybridSearch(t, svc, "salud mental", false)
 	if strings.Join(result.Engines, ",") != "fts,vector" {
@@ -108,12 +103,7 @@ func TestSearchDefaultKnobsMatchAFixedQuestion(t *testing.T) {
 func TestSearchParallelLegsFusesTheSameHits(t *testing.T) {
 	vector := func(_ context.Context, _ string, _ int, _ string) (service.VectorHits, error) {
 		time.Sleep(15 * time.Millisecond)
-		return service.VectorHits{Executed: true, Results: []service.VectorHit{
-			{Rank: 1, Score: 0.51, Database: "core", Table: "memories", ID: "1",
-				Text: "a private note about salud mental in therapy"},
-			{Rank: 2, Score: 0.44, Database: "core", Table: "sessions", ID: "session-salud",
-				Text: "Therapy notes\n\nrecovery"},
-		}}, nil
+		return service.VectorHits{Executed: true, Results: hybridVectorFixture()}, nil
 	}
 	sequentialSvc := seededHybridService(t, vector)
 	parallelSvc := initialized(t, freshPaths(t), func(options *service.Options) {
@@ -498,6 +488,15 @@ func vectorHitsHaveSource(hits []service.VectorHit, source string) bool {
 		}
 	}
 	return false
+}
+
+func hybridVectorFixture() []service.VectorHit {
+	return []service.VectorHit{
+		{Rank: 1, Score: 0.51, Database: "core", Table: "memories", ID: "1",
+			Text: "a private note about salud mental in therapy"},
+		{Rank: 2, Score: 0.44, Database: "core", Table: "sessions", ID: "session-salud",
+			Text: "Therapy notes\n\nrecovery"},
+	}
 }
 
 func seedHybridCorpus(t *testing.T, svc *service.Service) {
