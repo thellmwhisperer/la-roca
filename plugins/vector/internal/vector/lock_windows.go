@@ -112,3 +112,5 @@ func lock(path string, disposition uint32) (func() error, error) {
 	}
 	return release, nil
 }
+
+func alignLockOwner(string) error { return nil }

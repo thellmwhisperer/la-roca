@@ -70,6 +70,30 @@ func TestTheInstallerPlacesBundledVectorBesideACustomPrefix(t *testing.T) {
 	}
 }
 
+func TestTheInstallerUpdatesWhenAZeroByteLockIsPresent(t *testing.T) {
+	m := releaseInstallerWorld(t)
+	if err := m.iRunTheInstaller(); err != nil || m.last.code != 0 {
+		t.Fatalf("initial install: %v, code %d:\n%s%s", err, m.last.code, m.last.stdout, m.last.stderr)
+	}
+	lock := filepath.Join(m.home, ".roca", "plugins", "roca-vector", "state", "vector.db.index.lock")
+	if err := os.MkdirAll(filepath.Dir(lock), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(lock, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := m.iRunTheInstallerOfTheNewVersion(); err != nil {
+		t.Fatal(err)
+	}
+	if m.last.code != 0 {
+		t.Fatalf("upgrade with a 0-byte lock exited %d:\n%s%s", m.last.code, m.last.stdout, m.last.stderr)
+	}
+	if err := m.theVersionIsTheNewOne(); err != nil {
+		t.Fatalf("the binary was not updated: %v", err)
+	}
+}
+
 func TestTheInstallerRestoresThePreviousBinaryWhenBundledPlacementFails(t *testing.T) {
 	m := releaseInstallerWorld(t)
 	if err := m.iRunTheInstaller(); err != nil || m.last.code != 0 {

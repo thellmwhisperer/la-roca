@@ -8,6 +8,7 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - [CONTRIBUTING.md](../CONTRIBUTING.md#build-and-test) owns DATA SPLIT oracle coverage, evidence handling, and the owner-review requirement for golden or harness changes.
 - The slop gate ratchets over test code too, so new tests alone can fail `make check`: fold paired cases into one table-driven test rather than raise the ceiling in `.slop/`.
 - [Read-only snapshot cleanup](operations.md#read-only-snapshot-cleanup) owns the no-copy read-only open and doctor leftover cleanup for abandoned `roca-read-only-snapshot-*` directories from older binaries.
+- A `~/.roca` file owned by another user (typically root after `sudo` install) is not a stale lock. `roca doctor` prints the exact `chown` for each foreign-owned state path; `install.sh` and the CLI refuse root over a user-owned `~/.roca`; new index locks take the state directory's owner. Ownership cases are fixture-only; do not reproduce them on a real `~/.roca`.
 - Public source, documentation, features, and fixtures are English-only; use unmistakably synthetic test data.
 - Never add Sherpa-style navigational comment blocks or numbered section maps to any file; the owner forbids them repository-wide.
 - Keep distribution ownership declarations centralized in `internal/distribution/cli/uninstall.go` (`ownedPaths`, the `~/.roca` plugin trees, and recovery-backup handling); archived custodial plugin data is the one tree a purge owns only after its own consent.

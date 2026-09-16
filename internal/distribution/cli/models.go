@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/supportreport"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
+	"github.com/thellmwhisperer/la-roca/internal/securefile"
 )
 
 const (
@@ -27,6 +29,13 @@ type doctorReport struct {
 	QueryFailures     logfile.QueryFailureSummary `json:"query_failures"`
 	Vector            *vectorDoctorReport         `json:"vector,omitempty"`
 	ReadOnlySnapshots leftoverSnapshots           `json:"read_only_snapshots"`
+	ForeignOwned      []stateOwnership            `json:"foreign_owned,omitempty"`
+}
+
+type stateOwnership struct {
+	Path    string `json:"path"`
+	Owner   string `json:"owner"`
+	Command string `json:"chown"`
 }
 
 func doctorCommand(env *cliEnv) *cobra.Command {
@@ -69,13 +78,15 @@ func doctorCommand(env *cliEnv) *cobra.Command {
 				}
 				answer := doctorReport{DoctorReport: report, QueryFailures: failures,
 					Vector:            env.collectVectorDoctor(cmd.Context()),
-					ReadOnlySnapshots: collectSnapshotDoctor()}
+					ReadOnlySnapshots: collectSnapshotDoctor(),
+					ForeignOwned:      env.collectForeignOwnedState()}
 				if env.json {
 					return env.printJSON(answer)
 				}
 				renderDoctor(env, report)
 				renderVectorDoctor(env, answer.Vector)
 				renderSnapshotDoctor(env, answer.ReadOnlySnapshots)
+				renderForeignOwnedState(env, answer.ForeignOwned)
 				renderQueryFailures(env, failures)
 				if err := env.offerSnapshotCleanup(cmd, answer.ReadOnlySnapshots); err != nil {
 					return err
@@ -198,4 +209,26 @@ func orDash(value string) string {
 		return "-"
 	}
 	return value
+}
+
+func (env *cliEnv) collectForeignOwnedState() []stateOwnership {
+	paths, err := env.resolvePaths()
+	if err != nil || paths.Home == "" {
+		return nil
+	}
+	repairs := securefile.ScanForeignOwned(filepath.Join(paths.Home, config.DirOwn))
+	found := make([]stateOwnership, 0, len(repairs))
+	for _, repair := range repairs {
+		found = append(found, stateOwnership{
+			Path: repair.Path, Owner: repair.Owner, Command: repair.Command,
+		})
+	}
+	return found
+}
+
+func renderForeignOwnedState(env *cliEnv, found []stateOwnership) {
+	for _, item := range found {
+		env.print("state file owned by %s: %s", item.Owner, item.Path)
+		env.print("      remedy: %s", item.Command)
+	}
 }

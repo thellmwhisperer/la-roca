@@ -26,6 +26,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
+	"github.com/thellmwhisperer/la-roca/internal/securefile"
 )
 
 // Build is what the linker put inside the binary.
@@ -186,6 +187,9 @@ func rootCommand(env *cliEnv) *cobra.Command {
 			"questions use zero-inference FTS and vector search. Optional human answering belongs to roca-playground.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+			return env.refuseRootOverUserState(cmd)
+		},
 		// `roca --version` is the health check `install.sh` and `roca update` run
 		// before they trust a
 		// binary. It answers exactly what `roca version` answers: the same
@@ -709,6 +713,21 @@ func (env *cliEnv) resolvePaths() (config.Paths, error) {
 		Home:      home,
 		ConfigEnv: os.Getenv(config.EnvConfig),
 	})
+}
+
+func (env *cliEnv) refuseRootOverUserState(cmd *cobra.Command) error {
+	switch cmd.Name() {
+	case "roca", "version", "help":
+		return nil
+	}
+	if flag := cmd.Flags().Lookup("help"); flag != nil && flag.Changed {
+		return nil
+	}
+	paths, err := env.resolvePaths()
+	if err != nil || paths.Home == "" {
+		return err
+	}
+	return securefile.RefuseRootOverUserState(filepath.Join(paths.Home, config.DirOwn))
 }
 
 // loadCommandFeatures resolves only the switches that decide whether a command

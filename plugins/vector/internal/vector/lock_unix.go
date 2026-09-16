@@ -5,6 +5,8 @@ package vector
 import (
 	"errors"
 	"os"
+	"path/filepath"
+	"syscall"
 
 	"golang.org/x/sys/unix"
 )
@@ -83,4 +85,27 @@ func lock(path string, flags int) (func() error, error) {
 		return nil, err
 	}
 	return release, nil
+}
+
+func alignLockOwner(path string) error {
+	parent, err := os.Stat(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	current, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	parentStat, ok := parent.Sys().(*syscall.Stat_t)
+	if !ok {
+		return nil
+	}
+	currentStat, ok := current.Sys().(*syscall.Stat_t)
+	if !ok {
+		return nil
+	}
+	if parentStat.Uid == currentStat.Uid && parentStat.Gid == currentStat.Gid {
+		return nil
+	}
+	return os.Chown(path, int(parentStat.Uid), int(parentStat.Gid))
 }

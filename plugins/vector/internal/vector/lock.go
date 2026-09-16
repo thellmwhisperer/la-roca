@@ -56,7 +56,10 @@ func ensureLockFile(path string) error {
 	if err != nil {
 		return err
 	}
-	return created.Close()
+	if err := created.Close(); err != nil {
+		return err
+	}
+	return alignLockOwner(path)
 }
 
 func validateExistingLock(path string, file *os.File, release func() error) error {
