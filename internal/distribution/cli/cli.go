@@ -797,10 +797,22 @@ func (env *cliEnv) refuseRootOverUserState(cmd *cobra.Command) error {
 
 func (env *cliEnv) refuseRootOverUserStatePath() error {
 	paths, err := env.resolvePaths()
-	if err != nil || paths.Home == "" {
+	if err != nil {
 		return err
 	}
-	return securefile.RefuseRootOverUserState(filepath.Join(paths.Home, config.DirOwn))
+	roots := make([]string, 0, 2)
+	if paths.Home != "" {
+		roots = append(roots, filepath.Join(paths.Home, config.DirOwn))
+	}
+	if databaseDir := filepath.Dir(paths.DB); databaseDir != "." {
+		roots = append(roots, databaseDir)
+	}
+	for _, root := range roots {
+		if err := securefile.RefuseRootOverUserState(root); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // loadCommandFeatures resolves only the switches that decide whether a command
