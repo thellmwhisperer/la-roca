@@ -2,7 +2,6 @@ package plugin
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -129,9 +128,8 @@ func DiscoverOperatorRides(configPath, ridesDir string) ([]Ride, []string, error
 				path := filepath.Join(directory, name)
 				found, err := readOperatorRides(OperatorPlugin, path, false)
 				if err != nil {
-					warnings = append(warnings,
-						fmt.Sprintf("operator ride file %s is unusable: %v", name, err))
-					continue
+					return nil, warnings, fmt.Errorf(
+						"operator ride file %s is unusable: %w", name, err)
 				}
 				for _, ride := range found {
 					if previous, ok := sourceOf[ride.Name]; ok {
@@ -149,8 +147,8 @@ func DiscoverOperatorRides(configPath, ridesDir string) ([]Ride, []string, error
 	if path := strings.TrimSpace(configPath); path != "" {
 		found, err := readOperatorRides(OperatorPlugin, path, true)
 		if err != nil {
-			warnings = append(warnings,
-				fmt.Sprintf("operator rides in %s are unusable: %v", path, err))
+			return nil, warnings, fmt.Errorf(
+				"operator rides in %s are unusable: %w", path, err)
 		} else {
 			label := filepath.Base(path)
 			for _, ride := range found {
@@ -176,24 +174,17 @@ func DiscoverOperatorRides(configPath, ridesDir string) ([]Ride, []string, error
 }
 
 func readOperatorRides(pluginName, path string, configFile bool) ([]Ride, error) {
-	file, err := openOperatorRide(path, !configFile)
+	info, err := os.Stat(path)
 	if os.IsNotExist(err) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
-	if !configFile {
-		info, err := file.Stat()
-		if err != nil {
-			return nil, err
-		}
-		if !info.Mode().IsRegular() {
-			return nil, fmt.Errorf("%s is not a regular file", path)
-		}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", path)
 	}
-	raw, err := io.ReadAll(file)
+	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}

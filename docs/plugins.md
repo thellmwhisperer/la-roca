@@ -917,12 +917,15 @@ command = "roca vector ingest --delta"
 gate = "after_ingest"
 ```
 
-Duplicate operator ride names from different declaration files are rejected.
-An operator `vector_delta` ride
-replaces only the bundled `roca-vector/vector_delta` ride; same-named rides from
-other plugins remain. Plugin rides keep their own plugin identity unless
-replaced; operator rides use the reserved `operator` namespace. The built-in
-`core` ingest ride cannot be replaced.
+Every selected `rides.d/*.toml` entry must resolve to a readable regular file
+and declare at least one valid ride. An unusable declaration makes `roca cron
+list` and `roca cron run` fail instead of running a partial operator
+configuration. Duplicate operator ride names, whether repeated in one source or
+across `config.toml` and `rides.d` files, are rejected. An operator
+`vector_delta` ride replaces only the bundled `roca-vector/vector_delta` ride;
+same-named rides from other plugins remain. Plugin rides keep their own plugin
+identity unless replaced; operator rides use the reserved `operator` namespace.
+The built-in `core` ingest ride cannot be replaced.
 
 `roca cron list` aggregates the built-in ride, installed plugin manifests, and
 operator declarations in stable plugin/ride order. `roca cron run [train]
