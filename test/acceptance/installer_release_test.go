@@ -97,6 +97,58 @@ func TestTheInstallerUpdatesWhenAZeroByteLockIsPresent(t *testing.T) {
 		lockInfo.Size(), installerOutput, m.last.stdout)
 }
 
+func TestIssue401LiveUpdatePreservesOperatorRide(t *testing.T) {
+	m := releaseInstallerWorld(t)
+	if err := m.installedAtAnEarlierReleaseVersion(); err != nil {
+		t.Fatal(err)
+	}
+
+	configPath := filepath.Join(m.home, ".roca", "config.toml")
+	config := []byte(`[features]
+cron = true
+
+[ride.vector_delta]
+command = "echo UPDATE_RIDE_EXECUTED"
+gate = "after_ingest"
+`)
+	if err := os.WriteFile(configPath, config, 0o666); err != nil {
+		t.Fatal(err)
+	}
+
+	updated, err := m.run("roca update")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.code != 0 {
+		t.Fatalf("update exited %d:\n%s%s", updated.code, updated.stdout, updated.stderr)
+	}
+	version, err := m.run("roca --version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if version.code != 0 || !strings.Contains(version.stdout, theNewVersion) {
+		t.Fatalf("updated version exited %d:\n%s%s", version.code, version.stdout, version.stderr)
+	}
+	kept, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(kept) != string(config) {
+		t.Fatalf("update changed operator configuration:\n%s", kept)
+	}
+
+	run, err := m.run("roca cron run nightly")
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := run.stdout + run.stderr
+	if run.code != 0 || !strings.Contains(output, "UPDATE_RIDE_EXECUTED") ||
+		!strings.Contains(output, "operator\tvector_delta\tafter_ingest_ok\texit=0") ||
+		!strings.Contains(output, "train nightly: 2 rides, 0 failed, 0 deferred") {
+		t.Fatalf("post-update cron exited %d:\n%s", run.code, output)
+	}
+}
+
 func TestTheInstallerRestoresThePreviousBinaryWhenBundledPlacementFails(t *testing.T) {
 	m := releaseInstallerWorld(t)
 	requireInitialInstall(t, m)

@@ -67,3 +67,18 @@ func InstallRidePlugin(root, name, rides string) error {
 	}).Install(candidate)
 	return err
 }
+
+// WriteOperatorRideFiles creates operator ride declarations that share one
+// ride name, which is useful for duplicate-declaration fixtures.
+func WriteOperatorRideFiles(directory, rideName string, commands map[string]string) error {
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		return err
+	}
+	for filename, command := range commands {
+		body := fmt.Sprintf("[ride.%s]\ncommand = %q\n", rideName, command)
+		if err := os.WriteFile(filepath.Join(directory, filename), []byte(body), 0o600); err != nil {
+			return err
+		}
+	}
+	return nil
+}

@@ -265,6 +265,9 @@ func cronRunCommand(env *cliEnv) *cobra.Command {
 				}
 				return env.printJSON(report)
 			}
+			for _, warning := range report.Warnings {
+				fmt.Fprintf(env.errOut, "warning: %s\n", warning)
+			}
 			for _, ride := range report.Rides {
 				exit := "-"
 				if ride.ExitCode != nil {
@@ -304,13 +307,17 @@ func (env *cliEnv) openCronService(readOnly bool) (*rocacron.Service, error) {
 	if env.json {
 		out, errOut = io.Discard, io.Discard
 	}
+	dataDir := filepath.Dir(paths.DB)
 	return rocacron.Open(rocacron.Options{
-		PluginRoot: root,
-		Database:   filepath.Join(root, rocacron.Name, rocacron.DatabaseFilename),
-		LockPath:   logfile.New(filepath.Dir(paths.DB)).LockPath(),
-		ReadOnly:   readOnly,
-		Out:        out,
-		ErrOut:     errOut,
+		PluginRoot:    root,
+		Database:      filepath.Join(root, rocacron.Name, rocacron.DatabaseFilename),
+		LockPath:      logfile.New(dataDir).LockPath(),
+		ConfigPath:    paths.Config,
+		RidesDir:      filepath.Join(dataDir, config.DirRides),
+		VectorEnabled: env.features.Vector,
+		ReadOnly:      readOnly,
+		Out:           out,
+		ErrOut:        errOut,
 	})
 }
 

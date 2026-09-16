@@ -157,6 +157,36 @@ command = "roca vector ingest --delta"
 	}
 }
 
+func TestVectorRideFollowsFeatureAndOnlyItsBundledCollisionIsReplaced(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "plugins")
+	manifest := "[ride.vector_delta]\ncommand = \"echo bundled\"\n"
+	writeRides(t, root, "roca-vector", manifest)
+	writeRides(t, root, "archive", manifest)
+
+	disabled := newService(t, root, filepath.Join(t.TempDir(), rocacron.DatabaseFilename), nil)
+	rides, warnings := disabled.List()
+	if len(warnings) != 0 || len(rides) != 2 || rides[1].Plugin != "archive" {
+		t.Fatalf("disabled vector rides = %+v warnings = %v", rides, warnings)
+	}
+
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(configPath, []byte("[ride.vector_delta]\ncommand = \"echo operator\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	enabled := mustOpenCron(t, rocacron.Options{
+		PluginRoot: root, Database: filepath.Join(t.TempDir(), rocacron.DatabaseFilename),
+		ConfigPath: configPath, VectorEnabled: true,
+	})
+	rides, warnings = enabled.List()
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "roca-vector/vector_delta") || len(rides) != 3 {
+		t.Fatalf("enabled vector rides = %+v warnings = %v", rides, warnings)
+	}
+	if rides[1].Plugin != "archive" || rides[2].Plugin != plugin.OperatorPlugin ||
+		rides[2].Command != "echo operator" {
+		t.Fatalf("collision merge = %+v", rides)
+	}
+}
+
 func TestListRejectsRidesWithoutVerifiedInstallerOwnership(t *testing.T) {
 	for _, test := range []struct {
 		name    string
@@ -192,6 +222,13 @@ func TestListRejectsRidesWithoutVerifiedInstallerOwnership(t *testing.T) {
 			name: "reserved core namespace",
 			prepare: func(t *testing.T, root string) {
 				writeRides(t, root, "core", "[ride.ingest]\ncommand = \"echo impostor\"\n")
+			},
+			want: "reserved",
+		},
+		{
+			name: "reserved operator namespace",
+			prepare: func(t *testing.T, root string) {
+				writeRides(t, root, plugin.OperatorPlugin, "[ride.payload]\ncommand = \"echo impostor\"\n")
 			},
 			want: "reserved",
 		},
@@ -391,6 +428,116 @@ func TestTheRealCoreLockProbeNeitherCreatesNorKeepsTheLock(t *testing.T) {
 	}
 }
 
+func TestOperatorRidesMergeWithPluginManifests(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "plugins")
+	database := filepath.Join(t.TempDir(), rocacron.DatabaseFilename)
+	writeRides(t, root, "roca-vector", `[ride.vector_delta]
+command = "roca vector ingest --delta"
+gate = "after_ingest"
+`)
+	home := filepath.Dir(root)
+	ridesDir := filepath.Join(home, "rides.d")
+	if err := os.Mkdir(ridesDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ridesDir, "90-late.toml"), []byte(`[ride.extra]
+command = "echo extra"
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(home, "config.toml")
+	if err := os.WriteFile(configPath, []byte(`[ride.vector_delta]
+command = "echo operator-vector-delta"
+gate = "after_ingest"
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var invoked []string
+	service := mustOpenCron(t, rocacron.Options{
+		PluginRoot: root, Database: database, ConfigPath: configPath, RidesDir: ridesDir,
+		VectorEnabled: true,
+		RunCommand: func(_ context.Context, command string, _, _ io.Writer) (int, error) {
+			invoked = append(invoked, command)
+			return 0, nil
+		},
+	})
+	rides, warnings := service.List()
+	if len(rides) != 3 {
+		t.Fatalf("rides = %+v warnings = %v", rides, warnings)
+	}
+	if rides[0].Plugin != "core" || rides[1].Plugin != plugin.OperatorPlugin ||
+		rides[1].Name != "extra" || rides[1].Command != "echo extra" ||
+		rides[2].Name != "vector_delta" || rides[2].Command != "echo operator-vector-delta" {
+		t.Fatalf("merged rides = %+v", rides)
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("merge warnings = %v", warnings)
+	}
+	report, err := service.Run(context.Background(), plugin.DefaultTrain, false)
+	if err != nil || !slices.Contains(invoked, "echo extra") {
+		t.Fatalf("trusted operator ride run = %+v invoked = %v err = %v", report, invoked, err)
+	}
+	if _, err := os.Stat(filepath.Join(home, "rides.consent.json")); !os.IsNotExist(err) {
+		t.Fatalf("consent document appeared: %v", err)
+	}
+	if err := os.WriteFile(configPath, []byte(`[ride.broken]
+command = "echo broken"
+surprise = true
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rides, warnings = service.List()
+	if len(rides) != 3 || rides[2].Plugin != "roca-vector" ||
+		!strings.Contains(strings.Join(warnings, "\n"), "unknown field") {
+		t.Fatalf("invalid config rides = %+v warnings = %v", rides, warnings)
+	}
+}
+
+func TestRunRejectsDuplicateOperatorRides(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "plugins")
+	ridesDir := filepath.Join(t.TempDir(), "rides.d")
+	if err := testfixture.WriteOperatorRideFiles(ridesDir, "backup", map[string]string{
+		"10-backup.toml": "echo first",
+		"20-backup.toml": "echo second",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	service := mustOpenCron(t, rocacron.Options{
+		PluginRoot: root, Database: filepath.Join(t.TempDir(), rocacron.DatabaseFilename),
+		RidesDir: ridesDir,
+	})
+	if _, err := service.Run(context.Background(), plugin.DefaultTrain, true); err == nil ||
+		!strings.Contains(err.Error(), "duplicate operator ride") {
+		t.Fatalf("duplicate operator ride run error = %v", err)
+	}
+}
+
+func mustOpenCron(t *testing.T, options rocacron.Options) *rocacron.Service {
+	t.Helper()
+	if options.LockPath == "" {
+		options.LockPath = filepath.Join(t.TempDir(), ".roca.lock")
+	}
+	if options.Out == nil {
+		options.Out = io.Discard
+	}
+	if options.ErrOut == nil {
+		options.ErrOut = io.Discard
+	}
+	if options.Now == nil {
+		clock := time.Date(2026, 8, 14, 1, 2, 3, 0, time.UTC)
+		options.Now = func() time.Time {
+			clock = clock.Add(25 * time.Millisecond)
+			return clock
+		}
+	}
+	service, err := rocacron.Open(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = service.Close() })
+	return service
+}
+
 func cronWorld(t *testing.T, vectorRides string) (string, string) {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), "plugins")
@@ -440,24 +587,9 @@ func insertJourney(t *testing.T, path, pluginName, ride string, exitCode int) {
 
 func newService(t *testing.T, root, database string, runner rocacron.CommandRunner) *rocacron.Service {
 	t.Helper()
-	clock := time.Date(2026, 8, 14, 1, 2, 3, 0, time.UTC)
-	service, err := rocacron.Open(rocacron.Options{
-		PluginRoot: root,
-		Database:   database,
-		LockPath:   filepath.Join(t.TempDir(), ".roca.lock"),
-		Now: func() time.Time {
-			clock = clock.Add(25 * time.Millisecond)
-			return clock
-		},
-		RunCommand: runner,
-		Out:        io.Discard,
-		ErrOut:     io.Discard,
+	return mustOpenCron(t, rocacron.Options{
+		PluginRoot: root, Database: database, RunCommand: runner,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = service.Close() })
-	return service
 }
 
 type journey struct {
