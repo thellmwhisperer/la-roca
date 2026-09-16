@@ -5,11 +5,8 @@ package rocacron
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"database/sql"
 	_ "embed"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -26,7 +23,6 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/migrationledger"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/plugininstall"
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
-	"github.com/thellmwhisperer/la-roca/internal/securefile"
 )
 
 const (
@@ -57,10 +53,9 @@ type Options struct {
 	PluginRoot  string
 	Database    string
 	LockPath    string
-	ConfigPath  string
-	RidesDir    string
-	ConsentPath string
-	ReadOnly    bool
+	ConfigPath string
+	RidesDir   string
+	ReadOnly   bool
 	Now         func() time.Time
 	RunCommand  CommandRunner
 	Out         io.Writer
@@ -71,10 +66,9 @@ type Service struct {
 	db          *sql.DB
 	pluginRoot  string
 	lockPath    string
-	configPath  string
-	ridesDir    string
-	consentPath string
-	now         func() time.Time
+	configPath string
+	ridesDir   string
+	now        func() time.Time
 	runCommand  CommandRunner
 	out         io.Writer
 	errOut      io.Writer
@@ -157,7 +151,7 @@ func Open(options Options) (*Service, error) {
 	}
 	return &Service{
 		db: db, pluginRoot: options.PluginRoot, lockPath: options.LockPath,
-		configPath: options.ConfigPath, ridesDir: options.RidesDir, consentPath: options.ConsentPath,
+		configPath: options.ConfigPath, ridesDir: options.RidesDir,
 		now: now, runCommand: runner, out: out, errOut: errOut,
 		readOnly: options.ReadOnly, LockFree: coreLockFree,
 	}, nil
@@ -191,8 +185,6 @@ func (s *Service) List() ([]plugin.Ride, []string) {
 	discovered, warnings := plugin.DiscoverRides(s.pluginRoot, verifyInstalledRides)
 	operator, operatorWarnings := plugin.DiscoverOperatorRides(s.configPath, s.ridesDir)
 	warnings = append(warnings, operatorWarnings...)
-	operator, consentWarnings := s.admitOperatorRides(operator)
-	warnings = append(warnings, consentWarnings...)
 	merged, mergeWarnings := mergeOperatorRides(discovered, operator)
 	warnings = append(warnings, mergeWarnings...)
 	return append([]plugin.Ride{coreIngestRide()}, merged...), warnings
@@ -328,6 +320,11 @@ func (s *Service) runRide(ctx context.Context, ride plugin.Ride, declared map[st
 	if !open {
 		return result, s.recordDeferred(ride, status, "the gated dependency has no latest successful journey")
 	}
+	if ride.Plugin == plugin.OperatorPlugin {
+		if err := plugin.CheckOperatorRideFile(ride.Source); err != nil {
+			return result, err
+		}
+	}
 
 	started := s.now().UTC()
 	var stdout, stderr excerpt
@@ -390,16 +387,6 @@ func gateOwner(ride plugin.Ride, dependency string, declared map[string]bool) (s
 
 func rideKey(pluginName, ride string) string { return pluginName + "\x00" + ride }
 
-type operatorConsentDocument struct {
-	Schema int                              `json:"schema"`
-	Risk   plugininstall.Risk               `json:"risk"`
-	Rides  map[string]operatorConsentRecord `json:"rides"`
-}
-
-type operatorConsentRecord struct {
-	Digest string `json:"digest"`
-}
-
 func mergeOperatorRides(pluginRides, operatorRides []plugin.Ride) ([]plugin.Ride, []string) {
 	if len(operatorRides) == 0 {
 		return pluginRides, nil
@@ -426,68 +413,6 @@ func mergeOperatorRides(pluginRides, operatorRides []plugin.Ride) ([]plugin.Ride
 		return strings.Compare(a.Name, b.Name)
 	})
 	return kept, warnings
-}
-
-func (s *Service) admitOperatorRides(rides []plugin.Ride) ([]plugin.Ride, []string) {
-	if len(rides) == 0 || strings.TrimSpace(s.consentPath) == "" {
-		return rides, nil
-	}
-	document, err := readOperatorConsent(s.consentPath)
-	if err != nil {
-		return nil, []string{fmt.Sprintf("operator ride consent could not be read: %v", err)}
-	}
-	if document.Schema != 0 && document.Risk != plugininstall.Executable {
-		return nil, []string{fmt.Sprintf(
-			"operator rides were recorded as %s; redeclare them to consent to running them",
-			document.Risk)}
-	}
-	if document.Rides == nil {
-		document.Rides = map[string]operatorConsentRecord{}
-	}
-	changed := document.Schema == 0 || document.Risk != plugininstall.Executable
-	document.Schema = 1
-	document.Risk = plugininstall.Executable
-	for _, ride := range rides {
-		digest := operatorRideDigest(ride)
-		if recorded, ok := document.Rides[ride.Name]; !ok || recorded.Digest != digest {
-			document.Rides[ride.Name] = operatorConsentRecord{Digest: digest}
-			changed = true
-		}
-	}
-	if changed && !s.readOnly {
-		if err := writeOperatorConsent(s.consentPath, document); err != nil {
-			return nil, []string{fmt.Sprintf("operator ride consent could not be recorded: %v", err)}
-		}
-	}
-	return rides, nil
-}
-
-func readOperatorConsent(path string) (operatorConsentDocument, error) {
-	raw, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return operatorConsentDocument{}, nil
-	}
-	if err != nil {
-		return operatorConsentDocument{}, err
-	}
-	var document operatorConsentDocument
-	if err := json.Unmarshal(raw, &document); err != nil {
-		return operatorConsentDocument{}, fmt.Errorf("parse operator ride consent: %w", err)
-	}
-	return document, nil
-}
-
-func writeOperatorConsent(path string, document operatorConsentDocument) error {
-	raw, err := json.MarshalIndent(document, "", "  ")
-	if err != nil {
-		return err
-	}
-	return securefile.Write(path, append(raw, '\n'), 0o600, 0o700)
-}
-
-func operatorRideDigest(ride plugin.Ride) string {
-	sum := sha256.Sum256([]byte(ride.Name + "\x00" + ride.Train + "\x00" + ride.Command + "\x00" + ride.Gate))
-	return hex.EncodeToString(sum[:])
 }
 
 func (s *Service) lastJourneyOK(ctx context.Context, owner, ride string) (bool, error) {

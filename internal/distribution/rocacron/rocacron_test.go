@@ -398,7 +398,7 @@ func TestTheRealCoreLockProbeNeitherCreatesNorKeepsTheLock(t *testing.T) {
 	}
 }
 
-func TestOperatorRidesMergeWithPluginManifestsAndRecordConsent(t *testing.T) {
+func TestOperatorRidesMergeWithPluginManifestsAndHonorFileGate(t *testing.T) {
 	root, database := cronWorld(t, `[ride.vector_delta]
 command = "roca vector ingest --delta"
 gate = "after_ingest"
@@ -425,10 +425,13 @@ gate = "after_ingest"
 `), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	consentPath := filepath.Join(home, "rides.consent.json")
+	var invoked []string
 	service := mustOpenCron(t, rocacron.Options{
-		PluginRoot: root, Database: database, ConfigPath: configPath,
-		RidesDir: ridesDir, ConsentPath: consentPath,
+		PluginRoot: root, Database: database, ConfigPath: configPath, RidesDir: ridesDir,
+		RunCommand: func(_ context.Context, command string, _, _ io.Writer) (int, error) {
+			invoked = append(invoked, command)
+			return 0, nil
+		},
 	})
 	rides, warnings := service.List()
 	if len(rides) != 3 {
@@ -442,6 +445,13 @@ gate = "after_ingest"
 	if len(warnings) != 2 {
 		t.Fatalf("merge warnings = %v", warnings)
 	}
+	report, err := service.Run(context.Background(), plugin.DefaultTrain, false)
+	if err != nil || !slices.Contains(invoked, "echo extra") {
+		t.Fatalf("trusted operator ride run = %+v invoked = %v err = %v", report, invoked, err)
+	}
+	if _, err := os.Stat(filepath.Join(home, "rides.consent.json")); !os.IsNotExist(err) {
+		t.Fatalf("consent document appeared: %v", err)
+	}
 	if err := os.WriteFile(configPath, []byte(`[ride.broken]
 command = "echo broken"
 surprise = true
@@ -453,21 +463,30 @@ surprise = true
 		!strings.Contains(strings.Join(warnings, "\n"), "unknown field") {
 		t.Fatalf("invalid config rides = %+v warnings = %v", rides, warnings)
 	}
-	raw, err := os.ReadFile(consentPath)
-	if err != nil {
+	if err := os.WriteFile(configPath, []byte(`[ride.vector_delta]
+command = "echo operator-vector-delta"
+gate = "after_ingest"
+`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(raw), string(plugininstall.Executable)) {
-		t.Fatalf("consent = %s", raw)
-	}
-
-	if err := os.WriteFile(consentPath, []byte(`{"schema":1,"risk":"data-only","rides":{}}`), 0o600); err != nil {
+	if err := os.Chmod(configPath, 0o664); err != nil {
 		t.Fatal(err)
 	}
 	rides, warnings = service.List()
-	if len(rides) != 2 || rides[1].Plugin != "vector" ||
-		!strings.Contains(strings.Join(warnings, "\n"), string(plugininstall.DataOnly)) {
-		t.Fatalf("unconsented rides = %+v warnings = %v", rides, warnings)
+	if len(rides) != 3 || rides[2].Plugin != "vector" ||
+		!strings.Contains(strings.Join(warnings, "\n"), "writable by group or others") {
+		t.Fatalf("group-writable config rides = %+v warnings = %v", rides, warnings)
+	}
+	for _, name := range []string{"10-early.toml", "90-late.toml"} {
+		if err := os.Chmod(filepath.Join(ridesDir, name), 0o664); err != nil {
+			t.Fatal(err)
+		}
+	}
+	invoked = invoked[:0]
+	report, err = service.Run(context.Background(), plugin.DefaultTrain, false)
+	if err != nil || slices.Contains(invoked, "echo extra") ||
+		!strings.Contains(strings.Join(report.Warnings, "\n"), "writable by group or others") {
+		t.Fatalf("group-writable operator ride run = %+v invoked = %v err = %v", report, invoked, err)
 	}
 }
 

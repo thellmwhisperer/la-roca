@@ -22,6 +22,7 @@ type Ride struct {
 	Train   string `json:"train"`
 	Command string `json:"command"`
 	Gate    string `json:"gate,omitempty"`
+	Source  string `json:"-"`
 }
 
 type RideVerifier func(pluginName, directory string) error
@@ -99,7 +100,7 @@ func readRides(pluginName, path string) ([]Ride, error) {
 	if err != nil {
 		return nil, err
 	}
-	return parseRideSource(pluginName, filepath.Base(path), raw, false)
+	return parseRideSource(pluginName, path, raw, false)
 }
 
 // DiscoverOperatorRides reads operator-owned ride tables from config.toml and
@@ -126,10 +127,14 @@ func DiscoverOperatorRides(configPath, ridesDir string) ([]Ride, []string) {
 			}
 			slices.Sort(names)
 			for _, name := range names {
-				found, err := readRides(OperatorPlugin, filepath.Join(directory, name))
+				path := filepath.Join(directory, name)
+				found, err := readRides(OperatorPlugin, path)
 				if err != nil {
 					warnings = append(warnings,
 						fmt.Sprintf("operator ride file %s is unusable: %v", name, err))
+					continue
+				}
+				if err := refuseUntrustedOperatorRides(path, found, &warnings); err != nil {
 					continue
 				}
 				for _, ride := range found {
@@ -149,7 +154,7 @@ func DiscoverOperatorRides(configPath, ridesDir string) ([]Ride, []string) {
 		if err != nil {
 			warnings = append(warnings,
 				fmt.Sprintf("operator rides in %s are unusable: %v", path, err))
-		} else {
+		} else if err := refuseUntrustedOperatorRides(path, found, &warnings); err == nil {
 			label := filepath.Base(path)
 			for _, ride := range found {
 				if previous, ok := sourceOf[ride.Name]; ok {
@@ -182,7 +187,18 @@ func readConfigRides(path string) ([]Ride, error) {
 	if err != nil {
 		return nil, err
 	}
-	return parseRideSource(OperatorPlugin, filepath.Base(path), raw, true)
+	return parseRideSource(OperatorPlugin, path, raw, true)
+}
+
+func refuseUntrustedOperatorRides(path string, rides []Ride, warnings *[]string) error {
+	if len(rides) == 0 {
+		return nil
+	}
+	if err := CheckOperatorRideFile(path); err != nil {
+		*warnings = append(*warnings, err.Error())
+		return err
+	}
+	return nil
 }
 
 func parseRideSource(pluginName, source string, raw []byte, configFile bool) ([]Ride, error) {
@@ -224,6 +240,7 @@ func parseRideSource(pluginName, source string, raw []byte, configFile bool) ([]
 		}
 		rides = append(rides, Ride{
 			Name: name, Plugin: pluginName, Train: train, Command: command, Gate: gate,
+			Source: source,
 		})
 	}
 	slices.SortFunc(rides, func(a, b Ride) int { return strings.Compare(a.Name, b.Name) })

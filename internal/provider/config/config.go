@@ -47,7 +47,6 @@ const (
 	DirBackups      = "backups"
 	DirRunner       = "runner"
 	DirRides        = "rides.d"
-	FileRideConsent = "rides.consent.json"
 	EnvDBPath       = "ROCA_DB_PATH"
 )
 

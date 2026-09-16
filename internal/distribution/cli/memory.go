@@ -309,10 +309,9 @@ func (env *cliEnv) openCronService(readOnly bool) (*rocacron.Service, error) {
 		PluginRoot:  root,
 		Database:    filepath.Join(root, rocacron.Name, rocacron.DatabaseFilename),
 		LockPath:    logfile.New(dataDir).LockPath(),
-		ConfigPath:  paths.Config,
-		RidesDir:    filepath.Join(dataDir, config.DirRides),
-		ConsentPath: filepath.Join(dataDir, config.FileRideConsent),
-		ReadOnly:    readOnly,
+		ConfigPath: paths.Config,
+		RidesDir:   filepath.Join(dataDir, config.DirRides),
+		ReadOnly:   readOnly,
 		Out:         out,
 		ErrOut:      errOut,
 	})
