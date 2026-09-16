@@ -428,7 +428,7 @@ func TestTheRealCoreLockProbeNeitherCreatesNorKeepsTheLock(t *testing.T) {
 	}
 }
 
-func TestOperatorRidesMergeWithPluginManifestsAndHonorFileGate(t *testing.T) {
+func TestOperatorRidesMergeWithPluginManifests(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "plugins")
 	database := filepath.Join(t.TempDir(), rocacron.DatabaseFilename)
 	writeRides(t, root, "roca-vector", `[ride.vector_delta]
@@ -490,29 +490,6 @@ surprise = true
 	if len(rides) != 3 || rides[2].Plugin != "roca-vector" ||
 		!strings.Contains(strings.Join(warnings, "\n"), "unknown field") {
 		t.Fatalf("invalid config rides = %+v warnings = %v", rides, warnings)
-	}
-	if err := os.WriteFile(configPath, []byte(`[ride.vector_delta]
-command = "echo operator-vector-delta"
-gate = "after_ingest"
-`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(configPath, 0o664); err != nil {
-		t.Fatal(err)
-	}
-	rides, warnings = service.List()
-	if len(rides) != 1 ||
-		!strings.Contains(strings.Join(warnings, "\n"), "writable by group or others") {
-		t.Fatalf("group-writable config rides = %+v warnings = %v", rides, warnings)
-	}
-	if err := os.Chmod(filepath.Join(ridesDir, "90-late.toml"), 0o664); err != nil {
-		t.Fatal(err)
-	}
-	invoked = invoked[:0]
-	report, err = service.Run(context.Background(), plugin.DefaultTrain, false)
-	if err == nil || len(report.Rides) != 0 || len(invoked) != 0 ||
-		!strings.Contains(err.Error(), "writable by group or others") {
-		t.Fatalf("group-writable operator ride run = %+v invoked = %v err = %v", report, invoked, err)
 	}
 }
 

@@ -110,7 +110,7 @@ gate = "after_export"
 	}
 }
 
-func TestDiscoverOperatorRidesIgnoresTrustGateForRideFreeConfig(t *testing.T) {
+func TestDiscoverOperatorRidesIgnoresRideFreeConfig(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	if err := os.WriteFile(path, []byte("[features]\ncron = true\n"), 0o664); err != nil {
 		t.Fatal(err)

@@ -907,13 +907,9 @@ gate = "after_ingest"
 The operator can declare the same fields outside any plugin payload. Write
 `[ride.<name>]` tables in `~/.roca/config.toml`, or drop `*.toml` files into
 `~/.roca/rides.d/`. Those files are operator configuration, not package
-payload, so `roca update` keeps working. Editing the file is the consent: there
-is no consent command and no consent document. The train runs a ride from that
-file only when the user executing `roca cron` owns it and group and other
-cannot write it; otherwise that ride is refused with a clear error. Operator
-rides are Unix-only: on Windows they are refused with a clear unsupported
-error. On Unix the check is POSIX ownership and mode only. A macOS extended
-ACL can grant another user write access that this gate does not see:
+payload, so `roca update` keeps working. Writing the file is the declaration:
+there is no consent command and no consent document. Those tables are ordinary
+operator configuration, like the rest of `config.toml`:
 
 ```toml
 [ride.vector_delta]

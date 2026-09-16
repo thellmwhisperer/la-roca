@@ -1,9 +1,7 @@
 package plugin
 
 import (
-	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -11,8 +9,6 @@ import (
 
 	"github.com/BurntSushi/toml"
 )
-
-var ErrUntrustedOperatorRide = errors.New("untrusted operator ride file")
 
 const (
 	RidesFilename  = "rides.toml"
@@ -132,9 +128,6 @@ func DiscoverOperatorRides(configPath, ridesDir string) ([]Ride, []string, error
 				path := filepath.Join(directory, name)
 				found, err := readOperatorRides(OperatorPlugin, path, false)
 				if err != nil {
-					if errors.Is(err, ErrUntrustedOperatorRide) {
-						return nil, warnings, err
-					}
 					warnings = append(warnings,
 						fmt.Sprintf("operator ride file %s is unusable: %v", name, err))
 					continue
@@ -155,9 +148,6 @@ func DiscoverOperatorRides(configPath, ridesDir string) ([]Ride, []string, error
 	if path := strings.TrimSpace(configPath); path != "" {
 		found, err := readOperatorRides(OperatorPlugin, path, true)
 		if err != nil {
-			if errors.Is(err, ErrUntrustedOperatorRide) {
-				return nil, warnings, err
-			}
 			warnings = append(warnings,
 				fmt.Sprintf("operator rides in %s are unusable: %v", path, err))
 		} else {
@@ -185,45 +175,14 @@ func DiscoverOperatorRides(configPath, ridesDir string) ([]Ride, []string, error
 }
 
 func readOperatorRides(pluginName, path string, configFile bool) ([]Ride, error) {
-	file, err := openOperatorRide(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	defer file.Close()
-	info, err := file.Stat()
-	if err != nil {
-		return nil, fmt.Errorf("inspect %s: %w", path, err)
-	}
-	pathInfo, err := os.Stat(path)
-	if err != nil {
-		return nil, fmt.Errorf("inspect %s: %w", path, err)
-	}
-	if !os.SameFile(pathInfo, info) {
-		return nil, fmt.Errorf("%w: operator ride file %s changed while it was opened; refuse to run its rides", ErrUntrustedOperatorRide, path)
-	}
-	if !configFile {
-		if err := operatorRideFileAllowed(path, file, info, os.Geteuid()); err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrUntrustedOperatorRide, err)
-		}
-	}
-	raw, err := io.ReadAll(file)
-	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", path, err)
-	}
-	rides, err := parseRideSource(pluginName, path, raw, configFile)
-	if err != nil {
-		return nil, err
-	}
-	if len(rides) == 0 {
+	raw, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
 		return nil, nil
 	}
-	if err := operatorRideFileAllowed(path, file, info, os.Geteuid()); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrUntrustedOperatorRide, err)
+	if err != nil {
+		return nil, err
 	}
-	return rides, nil
+	return parseRideSource(pluginName, path, raw, configFile)
 }
 
 func parseRideSource(pluginName, source string, raw []byte, configFile bool) ([]Ride, error) {
