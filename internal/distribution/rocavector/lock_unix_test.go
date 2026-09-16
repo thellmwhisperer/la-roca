@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"syscall"
 	"testing"
+
+	"github.com/thellmwhisperer/la-roca/internal/securefile"
 )
 
 func TestIndexLockTakesTheStateDirectoryOwner(t *testing.T) {
@@ -37,5 +39,35 @@ func TestIndexLockTakesTheStateDirectoryOwner(t *testing.T) {
 	if lockStat.Uid != dirStat.Uid || lockStat.Gid != dirStat.Gid {
 		t.Fatalf("lock owner %d:%d, want directory owner %d:%d",
 			lockStat.Uid, lockStat.Gid, dirStat.Uid, dirStat.Gid)
+	}
+}
+
+func TestExistingIndexLockIsNotReowned(t *testing.T) {
+	state := t.TempDir()
+	path := filepath.Join(state, "vector.db.index.lock")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	restoreIdentity := securefile.OverrideIdentityLookups(
+		securefile.Identity{UID: 501, Name: "operator"},
+		map[string]securefile.Identity{path: {UID: 0, Name: "root"}},
+	)
+	t.Cleanup(restoreIdentity)
+	chownCalled := false
+	restoreChown := securefile.OverrideChown(func(string, int, int) error {
+		chownCalled = true
+		return nil
+	})
+	t.Cleanup(restoreChown)
+
+	release, busy, err := tryExclusiveFileLock(path, true)
+	if err != nil || busy {
+		t.Fatalf("lock: busy=%v err=%v", busy, err)
+	}
+	if err := release(); err != nil {
+		t.Fatal(err)
+	}
+	if chownCalled {
+		t.Fatal("existing lock was reowned")
 	}
 }

@@ -54,11 +54,15 @@ func doctorCommand(env *cliEnv) *cobra.Command {
 			"also reports leftover read-only snapshot copies under the temp root and\n" +
 			"offers to delete the abandoned ones.",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			foreignOwned := env.collectForeignOwnedState()
 			if support {
 				env.skipExecutionLog = true
-				return env.runDoctorReport(cmd.Context())
+				err := env.runDoctorReport(cmd.Context(), foreignOwned)
+				if err != nil && len(foreignOwned) > 0 {
+					renderForeignOwnedStateTo(env.errOut, foreignOwned)
+				}
+				return err
 			}
-			foreignOwned := env.collectForeignOwnedState()
 			err := env.serviceRunE(func(cmd *cobra.Command, _ []string, svc *service.Service) error {
 				report, err := svc.Doctor(cmd.Context())
 				if err != nil {
@@ -109,7 +113,12 @@ func doctorCommand(env *cliEnv) *cobra.Command {
 	return cmd
 }
 
-func (env *cliEnv) runDoctorReport(ctx context.Context) error {
+type doctorSupportReport struct {
+	supportreport.Snapshot
+	ForeignOwned []stateOwnership `json:"foreign_owned,omitempty"`
+}
+
+func (env *cliEnv) runDoctorReport(ctx context.Context, foreignOwned []stateOwnership) error {
 	paths, err := env.resolvePaths()
 	if err != nil {
 		return err
@@ -128,9 +137,10 @@ func (env *cliEnv) runDoctorReport(ctx context.Context) error {
 		return err
 	}
 	if env.json {
-		return env.printJSON(snapshot)
+		return env.printJSON(doctorSupportReport{Snapshot: snapshot, ForeignOwned: foreignOwned})
 	}
 	env.print("%s", supportreport.Render(snapshot))
+	renderForeignOwnedState(env, foreignOwned)
 	return nil
 }
 

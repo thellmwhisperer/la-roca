@@ -277,11 +277,11 @@ refuse_root_over_user_state() {
   state="${HOME}/.roca"
   [ -e "$state" ] || return 0
   if stat --version >/dev/null 2>&1; then
-    owner=$(stat -c %u "$state")
-    owner_name=$(stat -c %U "$state")
+    owner=$(stat -L -c %u "$state")
+    owner_name=$(stat -L -c %U "$state")
   else
-    owner=$(stat -f %u "$state")
-    owner_name=$(stat -f %Su "$state")
+    owner=$(stat -L -f %u "$state")
+    owner_name=$(stat -L -f %Su "$state")
   fi
   [ "$owner" = "0" ] && return 0
   die "running as root over $state owned by $owner_name would leave root-owned state files. Re-run as $owner_name"

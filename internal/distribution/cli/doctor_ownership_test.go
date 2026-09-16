@@ -42,6 +42,16 @@ func TestDoctorPrintsChownForForeignOwnedState(t *testing.T) {
 	if row["chown"] != want || row["owner"] != "root" || row["path"] != lock {
 		t.Fatalf("foreign_owned row = %#v, want chown %q", row, want)
 	}
+
+	report := runRoot(t, contractBuild(), "doctor", "--report")
+	if !strings.Contains(report, want) {
+		t.Fatalf("support report missing %q:\n%s", want, report)
+	}
+	reportJSON := mustJSON(t, runRoot(t, contractBuild(), "doctor", "--report", "--json"))
+	owned, _ = reportJSON["foreign_owned"].([]any)
+	if len(owned) != 1 {
+		t.Fatalf("support report foreign_owned = %#v, want the lock", reportJSON["foreign_owned"])
+	}
 }
 
 func TestDoctorReportsOwnershipWhenServiceCannotOpenState(t *testing.T) {

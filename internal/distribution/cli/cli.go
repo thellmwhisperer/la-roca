@@ -107,9 +107,23 @@ func executeWithOptions(env *cliEnv, args []string, in io.Reader, plugins bool) 
 		started = time.Now()
 		env.started = started
 	}
-	env.loadCommandFeatures()
+	if !doctorInvocation(args) {
+		env.loadCommandFeatures()
+	}
 	root := rootCommand(env)
 	if plugins {
+		if len(args) > 0 && !strings.HasPrefix(args[0], "-") && !builtIn(root, args[0]) {
+			if err := env.refuseRootOverUserStatePath(); err != nil {
+				env.auditCommand = args[0]
+				env.auditArgs = redactPluginArguments(args[1:])
+				err = logfile.Correlate(err)
+				if logErr := env.logExecution(nil, started, ExitError, err); logErr != nil {
+					fmt.Fprintf(env.errOut,
+						"warning: this run is not in the execution log: %v\n", logErr)
+				}
+				return ExitError, err
+			}
+		}
 		if handled, code, err := dispatchPlugin(env, root, args, env.features); handled {
 			env.auditCommand = args[0]
 			env.auditArgs = redactPluginArguments(args[1:])
@@ -173,6 +187,25 @@ func executeWithOptions(env *cliEnv, args []string, in io.Reader, plugins bool) 
 		}
 	}
 	return code, err
+}
+
+func doctorInvocation(args []string) bool {
+	for index := 0; index < len(args); index++ {
+		argument := args[index]
+		switch {
+		case argument == "--db-path":
+			index++
+			continue
+		case argument == "--json" || argument == "--read-only" ||
+			strings.HasPrefix(argument, "--db-path="):
+			continue
+		case strings.HasPrefix(argument, "-"):
+			continue
+		default:
+			return argument == "doctor"
+		}
+	}
+	return false
 }
 
 func rootCommand(env *cliEnv) *cobra.Command {
@@ -723,6 +756,10 @@ func (env *cliEnv) refuseRootOverUserState(cmd *cobra.Command) error {
 	if flag := cmd.Flags().Lookup("help"); flag != nil && flag.Changed {
 		return nil
 	}
+	return env.refuseRootOverUserStatePath()
+}
+
+func (env *cliEnv) refuseRootOverUserStatePath() error {
 	paths, err := env.resolvePaths()
 	if err != nil || paths.Home == "" {
 		return err
