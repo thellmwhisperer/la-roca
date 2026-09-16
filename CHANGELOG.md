@@ -20,6 +20,20 @@ Most users need to do nothing: an already signed-in Codex or Claude CLI is detec
 
 The bootstrap JSON field `external_credential` is now named `command_transport`; it reports that the selected model runs through a local agent CLI without implying that La Roca owns authentication.
 
+## [1.86.0](https://github.com/thellmwhisperer/la-roca/compare/v1.85.1...v1.86.0) (2026-09-16)
+
+
+### Features
+
+* configure and parallelize hybrid query retrieval ([#403](https://github.com/thellmwhisperer/la-roca/issues/403)) ([676a650](https://github.com/thellmwhisperer/la-roca/commit/676a65063215f0afdeebcb88b4400392c20f5da7))
+* support operator-defined scheduled rides ([#405](https://github.com/thellmwhisperer/la-roca/issues/405)) ([347a9ba](https://github.com/thellmwhisperer/la-roca/commit/347a9bad5e31cc622785745e0fe7fc47466490a9))
+
+
+### Bug Fixes
+
+* diagnose and prevent unsafe state ownership ([#404](https://github.com/thellmwhisperer/la-roca/issues/404)) ([e8ff10d](https://github.com/thellmwhisperer/la-roca/commit/e8ff10ddfc371aebea1b0da6e0b5068dcd75f9fc))
+* **plugin:** treat operator rides as ordinary configuration ([#407](https://github.com/thellmwhisperer/la-roca/issues/407)) ([05bda74](https://github.com/thellmwhisperer/la-roca/commit/05bda741e9852de0377829a77f6c3b8906dc31bc))
+
 ## [1.85.1](https://github.com/thellmwhisperer/la-roca/compare/v1.85.0...v1.85.1) (2026-09-15)
 
 
