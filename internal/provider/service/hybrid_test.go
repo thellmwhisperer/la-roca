@@ -234,16 +234,11 @@ func TestSearchUsesOnlyVectorWhenEveryFTSTermHasZeroDocumentFrequency(t *testing
 }
 
 func TestPluginVectorQueryDegradesWhenTheScannerOverflows(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "roca-vector")
 	script := `#!/bin/sh
 printf '%s\n' 'bufio.Scanner: token too long' >&2
 exit 1
 `
-	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	installVectorScript(t, script)
 
 	hits, err := service.PluginVectorQuery(context.Background(), "", "salud mental", service.VectorLeg{
 		K: 100, Expand: true,
@@ -260,15 +255,10 @@ exit 1
 }
 
 func TestPluginVectorSearchPreservesMixedModelAndExecutionState(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "roca-vector")
 	script := `#!/bin/sh
 printf '%s' '{"mixed_models":true,"vector_executed":true,"results":[],"database_results":[{"database":"corpus","model":"a","results":[{"rank":1,"score":0.9,"database":"corpus","table":"memories","id":"1"}]}],"notices":[]}'
 `
-	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	installVectorScript(t, script)
 
 	hits, err := service.PluginVectorSearch("")(context.Background(), "salud mental", 100, "all")
 	if err != nil {
@@ -277,6 +267,16 @@ printf '%s' '{"mixed_models":true,"vector_executed":true,"results":[],"database_
 	if !hits.Executed || !hits.MixedModels || len(hits.Results) != 0 {
 		t.Fatalf("vector envelope state = %+v", hits)
 	}
+}
+
+func installVectorScript(t *testing.T, script string) {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "roca-vector")
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
 func TestSearchResolvesSessionSnippetsFromDeclaredColumns(t *testing.T) {
