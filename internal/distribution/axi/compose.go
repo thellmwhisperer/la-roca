@@ -241,6 +241,9 @@ func searchText(res service.SearchResult, help []string) string {
 		engines = "none"
 	}
 	appendLine(&b, fmt.Sprintf("search %s · engines %s · %s", hybridMode(res.Engines), engines, Duration(res.LatencyMS)))
+	if res.Degraded != "" {
+		appendLine(&b, "degraded: "+res.Degraded)
+	}
 	if len(res.Databases) > 0 {
 		appendLine(&b, "databases: "+strings.Join(res.Databases, ", "))
 	}

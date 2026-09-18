@@ -48,8 +48,7 @@ Two kinds of freshness, two commands:
 
 Agents start semantic search with `roca vector query`. Write the SQL yourself
 and run it with `roca exec`. Use `roca query` only when exact terms matter and
-the search needs its rarity-selected FTS leg fused with template-expanded vector
-neighbors.
+the search needs its rarity-selected FTS leg fused with the vector neighbors.
 All three use zero answering-model inference. Humans who want a model to write
 SQL and explain the rows use `roca playground`. Agents never pass `--full`.
 
