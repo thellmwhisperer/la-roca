@@ -12,8 +12,8 @@ commands in every answer. An agent never has to guess what it just got or
 what to run next.
 
 `roca_vector_query` is the fast semantic search. `roca_query` is the hybrid
-path: full-text plus an optional template-expanded vector leg, used when exact
-terms matter. Neither calls an answering model. The model-backed `roca_sql` and
+path: full-text plus an optional vector leg, used when exact terms matter.
+Neither calls an answering model. The model-backed `roca_sql` and
 `roca_explore` tools require the [optional playground plugin](plugins.md#optional-human-answering).
 `roca_handoff_latest` and `roca_pill_show` load session-continuity records
 without hybrid retrieval.
@@ -54,7 +54,9 @@ tools available without `roca_vector_query`. If an MCP or CLI client receives a
 query's result or query error immediately before a disconnect, it preserves that
 reply. A disconnect without a reply for that query remains an error. Subsequent
 vector calls on the disconnected MCP session fail; a new MCP session can start
-or connect to a resident.
+or connect to a resident. If one resident reply exceeds the client read limit,
+the query succeeds with a notice and no vector results instead of failing with
+a scanner error; hybrid search keeps any full-text results.
 
 If the CLI cannot establish a ready resident connection, it uses its in-process
 query path, which may load the model for that invocation. After establishing
@@ -66,8 +68,8 @@ or starts a separate resident using the updated companion. Its socket and
 startup lock append `.current` to the primary paths, including an overridden
 socket path; the Unix path-length limit also applies to this socket. This
 applies even to plain CLI queries. Existing MCP vector clients stay on their
-original resident until disconnected. Hybrid `roca query` uses this CLI path
-with template expansion for its vector leg.
+original resident until disconnected. Hybrid `roca query` uses this CLI path,
+with template expansion only when enabled in query settings.
 
 If the selected resident still lacks a requested query option, the query fails
 with a restart instruction. Disconnect its clients and let the idle period

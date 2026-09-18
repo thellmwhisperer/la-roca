@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -26,6 +27,9 @@ func (env *environment) queryThroughResident(ctx context.Context, text string, k
 		ExpandTemplates: expandTemplates, MinScore: minScore,
 	})
 	if err != nil {
+		if errors.Is(err, vectorresident.ErrResponseTooLarge) {
+			return vector.FederatedQuery{Notices: []string{vectorresident.ResponseTooLargeNotice}}, true, nil
+		}
 		return vector.FederatedQuery{}, true, err
 	}
 	var result vector.FederatedQuery

@@ -64,6 +64,21 @@ func TestSearchKeepsHelpForOneHit(t *testing.T) {
 	}
 }
 
+func TestSearchNamesAVectorTimeoutBeforeTheHits(t *testing.T) {
+	got := axi.Search(service.SearchResult{
+		Question: "timed out vector", Engines: []string{"fts"},
+		Degraded: service.DegradedVectorTimeout,
+		Notices:  []string{"vector search unavailable: the validated SQL exceeded the time limit after 5s"},
+		Hits:     []service.SearchHit{{Rank: 1, Source: "memory", Snippet: "fts only"}},
+	})
+	degradedAt := strings.Index(got, "degraded: "+service.DegradedVectorTimeout)
+	noticeAt := strings.Index(got, "notice:")
+	rowsAt := strings.Index(got, "rows[")
+	if degradedAt < 0 || noticeAt < 0 || rowsAt < 0 || degradedAt > noticeAt || noticeAt > rowsAt {
+		t.Fatalf("vector timeout was not the envelope headline:\n%s", got)
+	}
+}
+
 func TestQueryAndExecDeclareConsultedDatabases(t *testing.T) {
 	queryText := axi.Query(service.QueryResult{
 		Path: service.PathLLM, Match: service.MatchFound,

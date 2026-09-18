@@ -49,6 +49,7 @@ type SearchResult struct {
 	Engines     []string    `json:"engines"`
 	Terms       []string    `json:"terms,omitempty"`
 	Notices     []string    `json:"notices,omitempty"`
+	Degraded    string      `json:"degraded,omitempty"`
 	Databases   []string    `json:"databases,omitempty"`
 	RequireBoth bool        `json:"require_both,omitempty"`
 	Top         int         `json:"top"`
@@ -101,8 +102,8 @@ type searchSurface struct {
 	FTSTable    string
 }
 
-// Search is the hybrid retrieval seat: rarity-selected FTS, template-expanded
-// vector when a sidecar exists, RRF fusion, labeled evidence.
+// Search is the hybrid retrieval seat: rarity-selected FTS, vector neighbors
+// when a sidecar exists, RRF fusion, labeled evidence.
 func (s *Service) Search(ctx context.Context, req SearchRequest) (SearchResult, error) {
 	start := time.Now()
 	if err := query.ValidateQuestion(req.Question); err != nil {
@@ -153,6 +154,9 @@ func (s *Service) Search(ctx context.Context, req SearchRequest) (SearchResult, 
 		result.Engines = append(result.Engines, search.LegFTS)
 	}
 	result.Notices = append(result.Notices, legs.notices...)
+	if mode := vectorTimeoutMode(legs.notices); mode != "" {
+		result.Degraded = mode
+	}
 	if legs.vectorOK {
 		result.Engines = append(result.Engines, search.LegVector)
 	}
@@ -202,6 +206,22 @@ func (s *Service) Search(ctx context.Context, req SearchRequest) (SearchResult, 
 	result.RowCount = len(result.Hits)
 	result.LatencyMS = time.Since(start).Milliseconds()
 	return result, nil
+}
+
+func vectorUnavailableNotice(message string) string {
+	return "vector search unavailable: " + message
+}
+
+func vectorTimeoutMode(notices []string) string {
+	for _, notice := range notices {
+		lower := strings.ToLower(notice)
+		if strings.Contains(lower, "time limit") ||
+			strings.Contains(lower, "deadline exceeded") ||
+			strings.Contains(lower, "exceeded the time") {
+			return DegradedVectorTimeout
+		}
+	}
+	return ""
 }
 
 func uniqueTokens(tokens []string) []string {
@@ -262,7 +282,7 @@ func (s *Service) runSearchLegs(ctx context.Context, req SearchRequest, route Pl
 	runVector := func(runCtx context.Context) ([]search.RankedDoc, []string, bool) {
 		hits, notices, ok, err := s.searchVector(runCtx, req, settings)
 		if err != nil {
-			return nil, []string{"vector search unavailable: " + err.Error()}, false
+			return nil, []string{vectorUnavailableNotice(err.Error())}, false
 		}
 		if !ok {
 			return nil, notices, false
@@ -694,7 +714,7 @@ func PluginVectorQuery(ctx context.Context, dbPath, question string, leg VectorL
 		if exit, ok := runErr.(*exec.ExitError); ok && len(exit.Stderr) > 0 {
 			message = strings.TrimSpace(string(exit.Stderr))
 		}
-		return VectorHits{Notices: []string{"vector search unavailable: " + message}}, nil
+		return VectorHits{Notices: []string{vectorUnavailableNotice(message)}}, nil
 	}
 	var envelope struct {
 		Results        []VectorHit `json:"results"`

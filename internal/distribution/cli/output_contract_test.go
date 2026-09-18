@@ -93,8 +93,8 @@ func TestDoctorNarratesAndAnswersJSON(t *testing.T) {
 	human := runRoot(t, contractBuild(), "doctor")
 	for _, want := range []string{
 		"roca " + contractVersion, "database:", "configuration:",
-		"query: oversample 100", "templates default", "rrf_k 60",
-		"min_vector_score 0.35", "max_rare_terms 5", "parallel_legs false",
+		"query: oversample 10", "templates false", "rrf_k 60",
+		"min_vector_score 0.35", "max_rare_terms 5", "parallel_legs true",
 		"agents detected:", "agents not found:", "playground:",
 	} {
 		if !strings.Contains(human, want) {

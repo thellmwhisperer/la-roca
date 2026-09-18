@@ -92,6 +92,17 @@ func TestCollapseBestRankKeepsTheBestChunkOfOneSource(t *testing.T) {
 	}
 }
 
+func TestDefaultSettingsAreTheCheapHybridPath(t *testing.T) {
+	got := search.DefaultSettings()
+	if got.Oversample != 10 || !got.ParallelLegs || got.Templates != search.TemplatesOff {
+		t.Fatalf("default settings = %+v, want oversample 10, parallel legs, raw question", got)
+	}
+	filled := (search.Settings{}).WithDefaults()
+	if filled.Oversample != 10 || !filled.ParallelLegs {
+		t.Fatalf("zero settings with defaults = %+v", filled)
+	}
+}
+
 func TestSettingsApplyFlagOverDefaultAndKeepUnsetKnobs(t *testing.T) {
 	oversample := 30
 	got := search.DefaultSettings().Apply(search.Overlay{Oversample: &oversample, NoTemplates: true})

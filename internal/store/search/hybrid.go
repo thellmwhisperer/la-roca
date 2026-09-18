@@ -7,10 +7,11 @@ import (
 
 // Hybrid retrieval constants measured against the live corpus: rarity drops
 // terms that appear in more than two percent of documents, RRF uses k=60, and
-// each leg oversamples about 100 candidates before fusion.
+// each leg gathers the fused top before fusion. Operators may raise oversample
+// up to MaxOversample when they want a wider candidate pool.
 const (
 	RRFK             = 60
-	HybridOversample = 100
+	HybridOversample = 10
 	MaxOversample    = 100
 	MaxRRFK          = 1 << 52
 	MaxRareTerms     = 5

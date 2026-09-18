@@ -255,8 +255,8 @@ func TestQueryHybridKnobsResolveFlagOverConfigOverDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 	defaults := absent.Query.Settings()
-	if defaults.Oversample != 100 || defaults.RRFK != 60 || defaults.MinVectorScore != 0.35 ||
-		defaults.MaxRareTerms != 5 || defaults.ParallelLegs || defaults.Templates != search.TemplatesDefault {
+	if defaults.Oversample != 10 || defaults.RRFK != 60 || defaults.MinVectorScore != 0.35 ||
+		defaults.MaxRareTerms != 5 || !defaults.ParallelLegs || defaults.Templates != search.TemplatesOff {
 		t.Fatalf("absent [query] settings = %+v, want baked-in defaults", defaults)
 	}
 

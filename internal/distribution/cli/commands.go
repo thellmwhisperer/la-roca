@@ -648,8 +648,8 @@ func queryCommand(env *cliEnv) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "query <question>",
 		Short: "Hybrid FTS and vector search with labeled evidence",
-		Long: "Zero-inference hybrid search: rarity-selected full-text plus template-expanded " +
-			"vector neighbors, fused with RRF. Without a vector index the same command runs " +
+		Long: "Zero-inference hybrid search: rarity-selected full-text plus vector " +
+			"neighbors, fused with RRF. Without a vector index the same command runs " +
 			"full-text alone. Questions must contain text and may be at most 1000 characters. " +
 			"Supported flags override their corresponding config.toml [query] values, which " +
 			"override the built-in defaults.",

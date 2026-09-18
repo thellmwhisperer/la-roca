@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -103,15 +104,18 @@ func runVectorQueryResident(env *cliEnv, args []string, companion string, paths 
 		return false, 0, nil
 	}
 	defer client.Close()
+	var result federatedVectorQuery
 	raw, err := client.Query(context.Background(), vectorresident.Request{
 		Query: inv.query, K: inv.k, Databases: inv.databases,
 		ExpandTemplates: inv.expandTemplates, MinScore: inv.minScore,
 	})
 	if err != nil {
-		return true, ExitError, err
-	}
-	var result federatedVectorQuery
-	if err := json.Unmarshal(raw, &result); err != nil {
+		if errors.Is(err, vectorresident.ErrResponseTooLarge) {
+			result.Notices = []string{vectorresident.ResponseTooLargeNotice}
+		} else {
+			return true, ExitError, err
+		}
+	} else if err := json.Unmarshal(raw, &result); err != nil {
 		return true, ExitError, fmt.Errorf("decode semantic search: %w", err)
 	}
 	help := vectorQueryHelp(result)

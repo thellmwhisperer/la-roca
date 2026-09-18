@@ -27,6 +27,7 @@ type Settings struct {
 	MinVectorScoreSet bool
 	MaxRareTerms      int
 	ParallelLegs      bool
+	ParallelLegsSet   bool
 	Templates         TemplateMode
 	TemplateList      []string
 }
@@ -56,20 +57,23 @@ type Overlay struct {
 	NoTemplates bool
 }
 
-// DefaultSettings is today's baked-in hybrid: oversample 100, RRF k=60,
-// rarity keep 5, cosine floor 0.35, sequential legs, built-in templates.
+// DefaultSettings is today's baked-in hybrid: oversample 10, RRF k=60,
+// rarity keep 5, cosine floor 0.35, parallel legs, raw-question embeddings.
 func DefaultSettings() Settings {
 	return Settings{
-		Oversample:     HybridOversample,
-		RRFK:           RRFK,
-		MinVectorScore: MinVectorScore,
-		MaxRareTerms:   MaxRareTerms,
-		Templates:      TemplatesDefault,
+		Oversample:      HybridOversample,
+		RRFK:            RRFK,
+		MinVectorScore:  MinVectorScore,
+		MaxRareTerms:    MaxRareTerms,
+		ParallelLegs:    true,
+		ParallelLegsSet: true,
+		Templates:       TemplatesOff,
 	}
 }
 
 // WithDefaults fills unset numeric knobs with the baked-in value. Template
-// mode and ParallelLegs stay as written, including an explicit off.
+// mode stays as written, including an explicit on. Unset ParallelLegs follows
+// the baked-in default; ParallelLegsSet keeps an explicit off.
 func (s Settings) WithDefaults() Settings {
 	if s.Oversample <= 0 {
 		s.Oversample = HybridOversample
@@ -82,6 +86,10 @@ func (s Settings) WithDefaults() Settings {
 	}
 	if s.MaxRareTerms <= 0 {
 		s.MaxRareTerms = MaxRareTerms
+	}
+	if !s.ParallelLegsSet {
+		s.ParallelLegs = true
+		s.ParallelLegsSet = true
 	}
 	if s.Templates == TemplatesCustom && len(s.TemplateList) == 0 {
 		s.Templates = TemplatesOff
