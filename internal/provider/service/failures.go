@@ -11,6 +11,9 @@ const (
 	DegradedExecution = "sql_execution_error"
 	// DegradedTimeout: the SQL passed the gate but exceeded its configured work budget.
 	DegradedTimeout = "sql_execution_timeout"
+	// DegradedVectorTimeout: the hybrid vector leg hit the statement budget and
+	// was dropped. Search still returns FTS; the envelope must name this mode.
+	DegradedVectorTimeout = "vector_timeout"
 )
 
 // IsDegradedFailure is the one success contract shared by CLI exit codes and

@@ -13,10 +13,82 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 )
+
+func TestClientAcceptsAResponseLargerThanTheOldEightMegabyteCap(t *testing.T) {
+	clientEnd, serverEnd := net.Pipe()
+	t.Cleanup(func() {
+		_ = clientEnd.Close()
+		_ = serverEnd.Close()
+	})
+	client := NewClient(clientEnd, nil)
+	text := strings.Repeat("x", 9<<20)
+	go func() {
+		encoder := json.NewEncoder(serverEnd)
+		_ = encoder.Encode(envelope{Kind: "result", Stage: "prewarm"})
+		line, err := bufio.NewReader(serverEnd).ReadBytes('\n')
+		if err != nil {
+			return
+		}
+		var request map[string]any
+		if err := json.Unmarshal(line, &request); err != nil {
+			return
+		}
+		_ = encoder.Encode(map[string]any{
+			"kind": "result", "stage": "query", "id": request["id"],
+			"result": map[string]any{"text": text},
+		})
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := client.WaitReady(ctx); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := client.Query(ctx, Request{Query: "harbor lantern", K: 100, ExpandTemplates: false})
+	if err != nil {
+		t.Fatalf("large expand-templates payload failed: %v", err)
+	}
+	var got struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil || got.Text != text {
+		t.Fatalf("large payload decode = %v text_len=%d", err, len(got.Text))
+	}
+}
+
+func TestClientDegradesWhenALineExceedsTheBudget(t *testing.T) {
+	previous := maxResidentToken
+	maxResidentToken = 1024
+	t.Cleanup(func() { maxResidentToken = previous })
+	clientEnd, serverEnd := net.Pipe()
+	t.Cleanup(func() {
+		_ = clientEnd.Close()
+		_ = serverEnd.Close()
+	})
+	client := NewClient(clientEnd, nil)
+	go func() {
+		_, _ = fmt.Fprintln(serverEnd, `{"kind":"result","stage":"prewarm"}`)
+		_, _ = bufio.NewReader(serverEnd).ReadBytes('\n')
+		_, _ = fmt.Fprintln(serverEnd, `{"kind":"result","stage":"query","id":1,"result":{"text":"`+
+			strings.Repeat("x", 4096)+`"}}`)
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := client.WaitReady(ctx); err != nil {
+		t.Fatal(err)
+	}
+	_, err := client.Query(ctx, Request{Query: "harbor lantern", K: 3})
+	if !errors.Is(err, ErrResponseTooLarge) {
+		t.Fatalf("overflow error = %v, want %v", err, ErrResponseTooLarge)
+	}
+	if strings.Contains(err.Error(), "token too long") {
+		t.Fatalf("overflow leaked the scanner error: %v", err)
+	}
+}
 
 func TestClientRoutesByIDAndStreamsProductStatus(t *testing.T) {
 	clientEnd, serverEnd := net.Pipe()

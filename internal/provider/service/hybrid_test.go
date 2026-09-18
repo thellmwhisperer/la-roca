@@ -105,13 +105,15 @@ func TestSearchParallelLegsFusesTheSameHits(t *testing.T) {
 		time.Sleep(15 * time.Millisecond)
 		return service.VectorHits{Executed: true, Results: hybridVectorFixture()}, nil
 	}
-	sequentialSvc := seededHybridService(t, vector)
-	parallelSvc := initialized(t, freshPaths(t), func(options *service.Options) {
+	sequentialSettings := search.DefaultSettings()
+	sequentialSettings.ParallelLegs = false
+	sequentialSettings.ParallelLegsSet = true
+	sequentialSvc := initialized(t, freshPaths(t), func(options *service.Options) {
 		options.VectorSearch = vector
-		options.Query = search.DefaultSettings()
-		options.Query.ParallelLegs = true
+		options.Query = sequentialSettings
 	})
-	seedHybridCorpus(t, parallelSvc)
+	seedHybridCorpus(t, sequentialSvc)
+	parallelSvc := seededHybridService(t, vector)
 	sequential, err := sequentialSvc.Search(context.Background(), service.SearchRequest{Question: "salud mental", Top: 10})
 	if err != nil {
 		t.Fatal(err)
@@ -140,6 +142,25 @@ func TestSearchOversampleFlagReachesTheVectorLeg(t *testing.T) {
 	}
 	if gotK != 30 {
 		t.Fatalf("vector k = %d, want 30", gotK)
+	}
+}
+
+func TestSearchNamesAVectorTimeoutInTheEnvelope(t *testing.T) {
+	svc := seededHybridService(t,
+		func(context.Context, string, int, string) (service.VectorHits, error) {
+			return service.VectorHits{Notices: []string{
+				"vector search unavailable: roca reader: the validated SQL exceeded the time limit after 5s",
+			}}, nil
+		})
+	result := mustHybridSearch(t, svc, "salud mental", false)
+	if result.Degraded != service.DegradedVectorTimeout {
+		t.Fatalf("degraded = %q, want %q", result.Degraded, service.DegradedVectorTimeout)
+	}
+	if strings.Join(result.Engines, ",") != "fts" {
+		t.Fatalf("engines = %v, want fts-only after a vector timeout", result.Engines)
+	}
+	if !hybridHitContains(result, "salud mental") {
+		t.Fatalf("FTS hits were lost after a vector timeout: %+v", result.Hits)
 	}
 }
 
@@ -212,16 +233,32 @@ func TestSearchUsesOnlyVectorWhenEveryFTSTermHasZeroDocumentFrequency(t *testing
 	}
 }
 
+func TestPluginVectorQueryDegradesWhenTheScannerOverflows(t *testing.T) {
+	script := `#!/bin/sh
+printf '%s\n' 'bufio.Scanner: token too long' >&2
+exit 1
+`
+	installVectorScript(t, script)
+
+	hits, err := service.PluginVectorQuery(context.Background(), "", "salud mental", service.VectorLeg{
+		K: 100, Expand: true,
+	})
+	if err != nil {
+		t.Fatalf("scanner overflow aborted the vector call: %v", err)
+	}
+	if hits.Executed || len(hits.Results) != 0 {
+		t.Fatalf("overflow should degrade: %+v", hits)
+	}
+	if !strings.Contains(strings.Join(hits.Notices, "\n"), "token too long") {
+		t.Fatalf("overflow was not explained: %v", hits.Notices)
+	}
+}
+
 func TestPluginVectorSearchPreservesMixedModelAndExecutionState(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "roca-vector")
 	script := `#!/bin/sh
 printf '%s' '{"mixed_models":true,"vector_executed":true,"results":[],"database_results":[{"database":"corpus","model":"a","results":[{"rank":1,"score":0.9,"database":"corpus","table":"memories","id":"1"}]}],"notices":[]}'
 `
-	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	installVectorScript(t, script)
 
 	hits, err := service.PluginVectorSearch("")(context.Background(), "salud mental", 100, "all")
 	if err != nil {
@@ -230,6 +267,16 @@ printf '%s' '{"mixed_models":true,"vector_executed":true,"results":[],"database_
 	if !hits.Executed || !hits.MixedModels || len(hits.Results) != 0 {
 		t.Fatalf("vector envelope state = %+v", hits)
 	}
+}
+
+func installVectorScript(t *testing.T, script string) {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "roca-vector")
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
 func TestSearchResolvesSessionSnippetsFromDeclaredColumns(t *testing.T) {
