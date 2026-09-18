@@ -66,8 +66,8 @@ or starts a separate resident using the updated companion. Its socket and
 startup lock append `.current` to the primary paths, including an overridden
 socket path; the Unix path-length limit also applies to this socket. This
 applies even to plain CLI queries. Existing MCP vector clients stay on their
-original resident until disconnected. Hybrid `roca query` uses this CLI path
-with template expansion for its vector leg.
+original resident until disconnected. Hybrid `roca query` uses this CLI path,
+with template expansion only when enabled in query settings.
 
 If the selected resident still lacks a requested query option, the query fails
 with a restart instruction. Disconnect its clients and let the idle period

@@ -18,6 +18,8 @@ var (
 	ErrResponseTooLarge = errors.New("semantic search response is too large to read")
 )
 
+const ResponseTooLargeNotice = "semantic search response is too large to read; continuing without vector results"
+
 const (
 	residentLineBuffer = 64 * 1024
 	residentMaxToken   = 64 << 20
