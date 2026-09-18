@@ -88,11 +88,13 @@ func (n *Native) embedLocked(ctx context.Context, input []string, startWatchdog 
 		element := nativeElementIdentity(text)
 		n.activeElement.Store(&element)
 		watchdog := startWatchdog()
-		stopKill, _ := armExternalWatchdog(nativeCallTimeout, os.Getpid())
-		vector, _, err := n.engine.Embed(text)
-		if stopKill != nil {
-			stopKill()
+		stopKill, err := armExternalWatchdog(nativeCallTimeout, os.Getpid())
+		if err != nil {
+			watchdog.Stop()
+			return nil, fmt.Errorf("arm native watchdog: %w", err)
 		}
+		vector, _, err := n.engine.Embed(text)
+		stopKill()
 		watchdog.Stop()
 		if err != nil {
 			n.record(telemetry.Record{Kind: telemetry.KindError, Backend: n.backend, Fallback: n.fallback, Err: "embed failed"})
@@ -129,10 +131,11 @@ func (n *Native) open(ctx context.Context) error {
 	if !n.ReadOnly {
 		policy = n.Writer
 	}
-	stopKill, _ := armExternalWatchdog(nativeCallTimeout, os.Getpid())
-	if stopKill != nil {
-		defer stopKill()
+	stopKill, err := armExternalWatchdog(nativeCallTimeout, os.Getpid())
+	if err != nil {
+		return fmt.Errorf("arm native watchdog: %w", err)
 	}
+	defer stopKill()
 	loaded, err := openPreferredWithContext(ctx, path, runtime.NumCPU(), policy)
 	if err != nil {
 		n.record(telemetry.Record{Kind: telemetry.KindError, Err: "the embedding model failed to load"})
