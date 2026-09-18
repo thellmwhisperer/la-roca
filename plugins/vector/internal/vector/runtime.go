@@ -66,7 +66,12 @@ func (w Worker) Run(ctx context.Context) Completion {
 		failIf(w.WaitForCalm(ctx))
 	}
 	if completion.Error == "" {
-		delta, err := w.Index.Ingest(ctx)
+		var delta Delta
+		err := watchWorkerNativeCall(w.DataDir, func() error {
+			var ingestErr error
+			delta, ingestErr = w.Index.Ingest(ctx)
+			return ingestErr
+		})
 		completion.Delta = delta
 		failIf(err)
 	}

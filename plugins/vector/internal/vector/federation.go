@@ -991,12 +991,7 @@ func (s *embeddingScheduler) run() error {
 			request.reply <- embeddingReply{err: err}
 			return failPending(err)
 		}
-		var vectors [][]float32
-		err := watchWorkerNativeCall(request.stateDir, func() error {
-			var embedErr error
-			vectors, embedErr = s.embed(request.ctx, request.model, request.input)
-			return embedErr
-		})
+		vectors, err := s.embed(request.ctx, request.model, request.input)
 		database = ""
 		if clearErr := updateWorkerActivity(request.stateDir, "", &database); clearErr != nil {
 			clearErr = fmt.Errorf("clear current vector database: %w", clearErr)
@@ -2061,7 +2056,12 @@ func (w FederatedWorker) Run(ctx context.Context) Completion {
 		}
 	}
 	if completion.Error == "" {
-		delta, err := w.Federation.Ingest(ctx, "")
+		var delta FederationDelta
+		err := watchWorkerNativeCall(w.DataDir, func() error {
+			var ingestErr error
+			delta, ingestErr = w.Federation.Ingest(ctx, "")
+			return ingestErr
+		})
 		completion.Delta = delta.Delta
 		failIf(err)
 	}
