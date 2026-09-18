@@ -71,6 +71,7 @@ func (l workLiveness) progressed() {
 	if l != nil {
 		l()
 	}
+	resetWorkerStallWatchdog()
 }
 
 type Corpus interface {

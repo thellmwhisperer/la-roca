@@ -29,7 +29,7 @@ func TestWorkerStallWatchdogKillsOrSparesAStuckProcess(t *testing.T) {
 				_, _ = command.Process.Wait()
 			}()
 			logPath := filepath.Join(t.TempDir(), "worker.log")
-			stop, err := armWorkerStallWatchdog(time.Second, command.Process.Pid, logPath)
+			stop, err := armWorkerStallWatchdog(time.Second, command.Process.Pid, logPath, "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -61,6 +61,42 @@ func TestWorkerStallWatchdogKillsOrSparesAStuckProcess(t *testing.T) {
 				t.Fatalf("watchdog log = %q, want a stall diagnostic", body)
 			}
 		})
+	}
+}
+
+func TestWorkerStallWatchdogHeartbeatDelaysTermination(t *testing.T) {
+	command := exec.Command("/bin/sleep", "30")
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = command.Process.Kill()
+		_, _ = command.Process.Wait()
+	}()
+	heartbeat := filepath.Join(t.TempDir(), "beat")
+	if err := os.WriteFile(heartbeat, []byte("start\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stop, err := armWorkerStallWatchdog(time.Second, command.Process.Pid, "", heartbeat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop()
+	deadline := time.After(2 * time.Second)
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-deadline:
+			if !processAlive(command.Process.Pid) {
+				t.Fatal("progress heartbeat still terminated the worker")
+			}
+			return
+		case <-ticker.C:
+			if err := touchWorkerStallHeartbeat(heartbeat); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
 }
 

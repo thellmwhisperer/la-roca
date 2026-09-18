@@ -21,7 +21,7 @@ func processAlive(pid int) bool {
 // indexing worker if native work stays mute. The sibling records pid and start
 // identity so a reused PID is never signalled, writes a diagnostic, then sends
 // SIGTERM. It is not used for queries or residents.
-func armWorkerStallWatchdog(d time.Duration, pid int, logPath string) (func(), error) {
+func armWorkerStallWatchdog(d time.Duration, pid int, logPath, heartbeatPath string) (func(), error) {
 	if d <= 0 || pid <= 0 {
 		return func() {}, nil
 	}
@@ -37,7 +37,7 @@ func armWorkerStallWatchdog(d time.Duration, pid int, logPath string) (func(), e
 	if seconds < 1 {
 		seconds = 1
 	}
-	command := exec.Command(self, workerWatchdogArg, strconv.Itoa(seconds), strconv.Itoa(pid), identity, logPath)
+	command := exec.Command(self, workerWatchdogArg, strconv.Itoa(seconds), strconv.Itoa(pid), identity, logPath, heartbeatPath)
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := command.Start(); err != nil {
 		return nil, err
@@ -67,7 +67,16 @@ func RunWatchdogSleepIfRequested(args []string) bool {
 	if len(args) > 5 {
 		logPath = args[5]
 	}
-	time.Sleep(time.Duration(seconds) * time.Second)
+	heartbeatPath := ""
+	if len(args) > 6 {
+		heartbeatPath = args[6]
+	}
+	deadline := time.Duration(seconds) * time.Second
+	if heartbeatPath == "" {
+		time.Sleep(deadline)
+	} else if !waitForWorkerStall(deadline, heartbeatPath) {
+		return true
+	}
 	current, err := processStartIdentity(pid)
 	if err != nil || current != identity {
 		return true
@@ -82,6 +91,23 @@ func RunWatchdogSleepIfRequested(args []string) bool {
 	}
 	_ = syscall.Kill(pid, syscall.SIGTERM)
 	return true
+}
+
+func waitForWorkerStall(deadline time.Duration, heartbeatPath string) bool {
+	interval := deadline / 10
+	if interval < 200*time.Millisecond {
+		interval = 200 * time.Millisecond
+	}
+	if interval > 5*time.Second {
+		interval = 5 * time.Second
+	}
+	for {
+		info, err := os.Stat(heartbeatPath)
+		if err != nil || time.Since(info.ModTime()) >= deadline {
+			return true
+		}
+		time.Sleep(interval)
+	}
 }
 
 func replaceFile(source, destination string) error {

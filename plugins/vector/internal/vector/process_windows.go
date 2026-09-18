@@ -16,7 +16,7 @@ const stillActiveExitCode = 259
 
 var replaceFileW = windows.NewLazySystemDLL("kernel32.dll").NewProc("ReplaceFileW")
 
-func armWorkerStallWatchdog(time.Duration, int, string) (func(), error) {
+func armWorkerStallWatchdog(time.Duration, int, string, string) (func(), error) {
 	return func() {}, nil
 }
 
