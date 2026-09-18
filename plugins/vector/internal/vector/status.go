@@ -94,8 +94,18 @@ func ReportVectorization(ctx context.Context, req StatusRequest) (Vectorization,
 			report.Databases[index] = inspectDatabase(ctx, pluginRoot, database, active)
 		}(index, database)
 	}
-	wg.Wait()
+	waitOrCancel(ctx, &wg)
+	if err := ctx.Err(); err != nil {
+		return report, err
+	}
 	return report, nil
+}
+
+func waitOrCancel(ctx context.Context, wg *sync.WaitGroup) {
+	_, _ = awaitOrCancel(ctx, func() (struct{}, error) {
+		wg.Wait()
+		return struct{}{}, nil
+	})
 }
 
 func readWorkerStatus(stateDir string) WorkerStatus {
@@ -123,7 +133,9 @@ func readWorkerStatus(stateDir string) WorkerStatus {
 	return status
 }
 
-func inspectDatabase(ctx context.Context, pluginRoot string, database vectorDatabase, workerActive bool) DatabaseVectorization {
+var inspectDatabase = inspectDatabaseStatus
+
+func inspectDatabaseStatus(ctx context.Context, pluginRoot string, database vectorDatabase, workerActive bool) DatabaseVectorization {
 	row := DatabaseVectorization{
 		Plugin:   database.Plugin,
 		Database: database.Database,

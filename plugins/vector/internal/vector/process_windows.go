@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"strconv"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -14,6 +15,10 @@ import (
 const stillActiveExitCode = 259
 
 var replaceFileW = windows.NewLazySystemDLL("kernel32.dll").NewProc("ReplaceFileW")
+
+func armExternalWatchdog(time.Duration, int) (func(), error) {
+	return func() {}, nil
+}
 
 func processAlive(pid int) bool {
 	handle, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))

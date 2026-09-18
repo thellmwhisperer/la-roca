@@ -869,6 +869,28 @@ func boundContext(ctx context.Context, timeout time.Duration) (context.Context, 
 	return context.WithTimeout(ctx, timeout)
 }
 
+// awaitOrCancel returns when fn finishes or ctx ends. A cancelled caller does
+// not wait for work that ignores the context, so status and progress cannot
+// stay mute behind a COUNT or JOIN that never checks cancellation.
+func awaitOrCancel[T any](ctx context.Context, fn func() (T, error)) (T, error) {
+	type reply struct {
+		value T
+		err   error
+	}
+	done := make(chan reply, 1)
+	go func() {
+		value, err := fn()
+		done <- reply{value, err}
+	}()
+	select {
+	case got := <-done:
+		return got.value, got.err
+	case <-ctx.Done():
+		var zero T
+		return zero, ctx.Err()
+	}
+}
+
 type embeddingScheduler struct {
 	ctx             context.Context
 	base            Embedder
@@ -1994,10 +2016,16 @@ func countIndexedSources(ctx context.Context, database vectorDatabase,
 			ON progress.source_kind=%s AND progress.raw_source_id=CAST(src.%s AS TEXT)`,
 			quoteIdentifier(table.Name), sqlLiteral(table.Name),
 			quoteIdentifier(table.IDColumn))
-		var count int
-		if err := store.QueryRowContext(ctx, statement).Scan(&count); err != nil {
-			return 0, fmt.Errorf("count indexed rows in %s/%s: %w",
-				database.owner(), table.Name, err)
+		count, err := awaitOrCancel(ctx, func() (int, error) {
+			var n int
+			if err := store.QueryRowContext(ctx, statement).Scan(&n); err != nil {
+				return 0, fmt.Errorf("count indexed rows in %s/%s: %w",
+					database.owner(), table.Name, err)
+			}
+			return n, nil
+		})
+		if err != nil {
+			return 0, err
 		}
 		read += count
 	}

@@ -184,20 +184,24 @@ func statusCommand(env *environment) *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
 			report, err := env.vectorizationStatus(command.Context())
-			if err != nil {
+			if err != nil && !statusDeadlineExceeded(err) {
 				return err
 			}
 			help := statusHelp(report)
 			out := command.OutOrStdout()
 			if env.json {
-				return printJSONTo(out, map[string]any{
+				if printErr := printJSONTo(out, map[string]any{
 					"worker":    report.Worker,
 					"databases": report.Databases,
 					"help":      help,
-				})
+				}); printErr != nil {
+					return printErr
+				}
+			} else if _, printErr := fmt.Fprintln(out, renderVectorization(report, help)); printErr != nil {
+				return printErr
 			}
-			_, err = fmt.Fprintln(out, renderVectorization(report, help))
-			return err
+			abandonStatusIfDeadlineExceeded(err)
+			return nil
 		},
 	}
 }
@@ -580,18 +584,10 @@ func workerCommand(env *environment) *cobra.Command {
 			if requested, restartErr := recovery.RestartIfRequested(); requested {
 				return restartErr
 			}
-			if env.json {
-				if err := printJSON(completion); err != nil {
-					return err
-				}
-			} else {
-				fmt.Printf("vector worker: exit %d · %d added · %d updated · %d removed · %d chunks\n",
-					completion.ExitStatus, completion.Delta.Added, completion.Delta.Updated,
-					completion.Delta.Removed, completion.Delta.Chunks)
-				if completion.Error != "" {
-					fmt.Printf("  error: %s\n", completion.Error)
-				}
+			if err := reportWorkerCompletion(completion, env.json); err != nil {
+				return err
 			}
+			abandonWorkerIfStuck(completion)
 			if completion.ExitStatus != 0 {
 				return fmt.Errorf("vector worker failed: %s", completion.Error)
 			}
@@ -600,6 +596,41 @@ func workerCommand(env *environment) *cobra.Command {
 	}
 	command.Flags().StringVar(&model, "model", model, "embedding model identifier")
 	return command
+}
+
+var terminateProcess = os.Exit
+
+func reportWorkerCompletion(completion vector.Completion, asJSON bool) error {
+	if asJSON {
+		return printJSON(completion)
+	}
+	fmt.Printf("vector worker: exit %d · %d added · %d updated · %d removed · %d chunks\n",
+		completion.ExitStatus, completion.Delta.Added, completion.Delta.Updated,
+		completion.Delta.Removed, completion.Delta.Chunks)
+	if completion.Error != "" {
+		fmt.Printf("  error: %s\n", completion.Error)
+	}
+	return nil
+}
+
+func workerErrorIsStuck(message string) bool {
+	return strings.Contains(message, "stalled while preparing embeddings")
+}
+
+func abandonWorkerIfStuck(completion vector.Completion) {
+	if completion.ExitStatus != 0 && workerErrorIsStuck(completion.Error) {
+		terminateProcess(completion.ExitStatus)
+	}
+}
+
+func statusDeadlineExceeded(err error) bool {
+	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
+}
+
+func abandonStatusIfDeadlineExceeded(err error) {
+	if statusDeadlineExceeded(err) {
+		terminateProcess(0)
+	}
 }
 
 func (env *environment) index(model string) (vector.Index, error) {

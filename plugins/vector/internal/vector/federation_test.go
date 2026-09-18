@@ -1355,3 +1355,39 @@ func TestHistoryProgressReturnsWhenTheCountIsCancelled(t *testing.T) {
 		t.Fatal("HistoryProgress hung after its context expired")
 	}
 }
+
+func TestAwaitOrCancelReturnsWhenWorkIgnoresCancel(t *testing.T) {
+	started := make(chan struct{})
+	block := make(chan struct{})
+	t.Cleanup(func() {
+		select {
+		case <-block:
+		default:
+			close(block)
+		}
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := awaitOrCancel(ctx, func() (int, error) {
+			close(started)
+			<-block
+			return 1, nil
+		})
+		done <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("awaited work did not start")
+	}
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("awaitOrCancel error = %v, want deadline", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("awaitOrCancel hung after its context expired")
+	}
+}
