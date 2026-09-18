@@ -11,7 +11,20 @@ import (
 	"sync"
 )
 
-var ErrUnsupportedOptions = errors.New("semantic search resident does not support query options; restart the resident to use the updated companion")
+var (
+	ErrUnsupportedOptions = errors.New("semantic search resident does not support query options; restart the resident to use the updated companion")
+	// ErrResponseTooLarge is a degradable read failure: the NDJSON reply was
+	// longer than the scanner budget. Callers must not abort the hybrid search.
+	ErrResponseTooLarge = errors.New("semantic search response is too large to read")
+)
+
+const (
+	residentLineBuffer = 64 * 1024
+	residentMaxToken   = 64 << 20
+)
+
+// maxResidentToken is the scanner cap. Tests shrink it to exercise overflow.
+var maxResidentToken = residentMaxToken
 
 // Request is one semantic search against the shared resident.
 type Request struct {
@@ -68,7 +81,11 @@ func NewClient(conn io.ReadWriteCloser, status io.Writer) *Client {
 
 func (c *Client) decode(reader io.Reader) {
 	scanner := bufio.NewScanner(reader)
-	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+	initial := residentLineBuffer
+	if maxResidentToken < initial {
+		initial = maxResidentToken
+	}
+	scanner.Buffer(make([]byte, 0, initial), maxResidentToken)
 	for scanner.Scan() {
 		var response envelope
 		if err := json.Unmarshal(scanner.Bytes(), &response); err != nil {
@@ -116,6 +133,10 @@ func (c *Client) decode(reader io.Reader) {
 		}
 	}
 	if err := scanner.Err(); err != nil {
+		if errors.Is(err, bufio.ErrTooLong) {
+			c.fail(fmt.Errorf("%w; retry with a smaller k or without --expand-templates", ErrResponseTooLarge))
+			return
+		}
 		c.fail(err)
 		return
 	}

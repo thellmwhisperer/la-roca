@@ -12,8 +12,8 @@ commands in every answer. An agent never has to guess what it just got or
 what to run next.
 
 `roca_vector_query` is the fast semantic search. `roca_query` is the hybrid
-path: full-text plus an optional template-expanded vector leg, used when exact
-terms matter. Neither calls an answering model. The model-backed `roca_sql` and
+path: full-text plus an optional vector leg, used when exact terms matter.
+Neither calls an answering model. The model-backed `roca_sql` and
 `roca_explore` tools require the [optional playground plugin](plugins.md#optional-human-answering).
 `roca_handoff_latest` and `roca_pill_show` load session-continuity records
 without hybrid retrieval.

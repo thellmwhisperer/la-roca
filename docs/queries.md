@@ -7,10 +7,9 @@ First-time path: [install and initialize search](lifecycle.md#install).
 Start with `roca vector query "<topic>" 20 --databases corpus,ops` for the fast
 semantic leg. Use `roca query` when exact terms matter and the result needs the
 full-text leg and fusion too. The hybrid command uses no answering-model
-inference: it selects rare full-text terms, embeds the question plus static
-question templates when a vector index exists, fuses the two lists with RRF,
-and labels which legs found each hit. Without a vector index the same command
-runs full-text alone.
+inference: it selects rare full-text terms, embeds the raw question when a
+vector index exists, fuses the two lists with RRF, and labels which legs found
+each hit. Without a vector index the same command runs full-text alone.
 `--top N` (default 10) controls the fused result count. `--oversample` and
 `--no-templates` try those retrieval knobs before they land in
 [`config.toml` `[query]`](models.md#the-configuration); the remaining knobs are
@@ -204,13 +203,13 @@ help[3]:
 
 The FTS leg measures each token against the selected live indexes, removes
 zero-frequency and broadly common terms, and keeps a small rare-term set for
-BM25 ranking. The vector leg embeds the raw question plus fixed Spanish and
-English question wrappers, oversamples neighbors, applies a similarity floor,
-and deduplicates chunks by stable source. RRF then combines ranks without
-normalizing either leg's native scores. If vector search is unavailable,
-missing, or still downloading, the same envelope reports the notice and contains
-the federated FTS results alone. The query never waits on the embedding model
-download.
+BM25 ranking. The vector leg embeds the raw question, gathers the fused top
+neighbors, applies a similarity floor, and deduplicates chunks by stable
+source. RRF then combines ranks without normalizing either leg's native scores.
+If the vector leg times out, the envelope names `degraded: vector_timeout`
+above the FTS hits. If vector search is unavailable, missing, or still
+downloading, the same envelope reports the notice and contains the federated
+FTS results alone. The query never waits on the embedding model download.
 
 ## Hybrid retrieval
 
@@ -222,12 +221,12 @@ prints the effective values.
 
 | Knob | Default | Flag | What it trades off |
 |---|---|---|---|
-| `oversample` | 100 | `--oversample` | Whole number from 1 to 100: candidates each leg gathers before fusion. Higher values can improve recall at the cost of more candidate reads, rescoring, and FTS ranking; they do not add embeddings. |
-| `templates` | the three built-in question wrappers | `--no-templates` | Extra embeddings of the question as "qué se habló sobre…", "cómo afectó…", and "what was discussed about…". A non-empty list replaces those wrappers; every wrapper must contain `%s`, where the raw question is inserted. `false` (or `--no-templates`) embeds only the raw question: faster, weaker on bare nouns. |
+| `oversample` | 10 | `--oversample` | Whole number from 1 to 100: candidates each leg gathers before fusion. The default matches the fused top. Higher values can improve recall at the cost of more candidate reads, rescoring, and FTS ranking; they do not add embeddings. |
+| `templates` | false | `--no-templates` | Extra embeddings of the question as "qué se habló sobre…", "cómo afectó…", and "what was discussed about…". Off by default so the hybrid path stays near one embedding. A non-empty list enables those wrappers; every wrapper must contain `%s`, where the raw question is inserted. `false` (or `--no-templates`) embeds only the raw question. |
 | `rrf_k` | 60 | config only | Whole number from 1 through 2^52. Smaller values reward top ranks more sharply; larger values flatten the two lists together. |
 | `min_vector_score` | 0.35 | config only | Finite non-negative cosine floor on vector neighbors. Higher is stricter and may drop a useful near-miss; lower admits noise; `0` disables filtering. |
 | `max_rare_terms` | 5 | config only | Whole number of 1 or more: the rarest FTS tokens kept for the AND-connected `MATCH`. More terms narrow recall while potentially improving precision; fewer terms broaden recall but may admit noise. |
-| `parallel_legs` | false | config only | Run the complete FTS leg and vector leg at the same time. Changes latency, never the fused set or order. |
+| `parallel_legs` | true | config only | Run the complete FTS leg and vector leg at the same time. Changes latency, never the fused set or order. |
 
 `timeout_ms` stays the SQL statement budget for `roca exec` and the playground;
 it is not a retrieval knob.
@@ -235,8 +234,8 @@ it is not a retrieval knob.
 ```toml
 [query]
 oversample = 30
-templates = false
-parallel_legs = true
+templates = ["qué se habló sobre: %s"]
+parallel_legs = false
 ```
 
 ## The playground's two readers
