@@ -85,16 +85,28 @@ func ReportVectorization(ctx context.Context, req StatusRequest) (Vectorization,
 		Worker:    readWorkerStatus(req.StateDir),
 		Databases: make([]DatabaseVectorization, len(registry.Databases)),
 	}
-	var wg sync.WaitGroup
+	type inspectionResult struct {
+		index int
+		row   DatabaseVectorization
+	}
+	results := make(chan inspectionResult, len(registry.Databases))
 	for index, database := range registry.Databases {
-		wg.Add(1)
 		go func(index int, database vectorDatabase) {
-			defer wg.Done()
 			active := report.Worker.Database != nil && *report.Worker.Database == database.owner()
-			report.Databases[index] = inspectDatabase(ctx, pluginRoot, database, active)
+			results <- inspectionResult{
+				index: index,
+				row:   inspectDatabase(ctx, pluginRoot, database, active),
+			}
 		}(index, database)
 	}
-	wg.Wait()
+	for completed := 0; completed < len(registry.Databases); completed++ {
+		select {
+		case result := <-results:
+			report.Databases[result.index] = result.row
+		case <-ctx.Done():
+			return report, ctx.Err()
+		}
+	}
 	return report, nil
 }
 
@@ -123,7 +135,9 @@ func readWorkerStatus(stateDir string) WorkerStatus {
 	return status
 }
 
-func inspectDatabase(ctx context.Context, pluginRoot string, database vectorDatabase, workerActive bool) DatabaseVectorization {
+var inspectDatabase = inspectDatabaseStatus
+
+func inspectDatabaseStatus(ctx context.Context, pluginRoot string, database vectorDatabase, workerActive bool) DatabaseVectorization {
 	row := DatabaseVectorization{
 		Plugin:   database.Plugin,
 		Database: database.Database,

@@ -204,3 +204,23 @@ func TestQueryHelpUsesSharedHints(t *testing.T) {
 		})
 	}
 }
+
+func TestStatusCommandReturnsInspectErrorWithoutPrintingRows(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", filepath.Join(root, "home"))
+	t.Setenv("ROCA_VECTOR_PLUGIN_ROOT", filepath.Join(root, "missing-plugins"))
+	t.Setenv("ROCA_VECTOR_ROCA_BINARY", "/synthetic/roca")
+	command := statusCommand(&environment{
+		dbPath:   filepath.Join(root, "roca.db"),
+		stateDir: filepath.Join(root, "state"),
+	})
+	var out bytes.Buffer
+	command.SetOut(&out)
+	command.SetErr(&out)
+	if err := command.Execute(); err == nil {
+		t.Fatal("status succeeded without a registry")
+	}
+	if strings.Contains(out.String(), "databases[") {
+		t.Fatalf("failed status printed rows: %q", out.String())
+	}
+}
