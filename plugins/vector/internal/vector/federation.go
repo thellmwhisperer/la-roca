@@ -1994,12 +1994,12 @@ func countIndexedSources(ctx context.Context, database vectorDatabase,
 			ON progress.source_kind=%s AND progress.raw_source_id=CAST(src.%s AS TEXT)`,
 			quoteIdentifier(table.Name), sqlLiteral(table.Name),
 			quoteIdentifier(table.IDColumn))
-		var count int
-		if err := store.QueryRowContext(ctx, statement).Scan(&count); err != nil {
+		var n int
+		if err := store.QueryRowContext(ctx, statement).Scan(&n); err != nil {
 			return 0, fmt.Errorf("count indexed rows in %s/%s: %w",
 				database.owner(), table.Name, err)
 		}
-		read += count
+		read += n
 	}
 	return read, nil
 }
@@ -2056,7 +2056,12 @@ func (w FederatedWorker) Run(ctx context.Context) Completion {
 		}
 	}
 	if completion.Error == "" {
-		delta, err := w.Federation.Ingest(ctx, "")
+		var delta FederationDelta
+		err := watchWorkerNativeCall(w.DataDir, func() error {
+			var ingestErr error
+			delta, ingestErr = w.Federation.Ingest(ctx, "")
+			return ingestErr
+		})
 		completion.Delta = delta.Delta
 		failIf(err)
 	}

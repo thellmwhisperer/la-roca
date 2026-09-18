@@ -677,6 +677,54 @@ func (e activityClearFailEmbedder) Embed(_ context.Context, _ string, input []st
 	return make([][]float32, len(input)), nil
 }
 
+func TestReportVectorizationReturnsWhenADatabaseInspectBlocks(t *testing.T) {
+	root := t.TempDir()
+	writeRegistry(t, root, vectorRegistry{Schema: 2, Databases: []vectorDatabase{{
+		Plugin: "fixture", Database: "records", Path: "records.db", Alias: "main",
+		Tables: []vectorTable{{Name: "records", IDColumn: "id", TextColumns: []string{"body"}}},
+	}}})
+	started := make(chan struct{})
+	block := make(chan struct{})
+	t.Cleanup(func() {
+		select {
+		case <-block:
+		default:
+			close(block)
+		}
+	})
+	previous := inspectDatabase
+	inspectDatabase = func(context.Context, string, vectorDatabase, bool) DatabaseVectorization {
+		select {
+		case <-started:
+		default:
+			close(started)
+		}
+		<-block
+		return DatabaseVectorization{State: StateUnknown}
+	}
+	t.Cleanup(func() { inspectDatabase = previous })
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := ReportVectorization(ctx, StatusRequest{PluginRoot: root})
+		done <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("database inspect did not start")
+	}
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("bounded status error = %v, want deadline", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("ReportVectorization hung after its deadline")
+	}
+}
+
 func writeSidecarWithChunks(t *testing.T, path, owner string, n int, extraMeta map[string]string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
