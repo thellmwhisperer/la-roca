@@ -85,6 +85,9 @@ func workerLeverEnvironment(flag *bool) []string {
 }
 
 func main() {
+	if vector.RunWatchdogSleepIfRequested(os.Args) {
+		return
+	}
 	env := &environment{}
 	root := rootCommand(env)
 	if err := root.Execute(); err != nil {
@@ -184,24 +187,10 @@ func statusCommand(env *environment) *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
 			report, err := env.vectorizationStatus(command.Context())
-			if err != nil && !statusDeadlineExceeded(err) {
+			if err != nil {
 				return err
 			}
-			help := statusHelp(report)
-			out := command.OutOrStdout()
-			if env.json {
-				if printErr := printJSONTo(out, map[string]any{
-					"worker":    report.Worker,
-					"databases": report.Databases,
-					"help":      help,
-				}); printErr != nil {
-					return printErr
-				}
-			} else if _, printErr := fmt.Fprintln(out, renderVectorization(report, help)); printErr != nil {
-				return printErr
-			}
-			abandonStatusIfDeadlineExceeded(err)
-			return nil
+			return emitStatus(command.OutOrStdout(), report, env.json)
 		},
 	}
 }
@@ -587,7 +576,6 @@ func workerCommand(env *environment) *cobra.Command {
 			if err := reportWorkerCompletion(completion, env.json); err != nil {
 				return err
 			}
-			abandonWorkerIfStuck(completion)
 			if completion.ExitStatus != 0 {
 				return fmt.Errorf("vector worker failed: %s", completion.Error)
 			}
@@ -597,8 +585,6 @@ func workerCommand(env *environment) *cobra.Command {
 	command.Flags().StringVar(&model, "model", model, "embedding model identifier")
 	return command
 }
-
-var terminateProcess = os.Exit
 
 func reportWorkerCompletion(completion vector.Completion, asJSON bool) error {
 	if asJSON {
@@ -613,24 +599,17 @@ func reportWorkerCompletion(completion vector.Completion, asJSON bool) error {
 	return nil
 }
 
-func workerErrorIsStuck(message string) bool {
-	return strings.Contains(message, "stalled while preparing embeddings")
-}
-
-func abandonWorkerIfStuck(completion vector.Completion) {
-	if completion.ExitStatus != 0 && workerErrorIsStuck(completion.Error) {
-		terminateProcess(completion.ExitStatus)
+func emitStatus(out io.Writer, report vector.Vectorization, asJSON bool) error {
+	help := statusHelp(report)
+	if asJSON {
+		return printJSONTo(out, map[string]any{
+			"worker":    report.Worker,
+			"databases": report.Databases,
+			"help":      help,
+		})
 	}
-}
-
-func statusDeadlineExceeded(err error) bool {
-	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
-}
-
-func abandonStatusIfDeadlineExceeded(err error) {
-	if statusDeadlineExceeded(err) {
-		terminateProcess(0)
-	}
+	_, err := fmt.Fprintln(out, renderVectorization(report, help))
+	return err
 }
 
 func (env *environment) index(model string) (vector.Index, error) {
