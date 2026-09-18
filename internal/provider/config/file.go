@@ -726,6 +726,7 @@ func (q QueryConfig) Settings() search.Settings {
 	}
 	if q.ParallelLegsSet {
 		settings.ParallelLegs = q.ParallelLegs
+		settings.ParallelLegsSet = true
 	}
 	if q.TemplatesSet {
 		if q.TemplatesOff {

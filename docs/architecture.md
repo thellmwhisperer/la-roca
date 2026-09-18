@@ -120,7 +120,7 @@ independent modules; the root Go module does not import them.
 
 `roca query` resolves the requested database scope, discovers full-text and
 vector surfaces from the validated manifests, selects rare terms from the live
-FTS indexes, and fuses full-text and template-expanded vector candidates by
+FTS indexes, and fuses full-text and vector candidates by
 stable `database.table.id` identity. It invokes no answering model. Missing or
 incompatible vector sidecars leave the same federated FTS path running, and
 every hit carries its source and per-leg evidence. Snippet resolution uses each
