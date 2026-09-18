@@ -243,13 +243,16 @@ Worker coordination remains under `~/.roca/plugins/roca-vector/state/`
 can send a desktop notification with the exit status and aggregate counts.
 Windows sends no desktop notification: inspect `completion.json` or
 `worker.log` in that state directory. The worker log path is printed at launch;
-`completion.json` records `started_at`, `finished_at`, and `exit_status`. That
-record describes the worker run, not sidecar readiness. A sidecar is ready when
-its identity, model, and dimensions match the current declaration. Rows already
-written remain queryable whether the pass finished, failed, or stopped early;
-deterministic FTS and SQL answer for the rest. The timestamps time the first
-pass on this machine. During setup, download and indexing progress stream live
-with completed counts, the current time range, and an ETA. Engine timings
+when the worker reaches its completion path, `completion.json` records
+`started_at`, `finished_at`, and `exit_status`. A process-level stall termination
+may therefore leave the previous completion record; `worker.log` owns that
+termination's diagnostic. The completion record describes the worker run, not
+sidecar readiness. A sidecar is ready when its identity, model, and dimensions
+match the current declaration. Rows already written remain queryable whether
+the pass finished, failed, or stopped early; deterministic FTS and SQL answer
+for the rest. The timestamps time the first pass on this machine. During setup,
+download and indexing progress stream live with completed counts, the current
+time range, and an ETA. Engine timings
 (load, pre-warm, per-query embedding, throughput, backend and fallback, memory
 high-water, and errors) are rotated, dated JSONL files at
 `<data-directory>/logs/engine-YYYY-MM-DD.jsonl`. They contain no query or
@@ -321,7 +324,11 @@ before embedding each batch and clears it when that embedding call ends.
 Scanning, reconciliation, and embedding all count as progress. If none of
 them progresses for 30 minutes, the worker exits with `indexing stalled
 waiting for embedding work`; `worker.log` and `completion.json` retain the
-failure.
+failure. On macOS and Linux, the background install worker also has a separate
+process watchdog around indexing. Progress refreshes its heartbeat; ten minutes
+without progress makes a sibling process verify the worker's process-start
+identity, append `semantic search stalled` to `worker.log`, and send SIGTERM.
+That watchdog does not wrap queries, residents, or foreground `ingest --delta`.
 
 For a non-default database:
 
