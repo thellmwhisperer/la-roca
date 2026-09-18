@@ -430,4 +430,3 @@ func TestFederationUsesTheResidentPrewarmedEmbedder(t *testing.T) {
 		t.Fatal("federation replaced the prewarmed resident embedder")
 	}
 }
-
