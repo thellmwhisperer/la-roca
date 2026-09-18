@@ -9,13 +9,15 @@ import (
 )
 
 const (
-	workerWatchdogArg     = "_watchdog-sleep"
-	workerStallHeartbeat  = ".worker-stall-heartbeat"
+	workerWatchdogArg            = "_watchdog-sleep"
+	workerStallHeartbeat         = ".worker-stall-heartbeat"
+	workerStallHeartbeatInterval = time.Second
 )
 
 var (
 	workerNativeStallTimeout = 10 * time.Minute
 	workerStallHeartbeatPath atomic.Value
+	workerStallLastHeartbeat atomic.Int64
 )
 
 func watchWorkerNativeCall(stateDir string, fn func() error) error {
@@ -32,9 +34,11 @@ func watchWorkerNativeCall(stateDir string, fn func() error) error {
 	}
 	if heartbeat != "" {
 		workerStallHeartbeatPath.Store(heartbeat)
+		workerStallLastHeartbeat.Store(time.Now().UnixNano())
 	}
 	defer func() {
 		workerStallHeartbeatPath.Store("")
+		workerStallLastHeartbeat.Store(0)
 		stop()
 		if heartbeat != "" {
 			_ = os.Remove(heartbeat)
@@ -46,6 +50,14 @@ func watchWorkerNativeCall(stateDir string, fn func() error) error {
 func resetWorkerStallWatchdog() {
 	path, _ := workerStallHeartbeatPath.Load().(string)
 	if path == "" {
+		return
+	}
+	now := time.Now()
+	last := workerStallLastHeartbeat.Load()
+	if last != 0 && now.Sub(time.Unix(0, last)) < workerStallHeartbeatInterval {
+		return
+	}
+	if !workerStallLastHeartbeat.CompareAndSwap(last, now.UnixNano()) {
 		return
 	}
 	_ = touchWorkerStallHeartbeat(path)
