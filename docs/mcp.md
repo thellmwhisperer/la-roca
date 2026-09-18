@@ -54,7 +54,9 @@ tools available without `roca_vector_query`. If an MCP or CLI client receives a
 query's result or query error immediately before a disconnect, it preserves that
 reply. A disconnect without a reply for that query remains an error. Subsequent
 vector calls on the disconnected MCP session fail; a new MCP session can start
-or connect to a resident.
+or connect to a resident. If one resident reply exceeds the client read limit,
+the query succeeds with a notice and no vector results instead of failing with
+a scanner error; hybrid search keeps any full-text results.
 
 If the CLI cannot establish a ready resident connection, it uses its in-process
 query path, which may load the model for that invocation. After establishing
