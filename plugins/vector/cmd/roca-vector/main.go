@@ -85,6 +85,9 @@ func workerLeverEnvironment(flag *bool) []string {
 }
 
 func main() {
+	if vector.RunWatchdogSleepIfRequested(os.Args) {
+		return
+	}
 	env := &environment{}
 	root := rootCommand(env)
 	if err := root.Execute(); err != nil {
@@ -187,17 +190,7 @@ func statusCommand(env *environment) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			help := statusHelp(report)
-			out := command.OutOrStdout()
-			if env.json {
-				return printJSONTo(out, map[string]any{
-					"worker":    report.Worker,
-					"databases": report.Databases,
-					"help":      help,
-				})
-			}
-			_, err = fmt.Fprintln(out, renderVectorization(report, help))
-			return err
+			return emitStatus(command.OutOrStdout(), report, env.json)
 		},
 	}
 }
@@ -580,17 +573,8 @@ func workerCommand(env *environment) *cobra.Command {
 			if requested, restartErr := recovery.RestartIfRequested(); requested {
 				return restartErr
 			}
-			if env.json {
-				if err := printJSON(completion); err != nil {
-					return err
-				}
-			} else {
-				fmt.Printf("vector worker: exit %d · %d added · %d updated · %d removed · %d chunks\n",
-					completion.ExitStatus, completion.Delta.Added, completion.Delta.Updated,
-					completion.Delta.Removed, completion.Delta.Chunks)
-				if completion.Error != "" {
-					fmt.Printf("  error: %s\n", completion.Error)
-				}
+			if err := reportWorkerCompletion(completion, env.json); err != nil {
+				return err
 			}
 			if completion.ExitStatus != 0 {
 				return fmt.Errorf("vector worker failed: %s", completion.Error)
@@ -600,6 +584,32 @@ func workerCommand(env *environment) *cobra.Command {
 	}
 	command.Flags().StringVar(&model, "model", model, "embedding model identifier")
 	return command
+}
+
+func reportWorkerCompletion(completion vector.Completion, asJSON bool) error {
+	if asJSON {
+		return printJSON(completion)
+	}
+	fmt.Printf("vector worker: exit %d · %d added · %d updated · %d removed · %d chunks\n",
+		completion.ExitStatus, completion.Delta.Added, completion.Delta.Updated,
+		completion.Delta.Removed, completion.Delta.Chunks)
+	if completion.Error != "" {
+		fmt.Printf("  error: %s\n", completion.Error)
+	}
+	return nil
+}
+
+func emitStatus(out io.Writer, report vector.Vectorization, asJSON bool) error {
+	help := statusHelp(report)
+	if asJSON {
+		return printJSONTo(out, map[string]any{
+			"worker":    report.Worker,
+			"databases": report.Databases,
+			"help":      help,
+		})
+	}
+	_, err := fmt.Fprintln(out, renderVectorization(report, help))
+	return err
 }
 
 func (env *environment) index(model string) (vector.Index, error) {
