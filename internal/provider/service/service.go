@@ -344,11 +344,24 @@ func readableWithoutAdoption(report store.Report) bool {
 		return false
 	}
 	for _, difference := range report.Differences {
-		if !difference.Repairable || difference.Kind != "missing_column" {
+		if !difference.Repairable || difference.Kind != "missing_column" ||
+			!readOnlyMachineColumn(difference.Table, difference.Column) {
 			return false
 		}
 	}
 	return true
+}
+
+func readOnlyMachineColumn(table, column string) bool {
+	if column != "machine" {
+		return false
+	}
+	switch table {
+	case "sessions", "exchanges", "thinking_blocks", "tool_uses":
+		return true
+	default:
+		return false
+	}
 }
 
 // TheGate opens the read-only gate the first time it is needed. It is an

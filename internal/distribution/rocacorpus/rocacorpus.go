@@ -59,7 +59,7 @@ func applySchema(ctx context.Context, path string) error {
 		return err
 	}
 	defer db.Close()
-	if err := installHashGuards(ctx, db); err != nil {
+	if err := installHashGuards(ctx, db, true); err != nil {
 		return fmt.Errorf("install corpus hash guards: %w", err)
 	}
 	return nil

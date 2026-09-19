@@ -232,13 +232,18 @@ func preflightHashGuards(ctx context.Context, db *sql.DB) error {
 	return nil
 }
 
-func installHashGuards(ctx context.Context, db *sql.DB) error {
+func installHashGuards(ctx context.Context, db *sql.DB, allowSessionDuplicates bool) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin hash-guard installation: %w", err)
 	}
 	defer tx.Rollback()
-	if err := exactdedup.EnsureGuards(ctx, tx); err != nil {
+	if allowSessionDuplicates {
+		err = exactdedup.EnsureCorpusUpdateGuards(ctx, tx)
+	} else {
+		err = exactdedup.EnsureGuards(ctx, tx)
+	}
+	if err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {

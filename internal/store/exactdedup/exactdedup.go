@@ -638,6 +638,10 @@ func EnsureGuards(ctx context.Context, db queryExecutor) error {
 	return EnsureTableGuards(ctx, db)
 }
 
+func EnsureCorpusUpdateGuards(ctx context.Context, db queryExecutor) error {
+	return ensureTableGuards(ctx, db, true)
+}
+
 func GuardsInstalled(ctx context.Context, db interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 	QueryRowContext(context.Context, string, ...any) *sql.Row
@@ -667,6 +671,10 @@ func GuardsInstalled(ctx context.Context, db interface {
 }
 
 func EnsureTableGuards(ctx context.Context, db queryExecutor, only ...string) error {
+	return ensureTableGuards(ctx, db, false, only...)
+}
+
+func ensureTableGuards(ctx context.Context, db queryExecutor, allowSessionDuplicates bool, only ...string) error {
 	specs, err := specs(ctx, db)
 	if err != nil {
 		return err
@@ -691,15 +699,14 @@ func EnsureTableGuards(ctx context.Context, db queryExecutor, only ...string) er
 		if err == nil && normalizeDDL(installed.String) == normalizeDDL(statement) {
 			continue
 		}
-		duplicates, dupErr := exactPayloadDuplicateGroups(ctx, db, spec)
-		if dupErr != nil {
-			return dupErr
-		}
-		if duplicates > 0 {
-			// Leave the prior index in place. Schema adoption and bundled
-			// plugin place must finish when leftover exact clones block a
-			// newer unique expression.
-			continue
+		if allowSessionDuplicates && spec.name == "sessions" && err == nil {
+			duplicates, dupErr := exactPayloadDuplicateGroups(ctx, db, spec)
+			if dupErr != nil {
+				return dupErr
+			}
+			if duplicates > 0 {
+				continue
+			}
 		}
 		if err == nil {
 			if _, err := db.ExecContext(ctx, "DROP INDEX "+name); err != nil {

@@ -213,7 +213,7 @@ func TestExactPayloadGuardCanonicalizesSignedZero(t *testing.T) {
 	}
 }
 
-func TestEnsureGuardsLeavesPriorIndexWhenExactDuplicatesRemain(t *testing.T) {
+func TestEnsureCorpusUpdateGuardsLeavesPriorIndexWhenSessionDuplicatesRemain(t *testing.T) {
 	ctx := context.Background()
 	db, _ := openExactdedupDB(t)
 	defer db.Close()
@@ -229,10 +229,10 @@ func TestEnsureGuardsLeavesPriorIndexWhenExactDuplicatesRemain(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := exactdedup.EnsureGuards(ctx, db); err != nil {
+	if err := exactdedup.EnsureCorpusUpdateGuards(ctx, db); err != nil {
 		t.Fatalf("EnsureGuards with leftover duplicates = %v", err)
 	}
-	if err := exactdedup.EnsureGuards(ctx, db); err != nil {
+	if err := exactdedup.EnsureCorpusUpdateGuards(ctx, db); err != nil {
 		t.Fatalf("EnsureGuards second pass = %v", err)
 	}
 	var indexSQL string
@@ -242,6 +242,24 @@ func TestEnsureGuardsLeavesPriorIndexWhenExactDuplicatesRemain(t *testing.T) {
 	}
 	if strings.Contains(strings.ToLower(indexSQL), "roca_payload_hash") {
 		t.Fatalf("leftover duplicates replaced the prior guard: %s", indexSQL)
+	}
+}
+
+func TestEnsureGuardsRejectsDuplicateMemoriesWithoutPriorGuard(t *testing.T) {
+	ctx := context.Background()
+	db, _ := openExactdedupDB(t)
+	defer db.Close()
+	if _, err := db.Exec(`DROP INDEX IF EXISTS idx_memories_exact_payload`); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if _, err := db.Exec(`INSERT INTO memories(layer, content, metadata, origin, status)
+			VALUES ('project', 'duplicate memory', '{}', 'agent', 'active')`); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := exactdedup.EnsureGuards(ctx, db); err == nil {
+		t.Fatal("EnsureGuards accepted duplicate memories without a prior guard")
 	}
 }
 
