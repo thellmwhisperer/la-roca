@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const issue432RunawaySQL = `WITH RECURSIVE costly(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM costly WHERE n < 100000000) SELECT sum(n) FROM costly`
+const issue432RunawaySQL = `WITH RECURSIVE costly(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM costly WHERE n < 100000000) SELECT sum(n), (SELECT count(*) FROM plugin_roca_corpus.exchanges) AS exchanges FROM costly`
 
 func TestIssue432ExecTimeLimitOnInstalledBinary(t *testing.T) {
 	binary, err := rocaBinary()
@@ -54,12 +54,18 @@ func TestIssue432ExecTimeLimitOnInstalledBinary(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	doctor := world.runAt(home, binary, "doctor")
 	doctorOut := doctor.stdout + doctor.stderr
+	if doctor.code != 0 {
+		t.Fatalf("doctor failed while exec was bounded: code %d\n%s", doctor.code, doctorOut)
+	}
 	if strings.Contains(doctorOut, "SQLITE_BUSY") {
 		t.Fatalf("doctor hit SQLITE_BUSY while exec was bounded:\n%s", doctorOut)
 	}
 	execRun := <-done
 	if execRun.code == 0 {
 		t.Fatal("overlapping exec completed without the time limit")
+	}
+	if !strings.Contains(execRun.stdout+execRun.stderr, "the validated SQL exceeded the time limit after 5s") {
+		t.Fatalf("overlapping exec did not time out:\n%s%s", execRun.stdout, execRun.stderr)
 	}
 
 	ps := exec.Command("ps", "-axo", "etime,command")
