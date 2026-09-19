@@ -161,11 +161,12 @@ the CLI or MCP surface. MCP stamps that harness from the client's identity card
 under the [memory authorship](#memory-authorship) contract. For session
 continuity, prefer `branch:`, `scope:`, or `branch/scope:`, followed by the
 literal labels `done:`, `state:` (or `current state:`), and `next:`.
-Storing a new active handoff for a named project retires every current handoff
-for that project. Pending or resolved writes do not. CLI `--supersedes` or the
-MCP `supersedes` field still
-names a specific predecessor when the writer wants something other than the
-current one; a SUPERSEDE in prose does not. A writer refusal names the
+For the normal session replacement, omit `--supersedes`: storing a new active
+handoff for a named project automatically retires every current handoff for
+that project. Pending or resolved writes do not trigger that automatic
+retirement. CLI `--supersedes` or the MCP `supersedes` field still names a
+specific predecessor when the writer wants something other than the current
+one; a SUPERSEDE in prose does not. A writer refusal names the
 agent, surface and origin it saw, lists the session writers, and shows those
 recommended labels with one example. Rejections direct worker progress to tasks-axi,
 delivery to the `pr` field, session decisions to layer `decision`, and expiring
