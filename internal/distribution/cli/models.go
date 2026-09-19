@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 	"github.com/thellmwhisperer/la-roca/internal/securefile"
+	resident "github.com/thellmwhisperer/la-roca/pkg/resident"
 )
 
 const (
@@ -193,6 +195,7 @@ func renderDoctor(env *cliEnv, report service.DoctorReport) {
 		env.print("configuration: %s (does not exist: defaults in use)", report.ConfigPath)
 	}
 	env.print("%s", renderQueryKnobs(report.Query))
+	renderResidentDoctor(env, report.Resident)
 	env.print("agents detected: %s", detectedAgentsLine(report.DetectedAgents))
 	env.print("agents not found: %s", missingAgentsLine(report.DetectedAgents))
 	env.print("authentication: local agent models use their own CLI sessions; La Roca stores no secrets")
@@ -227,6 +230,35 @@ func renderDoctor(env *cliEnv, report service.DoctorReport) {
 			env.print("  - %s", proposal)
 		}
 	}
+}
+
+func renderResidentDoctor(env *cliEnv, report *resident.Status) {
+	if report == nil {
+		env.print("resident: down")
+		return
+	}
+	env.print("resident: pid=%d · uptime=%s · attached clients=%d · open connections=%d",
+		report.PID, doctorDuration(report.UptimeMS), report.AttachedClients, report.OpenConnections)
+	if len(report.WAL) == 0 {
+		env.print("resident WALs: none")
+		return
+	}
+	env.print("resident WALs:")
+	paths := make([]string, 0, len(report.WAL))
+	for path := range report.WAL {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	for _, path := range paths {
+		env.print("  %s · %d bytes", path, report.WAL[path])
+	}
+}
+
+func doctorDuration(milliseconds int64) string {
+	if milliseconds < 1000 {
+		return fmt.Sprintf("%dms", milliseconds)
+	}
+	return (time.Duration(milliseconds) * time.Millisecond).String()
 }
 
 func renderQueryKnobs(query service.QueryDoctor) string {

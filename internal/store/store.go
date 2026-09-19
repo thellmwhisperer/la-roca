@@ -248,10 +248,34 @@ func (db *DB) Write(ctx context.Context, fn func(*sql.Tx) error) error {
 			}
 			continue
 		}
+		// Keep the WAL bounded while the owning resident is alive. A busy
+		// checkpoint is retried by the next write; it must not turn a committed
+		// write into an apparent failure.
+		_ = db.Checkpoint(ctx)
 		return nil
 	}
 	return fmt.Errorf("the database is still busy after %d write attempts: %w",
 		writeRetries, last)
+}
+
+// Checkpoint truncates this database's WAL when no reader is holding a frame.
+// The bounded context keeps maintenance from extending the request that caused
+// it, and a busy result is intentionally reported to the caller for diagnosis.
+func (db *DB) Checkpoint(ctx context.Context) error {
+	if db == nil || db.sql == nil || db.transient || db.physicalReadOnly {
+		return nil
+	}
+	checkpointCtx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
+	defer cancel()
+	var busy, frames, checkpointed int
+	if err := db.sql.QueryRowContext(checkpointCtx,
+		"PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &frames, &checkpointed); err != nil {
+		return err
+	}
+	if busy != 0 {
+		return fmt.Errorf("WAL checkpoint is busy (%d frames remain)", frames-checkpointed)
+	}
+	return nil
 }
 
 // ApplySchema creates whichever v1 tables and indexes are missing. It is

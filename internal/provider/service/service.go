@@ -276,6 +276,22 @@ func (s *Service) servingLayout() ReadLayout {
 // yet.
 func (s *Service) DB() *store.DB { return s.db }
 
+// OpenConnections is the resident's SQLite handle count. Several service
+// fields can point at the same database while a cutover is in progress, so
+// count unique handles rather than fields.
+func (s *Service) OpenConnections() int {
+	if s == nil {
+		return 0
+	}
+	seen := map[*store.DB]bool{}
+	for _, database := range []*store.DB{s.db, s.legacy, s.hubDB, s.ops, s.corpus, s.layerDB} {
+		if database != nil {
+			seen[database] = true
+		}
+	}
+	return len(seen)
+}
+
 // DataDir is the operator-owned directory where file traces live.
 func (s *Service) DataDir() string { return s.dataDir() }
 

@@ -22,35 +22,48 @@ without hybrid retrieval.
 
 ## 1. `roca mcp serve`: the MCP over stdio
 
-One command, in the foreground, on demand. The agent launches it, it answers
-over its standard input and output, and it dies when that pipe closes. The MCP
-server needs no network port, supervisor or unit file.
+The command is a foreground stdio shim. It forwards each MCP session to the
+one La Roca resident for that data directory; the shim owns no database handle.
+The resident opens core, ops, and corpus once, serves MCP and CLI calls over its
+private local socket, and stays alive when a client pipe closes. Its default
+socket is `<data-directory>/resident/resident.sock`, normally under `~/.roca`.
+If none is listening, `mcp serve` starts it and waits for readiness.
 
-When semantic search is enabled, the server connects to a shared embedding
-resident. Sessions using the same Roca data directory reuse it; different data
-directories have separate residents. The default socket is
-`<data-directory>/vector-resident/resident.sock`, normally under `~/.roca`.
-If none is listening, `mcp serve` starts one. The resident prepares the model
-once; a query arriving before preparation finishes waits for readiness.
-Closing an MCP session disconnects only that client. `roca vector query` and
-`roca query` normally use that same resident: they connect when one is listening
-and start one when not. Closing the CLI process disconnects only that client. The
-resident exits after five minutes with no clients attached by default, and a
-stale socket from a killed resident is replaced on the next start.
+`roca exec`, `roca query`, `roca store`, `roca handoff`, `roca health`,
+`roca doctor`, and `roca vector query` use the resident when it is running.
+They retain their bounded in-process path when it is down, so a resident crash
+does not require a client restart. An attached MCP shim reconnects, replays its
+MCP initialize handshake, and forwards the next request to the replacement.
+The resident owns checkpointing: writes checkpoint and truncate WAL after the
+call, and every request releases its read transaction before the response.
+This bounds the corpus WAL under concurrent MCP and CLI clients (#437).
 
-`ROCA_VECTOR_RESIDENT_SOCKET` overrides the socket path and places its startup
-lock alongside it. Use a separate socket for each data context: the resident
-retains the database and plugin configuration of the session that started it.
+The resident is separate from the embedding resident. When semantic search is
+enabled, `roca-vector` is the single model holder at
+`<data-directory>/vector-resident/resident.sock`; the database resident asks it
+for vector results. Different data directories have separate pairs of
+residents. `roca doctor` reports the database resident PID, uptime, attached
+clients, open connections, and every discovered `*.db-wal` size.
+
+Closing an MCP session disconnects only that client. Both resident sockets are
+private and stale sockets from a killed process are replaced on the next start.
+
+`ROCA_RESIDENT_SOCKET` overrides the database resident socket. For the model
+resident, `ROCA_VECTOR_RESIDENT_SOCKET` overrides its socket. Both place their
+startup lock alongside the socket. Use a separate pair for each data context:
+the resident retains the database and plugin configuration of the session that
+started it.
 On Unix, the socket directory must be owned by the current user and private,
 and the socket path must be shorter than 100 bytes. A positive Go duration in
 `ROCA_VECTOR_RESIDENT_IDLE` overrides the idle period when a resident starts;
 the internal `_resident --idle` flag takes precedence.
 
 Preparation progress received by an MCP or CLI client goes to its standard
-error, leaving result output untouched. The detached resident appends its own
-stdout and stderr to `<data-directory>/logs/vector-resident.log`. If connecting
-or starting the resident fails, serve emits a notice on stderr and keeps the core
-tools available without `roca_vector_query`. If an MCP or CLI client receives a
+error, leaving result output untouched. The detached database resident appends
+its own stdout and stderr to `<data-directory>/logs/resident.log`; the model
+resident uses `<data-directory>/logs/vector-resident.log`. If connecting or
+starting the model resident fails, serve emits a notice on stderr and keeps the
+core tools available without `roca_vector_query`. If an MCP or CLI client receives a
 query's result or query error immediately before a disconnect, it preserves that
 reply. A disconnect without a reply for that query remains an error. Subsequent
 vector calls on the disconnected MCP session fail; a new MCP session can start

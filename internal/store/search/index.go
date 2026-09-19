@@ -108,6 +108,7 @@ func RebuildSources(ctx context.Context, db *store.DB, sources []ProofSource) (R
 	if err := tx.Commit(); err != nil {
 		return Report{}, err
 	}
+	_ = db.Checkpoint(ctx)
 	return Report{LexicalBuilt: true, ElapsedMS: time.Since(started).Milliseconds()}, nil
 }
 
