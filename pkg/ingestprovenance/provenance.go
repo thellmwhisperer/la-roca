@@ -72,8 +72,11 @@ type execer interface {
 }
 
 // Backfill labels historical ingest rows only where their recorded source
-// agent determines the harness. It also removes the old "-build" harness
-// suffix from known legacy Grok model labels without assigning a provider.
+// agent determines the harness. A live unique exact-payload guard may already
+// hold a labeled clone of an unlabeled row; UPDATE OR IGNORE leaves that
+// unlabeled row untouched instead of aborting the place. It also removes the
+// old "-build" harness suffix from known legacy Grok model labels without
+// assigning a provider.
 func Backfill(ctx context.Context, db execer) error {
 	mappings := []struct {
 		harness   string
@@ -99,7 +102,7 @@ func Backfill(ctx context.Context, db execer) error {
 				restriction = " AND origin = 'cron'" +
 					" AND json_extract(metadata, '$._cron_source') IS NOT NULL"
 			}
-			statement := fmt.Sprintf(`UPDATE %s SET source_surface = ?
+			statement := fmt.Sprintf(`UPDATE OR IGNORE %s SET source_surface = ?
 				WHERE COALESCE(source_surface, '') = '' AND %s%s`,
 				table, mapping.predicate, restriction)
 			if _, err := db.ExecContext(ctx, statement, mapping.harness); err != nil {
