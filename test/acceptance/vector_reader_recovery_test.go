@@ -4,8 +4,6 @@ package acceptance
 
 import (
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -15,20 +13,7 @@ func TestRealBinaryVectorReaderRecoversAfterRejectedRequests(t *testing.T) {
 	if err != nil {
 		t.Fatalf("I cannot find the binary: %v", err)
 	}
-	home, err := acceptanceTempDir("roca-vector-reader-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(home) })
-	if err := os.MkdirAll(filepath.Join(home, ".tmp"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-
-	world := &distributionWorld{}
-	init := world.runAt(home, binary, "init", "--db-path", filepath.Join(home, ".roca", "roca.db"), "--json")
-	if init.code != 0 {
-		t.Fatalf("initialize disposable home: code %d\n%s%s", init.code, init.stdout, init.stderr)
-	}
+	home, world := initializedDistributionHome(t, "roca-vector-reader-", binary)
 
 	requests := []struct {
 		body      map[string]any
