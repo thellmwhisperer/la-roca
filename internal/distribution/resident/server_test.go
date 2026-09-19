@@ -26,17 +26,9 @@ func TestResidentPreservesTheMCPHandshakeWhileSniffingTheProtocol(t *testing.T) 
 	if runtime.GOOS == "windows" {
 		t.Skip("unix resident transport")
 	}
-	root := residentTestRoot(t)
-	socket := filepath.Join(root, "resident.sock")
-	t.Setenv("ROCA_RESIDENT_SOCKET", socket)
-	svc, err := service.Open(service.Options{
-		DBPath: filepath.Join(root, "roca.db"), DataDir: root,
+	svc, socket := openResidentTestService(t, service.Options{
 		Version: "0.0.0-test", Commit: "0123456789abcdef",
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = svc.Close() })
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
@@ -74,14 +66,7 @@ func TestResidentPreservesTheMCPHandshakeWhileSniffingTheProtocol(t *testing.T) 
 }
 
 func TestResidentServesCLIStatusAlongsideMCPClients(t *testing.T) {
-	root := residentTestRoot(t)
-	socket := filepath.Join(root, "resident.sock")
-	t.Setenv("ROCA_RESIDENT_SOCKET", socket)
-	svc, err := service.Open(service.Options{DBPath: filepath.Join(root, "roca.db"), DataDir: root})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = svc.Close() })
+	svc, socket := openResidentTestService(t, service.Options{})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
@@ -131,15 +116,24 @@ func residentTestRoot(t *testing.T) string {
 	return root
 }
 
-func startReviewResident(t *testing.T) (*service.Service, transport.Options) {
+func openResidentTestService(t *testing.T, options service.Options) (*service.Service, string) {
 	t.Helper()
 	root := residentTestRoot(t)
 	socket := filepath.Join(root, "resident.sock")
 	t.Setenv("ROCA_RESIDENT_SOCKET", socket)
-	svc, err := service.Open(service.Options{DBPath: filepath.Join(root, "roca.db"), DataDir: root})
+	options.DBPath = filepath.Join(root, "roca.db")
+	options.DataDir = root
+	svc, err := service.Open(options)
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = svc.Close() })
+	return svc, socket
+}
+
+func startReviewResident(t *testing.T) (*service.Service, transport.Options) {
+	t.Helper()
+	svc, socket := openResidentTestService(t, service.Options{})
 	if _, err := svc.Init(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +141,7 @@ func startReviewResident(t *testing.T) (*service.Service, transport.Options) {
 	done := make(chan error, 1)
 	go func() { done <- Run(ctx, svc, mcpplug.Build{}) }()
 	waitResidentTestSocket(t, socket).Close()
-	t.Cleanup(func() { cancel(); <-done; svc.Close() })
+	t.Cleanup(func() { cancel(); <-done })
 	return svc, transport.Options{Socket: socket, DBPath: svc.ConfiguredDBPath()}
 }
 

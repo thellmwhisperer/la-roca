@@ -55,71 +55,45 @@ func (env *cliEnv) tryResident(ctx context.Context, raw []string) (bool, error) 
 
 	switch command {
 	case "exec":
-		request, ok := parseResidentExec(args)
-		if !ok {
-			return false, nil
-		}
-		var result service.ExecResult
-		if err := call("exec", request, &result); errors.Is(err, errResidentUnavailable) {
-			return false, nil
-		} else if err != nil {
-			return true, err
-		}
-		result.MaxChars = service.TextBudget(request.MaxChars)
-		env.capture(result)
-		if jsonOutput || env.json {
-			return true, env.printJSON(result)
-		}
-		env.print("%s", axi.Exec(result))
+		return runResidentCommand(env, args, jsonOutput, parseResidentExec, call, command, axi.Exec,
+			func(result *service.ExecResult, request service.ExecRequest) {
+				result.MaxChars = service.TextBudget(request.MaxChars)
+				env.capture(*result)
+			})
 	case "query":
-		request, ok := parseResidentQuery(args)
-		if !ok {
-			return false, nil
-		}
-		var result service.SearchResult
-		if err := call("query", request, &result); errors.Is(err, errResidentUnavailable) {
-			return false, nil
-		} else if err != nil {
-			return true, err
-		}
-		result.MaxChars = service.TextBudget(request.MaxChars)
-		env.capture(result)
-		if jsonOutput || env.json {
-			return true, env.printJSON(result)
-		}
-		env.print("%s", axi.Search(result))
+		return runResidentCommand(env, args, jsonOutput, parseResidentQuery, call, command, axi.Search,
+			func(result *service.SearchResult, request service.SearchRequest) {
+				result.MaxChars = service.TextBudget(request.MaxChars)
+				env.capture(*result)
+			})
 	case "store":
-		request, ok := parseResidentStore(args)
-		if !ok {
-			return false, nil
-		}
-		var result service.StoreResult
-		if err := call("store", request, &result); errors.Is(err, errResidentUnavailable) {
-			return false, nil
-		} else if err != nil {
-			return true, err
-		}
-		if jsonOutput || env.json {
-			return true, env.printJSON(result)
-		}
-		env.print("%s", axi.Store(result))
+		return runResidentCommand(env, args, jsonOutput, parseResidentStore, call, command, axi.Store, nil)
 	case "health":
-		request, ok := parseResidentHealth(args)
-		if !ok {
-			return false, nil
-		}
-		var result service.HealthReport
-		if err := call("health", request, &result); errors.Is(err, errResidentUnavailable) {
-			return false, nil
-		} else if err != nil {
-			return true, err
-		}
-		if jsonOutput || env.json {
-			return true, env.printJSON(result)
-		}
-		env.print("%s", axi.Health(result))
-
+		return runResidentCommand(env, args, jsonOutput, parseResidentHealth, call, command, axi.Health, nil)
 	}
+	return true, nil
+}
+
+func runResidentCommand[Request, Result any](env *cliEnv, args []string, jsonOutput bool,
+	parse func([]string) (Request, bool), call func(string, any, any) error, command string,
+	render func(Result) string, prepare func(*Result, Request)) (bool, error) {
+	request, ok := parse(args)
+	if !ok {
+		return false, nil
+	}
+	var result Result
+	if err := call(command, request, &result); errors.Is(err, errResidentUnavailable) {
+		return false, nil
+	} else if err != nil {
+		return true, err
+	}
+	if prepare != nil {
+		prepare(&result, request)
+	}
+	if jsonOutput || env.json {
+		return true, env.printJSON(result)
+	}
+	env.print("%s", render(result))
 	return true, nil
 }
 
@@ -150,32 +124,7 @@ func (env *cliEnv) tryResidentVector(ctx context.Context, args []string, jsonOut
 	if err := json.Unmarshal(payload, &result); err != nil {
 		return true, fmt.Errorf("decode semantic search: %w", err)
 	}
-	help := vectorQueryHelp(result)
-	if jsonOutput || env.json {
-		return true, env.printJSON(map[string]any{
-			"query": inv.query, "k": inv.k, "databases": result.Databases, "model": result.Model,
-			"mixed_models": result.MixedModels, "results": result.Results,
-			"database_results": result.DatabaseResults, "notices": result.Notices,
-			"vector_executed": result.VectorExecuted,
-			"elapsed_ms":      time.Since(started).Milliseconds(),
-			"help":            help,
-		})
-	}
-	for _, notice := range result.Notices {
-		fmt.Fprintln(env.errOut, "notice:", notice)
-	}
-	if result.MixedModels {
-		for _, database := range result.DatabaseResults {
-			fmt.Fprintf(env.out, "database %s · model %s\n", database.Database, database.Model)
-			printVectorHits(env, database.Results)
-		}
-	} else {
-		printVectorHits(env, result.Results)
-	}
-	if rendered := renderHelp(help...); rendered != "" {
-		env.print("%s", rendered)
-	}
-	return true, nil
+	return true, printVectorQueryResult(env, inv, result, jsonOutput, started)
 }
 
 var errResidentUnavailable = errors.New("resident unavailable")

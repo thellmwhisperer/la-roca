@@ -118,19 +118,23 @@ func runVectorQueryResident(env *cliEnv, args []string, companion string, paths 
 	} else if err := json.Unmarshal(raw, &result); err != nil {
 		return true, ExitError, fmt.Errorf("decode semantic search: %w", err)
 	}
+	if err := printVectorQueryResult(env, inv, result, inv.json, started); err != nil {
+		return true, ExitError, err
+	}
+	return true, ExitOK, nil
+}
+
+func printVectorQueryResult(env *cliEnv, inv vectorQueryInvocation, result federatedVectorQuery, jsonOutput bool, started time.Time) error {
 	help := vectorQueryHelp(result)
-	if inv.json || env.json {
-		if err := env.printJSON(map[string]any{
+	if jsonOutput || env.json {
+		return env.printJSON(map[string]any{
 			"query": inv.query, "k": inv.k, "databases": result.Databases, "model": result.Model,
 			"mixed_models": result.MixedModels, "results": result.Results,
 			"database_results": result.DatabaseResults, "notices": result.Notices,
 			"vector_executed": result.VectorExecuted,
 			"elapsed_ms":      time.Since(started).Milliseconds(),
 			"help":            help,
-		}); err != nil {
-			return true, ExitError, err
-		}
-		return true, ExitOK, nil
+		})
 	}
 	for _, notice := range result.Notices {
 		fmt.Fprintln(env.errOut, "notice:", notice)
@@ -146,7 +150,7 @@ func runVectorQueryResident(env *cliEnv, args []string, companion string, paths 
 	if rendered := renderHelp(help...); rendered != "" {
 		env.print("%s", rendered)
 	}
-	return true, ExitOK, nil
+	return nil
 }
 
 type federatedVectorQuery struct {
