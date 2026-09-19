@@ -10,8 +10,6 @@ import (
 	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
-	"github.com/thellmwhisperer/la-roca/internal/jsonid"
-
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 )
 
@@ -75,10 +73,306 @@ func (s *Service) exec(ctx context.Context, req ExecRequest, reader *ExecReader)
 	return result, nil
 }
 
+type opsSQLToken struct {
+	text       string
+	lower      string
+	start      int
+	end        int
+	depth      int
+	identifier bool
+	number     bool
+	string     bool
+}
+
+type opsSQLScope struct {
+	start   int
+	end     int
+	depth   int
+	ops     bool
+	aliases map[string]bool
+}
+
+type opsSQLReplacement struct {
+	start int
+	end   int
+	text  string
+}
+
+func expandOpsLegacyIDs(statement string) string {
+	if !strings.Contains(strings.ToLower(statement), "plugin_roca_ops.memories") {
+		return statement
+	}
+	tokens := tokenizeOpsSQL(statement)
+	if len(tokens) == 0 {
+		return statement
+	}
+	scopes := opsSQLScopes(tokens)
+	if len(scopes) == 0 {
+		return statement
+	}
+	replacements := make([]opsSQLReplacement, 0)
+	for index := range tokens {
+		scope := innermostOpsSQLScope(scopes, index)
+		if scope == nil || !scope.ops {
+			continue
+		}
+		idIndex, qualifier, ok := opsSQLIDReference(tokens, index, scope)
+		if !ok || idIndex+2 >= len(tokens) || tokens[idIndex+1].text != "=" {
+			continue
+		}
+		digits, ok := opsSQLDecimal(tokens[idIndex+2])
+		if !ok {
+			continue
+		}
+		column := "id"
+		legacy := "legacy_id"
+		start := tokens[idIndex].start
+		if qualifier != "" {
+			column = qualifier + ".id"
+			legacy = qualifier + ".legacy_id"
+			start = tokens[index].start
+		}
+		replacements = append(replacements, opsSQLReplacement{
+			start: start,
+			end:   tokens[idIndex+2].end,
+			text:  "(" + column + " = " + digits + " OR " + legacy + " = " + digits + ")",
+		})
+	}
+	if len(replacements) == 0 {
+		return statement
+	}
+	var result strings.Builder
+	last := 0
+	for _, replacement := range replacements {
+		if replacement.start < last {
+			continue
+		}
+		result.WriteString(statement[last:replacement.start])
+		result.WriteString(replacement.text)
+		last = replacement.end
+	}
+	result.WriteString(statement[last:])
+	return result.String()
+}
+
+func tokenizeOpsSQL(statement string) []opsSQLToken {
+	var tokens []opsSQLToken
+	depth := 0
+	for index := 0; index < len(statement); {
+		if statement[index] == '-' && index+1 < len(statement) && statement[index+1] == '-' {
+			index += 2
+			for index < len(statement) && statement[index] != '\n' {
+				index++
+			}
+			continue
+		}
+		if statement[index] == '/' && index+1 < len(statement) && statement[index+1] == '*' {
+			index += 2
+			for index+1 < len(statement) && (statement[index] != '*' || statement[index+1] != '/') {
+				index++
+			}
+			if index+1 < len(statement) {
+				index += 2
+			}
+			continue
+		}
+		if strings.ContainsRune(" \t\r\n", rune(statement[index])) {
+			index++
+			continue
+		}
+		start := index
+		switch statement[index] {
+		case '\'', '"', '`', '[':
+			quote := statement[index]
+			close := quote
+			if quote == '[' {
+				close = ']'
+			}
+			index++
+			for index < len(statement) {
+				if statement[index] == close {
+					if quote != '[' && index+1 < len(statement) && statement[index+1] == close {
+						index += 2
+						continue
+					}
+					index++
+					break
+				}
+				index++
+			}
+			text := statement[start:index]
+			token := opsSQLToken{text: text, lower: strings.ToLower(opsSQLQuotedValue(text)), start: start, end: index, depth: depth}
+			if quote == '\'' {
+				token.string = true
+			} else {
+				token.identifier = true
+			}
+			tokens = append(tokens, token)
+		case '(':
+			tokens = append(tokens, opsSQLToken{text: "(", start: start, end: start + 1, depth: depth})
+			depth++
+			index++
+		case ')':
+			if depth > 0 {
+				depth--
+			}
+			tokens = append(tokens, opsSQLToken{text: ")", start: start, end: start + 1, depth: depth})
+			index++
+		default:
+			if opsSQLIdentifierStartByte(statement[index]) {
+				index++
+				for index < len(statement) && opsSQLIdentifierByte(statement[index]) {
+					index++
+				}
+				text := statement[start:index]
+				tokens = append(tokens, opsSQLToken{text: text, lower: strings.ToLower(text), start: start, end: index, depth: depth, identifier: true})
+			} else if statement[index] >= '0' && statement[index] <= '9' {
+				index++
+				for index < len(statement) && statement[index] >= '0' && statement[index] <= '9' {
+					index++
+				}
+				text := statement[start:index]
+				tokens = append(tokens, opsSQLToken{text: text, lower: text, start: start, end: index, depth: depth, number: true})
+			} else {
+				tokens = append(tokens, opsSQLToken{text: statement[index : index+1], start: start, end: start + 1, depth: depth})
+				index++
+			}
+		}
+	}
+	return tokens
+}
+
+func opsSQLIdentifierByte(value byte) bool {
+	return value == '_' || value == '$' || value >= 'a' && value <= 'z' ||
+		value >= 'A' && value <= 'Z' || value >= '0' && value <= '9'
+}
+
+func opsSQLIdentifierStartByte(value byte) bool {
+	return value == '_' || value == '$' || value >= 'a' && value <= 'z' || value >= 'A' && value <= 'Z'
+}
+
+func opsSQLQuotedValue(text string) string {
+	if len(text) < 2 {
+		return text
+	}
+	value := text[1 : len(text)-1]
+	if text[0] == '[' {
+		return value
+	}
+	return strings.ReplaceAll(value, string(text[0])+string(text[0]), string(text[0]))
+}
+
+func opsSQLScopes(tokens []opsSQLToken) []opsSQLScope {
+	scopes := make([]opsSQLScope, 0)
+	cteOps := make(map[string]bool)
+	for index, token := range tokens {
+		if token.lower != "select" || !token.identifier {
+			continue
+		}
+		end := len(tokens)
+		for candidate := index + 1; candidate < len(tokens); candidate++ {
+			if tokens[candidate].depth < token.depth {
+				end = candidate
+				break
+			}
+		}
+		aliases := make(map[string]bool)
+		baseDepth := token.depth
+		for candidate := index + 1; candidate < end; candidate++ {
+			if tokens[candidate].depth != baseDepth || (tokens[candidate].lower != "from" && tokens[candidate].lower != "join") {
+				continue
+			}
+			table, next, ok := opsSQLTable(tokens, candidate+1, end)
+			if !ok || (table != "plugin_roca_ops.memories" && !cteOps[table]) {
+				continue
+			}
+			aliases[""] = true
+			if next < end && tokens[next].lower == "as" {
+				next++
+			}
+			if next < end && tokens[next].identifier && !opsSQLClause(tokens[next].lower) {
+				aliases[tokens[next].lower] = true
+			}
+		}
+		scope := opsSQLScope{start: index, end: end, depth: token.depth, ops: len(aliases) > 0, aliases: aliases}
+		scopes = append(scopes, scope)
+		if index >= 3 && tokens[index-3].identifier && tokens[index-2].lower == "as" && tokens[index-1].text == "(" {
+			cteOps[tokens[index-3].lower] = scope.ops
+		}
+	}
+	return scopes
+}
+
+func opsSQLTable(tokens []opsSQLToken, index, end int) (string, int, bool) {
+	if index >= end || !tokens[index].identifier {
+		return "", index, false
+	}
+	parts := []string{tokens[index].lower}
+	index++
+	for index+1 < end && tokens[index].text == "." && tokens[index+1].identifier {
+		parts = append(parts, tokens[index+1].lower)
+		index += 2
+	}
+	return strings.Join(parts, "."), index, true
+}
+
+func opsSQLClause(value string) bool {
+	switch value {
+	case "where", "join", "left", "right", "inner", "outer", "cross", "on", "group", "order", "limit", "offset", "having", "union", "except", "intersect", "window", "returning":
+		return true
+	default:
+		return false
+	}
+}
+
+func innermostOpsSQLScope(scopes []opsSQLScope, index int) *opsSQLScope {
+	var match *opsSQLScope
+	for scopeIndex := range scopes {
+		scope := &scopes[scopeIndex]
+		if index >= scope.start && index < scope.end && (match == nil || scope.depth > match.depth) {
+			match = scope
+		}
+	}
+	return match
+}
+
+func opsSQLIDReference(tokens []opsSQLToken, index int, scope *opsSQLScope) (int, string, bool) {
+	if tokens[index].lower == "id" && tokens[index].identifier {
+		if index == 0 || tokens[index-1].text != "." {
+			return index, "", scope.aliases[""]
+		}
+		if index >= 2 && tokens[index-2].identifier {
+			qualifier := tokens[index-2].lower
+			return index, qualifier, scope.aliases[qualifier]
+		}
+	}
+	return 0, "", false
+}
+
+func opsSQLDecimal(token opsSQLToken) (string, bool) {
+	if !token.number && !token.string {
+		return "", false
+	}
+	value := token.text
+	if token.string && len(value) >= 2 {
+		value = value[1 : len(value)-1]
+	}
+	if value == "" {
+		return "", false
+	}
+	for index := range value {
+		if value[index] < '0' || value[index] > '9' {
+			return "", false
+		}
+	}
+	return value, true
+}
+
 func (s *Service) prepareExec(ctx context.Context, statement string, cursor bool) (PluginRoute, string, error) {
 	if _, err := s.EnsureSchema(ctx); err != nil {
 		return PluginRoute{}, "", err
 	}
+	statement = expandOpsLegacyIDs(statement)
 	route := s.pluginsForSQL(ctx, statement)
 	ok := false
 	defer func() {
@@ -179,11 +473,8 @@ func scanRowsPage(rows *sql.Rows, maxChars int, term string, limit int) ([]strin
 			case []byte:
 				row[column] = Truncate(string(text), maxChars, term)
 			case string:
-				if !jsonid.IdentityName(column) {
-					row[column] = Truncate(text, maxChars, term)
-				}
+				row[column] = Truncate(text, maxChars, term)
 			}
-			row[column] = jsonid.Cell(column, row[column])
 		}
 		result = append(result, row)
 	}
