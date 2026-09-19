@@ -264,6 +264,7 @@ func opsSQLQuotedValue(text string) string {
 
 func opsSQLScopes(tokens []opsSQLToken) []opsSQLScope {
 	scopes := make([]opsSQLScope, 0)
+	cteOps := make(map[string]bool)
 	for index, token := range tokens {
 		if token.lower != "select" || !token.identifier {
 			continue
@@ -282,7 +283,7 @@ func opsSQLScopes(tokens []opsSQLToken) []opsSQLScope {
 				continue
 			}
 			table, next, ok := opsSQLTable(tokens, candidate+1, end)
-			if !ok || table != "plugin_roca_ops.memories" {
+			if !ok || (table != "plugin_roca_ops.memories" && !cteOps[table]) {
 				continue
 			}
 			aliases[""] = true
@@ -293,7 +294,11 @@ func opsSQLScopes(tokens []opsSQLToken) []opsSQLScope {
 				aliases[tokens[next].lower] = true
 			}
 		}
-		scopes = append(scopes, opsSQLScope{start: index, end: end, depth: token.depth, ops: len(aliases) > 0, aliases: aliases})
+		scope := opsSQLScope{start: index, end: end, depth: token.depth, ops: len(aliases) > 0, aliases: aliases}
+		scopes = append(scopes, scope)
+		if index >= 3 && tokens[index-3].identifier && tokens[index-2].lower == "as" && tokens[index-1].text == "(" {
+			cteOps[tokens[index-3].lower] = scope.ops
+		}
 	}
 	return scopes
 }

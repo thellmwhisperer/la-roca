@@ -11,7 +11,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
-func TestStoreMetadataAndSupersedesKeepOpsIdsAsStrings(t *testing.T) {
+func TestStoreMetadataUsesNumericOpsIDsAndAcceptsStringSupersedes(t *testing.T) {
 	svc := seededOpsService(t)
 	session := connectAs(t, svc, "claude-code", "2.1.0")
 
@@ -123,9 +123,6 @@ func mcpJSONInt(value any) (int64, bool) {
 		return v, true
 	case int:
 		return int64(v), true
-	case string:
-		n, err := strconv.ParseInt(v, 10, 64)
-		return n, err == nil
 	default:
 		return 0, false
 	}
