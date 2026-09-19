@@ -125,8 +125,8 @@ Memory identifiers in SQL JSON results, memory-operation envelopes, and MCP
 tool metadata are decimal strings, including small core IDs. SQL TOON output
 quotes IDs outside JavaScript's safe integer range; safe numeric IDs can appear
 unquoted. New operational memory identifiers are allocated below JavaScript's
-2^53 safe integer and at most 12 digits. Historical identifiers issued from
-2^60 stay stored as they are and remain addressable through `exec`,
+2^53 safe-integer limit and are at most 12 digits. Historical identifiers
+issued from 2^60 stay stored as they are and remain addressable through `exec`,
 `handoff latest`, `--supersedes`, and MCP. Keep returned ID strings intact in
 JavaScript: converting a historical ops ID to `Number` still rounds it and can
 point a later write at the wrong row.
@@ -143,7 +143,8 @@ Pass the returned ID directly to CLI `roca store --supersedes "$id"` or as a
 decimal string in the MCP `roca_store` `supersedes` field. MCP still accepts
 integer JSON input for compatibility, but cannot recover digits a client
 already rounded. The CLI accepts decimal argument text as before. This changes
-client encoding, not SQLite identifier storage or SQL comparisons.
+client encoding, not SQLite storage types or SQL comparisons; the short-ID
+allocator changes only the values assigned to newly stored operational memories.
 
 ## Read-only queries across machines
 
