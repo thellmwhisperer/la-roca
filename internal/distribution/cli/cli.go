@@ -372,13 +372,33 @@ func dispatchPlugin(env *cliEnv, root *cobra.Command, args []string, features co
 	}
 	var exit *exec.ExitError
 	if errors.As(err, &exit) {
-		if !probe.wrote.Load() {
-			return true, exit.ExitCode(), fmt.Errorf(
-				"plugin %s exited with code %d without writing a reason", args[0], exit.ExitCode())
-		}
-		return true, exit.ExitCode(), nil
+		return true, exit.ExitCode(), pluginExitReason(args, exit.ExitCode(), probe.wrote.Load())
 	}
 	return true, ExitError, fmt.Errorf("execute plugin %s: %w", path, err)
+}
+
+func pluginExitReason(args []string, code int, wroteStderr bool) error {
+	if !wroteStderr {
+		return fmt.Errorf("plugin %s exited with code %d without writing a reason", args[0], code)
+	}
+	if vectorIngestInvocation(args) {
+		// Progress is not a failure reason. A non-zero vector ingest must still
+		// name the exit so the host, the execution log, and a cron journey agree.
+		return fmt.Errorf("plugin %s exited with code %d", args[0], code)
+	}
+	return nil
+}
+
+func vectorIngestInvocation(args []string) bool {
+	if len(args) == 0 || args[0] != "vector" {
+		return false
+	}
+	for _, argument := range args[1:] {
+		if argument == "ingest" {
+			return true
+		}
+	}
+	return false
 }
 
 type stderrProbe struct {

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -119,12 +120,28 @@ func TestFailedIngestIsRecordedAndDefersTheDependentRide(t *testing.T) {
 }
 
 func TestVectorDeltaRideRecordsFailureWhenIngestExitsOne(t *testing.T) {
-	root, database := cronWorld(t, vectorDeltaRide)
-	service := newService(t, root, database, func(_ context.Context, command string, _, errOut io.Writer) (int, error) {
-		if strings.Contains(command, "vector ingest --delta") {
-			return 1, fmt.Errorf("exit status 1")
+	if runtime.GOOS == "windows" {
+		t.Skip("unix shell ride")
+	}
+	root, database := cronWorld(t, `[ride.vector_delta]
+command = "echo vector-delta-progress >&2; exit 1"
+gate = "after_ingest"
+`)
+	service := newService(t, root, database, func(ctx context.Context, command string, out, errOut io.Writer) (int, error) {
+		if !strings.Contains(command, "vector-delta-progress") {
+			return 0, nil
 		}
-		return 0, nil
+		child := exec.CommandContext(ctx, "/bin/sh", "-c", command)
+		child.Stdout, child.Stderr = out, errOut
+		err := child.Run()
+		if err == nil {
+			return 0, nil
+		}
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
+			return exit.ExitCode(), err
+		}
+		return -1, err
 	})
 
 	report, err := service.Run(context.Background(), plugin.DefaultTrain, false)
@@ -136,7 +153,8 @@ func TestVectorDeltaRideRecordsFailureWhenIngestExitsOne(t *testing.T) {
 	}
 	journeys := readJourneys(t, database)
 	if len(journeys) != 2 || journeys[1].ExitCode == nil || *journeys[1].ExitCode != 1 ||
-		journeys[1].Error == "" || *journeys[0].ExitCode != 0 {
+		journeys[1].Error == "" || *journeys[0].ExitCode != 0 ||
+		!strings.Contains(journeys[1].Stderr, "vector-delta-progress") {
 		t.Fatalf("journeys = %+v", journeys)
 	}
 }

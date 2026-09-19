@@ -153,6 +153,31 @@ func TestPluginCallsAreAuditedWithoutCredentialArguments(t *testing.T) {
 	}
 }
 
+func TestVectorIngestProgressThenExitNamesTheFailure(t *testing.T) {
+	home := t.TempDir()
+	pluginsDir := t.TempDir()
+	plugin := filepath.Join(pluginsDir, "roca-vector")
+	script := "#!/bin/sh\necho 'vector delta: 6/6954 sources' >&2\nexit 1\n"
+	if err := os.WriteFile(plugin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", pluginsDir)
+	t.Setenv("HOME", home)
+	writeConfig(t, home, "[features]\nvector = true\n")
+	warnings := &strings.Builder{}
+	env := &cliEnv{out: &strings.Builder{}, errOut: warnings}
+	code, err := executeWithOptions(env, []string{"vector", "ingest", "--delta"}, nil, true)
+	if code != 1 || err == nil || !strings.Contains(err.Error(), "plugin vector exited with code 1") ||
+		strings.Contains(err.Error(), "without writing a reason") {
+		t.Fatalf("progress-then-exit = code %d err %v", code, err)
+	}
+	raw := readAuditStream(t, filepath.Join(home, ".roca"), logfile.Executions)
+	if !strings.Contains(string(raw), "plugin vector exited with code 1") ||
+		strings.Contains(string(raw), `"error":"command exited with code 1"`) {
+		t.Fatalf("progress-then-exit audit = %s", raw)
+	}
+}
+
 func TestSilentPluginExitNamesTheFailure(t *testing.T) {
 	home := t.TempDir()
 	pluginsDir := t.TempDir()

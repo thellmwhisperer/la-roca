@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -84,6 +85,35 @@ func TestCronListAndDryRunRemainAvailableInReadOnlyMode(t *testing.T) {
 	pluginDirectory := filepath.Join(home, ".roca", "plugins", rocacron.Name)
 	if _, err := os.Stat(pluginDirectory); !os.IsNotExist(err) {
 		t.Fatalf("read-only inspection installed the plugin: %v", err)
+	}
+}
+
+func TestCronHourlyVectorDeltaRecordsAFailedShellRide(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix shell ride")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("ROCA_MODELS_ORDER", "none")
+	writeConfig(t, home, `[features]
+cron = true
+
+[ride.vector_delta]
+train = "hourly"
+command = "echo vector-delta-progress >&2; exit 1"
+`)
+	if _, err := rocacron.Ensure(filepath.Join(home, ".roca", "plugins"),
+		filepath.Join(home, ".local", "bin"), "test"); err != nil {
+		t.Fatal(err)
+	}
+	env, output, warnings := newCronTestEnv()
+	code, err := executeWithEnv(env, []string{"cron", "run", "hourly"}, nil)
+	if err != nil || code != ExitError ||
+		!strings.Contains(output.String(), "vector_delta") ||
+		!strings.Contains(output.String(), "exit=1") ||
+		!strings.Contains(warnings.String(), "vector-delta-progress") {
+		t.Fatalf("hourly vector_delta = code %d err %v out=%q errOut=%q",
+			code, err, output.String(), warnings.String())
 	}
 }
 
