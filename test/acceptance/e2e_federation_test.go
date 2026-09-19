@@ -284,6 +284,54 @@ func (m *world) jsonFieldIsString(field, want string) error {
 	return nil
 }
 
+func jsonInteger(value any) (int64, error) {
+	switch v := value.(type) {
+	case float64:
+		n := int64(v)
+		if float64(n) != v {
+			return 0, fmt.Errorf("not an integer: %v", v)
+		}
+		return n, nil
+	case json.Number:
+		return v.Int64()
+	case int64:
+		return v, nil
+	default:
+		return 0, fmt.Errorf("%T is not a JSON integer", value)
+	}
+}
+
+func requireJSSafeJSONID(t *testing.T, raw json.RawMessage, stdout string) int64 {
+	t.Helper()
+	id, err := strconv.ParseInt(strings.TrimSpace(string(raw)), 10, 64)
+	if err != nil {
+		t.Fatalf("id was not a JSON integer: %v\n%s", err, stdout)
+	}
+	if id < 1 || id >= 1<<53 || len(strconv.FormatInt(id, 10)) > 12 {
+		t.Fatalf("id = %d, want a positive JS-safe integer of at most 12 digits:\n%s", id, stdout)
+	}
+	return id
+}
+
+func (m *world) jsonFieldIsJSSafeInteger(field string) error {
+	document, err := m.json()
+	if err != nil {
+		return err
+	}
+	value, ok := lookup(document, field)
+	if !ok {
+		return fmt.Errorf("the JSON output has no %q: %v", field, document)
+	}
+	n, err := jsonInteger(value)
+	if err != nil {
+		return fmt.Errorf("%s = %v (%T), want a JSON integer: %w", field, value, value, err)
+	}
+	if n < 1 || n >= 1<<53 || len(strconv.FormatInt(n, 10)) > 12 {
+		return fmt.Errorf("%s = %d, want a positive JS-safe integer of at most 12 digits", field, n)
+	}
+	return nil
+}
+
 func caseIssue315(t *testing.T, installed string) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shared residency is proven on unix sockets")
@@ -318,7 +366,7 @@ func caseIssue318(t *testing.T, lab *federationLab) {
 }
 
 func caseIssue319(t *testing.T, lab *federationLab) {
-	got := lab.cli(t, 0, "exec", "SELECT id FROM plugin_roca_ops.memories LIMIT 1", "--json")
+	got := lab.cli(t, 0, "exec", "SELECT id FROM plugin_roca_ops.memories WHERE id = '"+federationDiscoveryID+"'", "--json")
 	var result struct {
 		Rows []struct {
 			ID json.RawMessage `json:"id"`
@@ -330,13 +378,7 @@ func caseIssue319(t *testing.T, lab *federationLab) {
 	if len(result.Rows) != 1 {
 		t.Fatalf("ops id rows = %d, want 1:\n%s", len(result.Rows), got.stdout)
 	}
-	id, err := strconv.ParseInt(string(result.Rows[0].ID), 10, 64)
-	if err != nil {
-		t.Fatalf("ops id was not a JSON integer: %v\n%s", err, got.stdout)
-	}
-	if id < 1 || id >= 1<<53 || len(strconv.FormatInt(id, 10)) > 12 {
-		t.Fatalf("ops id = %d, want a positive JS-safe integer of at most 12 digits:\n%s", id, got.stdout)
-	}
+	requireJSSafeJSONID(t, result.Rows[0].ID, got.stdout)
 }
 
 func caseIssue324(t *testing.T) {
@@ -488,13 +530,29 @@ func caseHooksNeverBlock(t *testing.T, lab *federationLab) {
 func caseExecExactIDs(t *testing.T, lab *federationLab) {
 	start := time.Now()
 	got := lab.cli(t, 0, "exec",
-		"SELECT id FROM plugin_roca_ops.memories WHERE id = '"+federationDiscoveryID+"'",
+		"SELECT id, legacy_id FROM plugin_roca_ops.memories WHERE id = '"+federationDiscoveryID+"'",
 		"--json")
 	if time.Since(start) >= 5*time.Second {
 		t.Fatalf("exec took %s, want under 5s", time.Since(start))
 	}
-	if !strings.Contains(got.stdout, `"`+federationDiscoveryID+`"`) {
-		t.Fatalf("exact id missing:\n%s", got.stdout)
+	var result struct {
+		Rows []struct {
+			ID       json.RawMessage `json:"id"`
+			LegacyID json.RawMessage `json:"legacy_id"`
+		} `json:"rows"`
+	}
+	if err := json.Unmarshal([]byte(got.stdout), &result); err != nil {
+		t.Fatalf("decode exact-id response: %v\n%s", err, got.stdout)
+	}
+	if len(result.Rows) != 1 {
+		t.Fatalf("exact-id rows = %d, want 1:\n%s", len(result.Rows), got.stdout)
+	}
+	requireJSSafeJSONID(t, result.Rows[0].ID, got.stdout)
+	if strings.TrimSpace(string(result.Rows[0].LegacyID)) != federationDiscoveryID {
+		t.Fatalf("legacy_id = %s, want %s:\n%s", result.Rows[0].LegacyID, federationDiscoveryID, got.stdout)
+	}
+	if !strings.Contains(got.stdout, federationDiscoveryID) {
+		t.Fatalf("historical id missing:\n%s", got.stdout)
 	}
 	ms, err := lastExecutionDuration(lab.m.home, "exec")
 	if err != nil {
@@ -555,9 +613,22 @@ func caseHandoffOnePerProject(t *testing.T, lab *federationLab) {
 	if strings.Contains(got.stdout, "handoffs[2]") {
 		t.Fatalf("more than one harbor handoff:\n%s", got.stdout)
 	}
-	if !strings.Contains(got.stdout, federationHarborID) {
-		t.Fatalf("harbor id missing:\n%s", got.stdout)
+	if !strings.Contains(got.stdout, "harbor") {
+		t.Fatalf("harbor missing:\n%s", got.stdout)
 	}
+	lookup := lab.cli(t, 0, "exec", "SELECT id FROM plugin_roca_ops.memories WHERE id = '"+federationHarborID+"'", "--json")
+	var result struct {
+		Rows []struct {
+			ID json.RawMessage `json:"id"`
+		} `json:"rows"`
+	}
+	if err := json.Unmarshal([]byte(lookup.stdout), &result); err != nil {
+		t.Fatalf("decode harbor lookup: %v\n%s", err, lookup.stdout)
+	}
+	if len(result.Rows) != 1 {
+		t.Fatalf("historical harbor id rows = %d, want 1:\n%s", len(result.Rows), lookup.stdout)
+	}
+	requireJSSafeJSONID(t, result.Rows[0].ID, lookup.stdout)
 }
 
 func caseMCPHandoffRefused(t *testing.T, lab *federationLab) {

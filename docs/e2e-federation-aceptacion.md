@@ -193,9 +193,10 @@ exit: 0
 duration_ms: 0
 
 ## real-usage-exec
-command: roca exec SELECT id FROM plugin_roca_ops.memories WHERE id = '1152921504606846980' --json
+command: roca exec SELECT id, legacy_id FROM plugin_roca_ops.memories WHERE id = '1152921504606846980' --json
 exit: 0
 duration_ms: < 5000
+rows[0].id: JS-safe integer of at most 12 digits
 stdout contains: 1152921504606846980
 
 ## real-usage-vector
@@ -219,7 +220,7 @@ if stdout contains search hybrid: stdout contains vector
 command: roca handoff latest --project harbor
 exit: 0
 stdout contains: handoffs[1]
-stdout contains: 1152921504606846977
+stdout contains: harbor
 stdout does not contain: handoffs[2]
 
 ## real-usage-mcp-handoff
