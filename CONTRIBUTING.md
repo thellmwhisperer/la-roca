@@ -57,6 +57,7 @@ make build
 make check
 make accept-index
 make e2e-smoke
+make e2e-federation
 make upgrade-gauntlet
 make split-oracle
 make playground-test
@@ -154,9 +155,15 @@ source reads and stored-count status latency in the isolated lab.
 and covers init, ingest, query, plugin install, and plugin update. It is also
 part of `make check` and must never mutate an operator's live La Roca home.
 
+`make e2e-federation` installs that same built binary into a disposable home
+prefix and runs commands against the frozen synthetic federation fixture. The
+runbook is [frozen federation e2e](docs/e2e-federation.md). The command list is
+[Aceptacion](docs/e2e-federation-aceptacion.md). It is part of
+`make accept` and never selects a live hub.
+
 `make upgrade-gauntlet` is the second gate every pull request has to pass: it
-upgrades the committed homes of older releases through the binary you just
-built. [Releases](docs/releases.md#schema-migration-definition-of-done) explains
+upgrades the committed homes of older releases through the current binary.
+[Releases](docs/releases.md#schema-migration-definition-of-done) explains
 when a change owes the gauntlet a new frozen home.
 
 `make split-oracle` replays the core DATA SPLIT compatibility cases on their own,
