@@ -109,6 +109,7 @@ func MissingAgentFamilies(detected []string) []string {
 // Scan walks the local v1 matrix and every configured remote mirror.
 func Scan(roots Roots) Plan {
 	plan := scanDeclared(roots)
+	plan.Warnings = append(plan.Warnings, roots.Warnings...)
 	stampPlan(&plan, roots)
 	for _, remote := range roots.Remotes {
 		extra := scanDeclared(remote)

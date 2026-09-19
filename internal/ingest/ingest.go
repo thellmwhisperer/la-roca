@@ -221,6 +221,7 @@ type harvestCursorState struct {
 	ExchangeCursors      map[string]int `json:"exchange_cursors,omitempty"`
 	LastExchangeComplete bool           `json:"last_exchange_complete"`
 	ParserVersion        string         `json:"parser_version"`
+	Machine              string         `json:"machine,omitempty"`
 }
 
 type harvestCursorSeed struct {
@@ -351,7 +352,8 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 			metadata, metadataErr := incrementality.MetadataFingerprint(target.Path)
 			isDatabase := target.Kind == parsers.KindOpenCodeDB || target.Kind == parsers.KindZCodeDB ||
 				target.Kind == parsers.KindHermesDB || target.Kind == parsers.KindLegacyStoreDB
-			if metadataErr == nil && !isDatabase && incrementality.UnchangedMetadata(state, target.Path, metadata) {
+			if metadataErr == nil && !isDatabase && incrementality.UnchangedMetadata(
+				state, target.Path, metadata, target.Machine) {
 				result.FilesSkipped++
 				result.categorizeFile("skipped", "unchanged fingerprint")
 				result.Coverage.skip(target.Path, "unchanged metadata after fingerprint failure")
@@ -705,6 +707,7 @@ func ingestOne(ctx context.Context, db Database, layers layerResolver, opts Opti
 			summary["exchange_cursors"] = cursor.ExchangeCursors
 			summary["last_exchange_complete"] = cursor.LastExchangeComplete
 			summary["parser_version"] = cursor.ParserVersion
+			summary["machine"] = cursor.Machine
 		} else if info, statErr := os.Stat(target.Path); statErr == nil {
 			summary["byte_offset"] = info.Size()
 		}
@@ -924,7 +927,8 @@ func cursorContent(target Target, previous incrementality.FileState,
 	var cursor harvestCursorState
 	if json.Unmarshal(previous.Metadata, &cursor) != nil || cursor.ByteOffset <= 0 ||
 		cursor.ByteOffset >= int64(len(content)) || cursor.PrefixDigest == "" ||
-		!cursor.LastExchangeComplete || cursor.ParserVersion != readingVersion(target.Kind) {
+		!cursor.LastExchangeComplete || cursor.ParserVersion != readingVersion(target.Kind) ||
+		cursor.Machine != target.Machine {
 		return content, harvestCursorSeed{}
 	}
 	if target.Kind == parsers.KindCodexHistory && len(cursor.ExchangeCursors) == 0 {
@@ -1237,7 +1241,7 @@ func recordHarvestCursor(target Target, seed harvestCursorSeed, full []byte, rec
 	result.harvestCursors[target.Path] = harvestCursorState{
 		ByteOffset: int64(len(full)), PrefixDigest: digestBytes(full), ExchangeCursor: exchangeCursor,
 		ExchangeCursors: exchangeCursors, LastExchangeComplete: records.Deferred == 0,
-		ParserVersion: readingVersion(target.Kind),
+		ParserVersion: readingVersion(target.Kind), Machine: target.Machine,
 	}
 }
 

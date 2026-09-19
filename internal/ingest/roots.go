@@ -128,6 +128,8 @@ type Roots struct {
 	Remote bool
 	// Remotes are additional HOME-shaped trees resolved from [[sources.remote]].
 	Remotes []Roots
+	// Warnings describe configured roots that were rejected before scanning.
+	Warnings []string
 }
 
 // These environment variable names are stable for operator compatibility.
@@ -156,12 +158,21 @@ const (
 func ResolveRoots(env Environment, settings Settings) Roots {
 	roots := resolveOne(env, settings)
 	roots.Machine = localHostname(env)
+	seenRoots := map[string]string{canonicalRoot(env.Home): "the local HOME"}
 	for _, remote := range settings.RemoteSources {
 		machine := strings.TrimSpace(remote.Machine)
 		root := expand(env, strings.TrimSpace(remote.Root))
 		if machine == "" || root == "" {
 			continue
 		}
+		canonical := canonicalRoot(root)
+		if owner, found := seenRoots[canonical]; found {
+			roots.Warnings = append(roots.Warnings, fmt.Sprintf(
+				"remote source %q at %s was ignored because it duplicates %s",
+				machine, root, owner))
+			continue
+		}
+		seenRoots[canonical] = fmt.Sprintf("remote source %q", machine)
 		remoteEnv := env
 		remoteEnv.Home = root
 		remoteEnv.Getenv = nil
@@ -171,6 +182,17 @@ func ResolveRoots(env Environment, settings Settings) Roots {
 		roots.Remotes = append(roots.Remotes, resolved)
 	}
 	return roots
+}
+
+func canonicalRoot(path string) string {
+	path = filepath.Clean(path)
+	if absolute, err := filepath.Abs(path); err == nil {
+		path = absolute
+	}
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
+	return filepath.Clean(path)
 }
 
 func resolveOne(env Environment, settings Settings) Roots {

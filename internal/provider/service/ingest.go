@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
@@ -145,6 +146,7 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (IngestResult, 
 		Progress:               s.opts.Progress,
 		LiveProgress:           s.opts.IngestProgress,
 	})
+	report.Warnings = append(slices.Clone(s.opts.ConfigWarnings), report.Warnings...)
 	result := IngestResult{Result: report}
 	if err != nil {
 		result.TotalElapsedMS = time.Since(started).Milliseconds()

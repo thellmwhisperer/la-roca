@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
@@ -132,6 +133,7 @@ func (s *Service) Doctor(ctx context.Context) (DoctorReport, error) {
 		PromptExists:  promptErr == nil && promptInfo.Mode().IsRegular(),
 		Query:         queryDoctor(s.QuerySettings()),
 		RemoteSources: remoteSourceDoctor(s.opts.Sources),
+		Warnings:      append(slices.Clone(s.opts.ConfigWarnings), s.opts.Sources.Warnings...),
 	}
 	unregistered, err := s.unregisteredLayers(ctx)
 	if err != nil {

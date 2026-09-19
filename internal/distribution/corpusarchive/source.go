@@ -5,8 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/migrationledger"
 )
@@ -16,6 +18,7 @@ type archiveTable struct {
 	migration        string
 	destinationTable string
 	query            string
+	legacyQuery      string
 	scan             func(*sql.Rows, *occurrenceTracker) (archiveRecord, error)
 }
 
@@ -32,6 +35,7 @@ type archiveRecord struct {
 	exchangeNumber   sql.NullInt64
 	ordinal          sql.NullInt64
 	statePath        sql.NullString
+	machine          sql.NullString
 }
 
 type occurrenceTracker struct {
@@ -46,6 +50,7 @@ type exchangePayload struct {
 	model, provider                      sql.NullString
 	tokensIn, tokensOut, tokensReasoning sql.NullInt64
 	cost                                 sql.NullFloat64
+	machine                              sql.NullString
 }
 
 func scanExchangePayload(rows *sql.Rows, identity any) (exchangePayload, error) {
@@ -53,8 +58,20 @@ func scanExchangePayload(rows *sql.Rows, identity any) (exchangePayload, error) 
 	err := rows.Scan(identity, &payload.sessionID, &payload.number, &payload.compacted,
 		&payload.human, &payload.agent, &payload.humanAt, &payload.agentAt,
 		&payload.latency, &payload.model, &payload.provider, &payload.tokensIn,
-		&payload.tokensOut, &payload.tokensReasoning, &payload.cost)
+		&payload.tokensOut, &payload.tokensReasoning, &payload.cost, &payload.machine)
+	payload.machine = archiveMachine(payload.machine)
 	return payload, err
+}
+
+func archiveMachine(machine sql.NullString) sql.NullString {
+	if machine.Valid && strings.TrimSpace(machine.String) != "" {
+		return machine
+	}
+	hostname, err := os.Hostname()
+	if err != nil || strings.TrimSpace(hostname) == "" {
+		hostname = "local"
+	}
+	return sql.NullString{String: strings.TrimSpace(hostname), Valid: true}
 }
 
 func (payload exchangePayload) values() []any {
@@ -62,7 +79,7 @@ func (payload exchangePayload) values() []any {
 }
 
 func (payload exchangePayload) currentValues() []any {
-	return payload.digestValues()
+	return append(payload.digestValues(), payload.machine)
 }
 
 func (payload exchangePayload) digestValues() []any {
@@ -93,7 +110,9 @@ var archiveSourceTables = []archiveTable{
 		sourceTable: "sessions", migration: "corpus-archive-sessions",
 		destinationTable: "session_versions",
 		query: `SELECT rowid, session_id, source_agent, source_surface, project, started_at, ended_at,
-			duration_minutes, title, metadata FROM sessions ORDER BY session_id`,
+			duration_minutes, title, metadata, machine FROM sessions ORDER BY session_id`,
+		legacyQuery: `SELECT rowid, session_id, source_agent, source_surface, project, started_at, ended_at,
+			duration_minutes, title, metadata, NULL AS machine FROM sessions ORDER BY session_id`,
 		scan: scanSession,
 	},
 	{
@@ -102,7 +121,12 @@ var archiveSourceTables = []archiveTable{
 		query: `SELECT id, session_id, exchange_number, is_after_compaction,
 			human_text, agent_text, human_timestamp, agent_timestamp,
 			response_latency_ms, model, provider, tokens_in, tokens_out,
-			tokens_reasoning, cost_usd FROM exchanges
+			tokens_reasoning, cost_usd, machine FROM exchanges
+			ORDER BY session_id, exchange_number, id`,
+		legacyQuery: `SELECT id, session_id, exchange_number, is_after_compaction,
+			human_text, agent_text, human_timestamp, agent_timestamp,
+			response_latency_ms, model, provider, tokens_in, tokens_out,
+			tokens_reasoning, cost_usd, NULL AS machine FROM exchanges
 			ORDER BY session_id, exchange_number, id`,
 		scan: scanExchange,
 	},
@@ -110,7 +134,10 @@ var archiveSourceTables = []archiveTable{
 		sourceTable: "tool_uses", migration: "corpus-archive-tool-uses",
 		destinationTable: "tool_use_versions",
 		query: `SELECT id, session_id, exchange_number, tool_name,
-			tool_params_summary, had_error, error_message, initiative_type
+			tool_params_summary, had_error, error_message, initiative_type, machine
+			FROM tool_uses ORDER BY session_id, exchange_number, id`,
+		legacyQuery: `SELECT id, session_id, exchange_number, tool_name,
+			tool_params_summary, had_error, error_message, initiative_type, NULL AS machine
 			FROM tool_uses ORDER BY session_id, exchange_number, id`,
 		scan: scanToolUse,
 	},
@@ -118,7 +145,10 @@ var archiveSourceTables = []archiveTable{
 		sourceTable: "thinking_blocks", migration: "corpus-archive-thinking-blocks",
 		destinationTable: "thinking_block_versions",
 		query: `SELECT id, session_id, exchange_number, position_in_session, depth,
-			caution_ratio, word_count, is_after_compaction, full_text
+			caution_ratio, word_count, is_after_compaction, full_text, machine
+			FROM thinking_blocks ORDER BY session_id, exchange_number, id`,
+		legacyQuery: `SELECT id, session_id, exchange_number, position_in_session, depth,
+			caution_ratio, word_count, is_after_compaction, full_text, NULL AS machine
 			FROM thinking_blocks ORDER BY session_id, exchange_number, id`,
 		scan: scanThinkingBlock,
 	},
@@ -151,7 +181,11 @@ type querier interface {
 // fn. The three materialization passes (destination sessions, source sessions,
 // source child rows) share this iteration and its error handling.
 func scanRecords(ctx context.Context, q querier, table archiveTable, fn func(archiveRecord) error) error {
-	rows, err := q.QueryContext(ctx, table.query)
+	query, err := queryForTable(ctx, q, table)
+	if err != nil {
+		return err
+	}
+	rows, err := q.QueryContext(ctx, query)
 	if err != nil {
 		return err
 	}
@@ -172,6 +206,28 @@ func scanRecords(ctx context.Context, q querier, table archiveTable, fn func(arc
 		return err
 	}
 	return rows.Close()
+}
+
+func queryForTable(ctx context.Context, q querier, table archiveTable) (string, error) {
+	if table.legacyQuery == "" {
+		return table.query, nil
+	}
+	rows, err := q.QueryContext(ctx, "SELECT name FROM pragma_table_info('"+table.sourceTable+"') WHERE name = 'machine'")
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	if rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return "", err
+		}
+		return table.query, rows.Err()
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	return table.legacyQuery, nil
 }
 
 func materializeCurrent(ctx context.Context, destination *sql.DB, sources []preparedSource) error {
@@ -240,30 +296,30 @@ func materializeRecord(ctx context.Context, tx *sql.Tx, record archiveRecord) er
 	case "session_versions":
 		query = `INSERT INTO sessions
 			(session_id, source_agent, source_surface, project, started_at, ended_at,
-			 duration_minutes, title, metadata)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(session_id) DO NOTHING`
+				duration_minutes, title, metadata, machine)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(session_id) DO NOTHING`
 	case "exchange_versions":
 		query = `INSERT OR IGNORE INTO exchanges
 			(session_id, exchange_number, is_after_compaction, human_text, agent_text,
 			 human_timestamp, agent_timestamp, response_latency_ms, model, provider,
-			 tokens_in, tokens_out, tokens_reasoning, cost_usd)
-			SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (
+				tokens_in, tokens_out, tokens_reasoning, cost_usd, machine)
+			SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (
 			 SELECT 1 FROM exchanges WHERE session_id IS ? AND exchange_number IS ?)`
 		args = append(slices.Clone(args), args[0], args[1])
 	case "tool_use_versions":
 		query = `INSERT INTO tool_uses
 			(session_id, exchange_number, tool_name, tool_params_summary, had_error,
-			 error_message, initiative_type)
-			SELECT ?, ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (
-			 SELECT 1 FROM tool_uses WHERE session_id IS ? AND exchange_number IS ?
-			   AND tool_name IS ? AND tool_params_summary IS ? AND had_error IS ?
-			   AND error_message IS ? AND initiative_type IS ?)`
+				error_message, initiative_type, machine)
+			SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (
+				SELECT 1 FROM tool_uses WHERE session_id IS ? AND exchange_number IS ?
+				  AND tool_name IS ? AND tool_params_summary IS ? AND had_error IS ?
+				  AND error_message IS ? AND initiative_type IS ? AND machine IS ?)`
 		args = append(slices.Clone(args), args...)
 	case "thinking_block_versions":
 		query = `INSERT OR IGNORE INTO thinking_blocks
 			(session_id, exchange_number, position_in_session, depth, caution_ratio,
-			 word_count, is_after_compaction, full_text)
-			SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (
+				word_count, is_after_compaction, full_text, machine)
+			SELECT ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (
 			 SELECT 1 FROM thinking_blocks WHERE session_id IS ? AND exchange_number IS ?
 			   AND position_in_session IS ?)`
 		args = append(slices.Clone(args), args[0], args[1], args[2])
@@ -291,7 +347,11 @@ func importTable(ctx context.Context, destination *sql.DB, source preparedSource
 	if err := validateRecordedTable(ctx, destination, source.Database, table.sourceTable, expected); err != nil {
 		return err
 	}
-	rows, err := source.db.QueryContext(ctx, table.query)
+	query, err := queryForTable(ctx, source.db, table)
+	if err != nil {
+		return err
+	}
+	rows, err := source.db.QueryContext(ctx, query)
 	if err != nil {
 		return err
 	}
@@ -511,16 +571,17 @@ func validateRecordedTable(ctx context.Context, destination *sql.DB,
 func scanSession(rows *sql.Rows, _ *occurrenceTracker) (archiveRecord, error) {
 	var rowID int64
 	var sessionID string
-	var sourceAgent, sourceSurface, project, startedAt, endedAt, title, metadata sql.NullString
+	var sourceAgent, sourceSurface, project, startedAt, endedAt, title, metadata, machine sql.NullString
 	var duration sql.NullInt64
 	if err := rows.Scan(&rowID, &sessionID, &sourceAgent, &sourceSurface, &project, &startedAt, &endedAt,
-		&duration, &title, &metadata); err != nil {
+		&duration, &title, &metadata, &machine); err != nil {
 		return archiveRecord{}, err
 	}
+	machine = archiveMachine(machine)
 	values := []any{sessionID, sourceAgent, sourceSurface, project, startedAt, endedAt,
 		duration}
 	currentValues := []any{sessionID, sourceAgent, sourceSurface, project, startedAt,
-		endedAt, duration, title, metadata}
+		endedAt, duration, title, metadata, machine}
 	return archiveRecord{
 		sourceKey:        canonicalDigest("session-key", sessionID),
 		digest:           canonicalDigest("session", currentValues...),
@@ -529,6 +590,7 @@ func scanSession(rows *sql.Rows, _ *occurrenceTracker) (archiveRecord, error) {
 		currentValues: currentValues,
 		sourceRowID:   sql.NullInt64{Int64: rowID, Valid: true},
 		sessionID:     sql.NullString{String: sessionID, Valid: true},
+		machine:       machine,
 	}, nil
 }
 
@@ -550,38 +612,42 @@ func scanExchange(rows *sql.Rows, tracker *occurrenceTracker) (archiveRecord, er
 		currentValues: payload.currentValues(),
 		sourceRowID:   sql.NullInt64{Int64: id, Valid: true},
 		sessionID:     payload.sessionID, exchangeNumber: payload.number, ordinal: ordinal,
+		machine: payload.machine,
 	}, nil
 }
 
 func scanToolUse(rows *sql.Rows, tracker *occurrenceTracker) (archiveRecord, error) {
 	var id int64
-	var sessionID, name, params, errorMessage, initiative sql.NullString
+	var sessionID, name, params, errorMessage, initiative, machine sql.NullString
 	var number, hadError sql.NullInt64
 	if err := rows.Scan(&id, &sessionID, &number, &name, &params, &hadError,
-		&errorMessage, &initiative); err != nil {
+		&errorMessage, &initiative, &machine); err != nil {
 		return archiveRecord{}, err
 	}
+	machine = archiveMachine(machine)
 	if !sessionID.Valid {
 		return archiveRecord{}, fmt.Errorf("tool use %d has no deterministic parent turn", id)
 	}
-	currentValues := []any{sessionID.String, number, name, params, hadError, errorMessage, initiative}
+	currentValues := []any{sessionID.String, number, name, params, hadError, errorMessage, initiative, machine}
 	digest := canonicalDigest("tool-use", currentValues...)
 	ordinal := tracker.next(sessionID, number, digest)
 	record := childRecord("tool_use_versions", id, sessionID, number, ordinal, digest,
 		[]any{sessionID.String, number, name, hadError, initiative})
 	record.currentValues = currentValues
+	record.machine = machine
 	return record, nil
 }
 
 func scanThinkingBlock(rows *sql.Rows, tracker *occurrenceTracker) (archiveRecord, error) {
 	var id int64
-	var sessionID, depth, fullText sql.NullString
+	var sessionID, depth, fullText, machine sql.NullString
 	var number, wordCount, compacted sql.NullInt64
 	var position, caution sql.NullFloat64
 	if err := rows.Scan(&id, &sessionID, &number, &position, &depth, &caution,
-		&wordCount, &compacted, &fullText); err != nil {
+		&wordCount, &compacted, &fullText, &machine); err != nil {
 		return archiveRecord{}, err
 	}
+	machine = archiveMachine(machine)
 	if !sessionID.Valid {
 		return archiveRecord{}, fmt.Errorf("thinking block %d has no deterministic parent turn", id)
 	}
@@ -591,6 +657,8 @@ func scanThinkingBlock(rows *sql.Rows, tracker *occurrenceTracker) (archiveRecor
 	values := []any{sessionID.String, number, position, depth, caution, wordCount, compacted}
 	record := childRecord("thinking_block_versions", id, sessionID, number, ordinal, digest, values)
 	record.currentValues = append(slices.Clone(values), fullText)
+	record.currentValues = append(record.currentValues, machine)
+	record.machine = machine
 	return record, nil
 }
 

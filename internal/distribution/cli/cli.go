@@ -987,10 +987,11 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 		ReadLayout:                readLayout,
 		RollbackLayout:            rollbackLayout,
 
-		ConfigPath:   paths.Config,
-		ConfigExists: file.Exists,
-		Sources:      ingestSources(file, home, paths.Runner),
-		ReadOnly:     readOnly,
+		ConfigPath:     paths.Config,
+		ConfigExists:   file.Exists,
+		ConfigWarnings: slices.Clone(file.Warnings),
+		Sources:        ingestSources(file, home, paths.Runner),
+		ReadOnly:       readOnly,
 		Progress: func(line string) {
 			if !env.json && strings.HasPrefix(line, "index: rebuilding") {
 				env.initSay("%s", line)
