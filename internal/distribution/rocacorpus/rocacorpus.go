@@ -160,6 +160,9 @@ func prepareIngestProvenance(path string) error {
 	if err := ensureMachineColumns(context.Background(), tx); err != nil {
 		return err
 	}
+	if err := backfillMachine(context.Background(), tx); err != nil {
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit bundled %s provenance migration: %w", Name, err)
 	}
@@ -171,9 +174,6 @@ func prepareIngestProvenance(path string) error {
 		return fmt.Errorf("begin bundled %s provenance backfill: %w", Name, err)
 	}
 	defer tx.Rollback()
-	if err := backfillMachine(context.Background(), tx); err != nil {
-		return err
-	}
 	if altered {
 		if _, err := tx.Exec(`INSERT INTO sessions_fts(sessions_fts) VALUES ('rebuild')`); err != nil {
 			return fmt.Errorf("rebuild the derived session index: %w", err)
@@ -211,6 +211,13 @@ func backfillMachine(ctx context.Context, tx *sql.Tx) error {
 		machine = strings.TrimSpace(machine)
 	}
 	for _, table := range []string{"sessions", "exchanges", "thinking_blocks", "tool_uses"} {
+		present, err := tableExists(tx, table)
+		if err != nil {
+			return err
+		}
+		if !present {
+			continue
+		}
 		if _, err := tx.ExecContext(ctx, "UPDATE "+table+" SET machine = ? WHERE machine IS NULL", machine); err != nil {
 			return fmt.Errorf("backfill %s.machine: %w", table, err)
 		}
