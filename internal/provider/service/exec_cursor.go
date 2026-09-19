@@ -5,6 +5,7 @@ import (
 	"database/sql"
 
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
+	"github.com/thellmwhisperer/la-roca/internal/store"
 )
 
 // ExecCursor is a gated SELECT whose rows are consumed in bounded pages by the
@@ -61,8 +62,21 @@ func (r *ExecReader) open(ctx context.Context, statement string, maxChars int, d
 		release()
 		return nil, typedExecError(err)
 	}
+	var releaseBound func()
+	if ctx.Done() != nil {
+		var bindErr error
+		releaseBound, bindErr = store.BoundConnection(ctx, connection)
+		if bindErr != nil {
+			closeQueryConnection(connection, attached)
+			release()
+			return nil, typedExecError(bindErr)
+		}
+	}
 	rows, err := connection.QueryContext(ctx, statement)
 	if err != nil {
+		if releaseBound != nil {
+			releaseBound()
+		}
 		closeQueryConnection(connection, attached)
 		release()
 		return nil, typedExecError(err)
@@ -70,6 +84,9 @@ func (r *ExecReader) open(ctx context.Context, statement string, maxChars int, d
 	cursor := &ExecCursor{rows: rows, maxChars: TextBudget(maxChars),
 		databases: databases, statement: statement}
 	cursor.close = func() {
+		if releaseBound != nil {
+			releaseBound()
+		}
 		closeQueryConnection(connection, attached)
 		release()
 		delete(r.cursors, cursor)
@@ -110,16 +127,9 @@ func (r *ExecReader) Exec(ctx context.Context, req ExecRequest) (ExecResult, err
 }
 
 func (r *ExecReader) execute(ctx context.Context, statement string, maxChars int, databases []plugin.Database, budget execBudget) ([]string, []map[string]any, error) {
-	timeout, bounded := r.service.queryExecutionBudget()
-	if budget.set {
-		timeout, bounded = budget.timeout, budget.timeout > 0
-	}
-	queryCtx := ctx
-	if bounded {
-		var cancel context.CancelFunc
-		queryCtx, cancel = context.WithTimeout(ctx, timeout)
-		defer cancel()
-	}
+	timeout := r.service.boundedExecTimeout(budget)
+	queryCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	cursor, err := r.open(queryCtx, statement, maxChars, databases)
 	if err != nil {
 		return nil, nil, executionError(ctx, queryCtx, timeout, err)
@@ -128,6 +138,9 @@ func (r *ExecReader) execute(ctx context.Context, statement string, maxChars int
 	columns, rows, err := cursor.readPage(0)
 	if err != nil {
 		return nil, nil, executionError(ctx, queryCtx, timeout, err)
+	}
+	if err := finishedWithinBudget(ctx, queryCtx, timeout, nil); err != nil {
+		return nil, nil, err
 	}
 	return columns, rows, nil
 }

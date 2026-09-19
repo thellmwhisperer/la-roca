@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/cucumber/godog"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -49,6 +50,7 @@ type plugWorld struct {
 	tools      *mcp.ListToolsResult
 	last       *mcp.CallToolResult
 	clientName string
+	elapsed    time.Duration
 }
 
 const sessionHandoffContent = "branch: fixture\ndone: recorded\nstate: stored\nnext: continue"
@@ -67,6 +69,7 @@ func registerMCPSteps(ctx *godog.ScenarioContext, m *world) {
 	ctx.When(`^I send "initialize"$`, m.iSendInitialize)
 	ctx.When(`^I send "tools/list"$`, m.iAskForTheTools)
 	ctx.When(`^I call the query tool with the question "([^"]*)"$`, m.iCallQuery)
+	ctx.When(`^I call the exec tool with the SQL "([^"]*)"$`, m.iCallExecSQL)
 	ctx.When(`^I call the query tool over stdio with the question "([^"]*)"$`, m.iCallQuery)
 	ctx.When(`^I call the query tool with no arguments$`, m.iCallQueryWithNoArguments)
 	ctx.When(`^I call the store tool over stdio with a new memory$`, m.iCallStore)
@@ -93,6 +96,8 @@ func registerMCPSteps(ctx *godog.ScenarioContext, m *world) {
 	ctx.Then(`^a correct call right after it works$`, m.aCorrectCallAfterItWorks)
 	ctx.Then(`^the response carries no structured content$`, m.theResponseCarriesNoStructuredContent)
 	ctx.Then(`^the readable response is plain AXI text$`, m.theReadableResponseIsPlainAXI)
+	ctx.Then(`^the readable response contains "([^"]*)"$`, m.theReadableResponseContains)
+	ctx.Then(`^the MCP call finished within (\d+) seconds$`, m.theMCPCallFinishedWithinSeconds)
 	ctx.Then(`^the count has gone up by one$`, m.theCountHasGoneUpByOne)
 	ctx.Then(`^the identity card of that write declares it came from the plug$`,
 		m.theIdentityCardSaysItCameFromThePlug)
@@ -187,6 +192,10 @@ func (m *world) iCallQuery(question string) error {
 	})
 }
 
+func (m *world) iCallExecSQL(statement string) error {
+	return m.callTool("roca_exec", map[string]any{"sql": statement})
+}
+
 func (m *world) iCallQueryWithNoArguments() error {
 	return m.callTool("roca_query", map[string]any{})
 }
@@ -202,8 +211,10 @@ func (m *world) callTool(name string, arguments map[string]any) error {
 	if err := m.openThePlug(); err != nil {
 		return err
 	}
+	started := time.Now()
 	result, err := m.plug.session.CallTool(context.Background(),
 		&mcp.CallToolParams{Name: name, Arguments: arguments})
+	m.plug.elapsed = time.Since(started)
 	if err != nil {
 		return fmt.Errorf("call %s: %w", name, err)
 	}
@@ -390,6 +401,22 @@ func (m *world) theReadableResponseIsPlainAXI() error {
 	text := strings.TrimSpace(renderedText(m.plug.last))
 	if text == "" || strings.HasPrefix(text, "{") || strings.HasPrefix(text, "[") {
 		return fmt.Errorf("the readable response is not plain AXI text: %q", text)
+	}
+	return nil
+}
+
+func (m *world) theReadableResponseContains(want string) error {
+	text := renderedText(m.plug.last)
+	if !strings.Contains(text, want) {
+		return fmt.Errorf("readable response does not contain %q: %q", want, text)
+	}
+	return nil
+}
+
+func (m *world) theMCPCallFinishedWithinSeconds(seconds int) error {
+	limit := time.Duration(seconds) * time.Second
+	if m.plug.elapsed > limit {
+		return fmt.Errorf("MCP call took %s, want <= %s", m.plug.elapsed, limit)
 	}
 	return nil
 }
