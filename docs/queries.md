@@ -122,29 +122,15 @@ For a common authored query, see the README's
 ## Memory identifiers for clients
 
 Memory identifiers in SQL JSON results, memory-operation envelopes, and MCP
-tool metadata are decimal strings, including small core IDs. SQL TOON output
-quotes IDs outside JavaScript's safe integer range; safe numeric IDs can appear
-unquoted. New operational memory identifiers are allocated below JavaScript's
-2^53 safe-integer limit and are at most 12 digits. Historical identifiers
-issued from 2^60 stay stored as they are and remain addressable through `exec`,
-`handoff latest`, `--supersedes`, and MCP. Keep returned ID strings intact in
-JavaScript: converting a historical ops ID to `Number` still rounds it and can
-point a later write at the wrong row.
+tool metadata are JSON numbers. New operational identifiers are assigned by
+SQLite `INTEGER PRIMARY KEY AUTOINCREMENT`, so they stay below JavaScript's
+2^53 safe integer. A compact pass renumbers historical 2^60 identifiers to
+1..N and stores the old value in `legacy_id`. `exec`, `handoff latest`,
+`--supersedes`, and MCP still resolve an old identifier through that column.
+SQL TOON quotes integers outside the JavaScript safe range.
 
-SQL result conversion recognizes identity column names and stringifies integers
-outside JavaScript's safe range even under other aliases. Safe non-identity
-integers remain numbers, and SQL NULL remains null. Metadata objects are
-normalized recursively when stored; JSON objects and arrays in a result's
-metadata column receive the same conversion if they survive the text budget
-as valid JSON, while remaining JSON text. The conversion
-rules are owned by [`internal/jsonid`](../internal/jsonid/jsonid.go).
-
-Pass the returned ID directly to CLI `roca store --supersedes "$id"` or as a
-decimal string in the MCP `roca_store` `supersedes` field. MCP still accepts
-integer JSON input for compatibility, but cannot recover digits a client
-already rounded. The CLI accepts decimal argument text as before. This changes
-client encoding, not SQLite storage types or SQL comparisons; the short-ID
-allocator changes only the values assigned to newly stored operational memories.
+Pass the returned ID to CLI `roca store --supersedes` or MCP `roca_store`
+`supersedes`. MCP still accepts a decimal string for a historical identifier.
 
 ## Read-only queries across machines
 

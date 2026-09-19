@@ -38,6 +38,8 @@ type world struct {
 	last       run
 	previous   run
 	memories   int
+	deletedID  int64
+	replacedID int64
 	// everything is every run of the scenario, for the steps that ask about a
 	// whole session's output and not only the last command's.
 	everything []run
