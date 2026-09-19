@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/axi"
@@ -192,6 +193,34 @@ func TestMalformedToolCallIsAuditedAsAFailure(t *testing.T) {
 	}
 	if text := string(raw); !strings.Contains(text, `"tool":"roca_query"`) || !strings.Contains(text, `"ok":false`) {
 		t.Fatalf("failed call was not audited as a failure: %s", text)
+	}
+}
+
+func TestTheExecToolHonorsTheQueryTimeLimit(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := service.Open(service.Options{
+		DBPath: filepath.Join(dir, "roca.db"), BackupDir: filepath.Join(dir, "backups"),
+		DataDir: dir, Version: "0.0.0-test", Commit: "0123456789abcdef",
+		QueryTimeout: 20 * time.Millisecond, QueryTimeoutSet: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { svc.Close() })
+	if _, err := svc.Init(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	text := callToolExpectingError(t, connect(t, svc), "roca_exec", map[string]any{
+		"sql": `WITH RECURSIVE costly(n) AS (
+			SELECT 1 UNION ALL SELECT n + 1 FROM costly WHERE n < 100000000
+		) SELECT sum(n) FROM costly`,
+	})
+	if !strings.Contains(text, "the validated SQL exceeded the time limit after") {
+		t.Fatalf("mcp exec timeout = %q", text)
+	}
+	if time.Since(started) > time.Second {
+		t.Fatalf("mcp exec timeout took %s", time.Since(started))
 	}
 }
 
