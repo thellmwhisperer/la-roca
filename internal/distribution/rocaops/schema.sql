@@ -13,7 +13,8 @@ CREATE TABLE IF NOT EXISTS memories (
   status          TEXT DEFAULT 'active' CHECK (status IN ('active', 'pending', 'resolved')),
   supersedes      INTEGER,
   created_at      TEXT DEFAULT (datetime('now')),
-  expires_at      TEXT
+  expires_at      TEXT,
+  legacy_id       INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_memories_layer ON memories(layer);
@@ -21,6 +22,7 @@ CREATE INDEX IF NOT EXISTS idx_memories_status ON memories(status);
 CREATE INDEX IF NOT EXISTS idx_memories_project ON memories(project);
 CREATE INDEX IF NOT EXISTS idx_memories_origin ON memories(origin);
 CREATE INDEX IF NOT EXISTS idx_memories_expires_at ON memories(expires_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_legacy_id ON memories(legacy_id) WHERE legacy_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS layers (
   name            TEXT PRIMARY KEY,
@@ -37,14 +39,6 @@ CREATE TABLE IF NOT EXISTS layers (
   capabilities    TEXT DEFAULT '{}',
   since_version   TEXT
 );
-
--- New operational memories take the reserved high short range. Historical
--- rows allocated from 2^60 stay in place. Existing databases with rows keep
--- their sequence; the store path assigns the next short id itself.
-INSERT INTO sqlite_sequence(name, seq)
-SELECT 'memories', 899999999999
-WHERE NOT EXISTS (SELECT 1 FROM sqlite_sequence WHERE name = 'memories')
-  AND NOT EXISTS (SELECT 1 FROM memories);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
   content,

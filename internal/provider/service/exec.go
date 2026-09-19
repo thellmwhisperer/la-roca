@@ -6,12 +6,11 @@ import (
 	"errors"
 	"fmt"
 
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
-	"github.com/thellmwhisperer/la-roca/internal/jsonid"
-
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 )
 
@@ -75,10 +74,27 @@ func (s *Service) exec(ctx context.Context, req ExecRequest, reader *ExecReader)
 	return result, nil
 }
 
+var opsMemoryIDEq = regexp.MustCompile(`(?i)(\bWHERE\b|\bAND\b|\bOR\b|\bON\b)\s+id\s*=\s*(?:'(\d+)'|(\d+))`)
+
+func expandOpsLegacyIDs(sql string) string {
+	if !strings.Contains(strings.ToLower(sql), "plugin_roca_ops.memories") {
+		return sql
+	}
+	return opsMemoryIDEq.ReplaceAllStringFunc(sql, func(match string) string {
+		parts := opsMemoryIDEq.FindStringSubmatch(match)
+		digits := parts[2]
+		if digits == "" {
+			digits = parts[3]
+		}
+		return parts[1] + " (id = " + digits + " OR legacy_id = " + digits + ")"
+	})
+}
+
 func (s *Service) prepareExec(ctx context.Context, statement string, cursor bool) (PluginRoute, string, error) {
 	if _, err := s.EnsureSchema(ctx); err != nil {
 		return PluginRoute{}, "", err
 	}
+	statement = expandOpsLegacyIDs(statement)
 	route := s.pluginsForSQL(ctx, statement)
 	ok := false
 	defer func() {
@@ -179,11 +195,8 @@ func scanRowsPage(rows *sql.Rows, maxChars int, term string, limit int) ([]strin
 			case []byte:
 				row[column] = Truncate(string(text), maxChars, term)
 			case string:
-				if !jsonid.IdentityName(column) {
-					row[column] = Truncate(text, maxChars, term)
-				}
+				row[column] = Truncate(text, maxChars, term)
 			}
-			row[column] = jsonid.Cell(column, row[column])
 		}
 		result = append(result, row)
 	}

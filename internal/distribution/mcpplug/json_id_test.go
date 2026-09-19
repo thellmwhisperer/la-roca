@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
-	"github.com/thellmwhisperer/la-roca/internal/jsonid"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
@@ -19,14 +18,11 @@ func TestStoreMetadataAndSupersedesKeepOpsIdsAsStrings(t *testing.T) {
 	created := callTool(t, session, "roca_store", map[string]any{
 		"layer": "discovery", "content": "ops identifier through the plug",
 	})
-	id, ok := created.Meta["id"].(string)
-	if !ok || id == "" {
-		t.Fatalf("MCP store metadata id = %#v, want a decimal string", created.Meta["id"])
+	numeric, ok := mcpJSONInt(created.Meta["id"])
+	if !ok || numeric < 1 || numeric > 1<<53-1 {
+		t.Fatalf("MCP store metadata id = %#v, want a sqlite integer below 2^53", created.Meta["id"])
 	}
-	numeric, err := strconv.ParseInt(id, 10, 64)
-	if err != nil || !jsonid.Allocated(numeric) {
-		t.Fatalf("MCP store id %q, want a short newly issued integer: %v", id, err)
-	}
+	id := strconv.FormatInt(numeric, 10)
 
 	execed := callTool(t, session, "roca_exec", map[string]any{
 		"sql": "SELECT id FROM plugin_roca_ops.memories LIMIT 1",
@@ -117,4 +113,20 @@ func schemaAllowsString(typ any) bool {
 		}
 	}
 	return false
+}
+
+func mcpJSONInt(value any) (int64, bool) {
+	switch v := value.(type) {
+	case float64:
+		return int64(v), true
+	case int64:
+		return v, true
+	case int:
+		return int64(v), true
+	case string:
+		n, err := strconv.ParseInt(v, 10, 64)
+		return n, err == nil
+	default:
+		return 0, false
+	}
 }

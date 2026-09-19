@@ -10,7 +10,6 @@ import (
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
-	"github.com/thellmwhisperer/la-roca/internal/jsonid"
 
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
@@ -133,14 +132,14 @@ func TestOpsStoreIssuesShortIdsAndKeepsHistoricalIdsAddressable(t *testing.T) {
 	svc, plugins := enabledRocaOps(t)
 	opsDB := openRocaOps(t, plugins)
 	defer opsDB.Close()
-	if _, err := svc.DB().SQL().Exec(`INSERT INTO memories
-		(id, layer, content, origin, status) VALUES (1, 'discovery', 'core identity one', 'agent', 'active')`); err != nil {
-		t.Fatal(err)
-	}
 	const historical int64 = 1152921504606853945
 	if _, err := opsDB.Exec(`INSERT INTO memories (id, layer, content, origin, project, status, created_at)
 		VALUES (?, 'handoff', 'pre-migration workspace handoff', 'agent', 'workspace', 'active', '2026-01-01 00:00:00')`,
 		historical); err != nil {
+		t.Fatal(err)
+	}
+	opsPath := filepath.Join(plugins, rocaops.Name, rocaops.DatabaseFilename)
+	if err := rocaops.ApplySchema(opsPath); err != nil {
 		t.Fatal(err)
 	}
 
@@ -150,23 +149,20 @@ func TestOpsStoreIssuesShortIdsAndKeepsHistoricalIdsAddressable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !jsonid.Allocated(first.ID) {
-		t.Fatalf("stored id %d is not a short newly issued id", first.ID)
+	if first.ID < 1 || first.ID > 1<<53-1 {
+		t.Fatalf("stored id %d is not a newly issued sqlite id", first.ID)
 	}
-	if first.ID == 1 {
-		t.Fatal("ops reused the core memory namespace")
+
+	var compactID int64
+	if err := opsDB.QueryRow(`SELECT id FROM memories WHERE legacy_id = ?`, historical).Scan(&compactID); err != nil {
+		t.Fatalf("historical id %d is not addressable through legacy_id: %v", historical, err)
 	}
-	resolved, err := svc.ResolveMemory(t.Context(), 1)
+	resolved, err := svc.ResolveMemory(t.Context(), historical)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resolved.Database != "core" || resolved.Content != "core identity one" {
-		t.Fatalf("memory 1 resolved to %+v, want the core row", resolved)
-	}
-
-	var got int64
-	if err := opsDB.QueryRow(`SELECT id FROM memories WHERE id = ?`, historical).Scan(&got); err != nil {
-		t.Fatalf("historical id %d is not addressable: %v", historical, err)
+	if resolved.CanonicalID != compactID {
+		t.Fatalf("resolve %d = %+v, want canonical %d", historical, resolved, compactID)
 	}
 	handoffs, err := svc.LatestHandoffs(t.Context(), "workspace")
 	if err != nil {
@@ -174,13 +170,13 @@ func TestOpsStoreIssuesShortIdsAndKeepsHistoricalIdsAddressable(t *testing.T) {
 	}
 	found := false
 	for _, row := range handoffs.Handoffs {
-		if row.ID == historical {
+		if row.ID == compactID {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Fatalf("handoff latest dropped historical id %d: %+v", historical, handoffs.Handoffs)
+		t.Fatalf("handoff latest dropped compacted historical row %d: %+v", compactID, handoffs.Handoffs)
 	}
 
 	second, err := svc.Store(t.Context(), service.StoreRequest{

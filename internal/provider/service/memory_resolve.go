@@ -9,8 +9,8 @@ import (
 )
 
 type MemoryResolution struct {
-	RequestedID int64  `json:"requested_id,string"`
-	CanonicalID int64  `json:"canonical_id,string"`
+	RequestedID int64  `json:"requested_id"`
+	CanonicalID int64  `json:"canonical_id"`
 	Alias       bool   `json:"alias"`
 	Database    string `json:"database"`
 	Layer       string `json:"layer"`
@@ -67,8 +67,17 @@ func resolveMemoryIn(ctx context.Context, db *sql.DB, database string,
 	if result, Found, err := read(requested, false); Found || err != nil {
 		return result, Found, err
 	}
+	var legacy int64
+	err := db.QueryRowContext(ctx, `SELECT id FROM memories WHERE legacy_id = ?`, requested).Scan(&legacy)
+	switch {
+	case err == nil:
+		return read(legacy, true)
+	case errors.Is(err, sql.ErrNoRows), missingTable(err), missingColumn(err):
+	default:
+		return MemoryResolution{}, false, err
+	}
 	var canonical int64
-	err := db.QueryRowContext(ctx, `SELECT canonical_id FROM memory_id_remaps WHERE old_id = ?`, requested).
+	err = db.QueryRowContext(ctx, `SELECT canonical_id FROM memory_id_remaps WHERE old_id = ?`, requested).
 		Scan(&canonical)
 	if errors.Is(err, sql.ErrNoRows) || missingTable(err) {
 		return MemoryResolution{}, false, nil
@@ -88,4 +97,8 @@ func resolveMemoryIn(ctx context.Context, db *sql.DB, database string,
 
 func missingTable(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "no such table")
+}
+
+func missingColumn(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "no such column")
 }

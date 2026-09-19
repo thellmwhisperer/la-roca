@@ -12,7 +12,6 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/thellmwhisperer/la-roca/internal/jsonid"
 	"github.com/thellmwhisperer/la-roca/internal/provider/layers"
 )
 
@@ -68,7 +67,7 @@ type StoreRequest struct {
 // StoreResult is the identity of the memory that is now there, whether this
 // call created it or Found it already written.
 type StoreResult struct {
-	ID    int64  `json:"id,string"`
+	ID    int64  `json:"id"`
 	Layer string `json:"layer"`
 	// Skipped says the content was already stored in this scope. It is not an
 	// error: retrying the same write must not create a duplicate memory.
@@ -157,7 +156,7 @@ func (s *Service) Store(ctx context.Context, req StoreRequest) (result StoreResu
 		// that holds it, so a replacement written here can only retire what is
 		// here. Naming a core memory would retire nothing and say it did.
 		if req.Supersedes != 0 {
-			known, err := memoryExists(ctx, s.ops.SQL(), req.Supersedes)
+			canonical, known, err := resolveMemoryID(ctx, s.ops.SQL(), req.Supersedes)
 			if err != nil {
 				return StoreResult{}, err
 			}
@@ -166,6 +165,7 @@ func (s *Service) Store(ctx context.Context, req StoreRequest) (result StoreResu
 					"memory %d is not an operational memory: with features.roca_ops enabled a new "+
 						"memory supersedes only what %s itself holds", req.Supersedes, rocaOpsPluginName)
 			}
+			req.Supersedes = canonical
 		}
 	}
 	err = target.Write(ctx, func(tx *sql.Tx) error {
@@ -198,15 +198,10 @@ func (s *Service) Store(ctx context.Context, req StoreRequest) (result StoreResu
 		arguments := []any{physical, content, metadata, origin, authorship.Agent, authorship.Model,
 			authorship.Surface, orNull(req.Project), status, orNull(req.Supersedes)}
 		if s.opts.RocaOpsEnabled {
-			id, err := nextShortMemoryID(ctx, tx)
-			if err != nil {
-				return err
-			}
-			statement = `INSERT INTO memories (id, layer, content, metadata, origin, source_agent,
+			statement = `INSERT INTO memories (layer, content, metadata, origin, source_agent,
 			                       source_model, source_surface, project, status, supersedes, expires_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-			arguments = append([]any{id}, append(arguments, expiresAt)...)
-			result.ID = id
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			arguments = append(arguments, expiresAt)
 		}
 		outcome, err := tx.ExecContext(ctx, statement, arguments...)
 		if pluginOrigin {
@@ -217,9 +212,6 @@ func (s *Service) Store(ctx context.Context, req StoreRequest) (result StoreResu
 		}
 		if err != nil {
 			return fmt.Errorf("store the memory: %w", err)
-		}
-		if result.ID != 0 {
-			return nil
 		}
 		result.ID, err = outcome.LastInsertId()
 		return err
@@ -307,15 +299,21 @@ func identicalMemory(ctx context.Context, db memoryQuerier, payload memoryPayloa
 }
 
 func memoryExists(ctx context.Context, db memoryQuerier, id int64) (bool, error) {
-	var existing int64
-	err := db.QueryRowContext(ctx, "SELECT id FROM memories WHERE id = ?", id).Scan(&existing)
+	_, known, err := resolveMemoryID(ctx, db, id)
+	return known, err
+}
+
+func resolveMemoryID(ctx context.Context, db memoryQuerier, id int64) (int64, bool, error) {
+	var canonical int64
+	err := db.QueryRowContext(ctx, `SELECT id FROM memories WHERE id = ? OR legacy_id = ?`, id, id).
+		Scan(&canonical)
 	switch {
 	case err == nil:
-		return true, nil
+		return canonical, true, nil
 	case errors.Is(err, sql.ErrNoRows):
-		return false, nil
+		return 0, false, nil
 	default:
-		return false, fmt.Errorf("look for the superseded memory: %w", err)
+		return 0, false, fmt.Errorf("look for the superseded memory: %w", err)
 	}
 }
 
@@ -383,7 +381,7 @@ func encodeMetadata(metadata map[string]any) (string, error) {
 	if metadata == nil {
 		metadata = map[string]any{}
 	}
-	encoded, err := json.Marshal(jsonid.RewriteMap(metadata))
+	encoded, err := json.Marshal(metadata)
 	if err != nil {
 		return "", fmt.Errorf("the metadata is not serializable: %w", err)
 	}
@@ -422,19 +420,4 @@ func orNull[T comparable](value T) any {
 		return nil
 	}
 	return value
-}
-
-func nextShortMemoryID(ctx context.Context, tx *sql.Tx) (int64, error) {
-	var next int64
-	err := tx.QueryRowContext(ctx,
-		`SELECT COALESCE(MAX(id), ? - 1) + 1 FROM memories WHERE id BETWEEN ? AND ?`,
-		jsonid.MinAllocated, jsonid.MinAllocated, jsonid.MaxAllocated).
-		Scan(&next)
-	if err != nil {
-		return 0, fmt.Errorf("allocate a short memory id: %w", err)
-	}
-	if !jsonid.Allocated(next) {
-		return 0, fmt.Errorf("short memory ids are exhausted")
-	}
-	return next, nil
 }
