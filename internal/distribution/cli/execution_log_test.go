@@ -317,5 +317,17 @@ func readAuditStream(t *testing.T, dataDir, stream string) []byte {
 	return raw
 }
 
+func TestLoggedDurationMSTreatsASubTwoMillisecondHookAsZero(t *testing.T) {
+	if got := loggedDurationMS("hooks run", time.Millisecond); got != 0 {
+		t.Fatalf("hooks 1ms = %d, want 0", got)
+	}
+	if got := loggedDurationMS("hooks run", 2*time.Millisecond); got != 2 {
+		t.Fatalf("hooks 2ms = %d, want 2", got)
+	}
+	if got := loggedDurationMS("exec", time.Millisecond); got != 1 {
+		t.Fatalf("exec 1ms = %d, want 1", got)
+	}
+}
+
 const queryModeQuestion = "synthetic orbit"
 const queryModeSQL = "SELECT content AS text FROM memories LIMIT 1"
