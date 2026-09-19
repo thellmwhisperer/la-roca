@@ -127,6 +127,7 @@ func TestPluginCallsAreAuditedWithoutCredentialArguments(t *testing.T) {
 	text := string(raw)
 	for _, want := range []string{
 		`"command":"synthetic-plugin"`, `"ok":false`, `"exit_code":23`,
+		`"error_type":"command_failure"`,
 		`"args":["--api-token","[REDACTED]"]`,
 	} {
 		if !strings.Contains(text, want) {
@@ -173,6 +174,7 @@ func TestVectorIngestProgressThenExitNamesTheFailure(t *testing.T) {
 	}
 	raw := readAuditStream(t, filepath.Join(home, ".roca"), logfile.Executions)
 	if !strings.Contains(string(raw), "plugin vector exited with code 1") ||
+		!strings.Contains(string(raw), `"error_type":"command_failure"`) ||
 		strings.Contains(string(raw), `"error":"command exited with code 1"`) {
 		t.Fatalf("progress-then-exit audit = %s", raw)
 	}
@@ -195,6 +197,7 @@ func TestSilentPluginExitNamesTheFailure(t *testing.T) {
 	}
 	raw := readAuditStream(t, filepath.Join(home, ".roca"), logfile.Executions)
 	if !strings.Contains(string(raw), "without writing a reason") ||
+		!strings.Contains(string(raw), `"error_type":"command_failure"`) ||
 		strings.Contains(string(raw), `"error":"command exited with code 1"`) {
 		t.Fatalf("silent plugin audit = %s", raw)
 	}

@@ -131,7 +131,10 @@ func executeWithOptions(env *cliEnv, args []string, in io.Reader, plugins bool) 
 			env.auditArgs = redactPluginArguments(args[1:])
 			logReason := err
 			if logReason == nil && code != ExitOK {
-				logReason = fmt.Errorf("plugin %s exited with code %d", args[0], code)
+				logReason = logfile.Typed(
+					fmt.Errorf("plugin %s exited with code %d", args[0], code),
+					logfile.ErrorCommandFailure,
+				)
 			}
 			if err != nil {
 				err = logfile.Correlate(err)
@@ -379,12 +382,18 @@ func dispatchPlugin(env *cliEnv, root *cobra.Command, args []string, features co
 
 func pluginExitReason(args []string, code int, wroteStderr bool) error {
 	if !wroteStderr {
-		return fmt.Errorf("plugin %s exited with code %d without writing a reason", args[0], code)
+		return logfile.Typed(
+			fmt.Errorf("plugin %s exited with code %d without writing a reason", args[0], code),
+			logfile.ErrorCommandFailure,
+		)
 	}
 	if vectorIngestInvocation(args) {
 		// Progress is not a failure reason. A non-zero vector ingest must still
 		// name the exit so the host, the execution log, and a cron journey agree.
-		return fmt.Errorf("plugin %s exited with code %d", args[0], code)
+		return logfile.Typed(
+			fmt.Errorf("plugin %s exited with code %d", args[0], code),
+			logfile.ErrorCommandFailure,
+		)
 	}
 	return nil
 }
