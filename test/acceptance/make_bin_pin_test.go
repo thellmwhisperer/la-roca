@@ -46,7 +46,7 @@ func TestMakeAcceptanceAndE2ESmokePinTheBuiltBinaryOverInheritedROCABin(t *testi
 		t.Fatal(err)
 	}
 
-	for _, target := range []string{"accept", "e2e-smoke"} {
+	for _, target := range []string{"accept", "e2e-smoke", "e2e-federation"} {
 		t.Run(target, func(t *testing.T) {
 			cmd := exec.Command("make", "--no-print-directory", target, "BIN="+relativeBuilt, "VECTOR_BUILD=:", "GO_BUILD=:", "VECTOR_BUNDLE=:")
 			cmd.Dir = root

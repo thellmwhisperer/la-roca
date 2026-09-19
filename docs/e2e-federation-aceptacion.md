@@ -1,0 +1,159 @@
+# Aceptacion
+
+Fixture: testdata/e2e-federation copied into a disposable HOME.
+Binary: that HOME's .local/bin/roca.
+Live hub: never selected.
+
+## 321
+command: roca ingest --json
+exit: 0
+stdout contains: "errors": 0
+
+## 325
+command: roca store --layer pill --content Temporary pill for issue 320 acceptance --metadata {"pill_slug":"tmp-x"} --origin agent --agent codex
+exit: 0
+stdout contains: stored:
+command: roca pill
+exit: 0
+stdout contains: tmp-x
+command: roca pill delete tmp-x
+exit: 0
+stdout contains: deleted: 1
+command: roca pill
+exit: 0
+stdout contains: no active pills
+command: roca exec SELECT count(*) FROM plugin_roca_ops.memories WHERE json_extract(metadata,'$.pill_slug')='tmp-x'
+exit: 0
+stdout contains: 0
+
+## 326
+command: roca exec SELECT content FROM plugin_roca_ops.memories WHERE layer='handoff' LIMIT 1 --max-chars 900
+exit: 0
+stdout digit run: >= 200
+
+## 315
+command: roca mcp serve
+repeat: 3
+expect: one vector resident process
+
+## 317
+command: roca exec SELECT content FROM memories WHERE content LIKE '%PROCESO CARWOW%'
+exit: 1
+output contains: unqualified table "memories"
+output contains: plugin_roca_ops.memories
+output contains: plugin_roca_corpus.memories
+
+## 318
+command: roca handoff latest --project harbor --limit 1
+exit: 0
+stdout contains: harbor
+command: roca handoff latest --all-projects
+exit: 0
+stdout contains: harbor
+stdout contains: dock
+
+## 319
+command: roca exec SELECT id FROM plugin_roca_ops.memories LIMIT 1 --json
+exit: 0
+stdout matches: "id"\s*:\s*"
+
+## 324
+command: roca exec SELECT session_id FROM plugin_roca_corpus.sessions WHERE session_id LIKE '019aba72-aa57-7d93-a12c-b6e65c0dca6%' ORDER BY session_id --json
+exit: 0
+stdout contains: 019aba72-aa57-7d93-a12c-b6e65c0dca6b
+
+## 232991
+command: roca vector query harbor lantern 20 --databases corpus,ops
+exit: 0
+
+## 233400
+command: roca exec SELECT content FROM plugin_roca_ops.memories WHERE content LIKE '%harbor lantern%'
+exit: 0
+
+## 233508
+command: roca query harbor lantern --json
+exit: 0
+stdout contains: engines
+
+## 10387
+command: roca exec SELECT COUNT(*) AS memories FROM plugin_roca_ops.memories
+exit: 0
+
+## 238277
+command: roca vector query harbor lantern 20 --databases corpus,ops
+exit: 0
+
+## 244386
+command: roca exec SELECT layer, COUNT(*) AS n FROM plugin_roca_ops.memories GROUP BY layer
+exit: 0
+
+## 259288
+command: roca handoff latest --project harbor
+exit: 0
+stdout contains: harbor
+
+## 93762
+command: roca query harbor lantern --json
+exit: 0
+
+## 19944
+command: roca handoff latest --project harbor
+exit: 0
+
+## 7734
+command: roca doctor
+exit: 0
+
+## 5740
+command: roca vector query harbor lantern 20 --databases corpus,ops
+exit: 0
+
+## 5950
+command: roca exec SELECT content FROM plugin_roca_ops.memories LIMIT 1
+exit: 0
+
+## 4269
+command: roca version
+exit: 0
+stdout contains: roca
+
+## 4657
+command: roca vector query harbor lantern 20 --databases corpus,ops
+exit: 0
+
+## 44508
+command: roca query harbor lantern
+exit: 0
+
+## 125372
+command: roca vector query I inspected the harbor lantern 20 --databases corpus,ops
+exit: 0
+
+## 126485
+command: roca exec SELECT content FROM plugin_roca_ops.memories WHERE layer='discovery'
+exit: 0
+
+## 127663
+command: roca doctor
+exit: 0
+
+## 296656
+command: roca doctor
+exit: 0
+
+## 297007
+command: roca doctor
+exit: 0
+
+## 1658381
+command: roca doctor
+exit: 0
+
+## 1708690
+command: roca pill show uso-de-la-roca
+exit: 0
+stdout contains: vectors first
+
+## 1733215
+command: roca handoff latest --project harbor
+exit: 0
