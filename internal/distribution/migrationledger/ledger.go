@@ -213,6 +213,10 @@ func Prepare(ctx context.Context, db *sql.DB, definition Definition) error {
 		if current.Plugin != definition.Plugin {
 			return fmt.Errorf("plugin database belongs to %q, not %q", current.Plugin, definition.Plugin)
 		}
+		if current.SchemaVersion > definition.SchemaVersion || current.IndexVersion > definition.IndexVersion {
+			return fmt.Errorf("plugin database schema/index %d/%d is newer than supported %d/%d",
+				current.SchemaVersion, current.IndexVersion, definition.SchemaVersion, definition.IndexVersion)
+		}
 		if current.SchemaVersion != definition.SchemaVersion || current.IndexVersion != definition.IndexVersion {
 			_, err = tx.ExecContext(ctx, `UPDATE plugin_schema SET
 				schema_version = ?, index_version = ?,
