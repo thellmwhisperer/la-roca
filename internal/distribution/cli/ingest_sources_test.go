@@ -22,15 +22,8 @@ func TestIngestSourcesReadDeclaredPaths(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			want := filepath.Join(t.TempDir(), test.fileName)
 			t.Setenv(test.environment, "/synthetic/environment-value")
-			path := filepath.Join(t.TempDir(), "config.toml")
 			content := "[defaults]\n" + test.key + " = \"" + want + "\"\n"
-			if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			file, err := config.LoadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
+			file := loadIngestConfig(t, content)
 			roots := ingestSources(file, "/synthetic/home", "/synthetic/runner")
 			if got := test.value(roots.ZCodeDB, roots.OpenCodeTelegramLogs); got != want {
 				t.Fatalf("resolved path = %q, want configured %q", got, want)
@@ -41,8 +34,17 @@ func TestIngestSourcesReadDeclaredPaths(t *testing.T) {
 
 func TestIngestSourcesResolveConfiguredRemoteRoots(t *testing.T) {
 	mirror := t.TempDir()
-	path := filepath.Join(t.TempDir(), "config.toml")
 	content := "[[sources.remote]]\nmachine = \"mini\"\nroot = \"" + mirror + "\"\n"
+	file := loadIngestConfig(t, content)
+	roots := ingestSources(file, "/synthetic/home", "/synthetic/runner")
+	if len(roots.Remotes) != 1 || roots.Remotes[0].Machine != "mini" || roots.Remotes[0].Home != mirror {
+		t.Fatalf("remotes = %+v", roots.Remotes)
+	}
+}
+
+func loadIngestConfig(t *testing.T, content string) config.File {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "config.toml")
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -50,8 +52,5 @@ func TestIngestSourcesResolveConfiguredRemoteRoots(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	roots := ingestSources(file, "/synthetic/home", "/synthetic/runner")
-	if len(roots.Remotes) != 1 || roots.Remotes[0].Machine != "mini" || roots.Remotes[0].Home != mirror {
-		t.Fatalf("remotes = %+v", roots.Remotes)
-	}
+	return file
 }
