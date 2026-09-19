@@ -349,9 +349,10 @@ Do not stack synonyms.
   somebody stores the first one.
 - Start project work with `roca pill` and `roca handoff latest`. Ask for the
   current handoff protocol and follow it instead of freezing it here.
-  Do not write a handoff unless the operator asked for one. When they do, the
-  shape is branch/scope, done, state (or current state), and next, and replacement is
-  declared with CLI `--supersedes` or the MCP `supersedes` field, not in prose.
+  Do not write a handoff unless the operator asked for one. When they do, prefer
+  branch/scope, done, state (or current state), and next. The
+  [handoff write contract](https://github.com/thellmwhisperer/la-roca/blob/main/docs/operations.md#handoff-writes)
+  owns replacement selection; a SUPERSEDE in prose does not select a predecessor.
   Progress belongs in tasks-axi; delivery belongs in the `pr` field; a session
   decision belongs in layer `decision`; job state belongs in a layer with
   `expires_at`.
