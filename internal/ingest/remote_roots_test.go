@@ -97,6 +97,39 @@ func TestRemoteSourceRootsIngestByMachine(t *testing.T) {
 	}
 }
 
+func TestRemoteSourceRootsIgnoreHubEnvironmentOverrides(t *testing.T) {
+	hubHome := t.TempDir()
+	mirror := t.TempDir()
+	hubEnv := Environment{
+		GOOS: "linux",
+		Home: hubHome,
+		Getenv: environmentOf(map[string]string{
+			"CLAUDE_PROJECTS_ROOT": filepath.Join(hubHome, "custom-claude-projects"),
+			"CODEX_ROOT":           filepath.Join(hubHome, "custom-codex"),
+		}),
+	}
+
+	combined := ResolveRoots(hubEnv, Settings{
+		RemoteSources: []RemoteSource{{Machine: "mini", Root: mirror}},
+	})
+	if combined.ClaudeProjects != filepath.Join(hubHome, "custom-claude-projects") {
+		t.Fatalf("local Claude projects = %q", combined.ClaudeProjects)
+	}
+	if combined.CodexRoot != filepath.Join(hubHome, "custom-codex") {
+		t.Fatalf("local Codex root = %q", combined.CodexRoot)
+	}
+	if len(combined.Remotes) != 1 {
+		t.Fatalf("remote roots = %+v", combined.Remotes)
+	}
+	remote := combined.Remotes[0]
+	if remote.ClaudeProjects != filepath.Join(mirror, ".claude", "projects") {
+		t.Fatalf("remote Claude projects = %q", remote.ClaudeProjects)
+	}
+	if remote.CodexRoot != filepath.Join(mirror, ".codex") {
+		t.Fatalf("remote Codex root = %q", remote.CodexRoot)
+	}
+}
+
 func TestQualifySessionIDAndMirrorStale(t *testing.T) {
 	if got := QualifySessionID("mini", "abc"); got != "mini/abc" {
 		t.Fatalf("qualify = %q", got)

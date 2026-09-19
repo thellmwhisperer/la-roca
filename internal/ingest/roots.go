@@ -176,6 +176,7 @@ func ResolveRoots(env Environment, settings Settings) Roots {
 		}
 		remoteEnv := env
 		remoteEnv.Home = root
+		remoteEnv.Getenv = nil
 		resolved := resolveOne(remoteEnv, Settings{})
 		resolved.Machine = machine
 		resolved.Remote = true
