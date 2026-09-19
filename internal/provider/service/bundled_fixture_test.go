@@ -133,6 +133,10 @@ func TestOpsStoreIssuesShortIdsAndKeepsHistoricalIdsAddressable(t *testing.T) {
 	svc, plugins := enabledRocaOps(t)
 	opsDB := openRocaOps(t, plugins)
 	defer opsDB.Close()
+	if _, err := svc.DB().SQL().Exec(`INSERT INTO memories
+		(id, layer, content, origin, status) VALUES (1, 'discovery', 'core identity one', 'agent', 'active')`); err != nil {
+		t.Fatal(err)
+	}
 	const historical int64 = 1152921504606853945
 	if _, err := opsDB.Exec(`INSERT INTO memories (id, layer, content, origin, project, status, created_at)
 		VALUES (?, 'handoff', 'pre-migration workspace handoff', 'agent', 'workspace', 'active', '2026-01-01 00:00:00')`,
@@ -148,6 +152,16 @@ func TestOpsStoreIssuesShortIdsAndKeepsHistoricalIdsAddressable(t *testing.T) {
 	}
 	if !jsonid.Allocated(first.ID) {
 		t.Fatalf("stored id %d is not a short newly issued id", first.ID)
+	}
+	if first.ID == 1 {
+		t.Fatal("ops reused the core memory namespace")
+	}
+	resolved, err := svc.ResolveMemory(t.Context(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Database != "core" || resolved.Content != "core identity one" {
+		t.Fatalf("memory 1 resolved to %+v, want the core row", resolved)
 	}
 
 	var got int64

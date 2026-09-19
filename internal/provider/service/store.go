@@ -427,13 +427,11 @@ func orNull[T comparable](value T) any {
 func nextShortMemoryID(ctx context.Context, tx *sql.Tx) (int64, error) {
 	var next int64
 	err := tx.QueryRowContext(ctx,
-		`SELECT COALESCE(MAX(id), 0) + 1 FROM memories WHERE id <= ?`, jsonid.MaxAllocated).
+		`SELECT COALESCE(MAX(id), ? - 1) + 1 FROM memories WHERE id BETWEEN ? AND ?`,
+		jsonid.MinAllocated, jsonid.MinAllocated, jsonid.MaxAllocated).
 		Scan(&next)
 	if err != nil {
 		return 0, fmt.Errorf("allocate a short memory id: %w", err)
-	}
-	if next < 1 {
-		next = 1
 	}
 	if !jsonid.Allocated(next) {
 		return 0, fmt.Errorf("short memory ids are exhausted")
