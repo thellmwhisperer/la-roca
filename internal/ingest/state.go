@@ -53,6 +53,7 @@ func incrementalityTarget(target Target) incrementality.Target {
 		Kind:          string(target.Kind),
 		SourceAgent:   target.SourceAgent,
 		Project:       target.Project,
+		Machine:       target.Machine,
 		ParserVersion: readingVersion(target.Kind),
 		IncludeSQLiteWAL: target.Kind == parsers.KindOpenCodeDB ||
 			target.Kind == parsers.KindZCodeDB || target.Kind == parsers.KindHermesDB ||
