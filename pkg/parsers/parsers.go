@@ -180,7 +180,10 @@ func Excluded(reason string) Discard { return Discard{Reason: reason, ByDesign: 
 
 // Session is one conversation, with everything that hangs off it.
 type Session struct {
-	ID          string
+	ID string
+	// Machine is the hostname or configured remote name that produced this
+	// session. It is assigned by ingest from the source root, not the artefact.
+	Machine     string
 	SourceAgent string
 	// SourceSurface is the canonical harness declared by the registered
 	// ingestion surface. It is not read from artifact content.

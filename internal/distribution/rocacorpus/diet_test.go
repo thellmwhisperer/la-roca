@@ -444,6 +444,47 @@ func tableHasColumn(t *testing.T, db *sql.DB, table, column string) bool {
 	return count == 1
 }
 
+func TestApplySchemaBackfillsMachineOnUpgrade(t *testing.T) {
+	db, path := openCorpusDB(t)
+	statements := []string{
+		`INSERT INTO sessions(session_id, source_agent) VALUES ('historical', 'claude')`,
+		`INSERT INTO exchanges(session_id, exchange_number) VALUES ('historical', 1)`,
+		`INSERT INTO thinking_blocks(session_id, exchange_number, position_in_session) VALUES ('historical', 1, 1)`,
+		`INSERT INTO tool_uses(session_id, exchange_number, tool_name) VALUES ('historical', 1, 'Read')`,
+	}
+	for _, statement := range statements {
+		if _, err := db.Exec(statement); err != nil {
+			db.Close()
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec(`UPDATE plugin_schema SET schema_version = ?`, rocacorpus.SchemaVersion-1); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	db = reapplySchemaAndReopen(t, path)
+	defer db.Close()
+	machine, err := os.Hostname()
+	if err != nil || strings.TrimSpace(machine) == "" {
+		machine = "local"
+	} else {
+		machine = strings.TrimSpace(machine)
+	}
+	for _, table := range []string{"sessions", "exchanges", "thinking_blocks", "tool_uses"} {
+		var got string
+		if err := db.QueryRow(`SELECT machine FROM ` + table + ` WHERE session_id = 'historical'`).Scan(&got); err != nil {
+			t.Fatal(err)
+		}
+		if got != machine {
+			t.Fatalf("%s.machine = %q, want %q", table, got, machine)
+		}
+	}
+}
+
 // openCorpusDB applies the corpus schema to a fresh database and opens it,
 // returning the handle and the file path for tests that reopen or compact it.
 func openCorpusDB(t *testing.T) (*sql.DB, string) {
