@@ -29,8 +29,7 @@ func TestBundledPlacementDoctorAndVectorQueryAcceptAheadOpsSchema(t *testing.T) 
 		"UPDATE plugin_schema SET schema_version = 6, index_version = 2",
 	} {
 		if _, err := db.Exec(statement); err != nil {
-			db.Close()
-			t.Fatal(err)
+			t.Fatalf("prepare ahead-schema fixture: %v", err)
 		}
 	}
 	if err := db.Close(); err != nil {
