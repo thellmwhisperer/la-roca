@@ -38,12 +38,11 @@ CREATE TABLE IF NOT EXISTS layers (
   since_version   TEXT
 );
 
--- The operational half issues identifiers above 2^60 so no ops memory ever
--- answers to the same id as a core memory while both halves are read as one.
--- The seed is conditional: a database that already counts keeps its own place.
-INSERT INTO sqlite_sequence(name, seq)
-SELECT 'memories', 1152921504606846976
-WHERE NOT EXISTS (SELECT 1 FROM sqlite_sequence WHERE name = 'memories');
+-- New operational memories take short identifiers (at most 12 digits, below
+-- JavaScript's 2^53). Historical rows allocated from 2^60 stay in place.
+-- sqlite_sequence is not seeded: AUTOINCREMENT would still follow max(rowid)
+-- on a database that already holds those historical ids, so the store path
+-- assigns the next short id itself.
 
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
   content,
