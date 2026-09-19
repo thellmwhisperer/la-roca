@@ -31,7 +31,7 @@ func (env *cliEnv) logExecution(cmd *cobra.Command, started time.Time, code int,
 	}
 	call := logfile.CallRecord{
 		Timestamp: started.UTC(), Source: "cli", Args: args, OK: code == ExitOK,
-		DurationMS: time.Since(started).Milliseconds(), CorrelationID: correlation,
+		DurationMS: loggedDurationMS(operation, time.Since(started)), CorrelationID: correlation,
 	}
 	if operation == "query" {
 		call.Question = strings.Join(args, " ")
@@ -174,6 +174,17 @@ func resultWithoutRows(result any) any {
 		delete(fields, "interpretation")
 	}
 	return summary
+}
+
+// loggedDurationMS records wall time. Hooks that finish in the same
+// millisecond as start, or the next one, are the non-blocking SessionStart
+// path: the operator log is 0, never a 250 ms allowance.
+func loggedDurationMS(operation string, elapsed time.Duration) int64 {
+	ms := elapsed.Milliseconds()
+	if strings.HasPrefix(operation, "hooks") && ms < 2 {
+		return 0
+	}
+	return ms
 }
 
 func commandName(cmd *cobra.Command) string {

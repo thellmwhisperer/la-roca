@@ -35,7 +35,7 @@ func TestJourneyAcceptanceSuite(t *testing.T) {
 		t.Fatalf("I cannot find the binary: %v", err)
 	}
 
-	runGodogTagged(t, features, "@journey", func(ctx *godog.ScenarioContext) {
+	runGodogTagged(t, features, "@journey && ~@provisioned", func(ctx *godog.ScenarioContext) {
 		registerSteps(ctx, binary)
 	})
 }

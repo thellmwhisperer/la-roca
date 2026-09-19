@@ -1,7 +1,13 @@
 @journey @e2e-federation
 Feature: Frozen federation installed binary
   Commands against an installed roca binary on the frozen synthetic federation.
-  The live hub is never selected.
+  The live hub is never selected. The fixture is testdata/e2e-federation/frozen.tar.gz.
+
+  Scenario: 321 ingest
+    Given a frozen pr321 federation lab
+    When I run "roca ingest --json"
+    Then the command exits with code 0
+    And the output contains "errors"
 
   Scenario: 325 pill delete
     Given a pill-free frozen synthetic federation lab
@@ -21,8 +27,14 @@ Feature: Frozen federation installed binary
 
   Scenario: 326 max-chars
     Given a frozen synthetic federation lab
-    When I exec the SQL "SELECT content FROM plugin_roca_ops.memories WHERE layer='handoff' LIMIT 1" with max-chars 900
+    When I exec the SQL "SELECT content FROM plugin_roca_ops.memories WHERE project='budgets'" with max-chars 900
     Then the command exits with code 0
+    And the output contains a digit run of at least 200 characters
+
+  Scenario: 315 shared resident
+    Given a frozen synthetic federation lab
+    When I start three mcp serve processes
+    Then one vector resident process exists
 
   Scenario: 317 unqualified table
     Given a frozen synthetic federation lab
@@ -44,20 +56,27 @@ Feature: Frozen federation installed binary
 
   Scenario: 319 json ids
     Given a frozen synthetic federation lab
-    When I exec the SQL "SELECT id FROM plugin_roca_ops.memories LIMIT 1" as json
+    When I exec the SQL "SELECT id FROM plugin_roca_ops.memories WHERE id = '1152921504606846980'" as json
     Then the command exits with code 0
-    And the output contains "id"
+    And the JSON output field "rows[0].id" is the string "1152921504606846980"
 
   Scenario: 324 exact Codex session id
-    Given a frozen synthetic federation lab
+    Given a frozen pr324 federation lab
+    When I run "roca ingest --json"
+    Then the command exits with code 0
     When I exec the SQL "SELECT session_id FROM plugin_roca_corpus.sessions WHERE session_id LIKE '019aba72-aa57-7d93-a12c-b6e65c0dca6%' ORDER BY session_id"
     Then the command exits with code 0
     And the output contains "019aba72-aa57-7d93-a12c-b6e65c0dca6b"
+    Then the frozen Codex identity has 2 sessions, 1 exact source session, 0 split siblings, 8 exchanges, 48 tools, 48 orphan tools, 1 failed tool, and 1 control session
+    When I run "roca ingest --json" a second time
+    Then the frozen Codex identity is unchanged
 
+  @provisioned
   Scenario: 232991 vector query
     Given a frozen synthetic federation lab
     When I vector-query "harbor lantern"
     Then the command exits with code 0
+    And the vector query executed the ready index
 
   Scenario Outline: uso-de-la-roca correction
     Given a frozen synthetic federation lab
@@ -73,3 +92,141 @@ Feature: Frozen federation installed binary
       | roca version |
       | roca query harbor lantern |
       | roca pill show uso-de-la-roca |
+
+  Scenario: 233400 exec harbor lantern
+    Given a frozen synthetic federation lab
+    When I exec the SQL "SELECT content FROM plugin_roca_ops.memories WHERE content LIKE '%harbor lantern%'"
+    Then the command exits with code 0
+
+  @provisioned
+  Scenario: 238277 vector query
+    Given a frozen synthetic federation lab
+    When I vector-query "harbor lantern"
+    Then the command exits with code 0
+    And the vector query executed the ready index
+
+  Scenario: 244386 exec layers
+    Given a frozen synthetic federation lab
+    When I exec the SQL "SELECT layer, COUNT(*) AS n FROM plugin_roca_ops.memories GROUP BY layer"
+    Then the command exits with code 0
+
+  Scenario: 93762 query json
+    Given a frozen synthetic federation lab
+    When I run "roca query harbor lantern --json"
+    Then the command exits with code 0
+
+  Scenario: 19944 handoff
+    Given a frozen synthetic federation lab
+    When I run "roca handoff latest --project harbor"
+    Then the command exits with code 0
+
+  @provisioned
+  Scenario: 5740 vector query
+    Given a frozen synthetic federation lab
+    When I vector-query "harbor lantern"
+    Then the command exits with code 0
+    And the vector query executed the ready index
+
+  Scenario: 5950 exec limit
+    Given a frozen synthetic federation lab
+    When I exec the SQL "SELECT content FROM plugin_roca_ops.memories LIMIT 1"
+    Then the command exits with code 0
+
+  @provisioned
+  Scenario: 4657 vector query
+    Given a frozen synthetic federation lab
+    When I vector-query "harbor lantern"
+    Then the command exits with code 0
+    And the vector query executed the ready index
+
+  @provisioned
+  Scenario: 125372 vector query first person
+    Given a frozen synthetic federation lab
+    When I vector-query "I inspected the harbor lantern"
+    Then the command exits with code 0
+    And the vector query executed the ready index
+
+  Scenario: 126485 exec discovery
+    Given a frozen synthetic federation lab
+    When I exec the SQL "SELECT content FROM plugin_roca_ops.memories WHERE layer='discovery'"
+    Then the command exits with code 0
+
+  Scenario: 127663 doctor
+    Given a frozen synthetic federation lab
+    When I run "roca doctor"
+    Then the command exits with code 0
+
+  Scenario: 296656 doctor
+    Given a frozen synthetic federation lab
+    When I run "roca doctor"
+    Then the command exits with code 0
+
+  Scenario: 297007 doctor
+    Given a frozen synthetic federation lab
+    When I run "roca doctor"
+    Then the command exits with code 0
+
+  Scenario: 1658381 doctor
+    Given a frozen synthetic federation lab
+    When I run "roca doctor"
+    Then the command exits with code 0
+
+  Scenario: 1733215 handoff
+    Given a frozen synthetic federation lab
+    When I run "roca handoff latest --project harbor"
+    Then the command exits with code 0
+
+  Scenario: real-usage hooks 0ms
+    Given a frozen synthetic federation lab
+    When I run the claude authorship hook
+    Then the command exits with code 0
+    And the execution log duration_ms is 0
+
+  Scenario: real-usage exec exact ids
+    Given a frozen synthetic federation lab
+    When I exec the SQL "SELECT id FROM plugin_roca_ops.memories WHERE id = '1152921504606846980'" as json
+    Then the command exits with code 0
+    And the output contains "1152921504606846980"
+    And the execution log duration_ms is under 5000
+
+  @provisioned
+  Scenario: real-usage vector query
+    Given a frozen synthetic federation lab
+    When I warm the vector index and vector-query "harbor lantern"
+    Then the command exits with code 0
+    And the vector query executed the ready index
+    And the execution log duration_ms is under 2000
+
+  Scenario: real-usage query no silent degrade
+    Given a frozen synthetic federation lab
+    When I run "roca query harbor lantern --json"
+    Then the command exits with code 0
+    And the output contains "engines"
+    And the output does not contain "search hybrid"
+    And the execution log duration_ms is under 3000
+
+  Scenario: real-usage handoff one per project
+    Given a frozen synthetic federation lab
+    When I run "roca handoff latest --project harbor"
+    Then the command exits with code 0
+    And the output contains "handoffs[1]"
+    And the output contains "1152921504606846977"
+    And the output does not contain "handoffs[2]"
+
+  Scenario: real-usage mcp handoff refused
+    Given a frozen synthetic federation lab
+    When I open an MCP session as client "glm-5.2 (codex/slopslint-detector-a1)"
+    And I store a session handoff over MCP with the same content the CLI accepts
+    Then the response is a tool error
+    And the refusal names the agent, surface, origin and why it was refused
+
+  @provisioned
+  Scenario: real-usage update+init smoke
+    When I run the e2e-smoke operator path
+    Then the command exits with code 0
+
+  Scenario: real-usage mcp health
+    Given a frozen synthetic federation lab
+    When I call the health tool over stdio
+    Then the response is not an error
+    And the readable MCP response contains "health: pass"

@@ -151,15 +151,11 @@ harnesses did with the hook, and for the two defects only a live session found.
 See [D8/D9 source generation evidence](docs/d8-d9-evidence.md) for unchanged-pass
 source reads and stored-count status latency in the isolated lab.
 
-`make e2e-smoke` isolates the real-binary operator path in a disposable `HOME`
-and covers init, ingest, query, plugin install, and plugin update. It is also
-part of `make check` and must never mutate an operator's live La Roca home.
-
-`make e2e-federation` installs that same built binary into a disposable home
-prefix and runs commands against the frozen synthetic federation fixture. The
-runbook is [frozen federation e2e](docs/e2e-federation.md). The command list is
-[Aceptacion](docs/e2e-federation-aceptacion.md). It is part of
-`make accept` and never selects a live hub.
+`make e2e-smoke` runs the branch operator path and the published-release update
+path in disposable homes. `make e2e-federation` runs the frozen installed-binary
+suite. Their prerequisites, isolation rules, coverage, and overrides are owned
+by the [frozen federation runbook](docs/e2e-federation.md); the exact commands
+and assertions are owned by [Aceptacion](docs/e2e-federation-aceptacion.md).
 
 `make upgrade-gauntlet` is the second gate every pull request has to pass: it
 upgrades the committed homes of older releases through the current binary.
