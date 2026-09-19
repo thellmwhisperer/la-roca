@@ -52,7 +52,8 @@ type world struct {
 	plug plugWorld
 	// readOnly is the operator's switch, applied to every command and every
 	// session of this scenario.
-	readOnly bool
+	readOnly            bool
+	codexIdentityBefore *codexIdentityCounts
 	// agentConfig and settings are the two files an integration touches: the
 	// runtime's MCP configuration and its lifecycle settings. Both keep the
 	// bytes they had before Roca arrived.
@@ -113,6 +114,7 @@ func registerSteps(ctx *godog.ScenarioContext, binary string) {
 		m.dbFingerprint = ""
 		m.plug = plugWorld{}
 		m.readOnly = false
+		m.codexIdentityBefore = nil
 		m.agentConfig, m.agentConfigBefore, m.agentConfigRuntime = "", "", ""
 		m.settings, m.settingsBefore = "", ""
 		m.installed = ""
@@ -144,6 +146,8 @@ func registerSteps(ctx *godog.ScenarioContext, binary string) {
 	ctx.Given(`^there is a handoff memory about "([^"]*)"$`, m.aHandoffMemoryAbout)
 	ctx.Given(`^a frozen synthetic federation lab$`, m.aFrozenSyntheticFederationLab)
 	ctx.Given(`^a pill-free frozen synthetic federation lab$`, m.aPillFreeFrozenSyntheticFederationLab)
+	ctx.Given(`^a frozen pr321 federation lab$`, m.aFrozenPR321FederationLab)
+	ctx.Given(`^a frozen pr324 federation lab$`, m.aFrozenPR324FederationLab)
 
 	ctx.When(`^I run "([^"]*)"$`, m.iRun)
 	ctx.When(`^I exec the SQL "([^"]*)"$`, m.iExecSQL)
@@ -151,6 +155,11 @@ func registerSteps(ctx *godog.ScenarioContext, binary string) {
 	ctx.When(`^I exec the SQL "([^"]*)" as json$`, m.iExecSQLJSON)
 	ctx.When(`^I store a pill with slug ([^ ]+) and content (.+)$`, m.iStorePill)
 	ctx.When(`^I vector-query "([^"]*)"$`, m.iVectorQuery)
+	ctx.When(`^I warm the vector index and vector-query "([^"]*)"$`, m.iWarmThenVectorQuery)
+	ctx.When(`^I run the claude authorship hook$`, m.iRunClaudeAuthorshipHook)
+	ctx.When(`^I start three mcp serve processes$`, m.iStartThreeMCPServeProcesses)
+	ctx.When(`^I call the health tool over stdio$`, m.iCallHealthOverStdio)
+	ctx.When(`^I run the e2e-smoke operator path$`, m.iRunTheE2ESmokeOperatorPath)
 	ctx.When(`^I run "([^"]*)" a second time$`, m.iRun)
 	ctx.When(`^I run "roca exec" with the SQL it returned, in JSON format$`, m.iRunTheSQLItReturned)
 
@@ -167,6 +176,17 @@ func registerSteps(ctx *godog.ScenarioContext, binary string) {
 	ctx.Then(`^the output names the question as outside the scope of the query$`, m.namesOutOfScope)
 	ctx.Then(`^the output asks to be more specific$`, m.asksToBeMoreSpecific)
 	ctx.Then(`^the output contains "([^"]*)"$`, m.outputContains)
+	ctx.Then(`^the output contains a digit run of at least (\d+) characters$`, m.outputDigitRunAtLeast)
+	ctx.Then(`^the JSON output field "([^"]*)" is the string "([^"]*)"$`, m.jsonFieldIsString)
+	ctx.Then(`^the frozen Codex identity has (\d+) sessions, (\d+) exact source session, (\d+) split siblings, (\d+) exchanges, (\d+) tools, (\d+) orphan tools, (\d+) failed tool, and (\d+) control session$`, func(sessions, exactSourceSession, splitSiblings, exchanges, tools, orphanTools, failedTools, controlSessions int) error {
+		return m.theFrozenCodexIdentityHas(sessions, exactSourceSession, splitSiblings, exchanges, tools, orphanTools, failedTools, controlSessions)
+	})
+	ctx.Then(`^the frozen Codex identity is unchanged$`, m.theFrozenCodexIdentityIsUnchanged)
+	ctx.Then(`^the execution log duration_ms is under (\d+)$`, m.theExecutionLogDurationUnder)
+	ctx.Then(`^the execution log duration_ms is 0$`, func() error { return m.theExecutionLogDurationIs(0) })
+	ctx.Then(`^the vector query executed the ready index$`, m.theVectorQueryExecutedTheReadyIndex)
+	ctx.Then(`^one vector resident process exists$`, m.oneVectorResidentProcessExists)
+	ctx.Then(`^the readable MCP response contains "([^"]*)"$`, m.theReadableMCPResponseContains)
 	ctx.Then(`^no row has been returned$`, m.jsonHasZeroRows)
 	ctx.Then(`^the memory count has not changed$`, m.theMemoryCountHasNotChanged)
 	ctx.Then(`^the memories table still exists$`, m.theMemoriesTableStillExists)
