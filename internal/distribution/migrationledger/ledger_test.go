@@ -62,6 +62,24 @@ func TestPrepareIsIdempotentAndASchemaUpgradeReturnsToPrepared(t *testing.T) {
 	}
 }
 
+func TestPrepareRejectsANewerLedger(t *testing.T) {
+	db := openTestDatabase(t)
+	newer := Definition{Plugin: "synthetic", SchemaVersion: 6, IndexVersion: 2}
+	if err := Prepare(context.Background(), db, newer); err != nil {
+		t.Fatal(err)
+	}
+
+	err := Prepare(context.Background(), db, Definition{
+		Plugin: "synthetic", SchemaVersion: 5, IndexVersion: 1,
+	})
+	if err == nil || !strings.Contains(err.Error(), "newer than supported") {
+		t.Fatalf("prepare against newer ledger = %v", err)
+	}
+	if got := inspectState(t, db); got.SchemaVersion != 6 || got.IndexVersion != 2 {
+		t.Fatalf("rejected prepare changed newer ledger = %+v", got)
+	}
+}
+
 func TestABatchNamesAnAbsentLedgerAndLeavesForeignKeysAsItFoundThem(t *testing.T) {
 	db := openTestDatabase(t)
 	_, err := BeginBatch(context.Background(), db, BatchSpec{
