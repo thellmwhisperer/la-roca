@@ -10,7 +10,7 @@ func TestStoreHandoffAutoSupersedesPreviousCurrentForTheProject(t *testing.T) {
 
 	first := mustJSON(t, runRoot(t, contractBuild(), "store",
 		"--layer", "handoff", "--project", project,
-		"--content", issueHandoffContent("handoff auto A"),
+		"--content", "handoff auto A",
 		"--agent", "claude", "--model", "sonnet", "--json"))
 	firstID, _ := first["id"].(string)
 	if firstID == "" {
@@ -19,7 +19,7 @@ func TestStoreHandoffAutoSupersedesPreviousCurrentForTheProject(t *testing.T) {
 
 	second := mustJSON(t, runRoot(t, contractBuild(), "store",
 		"--layer", "handoff", "--project", project,
-		"--content", issueHandoffContent("handoff auto B"),
+		"--content", "handoff auto B",
 		"--agent", "claude", "--model", "sonnet", "--json"))
 	secondID, _ := second["id"].(string)
 	if secondID == "" || secondID == firstID {
@@ -53,8 +53,4 @@ func TestStoreHandoffAutoSupersedesPreviousCurrentForTheProject(t *testing.T) {
 	default:
 		t.Fatalf("count n = %#v", row["n"])
 	}
-}
-
-func issueHandoffContent(phrase string) string {
-	return phrase + "\nbranch: lab\ndone: recorded\nstate: stored\nnext: continue"
 }

@@ -5,7 +5,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -48,12 +47,6 @@ var sessionHandoffSurfaces = map[string]bool{
 	SurfaceMCP: true,
 }
 
-var handoffShapeLabel = regexp.MustCompile(
-	`(?i)\b(branch/scope|branch|scope|done|current\s+state|state|next)\s*:`,
-)
-
-var requiredHandoffFields = []string{"branch/scope", "done", "state", "next"}
-
 const acceptedHandoffLabels = "branch/scope:, done:, state: (or current state:), and next:"
 
 const acceptedHandoffExample = `layer=handoff content="branch: main\ndone: recorded\nstate: stored\nnext: continue"`
@@ -90,14 +83,11 @@ func mcpAgentLookupNames(agent string) []string {
 	return slices.Compact(names)
 }
 
-func refuseHandoffWrite(physical string, origin string, authorship Authorship, content string) error {
+func refuseHandoffWrite(physical string, origin string, authorship Authorship) error {
 	if physical != "handoff" {
 		return nil
 	}
-	if err := refuseHandoffWriter(origin, authorship); err != nil {
-		return err
-	}
-	return refuseHandoffShape(content)
+	return refuseHandoffWriter(origin, authorship)
 }
 
 func refuseHandoffWriter(origin string, authorship Authorship) error {
@@ -111,7 +101,7 @@ func refuseHandoffWriter(origin string, authorship Authorship) error {
 		"handoff refused: agent=%q surface=%q origin=%q; session writers are %s writing from cli or mcp; "+
 			"progress belongs in tasks-axi; delivery belongs in the pr field; "+
 			"a session decision belongs in layer decision; job state belongs in a layer with expires_at; "+
-			"accepted shape uses the labels %s; example: %s",
+			"recommended shape uses the labels %s; example: %s",
 		valueOr(agent, UnknownAuthor), valueOr(surface, UnknownAuthor), valueOr(origin, UnknownAuthor),
 		sessionWriterNames(), acceptedHandoffLabels, acceptedHandoffExample)
 }
@@ -123,43 +113,6 @@ func sessionWriterNames() string {
 	}
 	slices.Sort(names)
 	return strings.Join(names, ", ")
-}
-
-func refuseHandoffShape(content string) error {
-	matches := handoffShapeLabel.FindAllStringSubmatchIndex(content, -1)
-	populated := map[string]bool{}
-	for i, match := range matches {
-		valueEnd := len(content)
-		if i+1 < len(matches) {
-			valueEnd = matches[i+1][0]
-		}
-		if strings.TrimSpace(content[match[1]:valueEnd]) == "" {
-			continue
-		}
-		label := strings.ToLower(strings.Join(strings.Fields(content[match[2]:match[3]]), " "))
-		switch label {
-		case "branch/scope", "branch", "scope":
-			populated["branch/scope"] = true
-		case "current state", "state":
-			populated["state"] = true
-		case "next":
-			populated["next"] = true
-		default:
-			populated[label] = true
-		}
-	}
-	missing := make([]string, 0, len(requiredHandoffFields))
-	for _, field := range requiredHandoffFields {
-		if !populated[field] {
-			missing = append(missing, field)
-		}
-	}
-	if len(missing) == 0 {
-		return nil
-	}
-	return fmt.Errorf(
-		"a handoff must use the labels %s (missing or blank %s); a SUPERSEDE in prose goes with --supersedes",
-		acceptedHandoffLabels, strings.Join(missing, ", "))
 }
 
 type handoffAutoSupersede struct {

@@ -66,52 +66,7 @@ func TestStoreRefusesAHandoffFromANonSessionWriter(t *testing.T) {
 	}
 }
 
-func TestStoreRefusesAHandoffThatOmitsTheRequiredShape(t *testing.T) {
-	svc, _ := serviceWithPaths(t)
-	tests := []struct {
-		name    string
-		content string
-	}{
-		{"unlabeled prose", "token refresh done, retry pending"},
-		{"near labels", "DONE (verified): recorded\nSTATUS: stored\nSUPERSEDE 42\nbranch: fixture\nnext: continue"},
-		{"next step alias", "branch: fixture\ndone: recorded\nstate: stored\nnext step: ship"},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			_, err := svc.Store(t.Context(), service.StoreRequest{
-				Layer: "handoff", Content: test.content, Authorship: sessionWriter(),
-			})
-			if err == nil {
-				t.Fatal("store accepted a handoff without the accepted labels")
-			}
-			for _, want := range []string{
-				"branch/scope:", "done:", "state:", "current state:", "next:",
-				"SUPERSEDE", "--supersedes",
-			} {
-				if !strings.Contains(err.Error(), want) {
-					t.Errorf("shape refusal does not name %q: %v", want, err)
-				}
-			}
-		})
-	}
-}
-
-func TestStoreRefusesAHandoffWithBlankLabeledFields(t *testing.T) {
-	svc, _ := serviceWithPaths(t)
-	_, err := svc.Store(t.Context(), service.StoreRequest{
-		Layer: "handoff", Content: "branch: done: state: next:", Authorship: sessionWriter(),
-	})
-	if err == nil {
-		t.Fatal("store accepted blank handoff fields")
-	}
-	for _, want := range []string{"branch/scope", "done", "state", "next"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("blank-field refusal does not name %q: %v", want, err)
-		}
-	}
-}
-
-func TestStoreAcceptsASessionHandoffWithTheRequiredShape(t *testing.T) {
+func TestStoreAcceptsAStructuredSessionHandoff(t *testing.T) {
 	svc, _ := serviceWithPaths(t)
 	result, err := svc.Store(t.Context(), sessionHandoff("the session closed on this branch"))
 	if err != nil {

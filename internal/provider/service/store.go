@@ -145,7 +145,7 @@ func (s *Service) Store(ctx context.Context, req StoreRequest) (result StoreResu
 	}
 	authorship := req.Authorship
 	authorship = authorship.normalized()
-	if err := refuseHandoffWrite(physical, origin, authorship, content); err != nil {
+	if err := refuseHandoffWrite(physical, origin, authorship); err != nil {
 		return StoreResult{}, err
 	}
 	target, err := s.memoryOwner()

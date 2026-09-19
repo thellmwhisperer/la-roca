@@ -320,7 +320,7 @@ roca handoff latest --all-projects --since 30d
 
 A handoff is written only on explicit operator instruction. The
 [handoff write policy](operations.md#handoff-writes) owns the allowed writers,
-required shape, and replacement contract.
+recommended shape, and replacement contract.
 
 ### Deleting a pill
 
