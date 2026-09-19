@@ -88,13 +88,32 @@ func compactOversizedIDs(ctx context.Context, tx *sql.Tx) error {
 		legacy_id = (SELECT old FROM memory_id_map WHERE old = -memories.id)`); err != nil {
 		return fmt.Errorf("apply compact memory ids: %w", err)
 	}
+	if err := remapMemoryAliases(ctx, tx); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `UPDATE memories SET supersedes = (
-		SELECT new FROM memory_id_map WHERE old = memories.supersedes)
+		COALESCE((SELECT new FROM memory_id_map WHERE old = memories.supersedes), memories.supersedes))
 		WHERE supersedes IS NOT NULL`); err != nil {
 		return fmt.Errorf("remap supersedes: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `DROP TABLE memory_id_map`); err != nil {
 		return fmt.Errorf("drop memory id map: %w", err)
+	}
+	return nil
+}
+
+func remapMemoryAliases(ctx context.Context, tx *sql.Tx) error {
+	var present int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'memory_id_remaps'`).Scan(&present); err != nil {
+		return fmt.Errorf("inspect memory id remaps: %w", err)
+	}
+	if present == 0 {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE memory_id_remaps SET canonical_id = COALESCE(
+		(SELECT new FROM memory_id_map WHERE old = memory_id_remaps.canonical_id), canonical_id)`); err != nil {
+		return fmt.Errorf("remap memory id aliases: %w", err)
 	}
 	return nil
 }

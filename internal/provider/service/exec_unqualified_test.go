@@ -66,3 +66,36 @@ func TestExecRefusesAnUnqualifiedTableSharedByAttachedPlugins(t *testing.T) {
 		t.Fatalf("expression SELECT = %v", err)
 	}
 }
+
+func TestExecLegacyIDExpansionStaysInTheOpsQueryScope(t *testing.T) {
+	paths, plugins := scopedBundledPlugins(t)
+	svc := initialized(t, paths, func(options *service.Options) {
+		options.PluginDir = plugins
+		options.RocaOpsEnabled = true
+		options.CorpusEnabled = true
+	})
+	stored, err := svc.Store(t.Context(), service.StoreRequest{Layer: "discovery", Content: "synthetic scoped legacy id"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const historical int64 = 1152921504606853945
+	ops := openRocaOps(t, plugins)
+	defer ops.Close()
+	if _, err := ops.Exec(`UPDATE memories SET legacy_id = ? WHERE id = ?`, historical, stored.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.DB().SQL().Exec(`INSERT INTO memories
+		(id, layer, content, origin) VALUES (1, 'discovery', 'synthetic core scope', 'agent')`); err != nil {
+		t.Fatal(err)
+	}
+	result, err := svc.Exec(t.Context(), service.ExecRequest{SQL: `
+		SELECT id FROM plugin_roca_ops.memories
+		WHERE id = '1152921504606853945'
+		  AND EXISTS (SELECT 1 FROM main.memories WHERE id = 1)`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.RowCount != 1 || fmt.Sprint(result.Rows[0]["id"]) != fmt.Sprint(stored.ID) {
+		t.Fatalf("scoped legacy result = %+v, want id %d", result.Rows, stored.ID)
+	}
+}
