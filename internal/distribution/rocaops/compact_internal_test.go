@@ -3,6 +3,7 @@ package rocaops
 import (
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/bundledplugin"
@@ -73,4 +74,20 @@ func assertMemoryFTSCount(t *testing.T, db *sql.DB, term string, want int) {
 	if got != want {
 		t.Fatalf("FTS count for %q = %d, want %d", term, got, want)
 	}
+}
+
+func TestMemoryFTSTriggerSQLMatchesSchema(t *testing.T) {
+	got := memoryFTSTriggerSQL(schema)
+	if len(got) != 3 {
+		t.Fatalf("trigger statements = %d, want 3", len(got))
+	}
+	for _, statement := range got {
+		if !containsSchema(statement) {
+			t.Fatalf("trigger is not taken from schema.sql:\n%s", statement)
+		}
+	}
+}
+
+func containsSchema(statement string) bool {
+	return strings.Contains(schema, statement)
 }

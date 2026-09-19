@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/bundledplugin"
 )
@@ -25,6 +26,14 @@ func compactMemoryIDs(path string) error {
 	if err := ensureLegacyIDColumn(ctx, tx); err != nil {
 		return err
 	}
+	var oversized int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM memories WHERE id > ?`, jsSafeInteger).Scan(&oversized); err != nil {
+		return fmt.Errorf("count oversized memory ids: %w", err)
+	}
+	if oversized == 0 {
+		return tx.Commit()
+	}
 	if err := dropMemoryFTSTriggers(tx); err != nil {
 		return err
 	}
@@ -34,10 +43,44 @@ func compactMemoryIDs(path string) error {
 	if err := resetSequence(ctx, tx); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, schema); err != nil {
-		return fmt.Errorf("restore memories fts schema: %w", err)
+	if _, err := tx.Exec(`INSERT INTO memories_fts(memories_fts) VALUES ('rebuild')`); err != nil {
+		return fmt.Errorf("rebuild memories fts after id compact: %w", err)
+	}
+	if err := createMemoryFTSTriggers(tx); err != nil {
+		return err
 	}
 	return tx.Commit()
+}
+
+func createMemoryFTSTriggers(tx *sql.Tx) error {
+	statements := memoryFTSTriggerSQL(schema)
+	if len(statements) != 3 {
+		return fmt.Errorf("schema.sql is missing memories FTS triggers")
+	}
+	for _, statement := range statements {
+		if _, err := tx.Exec(statement); err != nil {
+			return fmt.Errorf("restore memories fts trigger: %w", err)
+		}
+	}
+	return nil
+}
+
+func memoryFTSTriggerSQL(schemaSQL string) []string {
+	var statements []string
+	for _, name := range []string{"memories_ai", "memories_ad", "memories_au"} {
+		needle := "CREATE TRIGGER IF NOT EXISTS " + name
+		start := strings.Index(schemaSQL, needle)
+		if start < 0 {
+			return nil
+		}
+		rest := schemaSQL[start:]
+		end := strings.Index(rest, "END;")
+		if end < 0 {
+			return nil
+		}
+		statements = append(statements, strings.TrimSpace(rest[:end+4]))
+	}
+	return statements
 }
 
 func ensureLegacyIDColumn(ctx context.Context, tx *sql.Tx) error {

@@ -490,7 +490,7 @@ func (s *Service) prepareExec(ctx context.Context, statement string, cursor bool
 	if opsRouteHasLegacyID(route.Databases) {
 		remaps, err := opsRemapCanonicalIDs(route.Databases, collectOpsIDLiterals(statement))
 		if err != nil {
-			return PluginRoute{}, "", err
+			remaps = map[string]string{}
 		}
 		statement = expandOpsLegacyIDs(statement, remaps)
 	}
