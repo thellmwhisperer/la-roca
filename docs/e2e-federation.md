@@ -36,7 +36,7 @@ those pull request and issue bodies:
 - issue 315: three `roca mcp serve` processes share one vector resident
 - issue 317: unqualified `FROM memories` is refused with qualified candidates
 - issue 318: `roca handoff latest --limit 1` and `--all-projects`
-- issue 319: ops memory ids are JSON strings
+- issue 427: ops memory ids are short JSON numbers and legacy ids still resolve
 - issue 324: Codex source thread keeps its exact session id
 
 Plus one command case per uso-de-la-roca correction source (23 exchange ids),
