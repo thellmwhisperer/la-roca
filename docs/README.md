@@ -41,6 +41,9 @@ Reading order, from operator to contributor:
 15. [Schema adoption Aceptacion](schema-adoption-187-aceptacion.md): doctor,
     vector query, and bundled plugin place after the 1.87 machine-column
     adoption, on an isolated lab prefix.
+16. [Ops schema-ahead Aceptacion](schema-ahead-1881-aceptacion.md): doctor,
+    vector query, and bundled plugin place when the ops ledger is already
+    newer than this binary, on an isolated lab prefix.
 
 The [README](../README.md) is the front page; these pages carry the depth.
 [CONTRIBUTING.md](../CONTRIBUTING.md) owns build and test.

@@ -108,10 +108,29 @@ func TableColumns(ctx context.Context, querier interface {
 // ApplySchema upgrades one bundled plugin's owned database in place, then
 // prepares its plugin-local DATA SPLIT ledger. Every declaration it executes is
 // idempotent; each plugin owns any explicit historical-data deletion.
+// A database already adopted by a newer binary is left untouched: an older
+// release must still be able to place and attach it instead of rolling the
+// update back.
 func ApplySchema(path, pluginName, declaration string, schemaVersion, indexVersion int) error {
 	db, err := OpenDatabase(path, false)
 	if err != nil {
 		return fmt.Errorf("open bundled %s database: %w", pluginName, err)
+	}
+	current, err := migrationledger.Inspect(context.Background(), db)
+	if err != nil {
+		db.Close()
+		return fmt.Errorf("inspect bundled %s migration ledger: %w", pluginName, err)
+	}
+	if current.Plugin != "" && current.Plugin != pluginName {
+		db.Close()
+		return fmt.Errorf("plugin database belongs to %q, not %q", current.Plugin, pluginName)
+	}
+	if current.Plugin != "" &&
+		(current.SchemaVersion > schemaVersion || current.IndexVersion > indexVersion) {
+		if err := db.Close(); err != nil {
+			return fmt.Errorf("close bundled %s database: %w", pluginName, err)
+		}
+		return os.Chmod(path, 0o600)
 	}
 	if _, err := db.Exec(declaration); err != nil {
 		db.Close()

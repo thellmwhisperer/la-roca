@@ -60,6 +60,15 @@ func TestPrepareIsIdempotentAndASchemaUpgradeReturnsToPrepared(t *testing.T) {
 	if err := VerifyMigration(context.Background(), db, rowsMigration, fixtureDigest('a')); err != nil {
 		t.Fatalf("committed batches cannot be verified after a schema upgrade: %v", err)
 	}
+
+	older := definition
+	older.SchemaVersion = 1
+	if err := Prepare(context.Background(), db, older); err != nil {
+		t.Fatal(err)
+	}
+	if got = inspectState(t, db); got.SchemaVersion != 2 || got.IndexVersion != 2 {
+		t.Fatalf("newer identity was rewound: %+v", got)
+	}
 }
 
 func TestABatchNamesAnAbsentLedgerAndLeavesForeignKeysAsItFoundThem(t *testing.T) {

@@ -214,10 +214,9 @@ func Prepare(ctx context.Context, db *sql.DB, definition Definition) error {
 			return fmt.Errorf("plugin database belongs to %q, not %q", current.Plugin, definition.Plugin)
 		}
 		if current.SchemaVersion > definition.SchemaVersion || current.IndexVersion > definition.IndexVersion {
-			return fmt.Errorf("plugin database schema/index %d/%d is newer than supported %d/%d",
-				current.SchemaVersion, current.IndexVersion, definition.SchemaVersion, definition.IndexVersion)
-		}
-		if current.SchemaVersion != definition.SchemaVersion || current.IndexVersion != definition.IndexVersion {
+			// A newer binary already recorded this identity. Do not rewind it,
+			// or an older release cannot place the plugin it already owns.
+		} else if current.SchemaVersion != definition.SchemaVersion || current.IndexVersion != definition.IndexVersion {
 			_, err = tx.ExecContext(ctx, `UPDATE plugin_schema SET
 				schema_version = ?, index_version = ?,
 				prepared_at = datetime('now'), updated_at = datetime('now')

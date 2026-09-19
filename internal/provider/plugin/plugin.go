@@ -577,7 +577,7 @@ func validate(ctx context.Context, descriptor Descriptor) (Database, error) {
 		if !ok {
 			return Database{}, fmt.Errorf("semantic layer omits database table %s", name)
 		}
-		if !slices.Equal(inspected.Columns, table.Columns) {
+		if !physicalColumnsCover(table.Columns, inspected.Columns) {
 			return Database{}, fmt.Errorf("semantic layer columns for %s are %v but the database has %v",
 				name, table.Columns, inspected.Columns)
 		}
@@ -627,6 +627,22 @@ func validate(ctx context.Context, descriptor Descriptor) (Database, error) {
 		descriptor.VectorTables[index] = cloneVectorTable(descriptor.VectorTables[index])
 	}
 	return Database{Descriptor: descriptor, Tables: tables}, nil
+}
+
+// physicalColumnsCover reports whether the live table has every declared
+// column. Extra physical columns are allowed: a newer binary may have adopted
+// the database before this release learned those names.
+func physicalColumnsCover(declared, actual []string) bool {
+	have := make(map[string]bool, len(actual))
+	for _, name := range actual {
+		have[name] = true
+	}
+	for _, name := range declared {
+		if !have[name] {
+			return false
+		}
+	}
+	return true
 }
 
 // databaseURI resolves the path first because a plugin root reached through a
