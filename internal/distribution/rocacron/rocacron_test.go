@@ -23,6 +23,11 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+const vectorDeltaRide = `[ride.vector_delta]
+command = "roca vector ingest --delta"
+gate = "after_ingest"
+`
+
 func TestDryRunPreviewsOrderAndGateWithoutExecutingOrRecording(t *testing.T) {
 	root, database := cronWorld(t, `[ride.vector_delta]
 command = "roca vector ingest --delta"
@@ -89,10 +94,7 @@ gate = "after_ingest"
 }
 
 func TestFailedIngestIsRecordedAndDefersTheDependentRide(t *testing.T) {
-	root, database := cronWorld(t, `[ride.vector_delta]
-command = "roca vector ingest --delta"
-gate = "after_ingest"
-`)
+	root, database := cronWorld(t, vectorDeltaRide)
 	service := newService(t, root, database, func(_ context.Context, command string, _, errOut io.Writer) (int, error) {
 		if strings.HasSuffix(command, " ingest") {
 			fmt.Fprint(errOut, "synthetic ingest failure")
@@ -117,10 +119,7 @@ gate = "after_ingest"
 }
 
 func TestVectorDeltaRideRecordsFailureWhenIngestExitsOne(t *testing.T) {
-	root, database := cronWorld(t, `[ride.vector_delta]
-command = "roca vector ingest --delta"
-gate = "after_ingest"
-`)
+	root, database := cronWorld(t, vectorDeltaRide)
 	service := newService(t, root, database, func(_ context.Context, command string, _, errOut io.Writer) (int, error) {
 		if strings.Contains(command, "vector ingest --delta") {
 			return 1, fmt.Errorf("exit status 1")
