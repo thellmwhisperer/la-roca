@@ -17,13 +17,13 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/securefile"
 )
 
 var ErrUnavailable = errors.New("resident is not running")
+var ErrDatabaseMismatch = errors.New("resident is serving a different database")
 
 const (
 	maxSocketPath = 100
@@ -31,15 +31,18 @@ const (
 )
 
 type Options struct {
-	Binary  string
-	DataDir string
-	DBPath  string
-	Socket  string
+	Binary   string
+	DataDir  string
+	DBPath   string
+	Socket   string
+	ReadOnly bool
 }
 
 type Request struct {
-	Op   string          `json:"op"`
-	Args json.RawMessage `json:"args,omitempty"`
+	DBPath   string          `json:"db_path,omitempty"`
+	ReadOnly bool            `json:"read_only,omitempty"`
+	Op       string          `json:"op"`
+	Args     json.RawMessage `json:"args,omitempty"`
 }
 
 type Response struct {
@@ -95,12 +98,34 @@ func Dial(opts Options) (net.Conn, error) {
 	if err != nil {
 		return nil, ErrUnavailable
 	}
+	_ = conn.SetDeadline(time.Now().Add(time.Second))
+	if err := json.NewEncoder(conn).Encode(Request{Op: "connect", DBPath: opts.DBPath, ReadOnly: opts.ReadOnly}); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("connect to resident: %w", err)
+	}
+	var response Response
+	if err := json.NewDecoder(conn).Decode(&response); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("identify resident: %w", err)
+	}
+	if response.Error != "" {
+		conn.Close()
+		if response.Error == ErrDatabaseMismatch.Error() {
+			return nil, ErrDatabaseMismatch
+		}
+		return nil, errors.New(response.Error)
+	}
+	_ = conn.SetDeadline(time.Time{})
 	return conn, nil
 }
 
 func DialOrSpawn(ctx context.Context, opts Options) (net.Conn, error) {
+	ctx, cancel := context.WithTimeout(ctx, startupWait)
+	defer cancel()
 	if conn, err := Dial(opts); err == nil {
 		return conn, nil
+	} else if !errors.Is(err, ErrUnavailable) {
+		return nil, err
 	}
 	socket := opts.socket()
 	if err := os.MkdirAll(filepath.Dir(socket), 0o700); err != nil {
@@ -119,6 +144,8 @@ func DialOrSpawn(ctx context.Context, opts Options) (net.Conn, error) {
 	defer release()
 	if conn, err := Dial(opts); err == nil {
 		return conn, nil
+	} else if !errors.Is(err, ErrUnavailable) {
+		return nil, err
 	}
 	if strings.TrimSpace(opts.Binary) == "" {
 		return nil, ErrUnavailable
@@ -126,7 +153,11 @@ func DialOrSpawn(ctx context.Context, opts Options) (net.Conn, error) {
 	if err := os.Remove(socket); err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("replace stale resident socket: %w", err)
 	}
-	command := exec.Command(opts.Binary, "--db-path", opts.DBPath, "mcp", "serve", "--resident")
+	args := []string{"--db-path", opts.DBPath, "mcp", "serve", "--resident"}
+	if opts.ReadOnly {
+		args = append(args, "--read-only")
+	}
+	command := exec.Command(opts.Binary, args...)
 	command.Env = os.Environ()
 	command.SysProcAttr = detachedProcessAttr()
 	devNull, err := os.Open(os.DevNull)
@@ -152,10 +183,12 @@ func DialOrSpawn(ctx context.Context, opts Options) (net.Conn, error) {
 	var last error
 	for time.Now().Before(deadline) {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("wait for resident startup; inspect resident.log: %w", err)
 		}
 		if conn, err := Dial(opts); err == nil {
 			return conn, nil
+		} else if !errors.Is(err, ErrUnavailable) {
+			return nil, err
 		} else {
 			last = err
 		}
@@ -164,7 +197,7 @@ func DialOrSpawn(ctx context.Context, opts Options) (net.Conn, error) {
 	if last == nil {
 		last = ErrUnavailable
 	}
-	return nil, fmt.Errorf("wait for resident: %w", last)
+	return nil, fmt.Errorf("resident startup timed out; inspect resident.log: %w", last)
 }
 
 func Call(ctx context.Context, opts Options, op string, args any) (json.RawMessage, error) {
@@ -198,132 +231,152 @@ func Call(ctx context.Context, opts Options, op string, args any) (json.RawMessa
 // is sufficient to preserve an attached client session without exposing the
 // resident socket to the agent.
 func ProxyStdio(ctx context.Context, opts Options, in io.Reader, out io.Writer) error {
-	scanner := bufio.NewScanner(in)
-	scanner.Buffer(make([]byte, 64*1024), 64<<20)
-	var initialize []byte
-	var initialized []byte
-	var conn net.Conn
-	var reader *bufio.Reader
-	var mu sync.Mutex
-	closeConn := func() {
-		mu.Lock()
-		if conn != nil {
-			_ = conn.Close()
-			conn = nil
-			reader = nil
-		}
-		mu.Unlock()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	type message struct {
+		line []byte
+		err  error
+		conn net.Conn
 	}
-	connect := func() (net.Conn, error) {
-		for {
-			candidate, err := DialOrSpawn(ctx, opts)
-			if err == nil {
-				return candidate, nil
-			}
-			if !errors.Is(err, ErrUnavailable) {
-				return nil, err
-			}
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(50 * time.Millisecond):
-			}
-		}
-	}
-	readMessage := func() ([]byte, error) {
-		if reader == nil {
-			return nil, ErrUnavailable
-		}
-		line, err := reader.ReadBytes('\n')
-		if err != nil {
-			return nil, err
-		}
-		return line, nil
-	}
-	var replay func(net.Conn) error
-	replay = func(c net.Conn) error {
-		if len(initialize) == 0 {
-			return nil
-		}
-		if _, err := c.Write(append(initialize, '\n')); err != nil {
-			return err
-		}
-		if _, err := readMessage(); err != nil { // discard replayed initialize reply
-			return err
-		}
-		if len(initialized) > 0 {
-			_, err := c.Write(append(initialized, '\n'))
-			return err
-		}
-		return nil
-	}
-	for scanner.Scan() {
-		line := bytes.TrimSpace(scanner.Bytes())
-		if len(line) == 0 {
-			continue
-		}
-		var envelope struct {
-			Method string          `json:"method"`
-			ID     json.RawMessage `json:"id"`
-		}
-		_ = json.Unmarshal(line, &envelope)
-		if envelope.Method == "initialize" {
-			initialize = append([]byte(nil), line...)
-		}
-		if envelope.Method == "notifications/initialized" {
-			initialized = append([]byte(nil), line...)
-		}
-		for attempt := 0; attempt < 2; attempt++ {
-			if conn == nil {
-				candidate, err := connect()
-				if err != nil {
-					return err
-				}
-				conn = candidate
-				reader = bufio.NewReader(conn)
-				if envelope.Method != "initialize" {
-					if err := replay(conn); err != nil {
-						closeConn()
-						continue
-					}
-				}
-			}
-			if _, err := conn.Write(append(line, '\n')); err != nil {
-				closeConn()
+	input := make(chan message)
+	go func() {
+		scanner := bufio.NewScanner(in)
+		scanner.Buffer(make([]byte, 64*1024), 64<<20)
+		for scanner.Scan() {
+			line := bytes.TrimSpace(scanner.Bytes())
+			if len(line) == 0 {
 				continue
 			}
-			if len(envelope.ID) == 0 || envelope.Method != "" && strings.HasPrefix(envelope.Method, "notifications/") {
-				break
+			select {
+			case input <- message{line: bytes.Clone(line)}:
+			case <-ctx.Done():
+				return
 			}
+		}
+		err := scanner.Err()
+		if err == nil {
+			err = io.EOF
+		}
+		select {
+		case input <- message{err: err}:
+		case <-ctx.Done():
+		}
+	}()
+	responses := make(chan message)
+	var conn net.Conn
+	defer func() {
+		if conn != nil {
+			conn.Close()
+		}
+	}()
+	var initialize, initialized []byte
+	pending := map[string]json.RawMessage{}
+	connect := func(replay bool) error {
+		candidate, err := DialOrSpawn(ctx, opts)
+		if err != nil {
+			return err
+		}
+		reader := bufio.NewReader(candidate)
+		if replay && len(initialize) > 0 {
+			_ = candidate.SetDeadline(time.Now().Add(startupWait))
+			if _, err = candidate.Write(append(bytes.Clone(initialize), '\n')); err == nil {
+				_, err = reader.ReadBytes('\n')
+			}
+			if err == nil && len(initialized) > 0 {
+				_, err = candidate.Write(append(bytes.Clone(initialized), '\n'))
+			}
+			if err != nil {
+				candidate.Close()
+				return err
+			}
+			_ = candidate.SetDeadline(time.Time{})
+		}
+		conn = candidate
+		go func() {
 			for {
-				response, err := readMessage()
+				line, err := reader.ReadBytes('\n')
+				select {
+				case responses <- message{line: line, err: err, conn: candidate}:
+				case <-ctx.Done():
+					return
+				}
 				if err != nil {
-					closeConn()
-					break
+					return
 				}
-				var reply struct {
-					ID json.RawMessage `json:"id"`
+			}
+		}()
+		return nil
+	}
+	disconnect := func() error {
+		conn.Close()
+		conn = nil
+		for _, id := range pending {
+			if err := json.NewEncoder(out).Encode(map[string]any{
+				"jsonrpc": "2.0", "id": id,
+				"error": map[string]any{"code": -32000, "message": "resident disconnected; request outcome is unknown"},
+			}); err != nil {
+				return err
+			}
+		}
+		clear(pending)
+		return nil
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case received := <-input:
+			if received.err != nil {
+				if errors.Is(received.err, io.EOF) {
+					return nil
 				}
-				_ = json.Unmarshal(response, &reply)
-				if len(reply.ID) == 0 || string(reply.ID) != string(envelope.ID) {
-					if _, err := out.Write(response); err != nil {
-						return err
-					}
-					continue
-				}
-				if _, err := out.Write(response); err != nil {
+				return received.err
+			}
+			var envelope struct {
+				Method string          `json:"method"`
+				ID     json.RawMessage `json:"id"`
+			}
+			_ = json.Unmarshal(received.line, &envelope)
+			if conn == nil {
+				if err := connect(envelope.Method != "initialize"); err != nil {
 					return err
 				}
-				break
 			}
-			if conn != nil {
-				break
+			if envelope.Method == "initialize" {
+				initialize = bytes.Clone(received.line)
+			}
+			if envelope.Method == "notifications/initialized" {
+				initialized = bytes.Clone(received.line)
+			}
+			if len(envelope.ID) > 0 && envelope.Method != "" {
+				pending[string(envelope.ID)] = envelope.ID
+			}
+			if _, err := conn.Write(append(received.line, '\n')); err != nil {
+				if err := disconnect(); err != nil {
+					return err
+				}
+			}
+		case received := <-responses:
+			if received.conn != conn {
+				continue
+			}
+			if received.err != nil {
+				if err := disconnect(); err != nil {
+					return err
+				}
+				continue
+			}
+			var envelope struct {
+				ID     json.RawMessage `json:"id"`
+				Method string          `json:"method"`
+			}
+			_ = json.Unmarshal(received.line, &envelope)
+			if envelope.Method == "" {
+				delete(pending, string(envelope.ID))
+			}
+			if _, err := out.Write(received.line); err != nil {
+				return err
 			}
 		}
 	}
-	closeConn()
-	if err := scanner.Err(); err != nil {
-		return err
-	}
-	return nil
 }

@@ -27,7 +27,7 @@ func (env *cliEnv) tryResident(ctx context.Context, raw []string) (bool, error) 
 	}
 	command, args, jsonOutput, dbPath := residentCommandArgs(raw)
 	if command == "" || (command != "exec" && command != "query" && command != "store" &&
-		command != "handoff" && command != "health" && command != "doctor") {
+		command != "health") {
 		if command != "vector" || !env.features.Vector || len(args) == 0 || args[0] != "query" {
 			return false, nil
 		}
@@ -36,9 +36,6 @@ func (env *cliEnv) tryResident(ctx context.Context, raw []string) (bool, error) 
 		return env.tryResidentVector(ctx, args, jsonOutput, dbPath)
 	}
 	if command == "" {
-		return false, nil
-	}
-	if command == "doctor" && slicesContain(args, "--report") {
 		return false, nil
 	}
 	options, err := env.residentOptions(dbPath)
@@ -53,7 +50,7 @@ func (env *cliEnv) tryResident(ctx context.Context, raw []string) (bool, error) 
 			}
 			return callErr
 		}
-		return json.Unmarshal(rawResult, target)
+		return decodeJSON(string(rawResult), target)
 	}
 
 	switch command {
@@ -68,6 +65,7 @@ func (env *cliEnv) tryResident(ctx context.Context, raw []string) (bool, error) 
 		} else if err != nil {
 			return true, err
 		}
+		result.MaxChars = service.TextBudget(request.MaxChars)
 		env.capture(result)
 		if jsonOutput || env.json {
 			return true, env.printJSON(result)
@@ -84,6 +82,7 @@ func (env *cliEnv) tryResident(ctx context.Context, raw []string) (bool, error) 
 		} else if err != nil {
 			return true, err
 		}
+		result.MaxChars = service.TextBudget(request.MaxChars)
 		env.capture(result)
 		if jsonOutput || env.json {
 			return true, env.printJSON(result)
@@ -104,46 +103,6 @@ func (env *cliEnv) tryResident(ctx context.Context, raw []string) (bool, error) 
 			return true, env.printJSON(result)
 		}
 		env.print("%s", axi.Store(result))
-	case "handoff":
-		if len(args) == 0 || args[0] != "latest" {
-			return false, nil
-		}
-		request, op, all, ok := parseResidentHandoff(args[1:])
-		if !ok {
-			return false, nil
-		}
-		if all {
-			var result service.HandoffLab
-			if err := call(op, request, &result); errors.Is(err, errResidentUnavailable) {
-				return false, nil
-			} else if err != nil {
-				return true, err
-			}
-			if jsonOutput || env.json {
-				return true, env.printJSON(result)
-			}
-			env.print("%s", axi.HandoffLab(result))
-			break
-		}
-		var result service.HandoffList
-		if err := call(op, request, &result); errors.Is(err, errResidentUnavailable) {
-			return false, nil
-		} else if err != nil {
-			var missing *service.NoHandoffError
-			if errors.As(err, &missing) || strings.HasPrefix(err.Error(), "no handoff for project") {
-				message := err.Error()
-				if missing != nil {
-					message = missing.Error()
-				}
-				env.print("%s", message)
-				return true, nil
-			}
-			return true, err
-		}
-		if jsonOutput || env.json {
-			return true, env.printJSON(result)
-		}
-		env.print("%s", axi.Handoffs(result))
 	case "health":
 		request, ok := parseResidentHealth(args)
 		if !ok {
@@ -159,23 +118,7 @@ func (env *cliEnv) tryResident(ctx context.Context, raw []string) (bool, error) 
 			return true, env.printJSON(result)
 		}
 		env.print("%s", axi.Health(result))
-	case "doctor":
-		var report service.DoctorReport
-		if err := call("doctor", struct{}{}, &report); errors.Is(err, errResidentUnavailable) {
-			return false, nil
-		} else if err != nil {
-			return true, err
-		}
-		report.DBPath = options.DBPath
-		var status resident.Status
-		if err := call("status", struct{}{}, &status); err == nil {
-			report.Resident = &status
-		}
-		if jsonOutput || env.json {
-			return true, env.printJSON(doctorReport{DoctorReport: report, Vector: env.collectVectorDoctor(ctx), ReadOnlySnapshots: collectSnapshotDoctor()})
-		}
-		renderDoctor(env, report)
-		renderVectorDoctor(env, env.collectVectorDoctor(ctx))
+
 	}
 	return true, nil
 }
@@ -238,12 +181,10 @@ func (env *cliEnv) tryResidentVector(ctx context.Context, args []string, jsonOut
 var errResidentUnavailable = errors.New("resident unavailable")
 
 func (env *cliEnv) residentOptions(dbPath string) (resident.Options, error) {
-	previous := env.dbPath
 	if dbPath != "" {
 		env.dbPath = dbPath
 	}
 	paths, err := env.resolvePaths()
-	env.dbPath = previous
 	if err != nil {
 		return resident.Options{}, err
 	}
@@ -371,44 +312,11 @@ func parseResidentStore(args []string) (service.StoreRequest, bool) {
 	if err := flags.Parse(args); err != nil || request.Layer == "" || request.Content == "" {
 		return service.StoreRequest{}, false
 	}
-	if metadata != "" && (json.Unmarshal([]byte(metadata), &request.Metadata) != nil || request.Metadata == nil) {
+	if metadata != "" && (decodeJSON(metadata, &request.Metadata) != nil || request.Metadata == nil) {
 		return service.StoreRequest{}, false
 	}
 	request.Authorship = resolveCLIAuthorship(agent, model, currentAuthorshipEvidence)
 	return request, true
-}
-
-func parseResidentHandoff(args []string) (any, string, bool, bool) {
-	flags := pflag.NewFlagSet("handoff", pflag.ContinueOnError)
-	flags.SetOutput(nil)
-	project, since := "", ""
-	limit, headChars := 0, 0
-	all := false
-	flags.StringVar(&project, "project", "", "")
-	flags.StringVar(&since, "since", "", "")
-	flags.IntVar(&limit, "limit", 0, "")
-	flags.IntVar(&headChars, "head-chars", 0, "")
-	flags.BoolVar(&all, "all-projects", false, "")
-	if err := flags.Parse(args); err != nil || len(flags.Args()) != 0 {
-		return nil, "", false, false
-	}
-	if all {
-		stamp, err := parseSince(since)
-		if err != nil {
-			return nil, "", false, false
-		}
-		return struct {
-			Since     time.Time `json:"since"`
-			HeadChars int       `json:"head_chars"`
-		}{stamp, headChars}, "handoff_all", true, true
-	}
-	resolved, err := resolveProject(project)
-	if err != nil {
-		return nil, "", false, false
-	}
-	return struct {
-		Project string `json:"project"`
-	}{resolved}, "handoff_latest", false, true
 }
 
 func parseResidentHealth(args []string) (service.HealthRequest, bool) {
@@ -422,18 +330,28 @@ func parseResidentHealth(args []string) (service.HealthRequest, bool) {
 	return service.HealthRequest{MaxRows: maxRows}, true
 }
 
-func slicesContain(values []string, wanted string) bool {
-	for _, value := range values {
-		if value == wanted {
-			return true
-		}
-	}
-	return false
-}
 func filepathDir(path string) string {
 	index := strings.LastIndexAny(path, "/\\")
 	if index < 0 {
 		return "."
 	}
 	return path[:index]
+}
+
+func (env *cliEnv) callResident(ctx context.Context, op string, request, target any) (bool, error) {
+	if env.forceReadOnly || config.ReadOnly(os.Getenv(config.EnvReadOnly)) {
+		return false, nil
+	}
+	options, err := env.residentOptions("")
+	if err != nil {
+		return false, nil
+	}
+	payload, err := resident.Call(ctx, options, op, request)
+	if errors.Is(err, resident.ErrUnavailable) || (err != nil && strings.Contains(err.Error(), "resident socket path is too long")) {
+		return false, nil
+	}
+	if err != nil {
+		return true, err
+	}
+	return true, decodeJSON(string(payload), target)
 }

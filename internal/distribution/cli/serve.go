@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/mcpplug"
 	residentserver "github.com/thellmwhisperer/la-roca/internal/distribution/resident"
+	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	residenttransport "github.com/thellmwhisperer/la-roca/pkg/resident"
 )
 
@@ -48,6 +49,7 @@ func serveCommand(env *cliEnv) *cobra.Command {
 			}
 			return residenttransport.ProxyStdio(cmd.Context(), residenttransport.Options{
 				Binary: binary, DataDir: filepath.Dir(paths.DB), DBPath: paths.DB,
+				ReadOnly: env.forceReadOnly || config.ReadOnly(os.Getenv(config.EnvReadOnly)),
 			}, cmd.InOrStdin(), cmd.OutOrStdout())
 		},
 	}

@@ -39,6 +39,7 @@ type DB struct {
 	// plugin databases.
 	transient bool
 
+	poolMu      sync.Mutex
 	once        sync.Once
 	readOnly    *sql.DB
 	readOnlyErr error
@@ -164,6 +165,8 @@ func (db *DB) ReadOnly() (*sql.DB, error) {
 	if db.transient || db.physicalReadOnly {
 		return db.sql, nil
 	}
+	db.poolMu.Lock()
+	defer db.poolMu.Unlock()
 	db.once.Do(func() {
 		_, dsn, err := sqliteFileDSN(db.path, url.Values{
 			"_pragma": {
@@ -314,4 +317,10 @@ func isDatabaseBusy(err error) bool {
 	}
 	primary := serr.Code() & 0xff
 	return primary == 5 || primary == 6 // SQLITE_BUSY, SQLITE_LOCKED
+}
+
+func (db *DB) Pools() []*sql.DB {
+	db.poolMu.Lock()
+	defer db.poolMu.Unlock()
+	return []*sql.DB{db.sql, db.readOnly}
 }

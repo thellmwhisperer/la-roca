@@ -65,11 +65,7 @@ func doctorCommand(env *cliEnv) *cobra.Command {
 				}
 				return err
 			}
-			err := env.serviceRunE(func(cmd *cobra.Command, _ []string, svc *service.Service) error {
-				report, err := svc.Doctor(cmd.Context())
-				if err != nil {
-					return err
-				}
+			render := func(report service.DoctorReport, dataDir string) error {
 				proposals, err := env.openCapabilityProposals()
 				if err != nil {
 					return err
@@ -77,7 +73,7 @@ func doctorCommand(env *cliEnv) *cobra.Command {
 				for _, proposal := range proposals {
 					report.CapabilityProposals = append(report.CapabilityProposals, proposal.Proposal.Alert)
 				}
-				audit := logfile.New(svc.DataDir())
+				audit := logfile.New(dataDir)
 				failures, logErr := audit.RecentQueryFailures(
 					time.Now(), doctorQueryFailureWindow, doctorQueryFailureLimit)
 				if logErr != nil {
@@ -103,7 +99,31 @@ func doctorCommand(env *cliEnv) *cobra.Command {
 					_, err = env.reconcileCapabilities(cmd, true, true)
 				}
 				return err
-			})(cmd, args)
+			}
+			var report service.DoctorReport
+			handled, err := env.callResident(cmd.Context(), "doctor", struct{}{}, &report)
+			if handled {
+				if err == nil {
+					paths, pathErr := env.resolvePaths()
+					if pathErr != nil {
+						return pathErr
+					}
+					report.DBPath = paths.DB
+					var status resident.Status
+					if statusHandled, statusErr := env.callResident(cmd.Context(), "status", struct{}{}, &status); statusHandled && statusErr == nil {
+						report.Resident = &status
+					}
+					err = render(report, filepath.Dir(paths.DB))
+				}
+			} else {
+				err = env.serviceRunE(func(cmd *cobra.Command, _ []string, svc *service.Service) error {
+					report, err := svc.Doctor(cmd.Context())
+					if err != nil {
+						return err
+					}
+					return render(report, svc.DataDir())
+				})(cmd, args)
+			}
 			if err != nil && len(foreignOwned) > 0 {
 				renderForeignOwnedStateTo(env.errOut, foreignOwned)
 			}

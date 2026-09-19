@@ -126,12 +126,9 @@ func executeWithOptions(env *cliEnv, args []string, in io.Reader, plugins bool) 
 	}
 	root := rootCommand(env)
 	if handled, residentErr := env.tryResident(context.Background(), args); handled {
-		if len(args) > 0 {
-			env.auditCommand = args[0]
-		}
-		if len(args) > 1 {
-			env.auditArgs = redactPluginArguments(args[1:])
-		}
+		command, commandArgs, _, _ := residentCommandArgs(args)
+		env.auditCommand = command
+		env.auditArgs = redactPluginArguments(commandArgs)
 		if residentErr != nil {
 			residentErr = logfile.Correlate(residentErr)
 			env.code = ExitError

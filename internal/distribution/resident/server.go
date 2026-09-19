@@ -80,17 +80,37 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) error {
 	if err != nil {
 		return err
 	}
-	var probe struct {
-		Op string `json:"op"`
+	var probe transport.Request
+	readOnly := false
+	if json.Unmarshal(bytes.TrimSpace(line), &probe) == nil && probe.Op == "connect" {
+		if probe.DBPath != "" {
+			requested, reqErr := filepath.Abs(probe.DBPath)
+			serving, svcErr := filepath.Abs(s.service.ConfiguredDBPath())
+			if reqErr != nil || svcErr != nil || requested != serving {
+				return s.respond(conn, transport.Response{Error: transport.ErrDatabaseMismatch.Error()})
+			}
+		}
+		readOnly = probe.ReadOnly
+		if err := s.respond(conn, transport.Response{Result: json.RawMessage("{}")}); err != nil {
+			return err
+		}
+		line, err = reader.ReadBytes('\n')
+		if err != nil {
+			return err
+		}
+		probe = transport.Request{}
 	}
 	if json.Unmarshal(bytes.TrimSpace(line), &probe) == nil && probe.Op != "" {
+		if readOnly && probe.Op == "store" {
+			return s.respond(conn, transport.Response{Error: "La Roca is in read-only mode: this operation writes"})
+		}
 		return s.handleCall(ctx, conn, line)
 	}
 	transportConn := &bufferedConn{
 		Conn:   conn,
 		reader: io.MultiReader(bytes.NewReader(line), reader),
 	}
-	err = mcpplug.ServeConnection(ctx, s.service, s.build, transportConn)
+	err = mcpplug.ServeConnection(ctx, s.service, s.build, transportConn, readOnly)
 	return err
 }
 
@@ -115,7 +135,9 @@ func (s *Server) call(ctx context.Context, op string, raw json.RawMessage) (json
 		if len(raw) == 0 {
 			raw = []byte("{}")
 		}
-		return json.Unmarshal(raw, target)
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		decoder.UseNumber()
+		return decoder.Decode(target)
 	}
 	var value any
 	switch op {
@@ -267,7 +289,16 @@ func (s *Server) vectorQuery(ctx context.Context, request vectorresident.Request
 		s.vector = client
 	}
 	s.vectorMu.Unlock()
-	return client.Query(ctx, request)
+	result, err := client.Query(ctx, request)
+	if client.Failed() {
+		s.vectorMu.Lock()
+		if s.vector == client {
+			s.vector = nil
+		}
+		s.vectorMu.Unlock()
+		_ = client.Close()
+	}
+	return result, err
 }
 
 func (s *Server) closeVector() {

@@ -624,7 +624,7 @@ func Serve(ctx context.Context, svc *service.Service, build Build) error {
 // ServeConnection serves one MCP session over a resident-owned connection.
 // The connection is supplied by the resident so the shim process never opens
 // the service or a database.
-func ServeConnection(ctx context.Context, svc *service.Service, build Build, conn io.ReadWriteCloser) error {
+func ServeConnection(ctx context.Context, svc *service.Service, build Build, conn io.ReadWriteCloser, readOnly bool) error {
 	resident, err := consentedResident(ctx, svc)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "notice: semantic search will load when first used")
@@ -632,7 +632,23 @@ func ServeConnection(ctx context.Context, svc *service.Service, build Build, con
 	if resident != nil {
 		defer resident.Close()
 	}
-	return serveOver(ctx, svc, build, &mcp.IOTransport{Reader: conn, Writer: conn}, resident)
+	companions := startPluginCompanions(svc.PluginDir(), svc.DataDir(), os.Stderr)
+	defer companions.Close()
+	server := newServer(svc, build, resident)
+	if readOnly {
+		server.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
+			return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+				tool, _ := toolCall(req)
+				if method == "tools/call" && tool == storeTool.Name {
+					result := &mcp.CallToolResult{}
+					result.SetError(errors.New("La Roca is in read-only mode: this operation writes"))
+					return result, nil
+				}
+				return next(ctx, method, req)
+			}
+		})
+	}
+	return server.Run(ctx, &mcp.IOTransport{Reader: conn, Writer: conn})
 }
 
 func consentedResident(ctx context.Context, svc *service.Service) (*residentVector, error) {
