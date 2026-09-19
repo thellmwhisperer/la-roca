@@ -18,3 +18,4 @@ Feature: Exec time limit
     And I call the exec tool with the SQL "WITH RECURSIVE costly(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM costly WHERE n < 100000000) SELECT sum(n) FROM costly"
     Then the response is a tool error
     And the readable response contains "the validated SQL exceeded the time limit after 5s"
+    And the MCP call finished within 6 seconds
