@@ -112,11 +112,7 @@ func collectOpsIDLiterals(statement string) []string {
 		if scope == nil || !scope.ops {
 			continue
 		}
-		idIndex, _, ok := opsSQLIDReference(tokens, index, scope)
-		if !ok || idIndex+2 >= len(tokens) || tokens[idIndex+1].text != "=" {
-			continue
-		}
-		digits, ok := opsSQLDecimal(tokens[idIndex+2])
+		_, _, digits, ok := opsSQLIDEquality(tokens, index, scope)
 		if !ok || seen[digits] {
 			continue
 		}
@@ -210,11 +206,7 @@ func expandOpsLegacyIDs(statement string, remaps map[string]string) string {
 		if scope == nil || !scope.ops {
 			continue
 		}
-		idIndex, qualifier, ok := opsSQLIDReference(tokens, index, scope)
-		if !ok || idIndex+2 >= len(tokens) || tokens[idIndex+1].text != "=" {
-			continue
-		}
-		digits, ok := opsSQLDecimal(tokens[idIndex+2])
+		idIndex, qualifier, digits, ok := opsSQLIDEquality(tokens, index, scope)
 		if !ok {
 			continue
 		}
@@ -247,6 +239,15 @@ func expandOpsLegacyIDs(statement string, remaps map[string]string) string {
 	}
 	result.WriteString(statement[last:])
 	return result.String()
+}
+
+func opsSQLIDEquality(tokens []opsSQLToken, index int, scope *opsSQLScope) (int, string, string, bool) {
+	idIndex, qualifier, ok := opsSQLIDReference(tokens, index, scope)
+	if !ok || idIndex+2 >= len(tokens) || tokens[idIndex+1].text != "=" {
+		return 0, "", "", false
+	}
+	digits, ok := opsSQLDecimal(tokens[idIndex+2])
+	return idIndex, qualifier, digits, ok
 }
 
 func opsRouteHasLegacyID(databases []plugin.Database) bool {
