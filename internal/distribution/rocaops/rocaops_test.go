@@ -180,7 +180,7 @@ func TestEnsureDoesNotTouchTheDatabaseWhenTheInstalledVersionMatches(t *testing.
 	}
 }
 
-func TestFreshOpsSchemaDoesNotSeedUnsafeMemoryIds(t *testing.T) {
+func TestFreshOpsSchemaSeedsTheReservedShortMemoryRange(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "plugins")
 	bin := filepath.Join(t.TempDir(), "bin")
 	if _, err := rocaops.Ensure(root, bin, "v-test"); err != nil {
@@ -195,8 +195,8 @@ func TestFreshOpsSchemaDoesNotSeedUnsafeMemoryIds(t *testing.T) {
 	if err := db.QueryRow(`SELECT seq FROM sqlite_sequence WHERE name = 'memories'`).Scan(&seq); err != nil && err != sql.ErrNoRows {
 		t.Fatal(err)
 	}
-	if seq.Valid && !jsonid.Allocated(seq.Int64) && seq.Int64 != 0 {
-		t.Fatalf("fresh sqlite_sequence = %d, want no 2^60 seed", seq.Int64)
+	if !seq.Valid || seq.Int64 != jsonid.MinAllocated-1 {
+		t.Fatalf("fresh sqlite_sequence = %+v, want %d", seq, jsonid.MinAllocated-1)
 	}
 	result, err := db.Exec(`INSERT INTO memories (layer, content, origin) VALUES ('discovery', 'fresh schema id', 'agent')`)
 	if err != nil {

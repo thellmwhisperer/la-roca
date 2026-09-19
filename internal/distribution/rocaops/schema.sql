@@ -38,11 +38,13 @@ CREATE TABLE IF NOT EXISTS layers (
   since_version   TEXT
 );
 
--- New operational memories take short identifiers (at most 12 digits, below
--- JavaScript's 2^53). Historical rows allocated from 2^60 stay in place.
--- sqlite_sequence is not seeded: AUTOINCREMENT would still follow max(rowid)
--- on a database that already holds those historical ids, so the store path
--- assigns the next short id itself.
+-- New operational memories take the reserved high short range. Historical
+-- rows allocated from 2^60 stay in place. Existing databases with rows keep
+-- their sequence; the store path assigns the next short id itself.
+INSERT INTO sqlite_sequence(name, seq)
+SELECT 'memories', 899999999999
+WHERE NOT EXISTS (SELECT 1 FROM sqlite_sequence WHERE name = 'memories')
+  AND NOT EXISTS (SELECT 1 FROM memories);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
   content,

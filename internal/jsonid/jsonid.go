@@ -14,10 +14,13 @@ import (
 // MaxSafeInteger is JavaScript's Number.MAX_SAFE_INTEGER (2^53 - 1).
 const MaxSafeInteger = 1<<53 - 1
 
-// MaxAllocated is the largest newly issued memory identifier: twelve decimal
-// digits, inside JavaScript's safe integer range. Historical ops ids from 2^60
-// remain stored as they are and stay addressable.
-const MaxAllocated = 1_000_000_000_000 - 1
+// MinAllocated and MaxAllocated reserve the high twelve-digit range for newly
+// issued operational memory identifiers. Historical ops ids from 2^60 remain
+// stored as they are and stay addressable.
+const (
+	MinAllocated = 900_000_000_000
+	MaxAllocated = 1_000_000_000_000 - 1
+)
 
 // Unsafe reports whether n cannot be a JSON number that JavaScript will keep.
 func Unsafe(n int64) bool {
@@ -26,7 +29,7 @@ func Unsafe(n int64) bool {
 
 // Allocated reports whether n is in the range newly issued memory ids use.
 func Allocated(n int64) bool {
-	return n > 0 && n <= MaxAllocated
+	return n >= MinAllocated && n <= MaxAllocated
 }
 
 // IdentityName reports whether a JSON key or SQL column holds a memory id.
