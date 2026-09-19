@@ -81,7 +81,6 @@ codex-identity-test: build ## Paired Codex session identity regression on a decl
 	ROCA_BIN=$(abspath $(BIN)) go test -tags=acceptance ./test/acceptance -run '^TestCodexIdentityPublished$$' -v -count=1
 
 .PHONY: accept accept-index split-oracle e2e-smoke e2e-federation e2e
-ROCA_PUBLISHED_BIN ?= $(shell command -v roca 2>/dev/null)
 ROCA_E2E_VECTOR_MODEL ?= $(HOME)/.roca/models/nomic-embed-text-v2-moe/a5db3381f2e514d3490a3a31fe70eb1a65e95016c85c6c2c23223b810806594f.gguf
 # Pin the suite to the artefact this recipe's `build` just wrote. An inherited
 # ROCA_BIN, including a stub, cannot select a different binary.

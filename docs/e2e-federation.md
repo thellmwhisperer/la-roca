@@ -21,13 +21,14 @@ tagged `@provisioned` and run only by `TestFrozenFederationProvisionedJourney`.
 From the repository root:
 
 ```sh
-make e2e-federation
+make e2e-federation ROCA_PUBLISHED_BIN=<published-roca>
 ```
 
 The target requires an executable published release and the local embedding
-model used by the ready-index case. By default it selects `roca` from `PATH`
-and the pinned model under `~/.roca/models/`. Override either selection when
-needed:
+model used by the ready-index case. Set `ROCA_PUBLISHED_BIN` explicitly to
+the local release executable. A `roca` command on `PATH` may be an SSH wrapper
+that escapes the disposable HOME. The model defaults to the pinned file under
+`~/.roca/models/`; override it when needed:
 
 ```sh
 make e2e-federation \
