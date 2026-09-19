@@ -200,18 +200,30 @@ type Result struct {
 	After  Tables `json:"counts_after"`
 	Delta  Tables `json:"delta"`
 
-	WorkspaceRoots Workspace               `json:"workspace_roots"`
-	DetectedAgents []string                `json:"detected_agents"`
-	MissingAgents  []string                `json:"agents_not_found"`
-	Roots          map[string]string       `json:"roots"`
-	Warnings       []string                `json:"warnings,omitempty"`
-	ElapsedMS      int64                   `json:"elapsed_ms"`
-	SourceStats    map[string]*SourceStats `json:"-"`
-	Coverage       CoverageReport          `json:"coverage"`
+	WorkspaceRoots Workspace         `json:"workspace_roots"`
+	DetectedAgents []string          `json:"detected_agents"`
+	MissingAgents  []string          `json:"agents_not_found"`
+	Roots          map[string]string `json:"roots"`
+	// RootScans is what each HOME-shaped root contributed, local first.
+	RootScans   []RootScan              `json:"root_scans,omitempty"`
+	Warnings    []string                `json:"warnings,omitempty"`
+	ElapsedMS   int64                   `json:"elapsed_ms"`
+	SourceStats map[string]*SourceStats `json:"-"`
+	Coverage    CoverageReport          `json:"coverage"`
 	// categories indexes DiscardSummary while the run is collapsing into it.
 	categories     map[string]int                `json:"-"`
 	fileCategories map[string]int                `json:"-"`
 	harvestCursors map[string]harvestCursorState `json:"-"`
+}
+
+// RootScan is one HOME-shaped tree this run looked at.
+type RootScan struct {
+	Machine       string `json:"machine"`
+	Root          string `json:"root"`
+	FilesSeen     int    `json:"files_seen"`
+	FilesRead     int    `json:"files_read"`
+	FilesSkipped  int    `json:"files_skipped"`
+	FilesExcluded int    `json:"files_excluded"`
 }
 
 type harvestCursorState struct {
@@ -251,6 +263,7 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 		DetectedAgents: orEmpty(plan.DetectedAgents),
 		MissingAgents:  MissingAgentFamilies(plan.DetectedAgents),
 		Roots:          declaredRoots(opts.Roots),
+		RootScans:      seedRootScans(opts.Roots),
 		Warnings:       plan.Warnings,
 		SourceStats:    map[string]*SourceStats{},
 		FilesSeen:      len(plan.Targets) + len(plan.Excluded),
@@ -275,6 +288,9 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 		stats.RecordsExcluded += records
 		stats.FilesExcluded++
 		result.FilesExcluded++
+		scan := result.rootScan(target)
+		scan.FilesSeen++
+		scan.FilesExcluded++
 		result.categorizeFile("excluded", target.ExclusionReason)
 		// A file the scan refuses on purpose is not a failure to read one: it is
 		// this build declining to ingest something it decided is not corpus.
@@ -346,6 +362,8 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 				})
 			}
 		}
+		scan := result.rootScan(target)
+		scan.FilesSeen++
 		fingerprint, err := targetFingerprint(target)
 		if err != nil {
 			metadata, metadataErr := incrementality.MetadataFingerprint(target.Path)
@@ -353,6 +371,7 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 				target.Kind == parsers.KindHermesDB || target.Kind == parsers.KindLegacyStoreDB
 			if metadataErr == nil && !isDatabase && incrementality.UnchangedMetadata(state, target.Path, metadata) {
 				result.FilesSkipped++
+				scan.FilesSkipped++
 				result.categorizeFile("skipped", "unchanged fingerprint")
 				result.Coverage.skip(target.Path, "unchanged metadata after fingerprint failure")
 				finishTarget()
@@ -370,6 +389,7 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 		if incrementality.Unchanged(state, target.Path, fingerprint) {
 			result.addMessageCoverage(source, stateMessageCoverage(state[target.Path]))
 			result.FilesSkipped++
+			scan.FilesSkipped++
 			result.categorizeFile("skipped", "unchanged fingerprint")
 			result.Coverage.skip(target.Path, "unchanged fingerprint")
 			finishTarget()
@@ -377,6 +397,7 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 		}
 		if opts.DryRun {
 			result.FilesRead++
+			scan.FilesRead++
 			result.categorizeFile("pending", "new or changed fingerprint")
 			stats.Read++
 			result.Coverage.skip(target.Path, "dry run pending")
@@ -388,6 +409,7 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 			announced[source] = true
 		}
 		result.FilesRead++
+		scan.FilesRead++
 		result.categorizeFile("parsed", "new or changed fingerprint")
 		stats.Read++
 		discardsBefore, excludedBefore := result.RecordsDiscarded, result.RecordsExcluded
@@ -639,6 +661,7 @@ func ingestOne(ctx context.Context, db Database, layers layerResolver, opts Opti
 		kept = append(kept, session)
 	}
 	records.Sessions = kept
+	labelRecords(target, &records)
 	result.addMessageCoverage(target.SourceAgent, records.MessageCoverage)
 	result.ExchangesHeld += records.Deferred
 	if records.Seen.Sessions > 0 || records.Seen.Messages > 0 {
@@ -1250,6 +1273,7 @@ func digestBytes(content []byte) string {
 // declared, then what the path encodes. The path is the last resort because its
 // encoding is lossy.
 func resolveProjects(ctx context.Context, opts Options, target Target, records *parsers.Records) {
+	roots := owningRoots(opts, target)
 	for i := range records.Memories {
 		memory := &records.Memories[i]
 		cwd, _ := memory.Metadata["cwd"].(string)
@@ -1281,7 +1305,7 @@ func resolveProjects(ctx context.Context, opts Options, target Target, records *
 		if fromContent != "" {
 			session.Project = fromContent
 		} else if session.Project == "" {
-			if fromPath, ok := ProjectFromPath(target.Path, opts.Roots.Workspace); ok {
+			if fromPath, ok := ProjectFromPath(target.Path, roots.Workspace); ok {
 				session.Project = fromPath
 			}
 		}
@@ -1295,7 +1319,8 @@ func resolveProjects(ctx context.Context, opts Options, target Target, records *
 // what turns `codex` into a named agent, and it may upgrade a row this ingest
 // itself wrote as generic before the state database existed.
 func enrichCodexSession(ctx context.Context, opts Options, target Target, session *parsers.Session) {
-	enrichment := enrichCodex(ctx, opts.Roots.CodexStateDB, session.ID, target.Path)
+	roots := owningRoots(opts, target)
+	enrichment := enrichCodex(ctx, roots.CodexStateDB, session.ID, target.Path)
 	if len(enrichment.Metadata) == 0 {
 		return
 	}
@@ -1378,8 +1403,31 @@ func declaredRoots(roots Roots) map[string]string {
 		"claude_export":              strings.Join(roots.ClaudeWebExports, string(os.PathListSeparator)),
 		"chatgpt_export":             strings.Join(roots.ChatGPTWebExports, string(os.PathListSeparator)),
 	}
+	for _, remote := range roots.Remotes {
+		if remote.Machine != "" && remote.Home != "" {
+			declared["remote."+remote.Machine] = remote.Home
+		}
+	}
 	maps.DeleteFunc(declared, func(_, value string) bool { return value == "" })
 	return declared
+}
+
+func seedRootScans(roots Roots) []RootScan {
+	scans := []RootScan{{Machine: roots.Machine, Root: roots.Home}}
+	for _, remote := range roots.Remotes {
+		scans = append(scans, RootScan{Machine: remote.Machine, Root: remote.Home})
+	}
+	return scans
+}
+
+func (r *Result) rootScan(target Target) *RootScan {
+	for i := range r.RootScans {
+		if r.RootScans[i].Machine == target.Machine && r.RootScans[i].Root == target.RootHome {
+			return &r.RootScans[i]
+		}
+	}
+	r.RootScans = append(r.RootScans, RootScan{Machine: target.Machine, Root: target.RootHome})
+	return &r.RootScans[len(r.RootScans)-1]
 }
 
 // SortedSources is the report's source names in a stable order, for the readable

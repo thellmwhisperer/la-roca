@@ -74,3 +74,24 @@ func TestDoctorNamesDetectedAgents(t *testing.T) {
 		}
 	})
 }
+
+func TestDoctorListsRemoteRootsAndStaleMirrors(t *testing.T) {
+	age := 36
+	var output strings.Builder
+	renderDoctor(&cliEnv{out: &output}, service.DoctorReport{
+		RemoteSources: []service.RemoteSourceDoctor{
+			{Machine: "mini", Present: true, Stale: true, StaleAfterHours: 24, NewestAgeHours: &age},
+			{Machine: "studio", Present: false, Stale: true, StaleAfterHours: 12},
+		},
+	})
+	out := output.String()
+	for _, want := range []string{
+		"remote sources:",
+		"mini · stale · newest file 36h ago, threshold 24h",
+		"studio · missing · threshold 12h",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("want %q in\n%s", want, out)
+		}
+	}
+}

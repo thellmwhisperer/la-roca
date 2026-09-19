@@ -67,6 +67,29 @@ Older configuration files may still contain `anthropic_export_paths` or
 `openai_export_paths`. Those keys are leftovers: ingest ignores them, and they
 can be removed.
 
+## Remote source roots
+
+One hub can ingest artefacts produced on another machine without running a
+second La Roca there. Declare each mirror under `[[sources.remote]]`:
+
+```toml
+[[sources.remote]]
+machine = "mini"
+root = "~/.roca-sources/mini"
+```
+
+The root is a HOME-shaped tree (`.claude/`, `.codex/`, `.pi/`, and the rest).
+How the tree arrives (rsync, a shared disk) is the operator's job; ingest only
+reads it. Every session, exchange, thinking block, and tool call from that
+root is stamped `machine = "mini"`. The local HOME uses this machine's
+hostname. The same project path on two machines stays distinguishable, and
+removing the `[[sources.remote]]` entry stops reading that root without
+deleting rows already written.
+
+`roca ingest --dry-run` reports file counts per root. `roca doctor` lists each
+remote root and marks a mirror stale when its newest file is older than
+`stale_after_hours` (24 when the key is omitted).
+
 ## Import an Anthropic data export
 
 Request the official export from Claude web or Desktop under **Settings →

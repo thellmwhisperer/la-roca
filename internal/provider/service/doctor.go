@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
 	"github.com/thellmwhisperer/la-roca/internal/store/search"
@@ -75,6 +76,18 @@ type DoctorReport struct {
 	CapabilityProposals []string `json:"capability_proposals,omitempty"`
 	// Query is the effective hybrid retrieval knobs after config and defaults.
 	Query QueryDoctor `json:"query"`
+	// RemoteSources are configured HOME-shaped mirrors and whether each is stale.
+	RemoteSources []RemoteSourceDoctor `json:"remote_sources,omitempty"`
+}
+
+// RemoteSourceDoctor is one configured mirror `roca doctor` lists.
+type RemoteSourceDoctor struct {
+	Machine         string `json:"machine"`
+	Root            string `json:"root"`
+	Present         bool   `json:"present"`
+	Stale           bool   `json:"stale"`
+	StaleAfterHours int    `json:"stale_after_hours"`
+	NewestAgeHours  *int   `json:"newest_age_hours,omitempty"`
 }
 
 // QueryDoctor is the effective [query] hybrid knobs `roca doctor` prints.
@@ -119,9 +132,10 @@ func (s *Service) Doctor(ctx context.Context) (DoctorReport, error) {
 		Bedrock:        bedrock,
 		DetectedAgents: ingest.DetectAgents(s.opts.Sources),
 
-		PromptPath:   promptPath,
-		PromptExists: promptErr == nil && promptInfo.Mode().IsRegular(),
-		Query:        queryDoctor(s.QuerySettings()),
+		PromptPath:    promptPath,
+		PromptExists:  promptErr == nil && promptInfo.Mode().IsRegular(),
+		Query:         queryDoctor(s.QuerySettings()),
+		RemoteSources: remoteSourceDoctor(s.opts.Sources),
 	}
 	unregistered, err := s.unregisteredLayers(ctx)
 	if err != nil {
@@ -138,6 +152,35 @@ func (s *Service) Doctor(ctx context.Context) (DoctorReport, error) {
 		}
 	}
 	return report, nil
+}
+
+func remoteSourceDoctor(roots ingest.Roots) []RemoteSourceDoctor {
+	if len(roots.Remotes) == 0 {
+		return nil
+	}
+	now := time.Now()
+	report := make([]RemoteSourceDoctor, 0, len(roots.Remotes))
+	for _, remote := range roots.Remotes {
+		hours := remote.StaleAfterHours
+		if hours <= 0 {
+			hours = ingest.DefaultStaleAfterHours
+		}
+		entry := RemoteSourceDoctor{
+			Machine:         remote.Machine,
+			Root:            remote.Home,
+			StaleAfterHours: hours,
+		}
+		if info, err := os.Stat(remote.Home); err == nil && info.IsDir() {
+			entry.Present = true
+		}
+		entry.Stale = ingest.MirrorStale(remote.Home, hours, now)
+		if newest, found := ingest.NewestModTime(remote.Home); found {
+			age := int(now.Sub(newest).Hours())
+			entry.NewestAgeHours = &age
+		}
+		report = append(report, entry)
+	}
+	return report
 }
 
 func queryDoctor(settings search.Settings) QueryDoctor {

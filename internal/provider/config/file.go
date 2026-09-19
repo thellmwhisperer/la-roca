@@ -662,6 +662,8 @@ type File struct {
 	Query    QueryConfig
 	Features FeaturesConfig
 	Layout   LayoutConfig
+	// RemoteSources are HOME-shaped mirrors of other machines this hub may ingest.
+	RemoteSources []RemoteSource
 	// Warnings are what this build did not understand, each one naming the key,
 	// the file and the remedy.
 	Warnings []string
@@ -683,6 +685,15 @@ const (
 
 type LayoutConfig struct {
 	Serving ServingLayout `toml:"serving"`
+}
+
+// RemoteSource is one [[sources.remote]] entry: a HOME-shaped mirror tagged
+// with the machine that produced the artefacts. Transport of the mirror is
+// outside this product.
+type RemoteSource struct {
+	Machine         string
+	Root            string
+	StaleAfterHours int
 }
 
 func defaultLayout() LayoutConfig { return LayoutConfig{Serving: LayoutLegacyServing} }
@@ -880,7 +891,85 @@ func LoadFile(path string) (File, error) {
 	file.Features = readFeatures(features, path, &file.Warnings)
 	layout, _ := document["layout"].(map[string]any)
 	file.Layout = readLayout(layout, path, &file.Warnings)
+	sources, _ := document["sources"].(map[string]any)
+	file.RemoteSources = readRemoteSources(sources, path, &file.Warnings)
 	return file, nil
+}
+
+func readRemoteSources(section map[string]any, path string, warnings *[]string) []RemoteSource {
+	if section == nil {
+		return nil
+	}
+	for _, key := range sortedKeys(section) {
+		if key != "remote" {
+			*warnings = append(*warnings, unknownKey("sources."+key, path))
+		}
+	}
+	entries := remoteSourceEntries(section["remote"])
+	if entries == nil && section["remote"] != nil {
+		*warnings = append(*warnings, invalidValue("sources.remote", path,
+			"an array of tables with machine and root"))
+		return nil
+	}
+	var remotes []RemoteSource
+	seen := map[string]bool{}
+	for _, entry := range entries {
+		for _, key := range sortedKeys(entry) {
+			switch key {
+			case "machine", "root", "stale_after_hours":
+			default:
+				*warnings = append(*warnings, unknownKey("sources.remote."+key, path))
+			}
+		}
+		machine := strings.TrimSpace(asString(entry["machine"]))
+		root := strings.TrimSpace(asString(entry["root"]))
+		if machine == "" || root == "" {
+			*warnings = append(*warnings, invalidValue("sources.remote", path,
+				"a table with non-empty machine and root"))
+			continue
+		}
+		if seen[machine] {
+			*warnings = append(*warnings, invalidValue("sources.remote.machine", path,
+				"a machine name used once"))
+			continue
+		}
+		seen[machine] = true
+		remote := RemoteSource{Machine: machine, Root: root}
+		if raw, ok := entry["stale_after_hours"]; ok {
+			hours, ok := readNumber(raw)
+			if !ok || hours < 1 {
+				*warnings = append(*warnings, invalidValue("sources.remote.stale_after_hours", path,
+					"a whole number of hours, one or more"))
+			} else {
+				remote.StaleAfterHours = hours
+			}
+		}
+		remotes = append(remotes, remote)
+	}
+	return remotes
+}
+
+func remoteSourceEntries(value any) []map[string]any {
+	switch typed := value.(type) {
+	case nil:
+		return nil
+	case []map[string]any:
+		return typed
+	case []any:
+		entries := make([]map[string]any, 0, len(typed))
+		for _, item := range typed {
+			entry, ok := item.(map[string]any)
+			if !ok {
+				return nil
+			}
+			entries = append(entries, entry)
+		}
+		return entries
+	case map[string]any:
+		return []map[string]any{typed}
+	default:
+		return nil
+	}
 }
 
 func readLayout(section map[string]any, path string, warnings *[]string) LayoutConfig {
