@@ -2,11 +2,13 @@ package service_test
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
@@ -64,5 +66,27 @@ func TestExecRefusesAnUnqualifiedTableSharedByAttachedPlugins(t *testing.T) {
 
 	if _, err := svc.Exec(t.Context(), service.ExecRequest{SQL: `SELECT 1 AS n`}); err != nil {
 		t.Fatalf("expression SELECT = %v", err)
+	}
+}
+
+func TestExecRejectsWildcardAgainstAnAheadPluginSchema(t *testing.T) {
+	paths, plugins := scopedBundledPlugins(t)
+	db := openSQLite(t, filepath.Join(plugins, rocaops.Name, rocaops.DatabaseFilename))
+	if _, err := db.Exec(`ALTER TABLE memories ADD COLUMN legacy_id TEXT`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	svc := initialized(t, paths, func(options *service.Options) {
+		options.PluginDir, options.RocaOpsEnabled = plugins, true
+	})
+
+	if _, err := svc.Exec(t.Context(), service.ExecRequest{
+		SQL: `SELECT * FROM plugin_roca_ops.memories LIMIT 1`,
+	}); err == nil || logfile.ErrorType(err) != service.DegradedInvalidSQL ||
+		!strings.Contains(err.Error(), "wildcard SELECTs are unavailable") {
+		t.Fatalf("ahead-schema wildcard result was accepted: %v", err)
 	}
 }

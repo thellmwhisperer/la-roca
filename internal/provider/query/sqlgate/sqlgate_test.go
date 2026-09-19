@@ -48,6 +48,18 @@ func TestTheGateAcceptsAReadOfTheVisibleTables(t *testing.T) {
 	}
 }
 
+func TestHasResultWildcardIgnoresAggregateStarsAndFindsNestedProjections(t *testing.T) {
+	if sqlgate.HasResultWildcard("SELECT COUNT(*) FROM memories") {
+		t.Fatal("aggregate star was classified as a result wildcard")
+	}
+	if !sqlgate.HasResultWildcard("SELECT * FROM (SELECT id FROM memories)") {
+		t.Fatal("nested result wildcard was not classified")
+	}
+	if !sqlgate.HasResultWildcard("SELECT memories.* FROM memories") {
+		t.Fatal("qualified result wildcard was not classified")
+	}
+}
+
 // Only reads are allowed. The message is the acceptance suite's
 // contract, so it is checked literally.
 func TestTheGateLetsOnlySelectThrough(t *testing.T) {
