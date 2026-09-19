@@ -145,7 +145,7 @@ func (s *Service) Store(ctx context.Context, req StoreRequest) (result StoreResu
 	}
 	authorship := req.Authorship
 	authorship = authorship.normalized()
-	if err := refuseHandoffWrite(physical, origin, authorship, content); err != nil {
+	if err := refuseHandoffWrite(physical, origin, authorship); err != nil {
 		return StoreResult{}, err
 	}
 	target, err := s.memoryOwner()
@@ -169,11 +169,47 @@ func (s *Service) Store(ctx context.Context, req StoreRequest) (result StoreResu
 		}
 	}
 	err = target.Write(ctx, func(tx *sql.Tx) error {
+		planned, err := planHandoffAutoSupersede(ctx, tx, physical, req, status)
+		if err != nil {
+			return err
+		}
+		if planned.currentID != 0 {
+			req.Supersedes = planned.currentID
+		}
 		payload := memoryPayload{
 			layer: physical, content: content, metadata: metadata, origin: origin,
 			sourceAgent: authorship.Agent, sourceModel: authorship.Model,
 			sourceSurface: authorship.Surface, project: orNull(req.Project), status: status,
 			supersedes: orNull(req.Supersedes), expiresAt: expiresAt,
+		}
+		if planned.currentID == 0 && req.Supersedes != 0 {
+			if existing, Found, err := identicalMemory(ctx, tx, payload, s.opts.RocaOpsEnabled); err != nil {
+				return err
+			} else if Found {
+				if planned.keepID == 0 && len(planned.currentIDs) > 0 {
+					planned.keepID = planned.currentIDs[len(planned.currentIDs)-1]
+				}
+				if err := repairHandoffHeads(ctx, tx, planned.currentIDs, planned.keepID); err != nil {
+					return err
+				}
+				result.ID, result.Skipped = existing, true
+				result.DuplicateSource, result.DuplicateSurface = authorship.Agent, authorship.Surface
+				return nil
+			}
+		}
+		if err := repairHandoffHeads(ctx, tx, planned.currentIDs, planned.keepID); err != nil {
+			return err
+		}
+		if planned.currentID != 0 {
+			retry := payload
+			retry.supersedes = planned.currentSupersedes
+			if existing, Found, err := identicalMemory(ctx, tx, retry, s.opts.RocaOpsEnabled); err != nil {
+				return err
+			} else if Found && existing == planned.currentID {
+				result.ID, result.Skipped = existing, true
+				result.DuplicateSource, result.DuplicateSurface = authorship.Agent, authorship.Surface
+				return nil
+			}
 		}
 		if existing, Found, err := identicalMemory(ctx, tx, payload, s.opts.RocaOpsEnabled); err != nil {
 			return err
@@ -240,6 +276,7 @@ func explicitExpiry(metadata map[string]any) (any, error) {
 
 type memoryQuerier interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }
 
 type memoryPayload struct {

@@ -1,10 +1,13 @@
 package service
 
 import (
+	"cmp"
+	"context"
+	"database/sql"
 	"fmt"
-	"regexp"
 	"slices"
 	"strings"
+	"time"
 )
 
 // Session harnesses are the interactive runtimes this product already stamps
@@ -44,12 +47,6 @@ var sessionHandoffSurfaces = map[string]bool{
 	SurfaceMCP: true,
 }
 
-var handoffShapeLabel = regexp.MustCompile(
-	`(?i)\b(branch/scope|branch|scope|done|current\s+state|state|next)\s*:`,
-)
-
-var requiredHandoffFields = []string{"branch/scope", "done", "state", "next"}
-
 const acceptedHandoffLabels = "branch/scope:, done:, state: (or current state:), and next:"
 
 const acceptedHandoffExample = `layer=handoff content="branch: main\ndone: recorded\nstate: stored\nnext: continue"`
@@ -86,14 +83,11 @@ func mcpAgentLookupNames(agent string) []string {
 	return slices.Compact(names)
 }
 
-func refuseHandoffWrite(physical string, origin string, authorship Authorship, content string) error {
+func refuseHandoffWrite(physical string, origin string, authorship Authorship) error {
 	if physical != "handoff" {
 		return nil
 	}
-	if err := refuseHandoffWriter(origin, authorship); err != nil {
-		return err
-	}
-	return refuseHandoffShape(content)
+	return refuseHandoffWriter(origin, authorship)
 }
 
 func refuseHandoffWriter(origin string, authorship Authorship) error {
@@ -107,7 +101,7 @@ func refuseHandoffWriter(origin string, authorship Authorship) error {
 		"handoff refused: agent=%q surface=%q origin=%q; session writers are %s writing from cli or mcp; "+
 			"progress belongs in tasks-axi; delivery belongs in the pr field; "+
 			"a session decision belongs in layer decision; job state belongs in a layer with expires_at; "+
-			"accepted shape uses the labels %s; example: %s",
+			"recommended shape uses the labels %s; example: %s",
 		valueOr(agent, UnknownAuthor), valueOr(surface, UnknownAuthor), valueOr(origin, UnknownAuthor),
 		sessionWriterNames(), acceptedHandoffLabels, acceptedHandoffExample)
 }
@@ -121,39 +115,137 @@ func sessionWriterNames() string {
 	return strings.Join(names, ", ")
 }
 
-func refuseHandoffShape(content string) error {
-	matches := handoffShapeLabel.FindAllStringSubmatchIndex(content, -1)
-	populated := map[string]bool{}
-	for i, match := range matches {
-		valueEnd := len(content)
-		if i+1 < len(matches) {
-			valueEnd = matches[i+1][0]
+type handoffAutoSupersede struct {
+	currentID         int64
+	currentSupersedes any
+	currentIDs        []int64
+	keepID            int64
+}
+
+// planHandoffAutoSupersede fills the one-current-per-project contract for an
+// active named project.
+func planHandoffAutoSupersede(ctx context.Context, db memoryQuerier, physical string, req StoreRequest, status string) (handoffAutoSupersede, error) {
+	if physical != "handoff" || status != "active" {
+		return handoffAutoSupersede{}, nil
+	}
+	project := req.Project
+	if project == "" {
+		return handoffAutoSupersede{}, nil
+	}
+	heads, err := currentProjectHandoffs(ctx, db, project)
+	if err != nil || len(heads) == 0 {
+		return handoffAutoSupersede{}, err
+	}
+	ids := make([]int64, len(heads))
+	for i, head := range heads {
+		ids[i] = head.id
+	}
+	if req.Supersedes != 0 {
+		for _, head := range heads {
+			if head.id == req.Supersedes {
+				return handoffAutoSupersede{currentIDs: ids, keepID: req.Supersedes}, nil
+			}
 		}
-		if strings.TrimSpace(content[match[1]:valueEnd]) == "" {
+		return handoffAutoSupersede{currentIDs: ids}, nil
+	}
+	current := heads[len(heads)-1]
+	return handoffAutoSupersede{
+		currentID: current.id, currentSupersedes: current.supersedes, currentIDs: ids, keepID: current.id,
+	}, nil
+}
+
+type currentHandoffHead struct {
+	id             int64
+	supersedes     any
+	createdAt      time.Time
+	createdAtValid bool
+}
+
+func currentProjectHandoffs(ctx context.Context, db memoryQuerier, project string) ([]currentHandoffHead, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT candidate.id, candidate.supersedes, candidate.created_at
+		FROM memories AS candidate
+		WHERE candidate.layer = 'handoff'
+		  AND candidate.status = 'active'
+		  AND candidate.project = ?
+		  AND NOT EXISTS (
+		      SELECT 1 FROM memories AS replacement
+		      WHERE replacement.supersedes = candidate.id
+		  )
+		`, project)
+	if err != nil {
+		return nil, fmt.Errorf("look for the current project handoffs: %w", err)
+	}
+	defer rows.Close()
+	var heads []currentHandoffHead
+	for rows.Next() {
+		var head currentHandoffHead
+		var supersedes sql.NullInt64
+		var createdAt sql.NullString
+		if err := rows.Scan(&head.id, &supersedes, &createdAt); err != nil {
+			return nil, fmt.Errorf("read the current project handoffs: %w", err)
+		}
+		if supersedes.Valid {
+			head.supersedes = supersedes.Int64
+		}
+		head.createdAt, head.createdAtValid = normalizeCreatedAt(createdAt.String)
+		heads = append(heads, head)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read the current project handoffs: %w", err)
+	}
+	slices.SortFunc(heads, func(left, right currentHandoffHead) int {
+		if left.createdAtValid != right.createdAtValid {
+			if left.createdAtValid {
+				return -1
+			}
+			return 1
+		}
+		if left.createdAtValid {
+			if left.createdAt.Before(right.createdAt) {
+				return -1
+			}
+			if left.createdAt.After(right.createdAt) {
+				return 1
+			}
+		}
+		return cmp.Compare(left.id, right.id)
+	})
+	return heads, nil
+}
+
+func repairHandoffHeads(ctx context.Context, db *sql.Tx, currentIDs []int64, keepID int64) error {
+	for _, id := range currentIDs {
+		if id == keepID {
 			continue
 		}
-		label := strings.ToLower(strings.Join(strings.Fields(content[match[2]:match[3]]), " "))
-		switch label {
-		case "branch/scope", "branch", "scope":
-			populated["branch/scope"] = true
-		case "current state", "state":
-			populated["state"] = true
-		case "next":
-			populated["next"] = true
-		default:
-			populated[label] = true
+		if err := retireHandoffHead(ctx, db, id); err != nil {
+			return err
 		}
 	}
-	missing := make([]string, 0, len(requiredHandoffFields))
-	for _, field := range requiredHandoffFields {
-		if !populated[field] {
-			missing = append(missing, field)
-		}
+	return nil
+}
+
+func retireHandoffHead(ctx context.Context, db *sql.Tx, id int64) error {
+	var n int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM memories WHERE supersedes = ?`, id).Scan(&n); err != nil {
+		return fmt.Errorf("check whether a handoff head is already retired: %w", err)
 	}
-	if len(missing) == 0 {
+	if n > 0 {
 		return nil
 	}
-	return fmt.Errorf(
-		"a handoff must use the labels %s (missing or blank %s); a SUPERSEDE in prose goes with --supersedes",
-		acceptedHandoffLabels, strings.Join(missing, ", "))
+	var project sql.NullString
+	if err := db.QueryRowContext(ctx,
+		`SELECT project FROM memories WHERE id = ?`, id).Scan(&project); err != nil {
+		return fmt.Errorf("read the retired handoff project: %w", err)
+	}
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO memories (layer, content, origin, source_agent, source_model, source_surface, project, status, supersedes)
+		VALUES ('handoff-retirement', 'retired a parallel current handoff', 'agent', 'unknown', 'unknown', 'unknown', ?, 'resolved', ?)`,
+		project, id)
+	if err != nil {
+		return fmt.Errorf("retire a parallel current handoff: %w", err)
+	}
+	return nil
 }

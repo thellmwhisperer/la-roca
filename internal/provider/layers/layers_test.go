@@ -7,14 +7,14 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider/layers"
 )
 
-func TestTheRegistryCarriesTheTwelveLayers(t *testing.T) {
+func TestTheRegistryCarriesTheThirteenLayers(t *testing.T) {
 	registry, err := layers.Load()
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	want := []string{
 		"user", "feedback", "project", "pattern", "pill", "discovery",
-		"handoff", "handover", "question", "review", "issue", "protocol",
+		"handoff", "handoff-retirement", "handover", "question", "review", "issue", "protocol",
 	}
 	if len(registry.Layers) != len(want) {
 		t.Fatalf("layers = %d, want %d", len(registry.Layers), len(want))
@@ -48,7 +48,7 @@ func TestSearchExcludesMessagingNotHandoff(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	want := []string{"issue", "question", "review"}
+	want := []string{"handoff-retirement", "issue", "question", "review"}
 	got := registry.SearchExcluded()
 	slices.Sort(got)
 	if !slices.Equal(got, want) {
