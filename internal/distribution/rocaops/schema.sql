@@ -22,7 +22,6 @@ CREATE INDEX IF NOT EXISTS idx_memories_status ON memories(status);
 CREATE INDEX IF NOT EXISTS idx_memories_project ON memories(project);
 CREATE INDEX IF NOT EXISTS idx_memories_origin ON memories(origin);
 CREATE INDEX IF NOT EXISTS idx_memories_expires_at ON memories(expires_at);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_legacy_id ON memories(legacy_id) WHERE legacy_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS layers (
   name            TEXT PRIMARY KEY,
