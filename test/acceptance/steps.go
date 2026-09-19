@@ -52,7 +52,8 @@ type world struct {
 	plug plugWorld
 	// readOnly is the operator's switch, applied to every command and every
 	// session of this scenario.
-	readOnly bool
+	readOnly            bool
+	codexIdentityBefore *codexIdentityCounts
 	// agentConfig and settings are the two files an integration touches: the
 	// runtime's MCP configuration and its lifecycle settings. Both keep the
 	// bytes they had before Roca arrived.
@@ -113,6 +114,7 @@ func registerSteps(ctx *godog.ScenarioContext, binary string) {
 		m.dbFingerprint = ""
 		m.plug = plugWorld{}
 		m.readOnly = false
+		m.codexIdentityBefore = nil
 		m.agentConfig, m.agentConfigBefore, m.agentConfigRuntime = "", "", ""
 		m.settings, m.settingsBefore = "", ""
 		m.installed = ""
@@ -173,6 +175,12 @@ func registerSteps(ctx *godog.ScenarioContext, binary string) {
 	ctx.Then(`^the output names the question as outside the scope of the query$`, m.namesOutOfScope)
 	ctx.Then(`^the output asks to be more specific$`, m.asksToBeMoreSpecific)
 	ctx.Then(`^the output contains "([^"]*)"$`, m.outputContains)
+	ctx.Then(`^the output contains a digit run of at least (\d+) characters$`, m.outputDigitRunAtLeast)
+	ctx.Then(`^the JSON output field "([^"]*)" is the string "([^"]*)"$`, m.jsonFieldIsString)
+	ctx.Then(`^the frozen Codex identity has (\d+) sessions, (\d+) exact source session, (\d+) split siblings, (\d+) exchanges, (\d+) tools, (\d+) orphan tools, (\d+) failed tool, and (\d+) control session$`, func(sessions, exactSourceSession, splitSiblings, exchanges, tools, orphanTools, failedTools, controlSessions int) error {
+		return m.theFrozenCodexIdentityHas(sessions, exactSourceSession, splitSiblings, exchanges, tools, orphanTools, failedTools, controlSessions)
+	})
+	ctx.Then(`^the frozen Codex identity is unchanged$`, m.theFrozenCodexIdentityIsUnchanged)
 	ctx.Then(`^the execution log duration_ms is (\d+)$`, m.theExecutionLogDurationIs)
 	ctx.Then(`^the execution log duration_ms is under (\d+)$`, m.theExecutionLogDurationUnder)
 	ctx.Then(`^one vector resident process exists$`, m.oneVectorResidentProcessExists)

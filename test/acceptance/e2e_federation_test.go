@@ -254,6 +254,30 @@ func casePR326(t *testing.T, lab *federationLab) {
 	}
 }
 
+func (m *world) outputDigitRunAtLeast(want int) error {
+	got := longestDigitRun(m.last.stdout + m.last.stderr)
+	if got < want {
+		return fmt.Errorf("longest digit run=%d, want at least %d:\n%s", got, want, m.last.stdout+m.last.stderr)
+	}
+	return nil
+}
+
+func (m *world) jsonFieldIsString(field, want string) error {
+	document, err := m.json()
+	if err != nil {
+		return err
+	}
+	value, ok := lookup(document, field)
+	if !ok {
+		return fmt.Errorf("the JSON output has no %q: %v", field, document)
+	}
+	got, ok := value.(string)
+	if !ok || got != want {
+		return fmt.Errorf("%s = %v (%T), want JSON string %q", field, value, value, want)
+	}
+	return nil
+}
+
 func caseIssue315(t *testing.T, installed string) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shared residency is proven on unix sockets")
@@ -297,12 +321,130 @@ func caseIssue319(t *testing.T, lab *federationLab) {
 func caseIssue324(t *testing.T) {
 	lab := newFederationLab(t, "pr324")
 	lab.cli(t, 0, "ingest", "--json")
-	got := lab.cli(t, 0, "exec",
-		"SELECT session_id FROM plugin_roca_corpus.sessions WHERE session_id LIKE '019aba72-aa57-7d93-a12c-b6e65c0dca6%' ORDER BY session_id",
-		"--json")
-	if !strings.Contains(got.stdout, federationCodexID) {
-		t.Fatalf("exact source session missing:\n%s", got.stdout)
+	before := codexIdentitySnapshot(t, lab)
+	want := codexIdentityCounts{sessions: 2, exactSourceSession: 1, splitSiblings: 0, exchanges: 8, tools: 48, orphanTools: 48, failedTools: 1, controlSessions: 1}
+	if before != want {
+		t.Fatalf("Codex identity = %+v, want %+v", before, want)
 	}
+	lab.cli(t, 0, "ingest", "--json")
+	after := codexIdentitySnapshot(t, lab)
+	if after != before {
+		t.Fatalf("repeat ingest changed Codex identity: before=%+v after=%+v", before, after)
+	}
+}
+
+type codexIdentityCounts struct {
+	sessions           int
+	exactSourceSession int
+	splitSiblings      int
+	exchanges          int
+	tools              int
+	orphanTools        int
+	failedTools        int
+	controlSessions    int
+}
+
+const codexIdentitySQL = `SELECT
+ (SELECT COUNT(*) FROM plugin_roca_corpus.sessions WHERE source_agent = 'codex') AS sessions,
+ SUM(CASE WHEN session_id = '019aba72-aa57-7d93-a12c-b6e65c0dca6b' THEN 1 ELSE 0 END) AS exact_source_session,
+ SUM(CASE WHEN session_id IN ('019aba72-aa57-7d93-a12c-b6e65c0dca60','019aba72-aa57-7d93-a12c-b6e65c0dca61') THEN 1 ELSE 0 END) AS split_siblings,
+ (SELECT COUNT(*) FROM plugin_roca_corpus.exchanges WHERE session_id = '019aba72-aa57-7d93-a12c-b6e65c0dca6b') AS exchanges,
+ (SELECT COUNT(*) FROM plugin_roca_corpus.tool_uses WHERE session_id = '019aba72-aa57-7d93-a12c-b6e65c0dca6b') AS tools,
+ (SELECT COUNT(*) FROM plugin_roca_corpus.tool_uses WHERE session_id = '019aba72-aa57-7d93-a12c-b6e65c0dca6b' AND exchange_number IS NULL) AS orphan_tools,
+ (SELECT COUNT(*) FROM plugin_roca_corpus.tool_uses WHERE had_error = 1 AND error_message = 'synthetic failure') AS failed_tools,
+ (SELECT COUNT(*) FROM plugin_roca_corpus.sessions WHERE source_agent = 'codex' AND session_id = 'synthetic-correct-thread') AS control_sessions
+ FROM plugin_roca_corpus.sessions`
+
+func codexIdentitySnapshot(t *testing.T, lab *federationLab) codexIdentityCounts {
+	t.Helper()
+	got := lab.cli(t, 0, "exec", codexIdentitySQL, "--json")
+	counts, err := decodeCodexIdentityCounts(got.stdout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return counts
+}
+
+func (m *world) theFrozenCodexIdentityHas(sessions, exactSourceSession, splitSiblings, exchanges, tools, orphanTools, failedTools, controlSessions int) error {
+	run, err := m.runWith("roca exec --json", []string{"exec", codexIdentitySQL, "--json"})
+	if err != nil {
+		return err
+	}
+	if run.code != 0 {
+		return fmt.Errorf("Codex identity query exited %d: %s", run.code, run.stderr)
+	}
+	got, err := decodeCodexIdentityCounts(run.stdout)
+	if err != nil {
+		return err
+	}
+	want := codexIdentityCounts{sessions: sessions, exactSourceSession: exactSourceSession, splitSiblings: splitSiblings, exchanges: exchanges, tools: tools, orphanTools: orphanTools, failedTools: failedTools, controlSessions: controlSessions}
+	if got != want {
+		return fmt.Errorf("Codex identity = %+v, want %+v", got, want)
+	}
+	m.codexIdentityBefore = &got
+	return nil
+}
+
+func (m *world) theFrozenCodexIdentityIsUnchanged() error {
+	if m.codexIdentityBefore == nil {
+		return fmt.Errorf("Codex identity has not been captured")
+	}
+	run, err := m.runWith("roca exec --json", []string{"exec", codexIdentitySQL, "--json"})
+	if err != nil {
+		return err
+	}
+	if run.code != 0 {
+		return fmt.Errorf("Codex identity query exited %d: %s", run.code, run.stderr)
+	}
+	got, err := decodeCodexIdentityCounts(run.stdout)
+	if err != nil {
+		return err
+	}
+	if got != *m.codexIdentityBefore {
+		return fmt.Errorf("repeat ingest changed Codex identity: before=%+v after=%+v", *m.codexIdentityBefore, got)
+	}
+	return nil
+}
+
+func decodeCodexIdentityCounts(stdout string) (codexIdentityCounts, error) {
+	var envelope struct {
+		Rows []map[string]any `json:"rows"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &envelope); err != nil {
+		return codexIdentityCounts{}, fmt.Errorf("Codex identity JSON: %w\n%s", err, stdout)
+	}
+	if len(envelope.Rows) != 1 {
+		return codexIdentityCounts{}, fmt.Errorf("Codex identity rows=%d, want 1\n%s", len(envelope.Rows), stdout)
+	}
+	value := func(name string) (int, error) {
+		n, ok := envelope.Rows[0][name].(float64)
+		if !ok {
+			return 0, fmt.Errorf("Codex identity field %q = %v (%T), want number", name, envelope.Rows[0][name], envelope.Rows[0][name])
+		}
+		return int(n), nil
+	}
+	var counts codexIdentityCounts
+	fields := []struct {
+		name string
+		dest *int
+	}{
+		{"sessions", &counts.sessions},
+		{"exact_source_session", &counts.exactSourceSession},
+		{"split_siblings", &counts.splitSiblings},
+		{"exchanges", &counts.exchanges},
+		{"tools", &counts.tools},
+		{"orphan_tools", &counts.orphanTools},
+		{"failed_tools", &counts.failedTools},
+		{"control_sessions", &counts.controlSessions},
+	}
+	for _, field := range fields {
+		got, err := value(field.name)
+		if err != nil {
+			return codexIdentityCounts{}, err
+		}
+		*field.dest = got
+	}
+	return counts, nil
 }
 
 func caseHooksNeverBlock(t *testing.T, lab *federationLab) {

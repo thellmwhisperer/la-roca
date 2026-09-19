@@ -29,6 +29,7 @@ Feature: Frozen federation installed binary
     Given a frozen synthetic federation lab
     When I exec the SQL "SELECT content FROM plugin_roca_ops.memories WHERE project='budgets'" with max-chars 900
     Then the command exits with code 0
+    And the output contains a digit run of at least 200 characters
 
   Scenario: 315 shared resident
     Given a frozen synthetic federation lab
@@ -55,9 +56,9 @@ Feature: Frozen federation installed binary
 
   Scenario: 319 json ids
     Given a frozen synthetic federation lab
-    When I exec the SQL "SELECT id FROM plugin_roca_ops.memories LIMIT 1" as json
+    When I exec the SQL "SELECT id FROM plugin_roca_ops.memories WHERE id = '1152921504606846980'" as json
     Then the command exits with code 0
-    And the output contains "id"
+    And the JSON output field "rows[0].id" is the string "1152921504606846980"
 
   Scenario: 324 exact Codex session id
     Given a frozen pr324 federation lab
@@ -66,6 +67,9 @@ Feature: Frozen federation installed binary
     When I exec the SQL "SELECT session_id FROM plugin_roca_corpus.sessions WHERE session_id LIKE '019aba72-aa57-7d93-a12c-b6e65c0dca6%' ORDER BY session_id"
     Then the command exits with code 0
     And the output contains "019aba72-aa57-7d93-a12c-b6e65c0dca6b"
+    Then the frozen Codex identity has 2 sessions, 1 exact source session, 0 split siblings, 8 exchanges, 48 tools, 48 orphan tools, 1 failed tool, and 1 control session
+    When I run "roca ingest --json" a second time
+    Then the frozen Codex identity is unchanged
 
   Scenario: 232991 vector query
     Given a frozen synthetic federation lab
