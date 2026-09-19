@@ -83,6 +83,7 @@ func waitForExecReader(t *testing.T, home string, done <-chan distributionRun) {
 	t.Helper()
 	paths := []string{filepath.Join(home, ".roca", "roca.db")}
 	deadline := time.Now().Add(2 * time.Second)
+	var readerSince time.Time
 	for time.Now().Before(deadline) {
 		select {
 		case run := <-done:
@@ -94,7 +95,14 @@ func waitForExecReader(t *testing.T, home string, done <-chan distributionRun) {
 			if err != nil {
 				t.Fatalf("probe %s: %v", path, err)
 			}
-			if blocked {
+			if !blocked {
+				readerSince = time.Time{}
+				continue
+			}
+			if readerSince.IsZero() {
+				readerSince = time.Now()
+			}
+			if time.Since(readerSince) >= 100*time.Millisecond {
 				return
 			}
 		}
