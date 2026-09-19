@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/cucumber/godog"
 	_ "modernc.org/sqlite"
@@ -80,6 +81,7 @@ type run struct {
 	code    int
 	stdout  string
 	stderr  string
+	elapsed time.Duration
 }
 
 func registerSteps(ctx *godog.ScenarioContext, binary string) {
@@ -167,6 +169,7 @@ func registerSteps(ctx *godog.ScenarioContext, binary string) {
 	ctx.Then(`^the output names the question as outside the scope of the query$`, m.namesOutOfScope)
 	ctx.Then(`^the output asks to be more specific$`, m.asksToBeMoreSpecific)
 	ctx.Then(`^the output contains "([^"]*)"$`, m.outputContains)
+	ctx.Then(`^the command finished within (\d+) seconds$`, m.theCommandFinishedWithinSeconds)
 	ctx.Then(`^no row has been returned$`, m.jsonHasZeroRows)
 	ctx.Then(`^the memory count has not changed$`, m.theMemoryCountHasNotChanged)
 	ctx.Then(`^the memories table still exists$`, m.theMemoriesTableStillExists)
@@ -417,10 +420,11 @@ func (m *world) record(label string, command *exec.Cmd) error {
 
 	var out, failures strings.Builder
 	command.Stdout, command.Stderr = &out, &failures
+	started := time.Now()
 	err := command.Run()
 
 	m.previous = m.last
-	m.last = run{command: label, stdout: out.String(), stderr: failures.String()}
+	m.last = run{command: label, stdout: out.String(), stderr: failures.String(), elapsed: time.Since(started)}
 	if err != nil {
 		var exit *exec.ExitError
 		if !asExitError(err, &exit) {
@@ -706,6 +710,14 @@ func (m *world) outputContains(text string) error {
 	all := m.last.stdout + m.last.stderr
 	if !strings.Contains(all, text) {
 		return fmt.Errorf("the output does not contain %q:\n%s", text, all)
+	}
+	return nil
+}
+
+func (m *world) theCommandFinishedWithinSeconds(seconds int) error {
+	limit := time.Duration(seconds) * time.Second
+	if m.last.elapsed > limit {
+		return fmt.Errorf("command took %s, want <= %s", m.last.elapsed, limit)
 	}
 	return nil
 }

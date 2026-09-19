@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"testing"
 
 	"github.com/cucumber/godog"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -37,6 +38,25 @@ type distributionWorld struct {
 
 const distributionPreparedConfig = "[models]\norder = [\"none\"]\n\n" +
 	"[features]\nplugins = true\nroca_ops = true\ncron = true\nvector = false\n"
+
+func initializedDistributionHome(t *testing.T, prefix, binary string) (string, *distributionWorld) {
+	t.Helper()
+	home, err := acceptanceTempDir(prefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(home) })
+	if err := os.MkdirAll(filepath.Join(home, ".tmp"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	world := &distributionWorld{}
+	init := world.runAt(home, binary, "init", "--db-path", filepath.Join(home, ".roca", "roca.db"), "--json")
+	if init.code != 0 {
+		t.Fatalf("initialize disposable home: code %d\n%s%s", init.code, init.stdout, init.stderr)
+	}
+	return home, world
+}
 
 func registerDistributionSteps(ctx *godog.ScenarioContext, binary string) {
 	w := &distributionWorld{binary: binary}

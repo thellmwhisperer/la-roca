@@ -551,6 +551,13 @@ func (s *Service) executeWithDatabase(ctx context.Context, statement, term strin
 		return nil, nil, executionError(ctx, queryCtx, timeout, err)
 	}
 	defer func() { closeQueryConnection(connection, attached) }()
+	if bounded {
+		releaseBound, bindErr := store.BoundConnection(queryCtx, connection)
+		if bindErr != nil {
+			return nil, nil, executionError(ctx, queryCtx, timeout, bindErr)
+		}
+		defer releaseBound()
+	}
 	var onDemand []plugin.Database
 	for _, database := range databases {
 		if database.Semantic.Attachment != plugin.AttachmentResident {
@@ -559,7 +566,7 @@ func (s *Service) executeWithDatabase(ctx context.Context, statement, term strin
 	}
 	newlyAttached, err := plugin.Attach(queryCtx, connection, onDemand)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, executionError(ctx, queryCtx, timeout, err)
 	}
 	attached = append(attached, newlyAttached...)
 	rows, err := connection.QueryContext(queryCtx, statement)
@@ -573,6 +580,9 @@ func (s *Service) executeWithDatabase(ctx context.Context, statement, term strin
 	}
 	if closeErr != nil {
 		return nil, nil, executionError(ctx, queryCtx, timeout, closeErr)
+	}
+	if err := finishedWithinBudget(ctx, queryCtx, timeout, nil); err != nil {
+		return nil, nil, err
 	}
 	if len(databases) > 0 {
 		columns, result = EnsureDatabaseColumn(columns, result, fallbackDatabase(statement, databases))
