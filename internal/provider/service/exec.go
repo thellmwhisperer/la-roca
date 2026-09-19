@@ -11,6 +11,7 @@ import (
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
+	_ "modernc.org/sqlite"
 )
 
 // ExecRequest is a SELECT the caller wants to run as it is. It is the natural
@@ -98,7 +99,83 @@ type opsSQLReplacement struct {
 	text  string
 }
 
-func expandOpsLegacyIDs(statement string) string {
+func collectOpsIDLiterals(statement string) []string {
+	if !strings.Contains(strings.ToLower(statement), "plugin_roca_ops.memories") {
+		return nil
+	}
+	tokens := tokenizeOpsSQL(statement)
+	scopes := opsSQLScopes(tokens)
+	var ids []string
+	seen := map[string]bool{}
+	for index := range tokens {
+		scope := innermostOpsSQLScope(scopes, index)
+		if scope == nil || !scope.ops {
+			continue
+		}
+		idIndex, _, ok := opsSQLIDReference(tokens, index, scope)
+		if !ok || idIndex+2 >= len(tokens) || tokens[idIndex+1].text != "=" {
+			continue
+		}
+		digits, ok := opsSQLDecimal(tokens[idIndex+2])
+		if !ok || seen[digits] {
+			continue
+		}
+		seen[digits] = true
+		ids = append(ids, digits)
+	}
+	return ids
+}
+
+func opsRemapCanonicalIDs(databases []plugin.Database, ids []string) map[string]string {
+	out := make(map[string]string)
+	if len(ids) == 0 {
+		return out
+	}
+	var path string
+	for _, database := range databases {
+		if database.Schema == "plugin_roca_ops" {
+			path = database.Database
+			break
+		}
+	}
+	if path == "" {
+		return out
+	}
+	conn, err := sql.Open("sqlite", path)
+	if err != nil {
+		return out
+	}
+	defer conn.Close()
+	placeholders := strings.Repeat("?,", len(ids))
+	placeholders = placeholders[:len(placeholders)-1]
+	args := make([]any, len(ids))
+	for index, id := range ids {
+		args[index] = id
+	}
+	rows, err := conn.Query(`SELECT CAST(old_id AS TEXT), CAST(canonical_id AS TEXT) FROM memory_id_remaps WHERE old_id IN (`+placeholders+`)`, args...)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var oldID, canonical string
+		if err := rows.Scan(&oldID, &canonical); err != nil || canonical == "" {
+			continue
+		}
+		out[oldID] = canonical
+	}
+	return out
+}
+
+func opsIDPredicate(column, legacy, digits string, remaps map[string]string) string {
+	text := "(" + column + " = " + digits + " OR " + legacy + " = " + digits
+	if canonical := remaps[digits]; canonical != "" && canonical != digits {
+		text += " OR " + column + " = " + canonical + " OR " + legacy + " = " + canonical
+	}
+	return text + ")"
+}
+
+func expandOpsLegacyIDs(statement string, remaps map[string]string) string {
 	if !strings.Contains(strings.ToLower(statement), "plugin_roca_ops.memories") {
 		return statement
 	}
@@ -135,7 +212,7 @@ func expandOpsLegacyIDs(statement string) string {
 		replacements = append(replacements, opsSQLReplacement{
 			start: start,
 			end:   tokens[idIndex+2].end,
-			text:  "(" + column + " = " + digits + " OR " + legacy + " = " + digits + ")",
+			text:  opsIDPredicate(column, legacy, digits, remaps),
 		})
 	}
 	if len(replacements) == 0 {
@@ -393,7 +470,8 @@ func (s *Service) prepareExec(ctx context.Context, statement string, cursor bool
 	}
 	route := s.pluginsForSQL(ctx, statement)
 	if opsRouteHasLegacyID(route.Databases) {
-		statement = expandOpsLegacyIDs(statement)
+		remaps := opsRemapCanonicalIDs(route.Databases, collectOpsIDLiterals(statement))
+		statement = expandOpsLegacyIDs(statement, remaps)
 	}
 	ok := false
 	defer func() {

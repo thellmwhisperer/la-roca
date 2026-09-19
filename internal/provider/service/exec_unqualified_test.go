@@ -108,6 +108,33 @@ func TestExecLegacyIDExpansionStaysInTheOpsQueryScope(t *testing.T) {
 	}
 }
 
+func TestExecResolvesADedupAliasThroughOpsMemories(t *testing.T) {
+	svc, plugins := initializedScopedBundledPlugins(t)
+	stored, err := svc.Store(t.Context(), service.StoreRequest{Layer: "discovery", Content: "synthetic remapped ops id"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const alias int64 = 1152921504606853999
+	ops := openRocaOps(t, plugins)
+	defer ops.Close()
+	if _, err := ops.Exec(`CREATE TABLE IF NOT EXISTS memory_id_remaps (
+		old_id INTEGER PRIMARY KEY, canonical_id INTEGER NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ops.Exec(`INSERT INTO memory_id_remaps(old_id, canonical_id) VALUES (?, ?)`, alias, stored.ID); err != nil {
+		t.Fatal(err)
+	}
+	result, err := svc.Exec(t.Context(), service.ExecRequest{
+		SQL: `SELECT id FROM plugin_roca_ops.memories WHERE id = '1152921504606853999'`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.RowCount != 1 || fmt.Sprint(result.Rows[0]["id"]) != fmt.Sprint(stored.ID) {
+		t.Fatalf("dedup alias result = %+v, want id %d", result.Rows, stored.ID)
+	}
+}
+
 func initializedScopedBundledPlugins(t *testing.T) (*service.Service, string) {
 	t.Helper()
 	paths, plugins := scopedBundledPlugins(t)
