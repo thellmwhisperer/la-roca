@@ -12,8 +12,8 @@ func TestStoreHandoffAutoSupersedesPreviousCurrentForTheProject(t *testing.T) {
 		"--layer", "handoff", "--project", project,
 		"--content", "handoff auto A",
 		"--agent", "claude", "--model", "sonnet", "--json"))
-	firstID, _ := first["id"].(string)
-	if firstID == "" {
+	firstID := jsonInt(t, first["id"])
+	if firstID == 0 {
 		t.Fatalf("first store id = %#v", first["id"])
 	}
 
@@ -21,9 +21,9 @@ func TestStoreHandoffAutoSupersedesPreviousCurrentForTheProject(t *testing.T) {
 		"--layer", "handoff", "--project", project,
 		"--content", "handoff auto B",
 		"--agent", "claude", "--model", "sonnet", "--json"))
-	secondID, _ := second["id"].(string)
-	if secondID == "" || secondID == firstID {
-		t.Fatalf("second store = %#v, first=%s", second["id"], firstID)
+	secondID := jsonInt(t, second["id"])
+	if secondID == 0 || secondID == firstID {
+		t.Fatalf("second store = %#v, first=%d", second["id"], firstID)
 	}
 
 	latest := mustJSON(t, runRoot(t, contractBuild(),
@@ -33,8 +33,8 @@ func TestStoreHandoffAutoSupersedesPreviousCurrentForTheProject(t *testing.T) {
 		t.Fatalf("handoff latest = %#v, want exactly one current", latest["handoffs"])
 	}
 	got, _ := handoffs[0].(map[string]any)
-	if got["id"] != secondID {
-		t.Fatalf("latest id = %#v, want %s", got["id"], secondID)
+	if jsonInt(t, got["id"]) != secondID {
+		t.Fatalf("latest id = %#v, want %d", got["id"], secondID)
 	}
 
 	counted := mustJSON(t, runRoot(t, contractBuild(), "exec",

@@ -146,7 +146,7 @@ func TestRowBudgetPreservesNumericAndBooleanScalars(t *testing.T) {
 }
 
 func TestRowBudgetPreservesMemoryIdentifiers(t *testing.T) {
-	const id = "1152921504606853875"
+	const id int64 = 1152921504606853875
 	got := axi.RowOutputWithBudget([]string{"id"}, []map[string]any{{"id": id}}, 5)
 	if got != `"1152921504606853875"` {
 		t.Fatalf("identity scalar = %q, want the exact quoted id", got)
@@ -197,14 +197,17 @@ func TestScannedIdentifiersPreserveAliasesAndNullsUnderBudget(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			if strings.Contains(test.sql, "1152921504606853875") {
+				if !strings.Contains(string(encoded), "1152921504606853875") {
+					t.Fatalf("JSON lost the identifier digits: %s", encoded)
+				}
+				if strings.Contains(string(encoded), `"1152921504606853875"`) {
+					t.Fatalf("JSON still wrapped the identifier as a string: %s", encoded)
+				}
+			}
 			var decoded []map[string]any
 			if err := json.Unmarshal(encoded, &decoded); err != nil {
 				t.Fatal(err)
-			}
-			for _, key := range []string{"id", "ref"} {
-				if value, ok := decoded[0][key]; ok && value != "1152921504606853875" {
-					t.Fatalf("JSON %s = %#v, want the exact string", key, value)
-				}
 			}
 			if value, ok := decoded[0]["supersedes"]; ok && value != nil {
 				t.Fatalf("JSON supersedes = %#v, want null", value)

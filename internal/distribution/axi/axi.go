@@ -26,7 +26,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/thellmwhisperer/la-roca/internal/jsonid"
 	"github.com/thellmwhisperer/la-roca/internal/provider/query"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
@@ -52,15 +51,10 @@ func RowOutputWithBudget(columns []string, rows []map[string]any, budget int, te
 	}
 	if len(rows) == 1 && len(columns) == 1 && len(rows[0]) == 1 {
 		if value, ok := rows[0][columns[0]]; ok && value != nil {
-			if jsonid.IdentityName(columns[0]) {
-				return toonIdentifier(value)
-			}
-			switch v := value.(type) {
-			case jsonid.Decimal:
-				return toonString(string(v))
+			switch value.(type) {
 			case bool, int, int8, int16, int32, int64,
 				uint, uint8, uint16, uint32, uint64, float32, float64:
-				return asText(value)
+				return toonValue(value, "", budget)
 			}
 			return trim(asText(value), budget)
 		}
@@ -69,9 +63,6 @@ func RowOutputWithBudget(columns []string, rows []map[string]any, budget int, te
 	order := columnOrder(columns, rows)
 	term := strings.Join(terms, "+")
 	return toonRows("rows", order, rows, func(column string, value any) string {
-		if jsonid.IdentityName(column) {
-			return toonIdentifier(value)
-		}
 		return toonValue(value, term, budget)
 	})
 }
@@ -136,8 +127,6 @@ func toonValue(value any, term string, budget int) string {
 		return "null"
 	}
 	switch v := value.(type) {
-	case jsonid.Decimal:
-		return toonString(string(v))
 	case string:
 		return toonString(excerpt(v, term, budget))
 	case []byte:
@@ -158,23 +147,10 @@ func toonValue(value any, term string, budget int) string {
 
 func toonInteger(n int64) string {
 	text := strconv.FormatInt(n, 10)
-	if jsonid.Unsafe(n) {
+	if n > 1<<53-1 || n < -(1<<53-1) {
 		return quoteTOON(text)
 	}
 	return text
-}
-
-func toonIdentifier(value any) string {
-	if value == nil {
-		return "null"
-	}
-	if n, ok := jsonid.Int(value); ok {
-		return toonInteger(n)
-	}
-	if text, ok := value.(string); ok {
-		return toonString(text)
-	}
-	return toonString(asText(value))
 }
 
 func toonString(value string) string {

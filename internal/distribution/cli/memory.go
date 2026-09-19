@@ -18,7 +18,6 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacron"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocavector"
-	"github.com/thellmwhisperer/la-roca/internal/jsonid"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	pluginstd "github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
@@ -70,7 +69,7 @@ func storeCommand(env *cliEnv) *cobra.Command {
 	cmd.Flags().StringVar(&model, "model", "", "writing model (primary CLI identity path)")
 	cmd.Flags().StringVar(&req.Project, "project", "", "project scope (omit for global)")
 	cmd.Flags().StringVar(&req.Status, "status", "", "active, pending or resolved")
-	cmd.Flags().Var((*jsonid.IntVar)(&req.Supersedes), "supersedes", "id of the memory this one replaces")
+	cmd.Flags().Int64Var(&req.Supersedes, "supersedes", 0, "id of the memory this one replaces")
 	cmd.Flags().StringVar(&metadata, "metadata", "", "structured tags, as a JSON object")
 	cmd.MarkFlagRequired("layer")
 	cmd.MarkFlagRequired("content")

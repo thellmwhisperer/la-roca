@@ -61,6 +61,7 @@ func registerStoreSteps(ctx *godog.ScenarioContext, binary string) {
 		m.storeSupersedingPrevious)
 	ctx.When(`^I store a memory in layer "([^"]*)" superseding memory (\d+) with content "([^"]*)"$`,
 		m.storeSupersedingID)
+	ctx.When(`^I store a disposable memory then delete it and store another$`, m.storeDeleteStore)
 	ctx.When(`^I search for "([^"]*)"$`, m.searchFor)
 	ctx.When(`^I search the other database for its unique memory$`, m.searchOtherDatabase)
 	ctx.When(`^I search without choosing a database for the command$`, m.searchHomeDatabase)
@@ -99,6 +100,7 @@ func registerStoreSteps(ctx *godog.ScenarioContext, binary string) {
 	ctx.Then(`^the output says to run "roca init" before searching it$`, m.outputPointsToInit)
 	ctx.Then(`^both writes succeed$`, m.bothWritesSucceed)
 	ctx.Then(`^the database holds both memories intact$`, m.holdsBothMemories)
+	ctx.Then(`^the new memory id is greater than the deleted id$`, m.newIDGreaterThanDeleted)
 }
 
 // freshSandbox gives a scenario a HOME of its own with nothing else in it.
@@ -284,13 +286,9 @@ func (m *world) storeSupersedingPrevious(layer, content string) error {
 	if err != nil {
 		return err
 	}
-	id, ok := previous["id"].(string)
-	if !ok {
-		return fmt.Errorf("the previous store named no string memory id: %v", previous)
-	}
-	supersedes, err := strconv.ParseInt(id, 10, 64)
+	supersedes, err := jsonMemoryID(previous["id"])
 	if err != nil {
-		return fmt.Errorf("parse the previous store memory id: %w", err)
+		return fmt.Errorf("the previous store named no memory id: %v", previous)
 	}
 	return m.storeMemory(layer, content, "", "", supersedes)
 }
@@ -577,9 +575,9 @@ func (m *world) storedMemoryHas(layer, origin, project string) error {
 	if err != nil {
 		return err
 	}
-	id, ok := document["id"].(string)
+	id, ok := document["id"].(float64)
 	if !ok {
-		return fmt.Errorf("the store named no string memory id: %v", document)
+		return fmt.Errorf("the store named no numeric memory id: %v", document)
 	}
 	db, err := m.openDB()
 	if err != nil {
@@ -759,4 +757,66 @@ func (m *world) holdsBothMemories() error {
 		return fmt.Errorf("the database holds %d of the 2 concurrent memories", n)
 	}
 	return nil
+}
+
+func (m *world) storeDeleteStore() error {
+	if err := m.storeMemory("discovery", "disposable memory", "agent", "", 0); err != nil {
+		return err
+	}
+	doc, err := m.json()
+	if err != nil {
+		return err
+	}
+	deleted, err := jsonMemoryID(doc["id"])
+	if err != nil {
+		return err
+	}
+	m.deletedID = deleted
+	path := filepath.Join(m.home, ".roca", "plugins", "roca-ops", "roca-ops.db")
+	if _, err := os.Stat(path); err != nil {
+		path = m.storeDBPath()
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	if _, err := db.Exec(`DELETE FROM memories WHERE id = ?`, deleted); err != nil {
+		return err
+	}
+	if err := m.storeMemory("discovery", "after delete", "agent", "", 0); err != nil {
+		return err
+	}
+	doc, err = m.json()
+	if err != nil {
+		return err
+	}
+	replaced, err := jsonMemoryID(doc["id"])
+	if err != nil {
+		return err
+	}
+	m.replacedID = replaced
+	return nil
+}
+
+func (m *world) newIDGreaterThanDeleted() error {
+	if m.replacedID <= m.deletedID {
+		return fmt.Errorf("new id %d is not greater than deleted id %d", m.replacedID, m.deletedID)
+	}
+	return nil
+}
+
+func jsonMemoryID(value any) (int64, error) {
+	switch v := value.(type) {
+	case float64:
+		return int64(v), nil
+	case int64:
+		return v, nil
+	case json.Number:
+		return v.Int64()
+	case string:
+		return strconv.ParseInt(v, 10, 64)
+	default:
+		return 0, fmt.Errorf("memory id %v", value)
+	}
 }
