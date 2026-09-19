@@ -111,9 +111,10 @@ What each part says:
   SQL asks for it; `retention` is a required, plain-language description of
   your pruning policy — you own it and you enforce it.
 - `semantic` describes the data in words. The description and questions are
-  what lets the model pick these tables for the right questions, and the
-  ordered `columns` list must match the real table exactly or the plugin is
-  skipped at query time.
+  what lets the model pick these tables for the right questions. Every name in
+  the `columns` list must exist in the real table. Extra physical columns are
+  tolerated for forward compatibility but remain outside the declared read
+  shape.
 
 **File 3: the checksums.** The installer verifies every payload before it
 copies anything, using `checksums.txt` — one SHA-256 per line. Generate it
@@ -212,8 +213,9 @@ uninstall then archives the directory rather than deleting it — see
   rebases it onto the source you just named and preserves custodial data. Do
   not uninstall.
 - Your table does not appear and the `databases:` line omits the plugin — the
-  semantic declaration disagrees with the real database (a wrong or reordered
-  column list is the usual cause). The plugin is skipped with a warning.
+  semantic declaration disagrees with the real database (a declared column or
+  table is missing, or a physical table is undeclared). The plugin is skipped
+  with a warning.
   Fix `plugin.json`, regenerate the checksums, and run
   `roca plugin update first-receipts`.
 - `plugin.json` with a misspelled key is rejected outright: the engine refuses
