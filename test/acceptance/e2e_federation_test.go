@@ -32,7 +32,7 @@ func TestFrozenFederationInstalledBinary(t *testing.T) {
 	guardLiveHub(t)
 	seeded := newFederationLab(t, true)
 	t.Run("pr-321-codex-history-collision", func(t *testing.T) { casePR321(t) })
-	t.Run("pr-325-pill-delete", func(t *testing.T) { casePR325(t, seeded.clone(t)) })
+	t.Run("pr-325-pill-delete", func(t *testing.T) { casePR325(t, newFederationLab(t, false)) })
 	t.Run("pr-326-max-chars", func(t *testing.T) { casePR326(t) })
 	t.Run("issue-315-shared-resident", func(t *testing.T) { caseIssue315(t, seeded.m.installed) })
 	t.Run("issue-317-unqualified-table", func(t *testing.T) { caseIssue317(t, seeded) })
@@ -279,6 +279,9 @@ func casePR325(t *testing.T, lab *federationLab) {
 	after := lab.cli(t, 0, "pill")
 	if strings.Contains(after.stdout, "tmp-x") {
 		t.Fatalf("pill still listed:\n%s", after.stdout)
+	}
+	if !strings.Contains(after.stdout, "no active pills") {
+		t.Fatalf("pill list after delete was not empty:\n%s", after.stdout)
 	}
 	count := lab.cli(t, 0, "exec",
 		"SELECT count(*) FROM plugin_roca_ops.memories WHERE json_extract(metadata,'$.pill_slug')='tmp-x'")
@@ -564,6 +567,14 @@ func longestDigitRun(s string) int {
 }
 
 func (m *world) aFrozenSyntheticFederationLab() error {
+	return m.prepareFrozenSyntheticFederationLab(true)
+}
+
+func (m *world) aPillFreeFrozenSyntheticFederationLab() error {
+	return m.prepareFrozenSyntheticFederationLab(false)
+}
+
+func (m *world) prepareFrozenSyntheticFederationLab(withPill bool) error {
 	root, err := acceptanceRoot()
 	if err != nil {
 		return err
@@ -600,17 +611,19 @@ func (m *world) aFrozenSyntheticFederationLab() error {
 	if err := forceVectorOn(m.home); err != nil {
 		return err
 	}
-	return lab.seedMemoriesErr()
+	return lab.seedMemoriesErr(withPill)
 }
 
-func (lab *federationLab) seedMemoriesErr() error {
+func (lab *federationLab) seedMemoriesErr(withPill bool) error {
 	long := strings.Repeat("0123456789", 200) + " branch: lab done: seeded state: testing next: verify budgets"
 	cmds := [][]string{
-		{"store", "--layer", "pill", "--content", "How an agent searches La Roca: binary first, vectors first, then qualified exec. Never open the database files.", "--metadata", `{"pill_slug":"` + federationPill + `"}`, "--origin", "agent", "--agent", "codex"},
 		{"store", "--layer", "handoff", "--content", "branch: lab scope: harbor done: seeded the frozen federation state: ready next: run the installed binary suite", "--origin", "agent", "--agent", "codex", "--project", "harbor"},
 		{"store", "--layer", "handoff", "--content", "branch: lab scope: dock done: second project receipt state: ready next: cross-project view", "--origin", "agent", "--agent", "codex", "--project", "dock"},
 		{"store", "--layer", "handoff", "--content", long, "--origin", "agent", "--agent", "codex", "--project", "budgets"},
 		{"store", "--layer", "discovery", "--content", "the harbor lantern marks the synthetic federation row", "--origin", "agent", "--agent", "codex"},
+	}
+	if withPill {
+		cmds = append([][]string{{"store", "--layer", "pill", "--content", "How an agent searches La Roca: binary first, vectors first, then qualified exec. Never open the database files.", "--metadata", `{"pill_slug":"` + federationPill + `"}`, "--origin", "agent", "--agent", "codex"}}, cmds...)
 	}
 	for _, args := range cmds {
 		if _, err := lab.m.runWith("roca "+strings.Join(args, " "), args); err != nil {

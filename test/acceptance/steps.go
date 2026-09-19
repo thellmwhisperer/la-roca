@@ -143,6 +143,7 @@ func registerSteps(ctx *godog.ScenarioContext, binary string) {
 	ctx.Given(`^there is a memory with content longer than (\d+) characters$`, m.longMemory)
 	ctx.Given(`^there is a handoff memory about "([^"]*)"$`, m.aHandoffMemoryAbout)
 	ctx.Given(`^a frozen synthetic federation lab$`, m.aFrozenSyntheticFederationLab)
+	ctx.Given(`^a pill-free frozen synthetic federation lab$`, m.aPillFreeFrozenSyntheticFederationLab)
 
 	ctx.When(`^I run "([^"]*)"$`, m.iRun)
 	ctx.When(`^I exec the SQL "([^"]*)"$`, m.iExecSQL)
