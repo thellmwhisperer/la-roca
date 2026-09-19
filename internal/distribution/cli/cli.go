@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -128,8 +129,13 @@ func executeWithOptions(env *cliEnv, args []string, in io.Reader, plugins bool) 
 		if handled, code, err := dispatchPlugin(env, root, args, env.features); handled {
 			env.auditCommand = args[0]
 			env.auditArgs = redactPluginArguments(args[1:])
+			logReason := err
+			if logReason == nil && code != ExitOK {
+				logReason = fmt.Errorf("plugin %s exited with code %d", args[0], code)
+			}
 			if err != nil {
 				err = logfile.Correlate(err)
+				logReason = err
 			} else if code != ExitOK {
 				// The plugin exited non-zero on its own account, and its streams
 				// crossed this seam untouched. Naming the log line here would write
@@ -138,7 +144,7 @@ func executeWithOptions(env *cliEnv, args []string, in io.Reader, plugins bool) 
 				env.correlationID()
 			}
 			if !env.skipExecutionLog && !env.forceReadOnly {
-				if logErr := env.logExecution(nil, started, code, err); logErr != nil {
+				if logErr := env.logExecution(nil, started, code, logReason); logErr != nil {
 					fmt.Fprintf(env.errOut,
 						"warning: this run is not in the execution log: %v\n", logErr)
 				}
@@ -353,7 +359,8 @@ func dispatchPlugin(env *cliEnv, root *cobra.Command, args []string, features co
 		}
 	}
 	command := exec.Command(path, args[1:]...)
-	command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, os.Stderr
+	probe := &stderrProbe{dst: os.Stderr}
+	command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, probe
 	if strings.TrimSpace(os.Getenv("ROCA_VECTOR_ROCA_BINARY")) == "" {
 		if host, locErr := os.Executable(); locErr == nil && strings.TrimSpace(host) != "" {
 			command.Env = append(os.Environ(), "ROCA_VECTOR_ROCA_BINARY="+host)
@@ -365,9 +372,25 @@ func dispatchPlugin(env *cliEnv, root *cobra.Command, args []string, features co
 	}
 	var exit *exec.ExitError
 	if errors.As(err, &exit) {
+		if !probe.wrote.Load() {
+			return true, exit.ExitCode(), fmt.Errorf(
+				"plugin %s exited with code %d without writing a reason", args[0], exit.ExitCode())
+		}
 		return true, exit.ExitCode(), nil
 	}
 	return true, ExitError, fmt.Errorf("execute plugin %s: %w", path, err)
+}
+
+type stderrProbe struct {
+	dst   io.Writer
+	wrote atomic.Bool
+}
+
+func (p *stderrProbe) Write(payload []byte) (int, error) {
+	if len(payload) > 0 {
+		p.wrote.Store(true)
+	}
+	return p.dst.Write(payload)
 }
 
 func vectorLifecycleCommand(args []string) bool {

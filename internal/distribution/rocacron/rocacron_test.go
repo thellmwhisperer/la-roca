@@ -116,6 +116,32 @@ gate = "after_ingest"
 	}
 }
 
+func TestVectorDeltaRideRecordsFailureWhenIngestExitsOne(t *testing.T) {
+	root, database := cronWorld(t, `[ride.vector_delta]
+command = "roca vector ingest --delta"
+gate = "after_ingest"
+`)
+	service := newService(t, root, database, func(_ context.Context, command string, _, errOut io.Writer) (int, error) {
+		if strings.Contains(command, "vector ingest --delta") {
+			return 1, fmt.Errorf("exit status 1")
+		}
+		return 0, nil
+	})
+
+	report, err := service.Run(context.Background(), plugin.DefaultTrain, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Failed != 1 {
+		t.Fatalf("report = %+v", report)
+	}
+	journeys := readJourneys(t, database)
+	if len(journeys) != 2 || journeys[1].ExitCode == nil || *journeys[1].ExitCode != 1 ||
+		journeys[1].Error == "" || *journeys[0].ExitCode != 0 {
+		t.Fatalf("journeys = %+v", journeys)
+	}
+}
+
 func TestBusyCoreLockDefersWithoutInvokingAndRecordsTheDecision(t *testing.T) {
 	root, database := cronWorld(t, "")
 	service := newService(t, root, database, func(context.Context, string, io.Writer, io.Writer) (int, error) {

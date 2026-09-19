@@ -226,6 +226,11 @@ func ingestCommand(env *environment) *cobra.Command {
 				return err
 			}
 			defer release()
+			releaseClaim, err := vector.AcquireIngestClaim(state)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = releaseClaim() }()
 			federation, federationErr := env.federation(model)
 			federated := federationErr == nil
 			if federationErr != nil && !errors.Is(federationErr, os.ErrNotExist) {
@@ -251,6 +256,12 @@ func ingestCommand(env *environment) *cobra.Command {
 					model = vector.ConfiguredModel(vectorPath)
 				}
 			}
+			sidecars := []string{vectorPath}
+			if federated {
+				sidecars = federation.SidecarPaths()
+			}
+			vector.ClearUnheldIndexLocks(sidecars)
+			defer vector.ClearUnheldIndexLocks(sidecars)
 			if err := env.calmGate().Wait(command.Context()); err != nil {
 				return err
 			}
