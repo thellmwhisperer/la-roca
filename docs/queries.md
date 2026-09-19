@@ -29,7 +29,9 @@ prompt defenses belong to the [model-invoking playground](models.md#what-happens
 reading of the rows. `roca exec` runs your own `SELECT` through the same
 read-only gate. By default it uses the configured
 [`query.timeout_ms`](models.md#the-configuration). `--timeout-ms N` overrides that
-statement budget for one invocation; `0` disables the bound. Vector indexing's
+statement budget for one invocation; `0` disables the bound. The bound cancels
+the SQLite statement itself, including scans that continue after the first row,
+so a bad query cannot hold the database past the limit. Vector indexing's
 statement-budget exceptions are owned by [Local vector
 search](vector.md#index-declared-databases); query-time source lookups keep the
 interactive budget.

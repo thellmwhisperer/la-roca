@@ -149,6 +149,16 @@ func executionError(parent, queryCtx context.Context, timeout time.Duration, err
 	return fmt.Errorf("run the validated query: %w", err)
 }
 
+func finishedWithinBudget(parent, queryCtx context.Context, timeout time.Duration, err error) error {
+	if err != nil {
+		return executionError(parent, queryCtx, timeout, err)
+	}
+	if queryCtx.Err() != nil {
+		return executionError(parent, queryCtx, timeout, queryCtx.Err())
+	}
+	return nil
+}
+
 // ScanRows turns any result set into its column names and its rows of named
 // values under the text budget. The query cascade, health diagnosis and
 // SQL execution share it, so unexpected column types are handled in

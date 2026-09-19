@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"strings"
@@ -51,27 +52,89 @@ func TestExecDeclaresWhichStageRefusedTheStatement(t *testing.T) {
 }
 
 func TestExecStopsAQueryThatExceedsTheCostBudget(t *testing.T) {
+	blob := strings.Repeat("synthetic-scan-x", 2500)
+	for _, testCase := range []struct {
+		name string
+		sql  string
+		seed bool
+	}{
+		{name: "recursive aggregate", sql: `
+		WITH RECURSIVE costly(n) AS (
+			SELECT 1 UNION ALL SELECT n + 1 FROM costly WHERE n < 100000000
+		) SELECT sum(n) FROM costly`},
+		{name: "like scan after the first row", sql: `SELECT content FROM memories WHERE lower(content) LIKE '%x%'`, seed: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			paths := freshPaths(t)
+			svc := serviceOn(t, paths, func(options *service.Options) {
+				options.QueryTimeout = 80 * time.Millisecond
+			})
+			if _, err := svc.Init(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if testCase.seed {
+				if _, err := svc.DB().SQL().Exec(`WITH RECURSIVE n(i) AS (
+					SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<500)
+					INSERT INTO memories(layer, content, origin)
+					SELECT 'discovery', ?, 'agent' FROM n`, blob); err != nil {
+					t.Fatal(err)
+				}
+			}
+			started := time.Now()
+			_, err := svc.Exec(t.Context(), service.ExecRequest{SQL: testCase.sql})
+			if err == nil {
+				t.Fatal("runaway query completed without the cost budget")
+			}
+			if got := logfile.ErrorType(err); got != service.DegradedTimeout {
+				t.Fatalf("error_type = %q, want %q (%v)", got, service.DegradedTimeout, err)
+			}
+			if !strings.Contains(err.Error(), "the validated SQL exceeded the time limit after") {
+				t.Fatalf("timeout message = %v", err)
+			}
+			if time.Since(started) > time.Second {
+				t.Fatalf("query timeout took too long: %v", time.Since(started))
+			}
+		})
+	}
+}
+
+func TestExecTimeoutReleasesTheDatabaseForAWriter(t *testing.T) {
 	paths := freshPaths(t)
 	svc := serviceOn(t, paths, func(options *service.Options) {
-		options.QueryTimeout = time.Millisecond
+		options.QueryTimeout = 40 * time.Millisecond
 	})
 	if _, err := svc.Init(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-
+	blob := strings.Repeat("synthetic-scan-x", 2500)
+	if _, err := svc.DB().SQL().Exec(`WITH RECURSIVE n(i) AS (
+		SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<500)
+		INSERT INTO memories(layer, content, origin)
+		SELECT 'discovery', ?, 'agent' FROM n`, blob); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := svc.Exec(t.Context(), service.ExecRequest{
+			SQL: `SELECT content FROM memories WHERE lower(content) LIKE '%x%'`,
+		})
+		done <- err
+	}()
+	writer, err := sql.Open("sqlite", "file:"+paths.db+"?_pragma=busy_timeout(2000)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
 	started := time.Now()
-	_, err := svc.Exec(t.Context(), service.ExecRequest{SQL: `
-		WITH RECURSIVE costly(n) AS (
-			SELECT 1 UNION ALL SELECT n + 1 FROM costly WHERE n < 100000000
-		) SELECT sum(n) FROM costly`})
-	if err == nil {
-		t.Fatal("runaway recursive query completed without the cost budget")
+	if _, err := writer.Exec(`BEGIN EXCLUSIVE; COMMIT;`); err != nil {
+		t.Fatalf("writer during a bounded exec: %v after %s", err, time.Since(started))
 	}
-	if got := logfile.ErrorType(err); got != service.DegradedTimeout {
-		t.Fatalf("error_type = %q, want %q", got, service.DegradedTimeout)
+	if time.Since(started) > 2*time.Second {
+		t.Fatalf("exclusive lock waited %s", time.Since(started))
 	}
-	if time.Since(started) > time.Second {
-		t.Fatalf("query timeout took too long: %v", time.Since(started))
+	err = <-done
+	if err == nil || logfile.ErrorType(err) != service.DegradedTimeout {
+		t.Fatalf("exec = %v", err)
 	}
 }
 
