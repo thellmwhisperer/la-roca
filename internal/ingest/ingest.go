@@ -390,14 +390,26 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 			finishTarget()
 			continue
 		}
-		if targetUnchanged(state, target, fingerprint) {
-			result.addMessageCoverage(source, stateMessageCoverage(state[target.Path]))
-			result.FilesSkipped++
-			scan.FilesSkipped++
-			result.categorizeFile("skipped", "unchanged fingerprint")
-			result.Coverage.skip(target.Path, "unchanged fingerprint")
-			finishTarget()
-			continue
+		unchanged, legacyFingerprint := targetUnchanged(state, target, fingerprint)
+		if unchanged {
+			if legacyFingerprint != "" && !opts.DryRun {
+				if err := promoteFingerprint(ctx, db, target, fingerprint, legacyFingerprint); err != nil {
+					result.Warnings = append(result.Warnings,
+						fmt.Sprintf("could not promote the machine-aware fingerprint for %s: %v",
+							target.Path, err))
+				} else {
+					legacyFingerprint = ""
+				}
+			}
+			if legacyFingerprint == "" {
+				result.addMessageCoverage(source, stateMessageCoverage(state[target.Path]))
+				result.FilesSkipped++
+				scan.FilesSkipped++
+				result.categorizeFile("skipped", "unchanged fingerprint")
+				result.Coverage.skip(target.Path, "unchanged fingerprint")
+				finishTarget()
+				continue
+			}
 		}
 		if opts.DryRun {
 			result.FilesRead++
@@ -466,6 +478,27 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 		}
 	}
 	return result, nil
+}
+
+func promoteFingerprint(ctx context.Context, db Database, target Target,
+	fingerprint, legacyFingerprint string) error {
+	return db.Write(ctx, func(tx *sql.Tx) error {
+		updated, err := tx.ExecContext(ctx, `UPDATE ingest_file_state
+			SET fingerprint = ?, last_synced_at = datetime('now')
+			WHERE path = ? AND fingerprint = ? AND COALESCE(last_error, '') = ''`,
+			fingerprint, target.Path, legacyFingerprint)
+		if err != nil {
+			return err
+		}
+		count, err := updated.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if count != 1 {
+			return fmt.Errorf("state for %s changed during promotion", target.Path)
+		}
+		return nil
+	})
 }
 
 func excludedRecordCount(target Target) int {
@@ -731,6 +764,7 @@ func ingestOne(ctx context.Context, db Database, layers layerResolver, opts Opti
 			summary["exchange_cursors"] = cursor.ExchangeCursors
 			summary["last_exchange_complete"] = cursor.LastExchangeComplete
 			summary["parser_version"] = cursor.ParserVersion
+			summary["machine"] = cursor.Machine
 		} else if info, statErr := os.Stat(target.Path); statErr == nil {
 			summary["byte_offset"] = info.Size()
 		}

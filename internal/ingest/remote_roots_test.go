@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestRemoteSourceRootsIngestByMachine(t *testing.T) {
@@ -130,7 +129,7 @@ func TestRemoteSourceRootsIgnoreHubEnvironmentOverrides(t *testing.T) {
 	}
 }
 
-func TestQualifySessionIDAndMirrorStale(t *testing.T) {
+func TestQualifySessionID(t *testing.T) {
 	if got := QualifySessionID("mini", "abc"); got != "mini/abc" {
 		t.Fatalf("qualify = %q", got)
 	}
@@ -141,27 +140,6 @@ func TestQualifySessionIDAndMirrorStale(t *testing.T) {
 		t.Fatalf("local id changed: %q", got)
 	}
 
-	root := t.TempDir()
-	path := filepath.Join(root, ".claude", "keep.txt")
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte("ok"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	old := time.Now().Add(-48 * time.Hour)
-	if err := os.Chtimes(path, old, old); err != nil {
-		t.Fatal(err)
-	}
-	if !MirrorStale(root, 24, time.Now()) {
-		t.Fatal("a 48h-old mirror was not stale at a 24h threshold")
-	}
-	if MirrorStale(root, 72, time.Now()) {
-		t.Fatal("a 48h-old mirror was stale at a 72h threshold")
-	}
-	if !MirrorStale(filepath.Join(root, "missing"), 24, time.Now()) {
-		t.Fatal("a missing mirror was not stale")
-	}
 }
 
 func writeClaudeSession(t *testing.T, roots Roots, cwd, sessionID string) {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -913,6 +914,8 @@ func readRemoteSources(section map[string]any, path string, warnings *[]string) 
 	}
 	var remotes []RemoteSource
 	seen := map[string]bool{}
+	seenRoots := map[string]bool{}
+	localRoot := remoteRootKey("~")
 	for _, entry := range entries {
 		for _, key := range sortedKeys(entry) {
 			switch key {
@@ -933,7 +936,14 @@ func readRemoteSources(section map[string]any, path string, warnings *[]string) 
 				"a machine name used once"))
 			continue
 		}
+		rootKey := remoteRootKey(root)
+		if rootKey != "" && (seenRoots[rootKey] || rootKey == localRoot) {
+			*warnings = append(*warnings, invalidValue("sources.remote.root", path,
+				"a root used once and different from the local HOME"))
+			continue
+		}
 		seen[machine] = true
+		seenRoots[rootKey] = true
 		remote := RemoteSource{Machine: machine, Root: root}
 		if raw, ok := entry["stale_after_hours"]; ok {
 			hours, ok := readNumber(raw)
@@ -947,6 +957,28 @@ func readRemoteSources(section map[string]any, path string, warnings *[]string) 
 		remotes = append(remotes, remote)
 	}
 	return remotes
+}
+
+func remoteRootKey(root string) string {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return ""
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		switch {
+		case root == "~":
+			root = home
+		case strings.HasPrefix(root, "~/"), strings.HasPrefix(root, `~\`):
+			root = filepath.Join(home, root[2:])
+		}
+	}
+	if absolute, err := filepath.Abs(root); err == nil {
+		root = absolute
+	}
+	if resolved, err := filepath.EvalSymlinks(root); err == nil {
+		root = resolved
+	}
+	return filepath.Clean(root)
 }
 
 func remoteSourceEntries(value any) []map[string]any {

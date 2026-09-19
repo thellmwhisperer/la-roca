@@ -79,17 +79,20 @@ func targetFingerprint(target Target) (string, error) {
 }
 
 func targetUnchanged(state map[string]incrementality.FileState, target Target,
-	fingerprint string) bool {
+	fingerprint string) (bool, string) {
 	if incrementality.Unchanged(state, target.Path, fingerprint) {
-		return true
+		return true, ""
 	}
-	if target.Machine == "" {
-		return false
+	if target.Remote || target.Machine == "" {
+		return false, ""
 	}
 	legacy := target
 	legacy.Machine = ""
 	legacyFingerprint, err := targetFingerprint(legacy)
-	return err == nil && incrementality.Unchanged(state, target.Path, legacyFingerprint)
+	if err == nil && incrementality.Unchanged(state, target.Path, legacyFingerprint) {
+		return true, legacyFingerprint
+	}
+	return false, ""
 }
 
 func stateMessageCoverage(state incrementality.FileState) *parsers.MessageCoverage {

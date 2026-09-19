@@ -2,7 +2,6 @@ package ingest
 
 import (
 	"io/fs"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -46,22 +45,6 @@ func NewestModTime(root string) (time.Time, bool) {
 		return nil
 	})
 	return newest, found
-}
-
-// MirrorStale reports whether the newest file under root is older than hours.
-// A missing root or an empty tree is stale: nothing has arrived.
-func MirrorStale(root string, hours int, now time.Time) bool {
-	if hours <= 0 {
-		hours = DefaultStaleAfterHours
-	}
-	if _, err := os.Stat(root); err != nil {
-		return true
-	}
-	newest, found := NewestModTime(root)
-	if !found {
-		return true
-	}
-	return now.Sub(newest) > time.Duration(hours)*time.Hour
 }
 
 func owningRoots(opts Options, target Target) Roots {
