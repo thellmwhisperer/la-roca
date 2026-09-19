@@ -347,10 +347,20 @@ func resolveMemoryID(ctx context.Context, db memoryQuerier, id int64) (int64, bo
 	switch {
 	case err == nil:
 		return canonical, true, nil
-	case errors.Is(err, sql.ErrNoRows):
-		return 0, false, nil
+	case errors.Is(err, sql.ErrNoRows), missingTable(err), missingColumn(err):
 	default:
 		return 0, false, fmt.Errorf("look for the superseded memory: %w", err)
+	}
+	err = db.QueryRowContext(ctx, `SELECT memories.id FROM memory_id_remaps
+		JOIN memories ON memories.id = memory_id_remaps.canonical_id
+		WHERE memory_id_remaps.old_id = ?`, id).Scan(&canonical)
+	switch {
+	case err == nil:
+		return canonical, true, nil
+	case errors.Is(err, sql.ErrNoRows), missingTable(err):
+		return 0, false, nil
+	default:
+		return 0, false, fmt.Errorf("look for the superseded memory alias: %w", err)
 	}
 }
 

@@ -155,6 +155,25 @@ func expandOpsLegacyIDs(statement string) string {
 	return result.String()
 }
 
+func opsRouteHasLegacyID(databases []plugin.Database) bool {
+	for _, database := range databases {
+		if database.Schema != "plugin_roca_ops" {
+			continue
+		}
+		for _, table := range database.Tables {
+			if table.Name != "memories" {
+				continue
+			}
+			for _, column := range table.Columns {
+				if column == "legacy_id" {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 func tokenizeOpsSQL(statement string) []opsSQLToken {
 	var tokens []opsSQLToken
 	depth := 0
@@ -372,8 +391,10 @@ func (s *Service) prepareExec(ctx context.Context, statement string, cursor bool
 	if _, err := s.EnsureSchema(ctx); err != nil {
 		return PluginRoute{}, "", err
 	}
-	statement = expandOpsLegacyIDs(statement)
 	route := s.pluginsForSQL(ctx, statement)
+	if opsRouteHasLegacyID(route.Databases) {
+		statement = expandOpsLegacyIDs(statement)
+	}
 	ok := false
 	defer func() {
 		if !ok {

@@ -624,6 +624,30 @@ func explainQueryPlan(t *testing.T, db *sql.DB, statement string) string {
 	return strings.Join(details, " | ")
 }
 
+func TestResolveSourcesUsesOpsLegacyID(t *testing.T) {
+	root := t.TempDir()
+	dbPath := filepath.Join(root, "roca-ops.db")
+	createSourceDatabase(t, dbPath, `
+		CREATE TABLE memories(id INTEGER PRIMARY KEY, legacy_id INTEGER UNIQUE, content TEXT);
+		INSERT INTO memories VALUES (1, 1152921504606853945, 'legacy operational body');`)
+	runner := sqliteExecRunner(t, map[string]string{"plugin_roca_ops": dbPath})
+	declared := DeclaredCorpus{
+		Core: CoreCLI{Executable: "roca", readRequest: readerFixture(runner)},
+		Database: vectorDatabase{Plugin: "roca-ops", Database: "ops", Alias: "plugin_roca_ops",
+			Tables: []vectorTable{{Name: "memories", IDColumn: "id", TextColumns: []string{"content"}}}},
+	}
+	row := sourceRow{kind: "memories", sourceID: "1152921504606853945", text: "legacy operational body"}
+	resolved, err := declared.ResolveSources(context.Background(), []sourceLookup{{
+		kind: "memories", where: locator{SourceID: "1152921504606853945", Identity: row.identity()},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved[sourceLookupKey("memories", "1152921504606853945")] != row.text {
+		t.Fatalf("resolved legacy ops source = %v", resolved)
+	}
+}
+
 func TestResolveSourcesAlignsUnionArmsAcrossChunkGenerations(t *testing.T) {
 	root := t.TempDir()
 	dbPath := filepath.Join(root, "roca-corpus.db")

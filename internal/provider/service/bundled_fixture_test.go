@@ -193,4 +193,25 @@ func TestOpsStoreIssuesShortIdsAndKeepsHistoricalIdsAddressable(t *testing.T) {
 	if !supersedes.Valid || supersedes.Int64 != first.ID {
 		t.Fatalf("supersedes = %+v, want %d", supersedes, first.ID)
 	}
+	const dedupAlias int64 = 1152921504606853999
+	if _, err := opsDB.Exec(`CREATE TABLE IF NOT EXISTS memory_id_remaps (
+		old_id INTEGER PRIMARY KEY, canonical_id INTEGER NOT NULL REFERENCES memories(id))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := opsDB.Exec(`INSERT INTO memory_id_remaps(old_id, canonical_id) VALUES (?, ?)`, dedupAlias, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	third, err := svc.Store(t.Context(), service.StoreRequest{
+		Layer: "discovery", Project: "la-roca-e2e", Content: "id-size probe 3",
+		Supersedes: dedupAlias,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := opsDB.QueryRow(`SELECT supersedes FROM memories WHERE id = ?`, third.ID).Scan(&supersedes); err != nil {
+		t.Fatal(err)
+	}
+	if !supersedes.Valid || supersedes.Int64 != first.ID {
+		t.Fatalf("dedup alias supersedes = %+v, want %d", supersedes, first.ID)
+	}
 }

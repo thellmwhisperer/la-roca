@@ -1246,9 +1246,19 @@ func (d DeclaredCorpus) ResolveSource(ctx context.Context, kind string, where lo
 	if where.SourceID == "" {
 		return "", nil
 	}
-	statement := fmt.Sprintf(`SELECT %s FROM %s.%s WHERE CAST(%s AS TEXT)=%s`,
+	idPredicate := fmt.Sprintf("CAST(%s AS TEXT)=%s", quoteIdentifier(table.IDColumn), sqlLiteral(where.SourceID))
+	if d.Database.Plugin == "roca-ops" && table.Name == "memories" && table.IDColumn == "id" {
+		hasLegacy, err := d.hasColumn(ctx, table, "legacy_id")
+		if err != nil {
+			return "", err
+		}
+		if hasLegacy {
+			idPredicate = "(" + idPredicate + " OR CAST(\"legacy_id\" AS TEXT)=" + sqlLiteral(where.SourceID) + ")"
+		}
+	}
+	statement := fmt.Sprintf(`SELECT %s FROM %s.%s WHERE %s`,
 		strings.TrimPrefix(declaredColumnSelect("", table.TextColumns), ", "), quoteIdentifier(d.Database.Alias),
-		quoteIdentifier(table.Name), quoteIdentifier(table.IDColumn), sqlLiteral(where.SourceID))
+		quoteIdentifier(table.Name), idPredicate)
 	rows, err := d.Core.query(ctx, statement)
 	if err != nil {
 		return "", err
@@ -1304,12 +1314,15 @@ func (d DeclaredCorpus) ResolveSources(ctx context.Context,
 			literals[index] = sqlTypedLiteral(id, affinity)
 		}
 		inList := strings.Join(literals, ",")
-		for _, column := range table.TextColumns {
-			branches = append(branches, fmt.Sprintf(
-				`SELECT %s AS source_kind,CAST(%s AS TEXT) AS source_id,%s AS column_name,CAST(%s AS TEXT) AS column_text FROM %s.%s WHERE %s IN (%s)`,
-				sqlLiteral(table.Name), quoteIdentifier(table.IDColumn), sqlLiteral(column),
-				quoteIdentifier(column), quoteIdentifier(d.Database.Alias), quoteIdentifier(table.Name),
-				quoteIdentifier(table.IDColumn), inList))
+		branches = append(branches, d.sourceLookupBranches(table, inList, quoteIdentifier(table.IDColumn))...)
+		if d.Database.Plugin == "roca-ops" && table.Name == "memories" && table.IDColumn == "id" {
+			hasLegacy, err := d.hasColumn(ctx, table, "legacy_id")
+			if err != nil {
+				return nil, err
+			}
+			if hasLegacy {
+				branches = append(branches, d.sourceLookupBranches(table, inList, `"legacy_id"`)...)
+			}
 		}
 	}
 	if len(branches) == 0 {
@@ -1358,6 +1371,31 @@ func (d DeclaredCorpus) ResolveSources(ctx context.Context,
 		}
 	}
 	return resolved, nil
+}
+
+func (d DeclaredCorpus) sourceLookupBranches(table vectorTable, inList, idColumn string) []string {
+	branches := make([]string, 0, len(table.TextColumns))
+	for _, column := range table.TextColumns {
+		branches = append(branches, fmt.Sprintf(
+			`SELECT %s AS source_kind,CAST(%s AS TEXT) AS source_id,%s AS column_name,CAST(%s AS TEXT) AS column_text FROM %s.%s WHERE %s IN (%s)`,
+			sqlLiteral(table.Name), idColumn, sqlLiteral(column),
+			quoteIdentifier(column), quoteIdentifier(d.Database.Alias), quoteIdentifier(table.Name),
+			idColumn, inList))
+	}
+	return branches
+}
+
+func (d DeclaredCorpus) hasColumn(ctx context.Context, table vectorTable, column string) (bool, error) {
+	rows, err := d.Core.query(ctx, fmt.Sprintf(`SELECT COUNT(*) AS n FROM %s.pragma_table_info(%s) WHERE name=%s`,
+		quoteIdentifier(d.Database.Alias), sqlLiteral(table.Name), sqlLiteral(column)))
+	if err != nil {
+		return false, err
+	}
+	if len(rows) != 1 {
+		return false, fmt.Errorf("column inspection returned %d rows", len(rows))
+	}
+	count, err := integer(rows[0], "n")
+	return count != 0, err
 }
 
 func (d DeclaredCorpus) idAffinity(ctx context.Context, table vectorTable) (string, error) {
