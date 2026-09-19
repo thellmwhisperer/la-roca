@@ -206,7 +206,7 @@ func ingestCommand(env *environment) *cobra.Command {
 		Use:   "ingest --delta",
 		Short: "Embed only new or changed chunks from declared databases",
 		Args:  cobra.NoArgs,
-		RunE: func(command *cobra.Command, _ []string) error {
+		RunE: func(command *cobra.Command, _ []string) (err error) {
 			if !delta {
 				return fmt.Errorf("vector ingest is incremental; pass --delta")
 			}
@@ -226,6 +226,11 @@ func ingestCommand(env *environment) *cobra.Command {
 				return err
 			}
 			defer release()
+			releaseClaim, err := vector.AcquireIngestClaim(state)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = releaseClaim() }()
 			federation, federationErr := env.federation(model)
 			federated := federationErr == nil
 			if federationErr != nil && !errors.Is(federationErr, os.ErrNotExist) {
@@ -251,6 +256,14 @@ func ingestCommand(env *environment) *cobra.Command {
 					model = vector.ConfiguredModel(vectorPath)
 				}
 			}
+			sidecars := []string{vectorPath}
+			if federated {
+				sidecars = federation.SidecarPaths()
+			}
+			if err := vector.ClearUnheldIndexLocks(sidecars); err != nil {
+				return err
+			}
+			defer func() { err = errors.Join(err, vector.ClearUnheldIndexLocks(sidecars)) }()
 			if err := env.calmGate().Wait(command.Context()); err != nil {
 				return err
 			}

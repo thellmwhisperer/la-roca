@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -22,6 +23,11 @@ import (
 	"github.com/thellmwhisperer/la-roca/test/testfixture"
 	_ "modernc.org/sqlite"
 )
+
+const vectorDeltaRide = `[ride.vector_delta]
+command = "roca vector ingest --delta"
+gate = "after_ingest"
+`
 
 func TestDryRunPreviewsOrderAndGateWithoutExecutingOrRecording(t *testing.T) {
 	root, database := cronWorld(t, `[ride.vector_delta]
@@ -89,10 +95,7 @@ gate = "after_ingest"
 }
 
 func TestFailedIngestIsRecordedAndDefersTheDependentRide(t *testing.T) {
-	root, database := cronWorld(t, `[ride.vector_delta]
-command = "roca vector ingest --delta"
-gate = "after_ingest"
-`)
+	root, database := cronWorld(t, vectorDeltaRide)
 	service := newService(t, root, database, func(_ context.Context, command string, _, errOut io.Writer) (int, error) {
 		if strings.HasSuffix(command, " ingest") {
 			fmt.Fprint(errOut, "synthetic ingest failure")
@@ -112,6 +115,46 @@ gate = "after_ingest"
 	if len(journeys) != 2 || journeys[0].ExitCode == nil || *journeys[0].ExitCode != 7 ||
 		journeys[0].Error == "" || journeys[1].ExitCode != nil ||
 		journeys[1].GateStatus != rocacron.GateDeferredAfterIngest {
+		t.Fatalf("journeys = %+v", journeys)
+	}
+}
+
+func TestVectorDeltaRideRecordsFailureWhenIngestExitsOne(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix shell ride")
+	}
+	root, database := cronWorld(t, `[ride.vector_delta]
+command = "echo vector-delta-progress >&2; exit 1"
+gate = "after_ingest"
+`)
+	service := newService(t, root, database, func(ctx context.Context, command string, out, errOut io.Writer) (int, error) {
+		if !strings.Contains(command, "vector-delta-progress") {
+			return 0, nil
+		}
+		child := exec.CommandContext(ctx, "/bin/sh", "-c", command)
+		child.Stdout, child.Stderr = out, errOut
+		err := child.Run()
+		if err == nil {
+			return 0, nil
+		}
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
+			return exit.ExitCode(), err
+		}
+		return -1, err
+	})
+
+	report, err := service.Run(context.Background(), plugin.DefaultTrain, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Failed != 1 {
+		t.Fatalf("report = %+v", report)
+	}
+	journeys := readJourneys(t, database)
+	if len(journeys) != 2 || journeys[1].ExitCode == nil || *journeys[1].ExitCode != 1 ||
+		journeys[1].Error == "" || *journeys[0].ExitCode != 0 ||
+		!strings.Contains(journeys[1].Stderr, "vector-delta-progress") {
 		t.Fatalf("journeys = %+v", journeys)
 	}
 }

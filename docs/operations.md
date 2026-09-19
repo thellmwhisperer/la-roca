@@ -249,10 +249,11 @@ The stable fields are:
   command that exits non-zero after reporting the failure itself, gets a
   `correlation_id` line on the shell's error stream, where no answer is parsed
   from; the MCP surface appends the same line to the tool result it marks as an
-  error. The one failure that is recorded without being surfaced is an external
-  plugin's own non-zero exit: its arguments, streams and exit status cross the
-  plugin seam untouched, so its ID is read back from the log through
-  `roca doctor` rather than written into output the plugin owns.
+  error. An external plugin that explains its own non-zero exit on stderr keeps
+  its streams untouched; the execution record adds the exit reason and an ID
+  that can be read through `roca doctor`. If the plugin exits non-zero without
+  writing any stderr, the CLI instead surfaces that omission as the reason and
+  correlates it normally, so no plugin failure is reasonless.
 - Model-written SQL calls add `question`, `sql`, `model_sql`, `sql_provider`,
   `sql_model`, phase timings, and any `degraded`, `fallback_reason`,
   `retry_reason`, provider note, or `queryplan`. `sql` is the cleaned
