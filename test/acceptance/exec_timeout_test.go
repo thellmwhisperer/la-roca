@@ -3,9 +3,7 @@
 package acceptance
 
 import (
-	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -18,20 +16,7 @@ func TestIssue432ExecTimeLimitOnInstalledBinary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("I cannot find the binary: %v", err)
 	}
-	home, err := acceptanceTempDir("roca-exec-timeout-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(home) })
-	if err := os.MkdirAll(filepath.Join(home, "tmp"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-
-	world := &distributionWorld{}
-	init := world.runAt(home, binary, "init", "--db-path", filepath.Join(home, ".roca", "roca.db"), "--json")
-	if init.code != 0 {
-		t.Fatalf("initialize disposable home: code %d\n%s%s", init.code, init.stdout, init.stderr)
-	}
+	home, world := initializedDistributionHome(t, "roca-exec-timeout-", binary)
 
 	started := time.Now()
 	run := world.runAt(home, binary, "exec", issue432RunawaySQL)
