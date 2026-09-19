@@ -140,8 +140,11 @@ func (s *Service) queryExecutionBudget() (time.Duration, bool) {
 }
 
 func (s *Service) boundedExecTimeout(budget execBudget) time.Duration {
-	if budget.set && budget.timeout > 0 {
-		return budget.timeout
+	if budget.set {
+		if budget.timeout > 0 {
+			return budget.timeout
+		}
+		return DefaultQueryTimeout
 	}
 	timeout, _ := s.queryExecutionBudget()
 	return timeout

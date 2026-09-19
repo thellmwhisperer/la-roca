@@ -101,6 +101,7 @@ func TestExecStopsAQueryThatExceedsTheCostBudget(t *testing.T) {
 func TestExecZeroTimeoutStillAppliesTheDefaultBound(t *testing.T) {
 	paths := freshPaths(t)
 	svc := serviceOn(t, paths, func(options *service.Options) {
+		options.QueryTimeout = 60 * time.Second
 		options.QueryTimeoutSet = true
 	})
 	if _, err := svc.Init(t.Context()); err != nil {
