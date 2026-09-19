@@ -965,8 +965,6 @@ func remoteSourceEntries(value any) []map[string]any {
 			entries = append(entries, entry)
 		}
 		return entries
-	case map[string]any:
-		return []map[string]any{typed}
 	default:
 		return nil
 	}

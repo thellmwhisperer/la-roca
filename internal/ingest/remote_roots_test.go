@@ -134,8 +134,8 @@ func TestQualifySessionIDAndMirrorStale(t *testing.T) {
 	if got := QualifySessionID("mini", "abc"); got != "mini/abc" {
 		t.Fatalf("qualify = %q", got)
 	}
-	if got := QualifySessionID("mini", "mini/abc"); got != "mini/abc" {
-		t.Fatalf("already qualified = %q", got)
+	if got := QualifySessionID("mini", "mini/abc"); got != "mini/mini/abc" {
+		t.Fatalf("qualified native id = %q", got)
 	}
 	if got := QualifySessionID("", "abc"); got != "abc" {
 		t.Fatalf("local id changed: %q", got)
