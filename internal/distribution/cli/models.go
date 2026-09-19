@@ -195,6 +195,7 @@ func renderDoctor(env *cliEnv, report service.DoctorReport) {
 	env.print("%s", renderQueryKnobs(report.Query))
 	env.print("agents detected: %s", detectedAgentsLine(report.DetectedAgents))
 	env.print("agents not found: %s", missingAgentsLine(report.DetectedAgents))
+	renderDoctorRemoteSources(env, report.RemoteSources)
 	env.print("authentication: local agent models use their own CLI sessions; La Roca stores no secrets")
 
 	for _, warning := range report.Warnings {
@@ -226,6 +227,26 @@ func renderDoctor(env *cliEnv, report service.DoctorReport) {
 		for _, proposal := range report.CapabilityProposals {
 			env.print("  - %s", proposal)
 		}
+	}
+}
+
+func renderDoctorRemoteSources(env *cliEnv, remotes []service.RemoteSourceDoctor) {
+	if len(remotes) == 0 {
+		return
+	}
+	env.print("remote sources:")
+	for _, remote := range remotes {
+		state := "current"
+		if !remote.Present {
+			state = "missing"
+		} else if remote.Stale {
+			state = "stale"
+		}
+		detail := fmt.Sprintf("threshold %dh", remote.StaleAfterHours)
+		if remote.NewestAgeHours != nil {
+			detail = fmt.Sprintf("newest file %dh ago, %s", *remote.NewestAgeHours, detail)
+		}
+		env.print("  %s · %s · %s", remote.Machine, state, detail)
 	}
 }
 

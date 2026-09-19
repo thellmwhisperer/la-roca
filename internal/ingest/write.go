@@ -77,6 +77,7 @@ type writer struct {
 	layers                          layerResolver
 	hermesReservedMemories          *sql.DB
 	preserveSessionThinkingPosition bool
+	machine                         string
 }
 
 // WriteRecords writes one artefact's records and returns what it wrote.
@@ -157,6 +158,9 @@ func (w *writer) sessionWithPolicy(ctx context.Context, session parsers.Session,
 	if session.ID == "" {
 		return counts, nil
 	}
+	previous := w.machine
+	w.machine = session.Machine
+	defer func() { w.machine = previous }()
 	if session.SourceAgent == "codex" && len(session.Exchanges) == 0 &&
 		len(session.Thinking) == 0 && len(session.OrphanedTools) == 0 {
 		session.OrphanedTools = nil
@@ -1121,13 +1125,14 @@ func (w *writer) registerSession(ctx context.Context, session parsers.Session,
 	result, err := w.tx.ExecContext(ctx, `
 		INSERT INTO sessions
 		  (session_id, source_agent, source_surface, project, started_at, ended_at,
-		   duration_minutes, title, metadata)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, '{}')
+		   duration_minutes, title, metadata, machine)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, '{}', ?)
 		`+conflict,
 		session.ID, nullIfEmpty(session.SourceAgent), nullIfEmpty(session.SourceSurface),
 		nullIfEmpty(session.Project),
 		nullIfEmpty(session.StartedAt), nullIfEmpty(session.EndedAt),
-		nullInt(session.DurationMinutes), nullIfEmpty(session.Title))
+		nullInt(session.DurationMinutes), nullIfEmpty(session.Title),
+		nullIfEmpty(session.Machine))
 	if err != nil {
 		return false, fmt.Errorf("register the session %s: %w", session.ID, err)
 	}
@@ -1179,6 +1184,7 @@ func (w *writer) refreshSession(ctx context.Context, session parsers.Session, cu
 		  started_at = %s,
 		  ended_at = %s,
 		  duration_minutes = %s,
+		  machine = COALESCE(machine, ?),
 		  title = CASE WHEN TRIM(COALESCE(title, ''), CHAR(9,10,13,32,160)) <> '' THEN title
 		               WHEN TRIM(COALESCE(?, ''), CHAR(9,10,13,32,160)) <> '' THEN ?
 		               ELSE title END
@@ -1186,6 +1192,7 @@ func (w *writer) refreshSession(ctx context.Context, session parsers.Session, cu
 	_, err := w.tx.ExecContext(ctx, statement,
 		nullIfEmpty(agent), surface, project, nullIfEmpty(session.StartedAt),
 		nullIfEmpty(session.EndedAt), nullInt(session.DurationMinutes),
+		nullIfEmpty(session.Machine),
 		nullIfEmpty(session.Title), nullIfEmpty(session.Title), session.ID)
 	if session.HistoryFallback && isSessionExactPayloadConflict(err) {
 		// A fill-only refresh can prove that another session row already owns
@@ -1316,12 +1323,13 @@ func keysItsOwnExchanges(session parsers.Session) bool {
 func (w *writer) exchange(ctx context.Context, sessionID string, number int,
 	exchange parsers.Exchange) (int64, bool, error) {
 	values := append([]any{sessionID, number}, exchangeColumnValues(exchange)...)
+	values = append(values, nullIfEmpty(w.machine))
 	result, err := w.tx.ExecContext(ctx, `
 		INSERT OR IGNORE INTO exchanges
 		  (session_id, exchange_number, is_after_compaction, human_text, agent_text,
 		   human_timestamp, agent_timestamp, response_latency_ms,
-		   model, provider, tokens_in, tokens_out, tokens_reasoning, cost_usd)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, values...)
+		   model, provider, tokens_in, tokens_out, tokens_reasoning, cost_usd, machine)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, values...)
 	var affected int64
 	if err == nil {
 		affected, err = result.RowsAffected()
@@ -1453,11 +1461,11 @@ func (w *writer) insertTools(ctx context.Context, sessionID string, number any,
 		_, err := w.tx.ExecContext(ctx, `
 			INSERT INTO tool_uses
 			  (session_id, exchange_number, tool_name, tool_params_summary, had_error,
-			   error_message, initiative_type)
-			VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			   error_message, initiative_type, machine)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 			sessionID, number, tool.Name, nullIfEmpty(tool.ParamsSummary),
 			boolToInt(tool.HadError), nullIfEmpty(tool.ErrorMessage),
-			nullIfEmpty(tool.InitiativeType))
+			nullIfEmpty(tool.InitiativeType), nullIfEmpty(w.machine))
 		if err != nil {
 			if isExactPayloadConflict(err) || isUniqueConstraint(err) {
 				continue
@@ -1565,14 +1573,15 @@ func (w *writer) insertThinking(ctx context.Context, sessionID string, number, p
 	result, err := w.tx.ExecContext(ctx, `
 		INSERT INTO thinking_blocks
 		  (session_id, exchange_number, position_in_session, depth, caution_ratio,
-		   word_count, is_after_compaction, full_text)
-		SELECT ?, ?, ?, ?, ?, ?, ?, ?
+		   word_count, is_after_compaction, full_text, machine)
+		SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
 		WHERE NOT EXISTS (
 		  SELECT 1 FROM thinking_blocks
 		  WHERE session_id IS ? AND exchange_number IS ? AND position_in_session IS ?
 		    AND depth IS ? AND caution_ratio IS ? AND word_count IS ?
 		    AND is_after_compaction IS ? AND full_text IS ?
 		)`, sessionID, number, position, depth, caution, block.WordCount, compacted, block.Text,
+		nullIfEmpty(w.machine),
 		sessionID, number, position, depth, caution, block.WordCount, compacted, block.Text)
 	if err != nil {
 		if isExactPayloadConflict(err) || isUniqueConstraint(err) {

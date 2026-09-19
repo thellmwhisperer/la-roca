@@ -48,6 +48,12 @@ type Target struct {
 	CompanionPaths []string
 	// SidecarPath is the metadata file paired with a Cowork audit transcript.
 	SidecarPath string
+	// Machine is the label stamped on every row written from this artefact.
+	Machine string
+	// Remote is true when the artefact was found under a configured mirror.
+	Remote bool
+	// RootHome is the HOME-shaped root that discovered this artefact.
+	RootHome string
 	// ExclusionReason marks a discovered artefact that policy counts but never
 	// fingerprints, opens, parses, or writes.
 	ExclusionReason string
@@ -100,10 +106,55 @@ func MissingAgentFamilies(detected []string) []string {
 	return missing
 }
 
-// Scan walks every root in the v1 matrix and returns what one run would read. It
-// opens only source-owned completeness metadata: Claude's project map and memory
-// manifests. Corpus targets remain unopened until after the fingerprint gate.
+// Scan walks the local v1 matrix and every configured remote mirror.
 func Scan(roots Roots) Plan {
+	plan := scanDeclared(roots)
+	stampPlan(&plan, roots)
+	for _, remote := range roots.Remotes {
+		extra := scanDeclared(remote)
+		stampPlan(&extra, remote)
+		mergePlan(&plan, extra)
+	}
+	return plan
+}
+
+func stampPlan(plan *Plan, roots Roots) {
+	for i := range plan.Targets {
+		stampTarget(&plan.Targets[i], roots)
+	}
+	for i := range plan.Excluded {
+		stampTarget(&plan.Excluded[i], roots)
+	}
+}
+
+func stampTarget(target *Target, roots Roots) {
+	target.Machine = roots.Machine
+	target.Remote = roots.Remote
+	target.RootHome = roots.Home
+}
+
+func mergePlan(plan *Plan, extra Plan) {
+	plan.Targets = append(plan.Targets, extra.Targets...)
+	plan.Excluded = append(plan.Excluded, extra.Excluded...)
+	plan.Warnings = append(plan.Warnings, extra.Warnings...)
+	plan.ManifestLinks = append(plan.ManifestLinks, extra.ManifestLinks...)
+	if plan.Scanned == nil {
+		plan.Scanned = map[string]int{}
+	}
+	for key, count := range extra.Scanned {
+		plan.Scanned[key] += count
+	}
+	for _, agent := range extra.DetectedAgents {
+		if !slices.Contains(plan.DetectedAgents, agent) {
+			plan.DetectedAgents = append(plan.DetectedAgents, agent)
+		}
+	}
+}
+
+// scanDeclared walks every root in one HOME-shaped tree. It opens only
+// source-owned completeness metadata: Claude's project map and memory
+// manifests. Corpus targets remain unopened until after the fingerprint gate.
+func scanDeclared(roots Roots) Plan {
 	plan := Plan{
 		Scanned:        map[string]int{},
 		WorkspaceRoots: roots.Workspace.Selected,

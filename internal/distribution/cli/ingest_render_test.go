@@ -12,6 +12,27 @@ import (
 // The ingest summary counts in prose, and prose counts through axi.Quantity.
 // The deferred line was the one count still concatenating a bare number to a
 // hardcoded plural noun, so a single held turn read "1 exchanges".
+func TestDryRunReportsCountsPerRoot(t *testing.T) {
+	var output strings.Builder
+	renderIngest(&cliEnv{out: &output}, service.IngestResult{Result: ingest.Result{
+		DryRun: true,
+		RootScans: []ingest.RootScan{
+			{Machine: "hub", FilesSeen: 3, FilesRead: 1, FilesSkipped: 2},
+			{Machine: "mini", FilesSeen: 2, FilesRead: 2},
+		},
+	}}, false)
+	out := output.String()
+	for _, want := range []string{
+		"roots:",
+		"hub · 3 files seen · 1 pending · 2 skipped · 0 excluded",
+		"mini · 2 files seen · 2 pending · 0 skipped · 0 excluded",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("want %q in\n%s", want, out)
+		}
+	}
+}
+
 func TestTheDeferredLineCountsHeldExchangesInProse(t *testing.T) {
 	for _, want := range []struct {
 		held int

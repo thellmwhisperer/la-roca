@@ -32,7 +32,8 @@ func ingestCommand(env *cliEnv) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "ingest [export-directory]",
 		Short: "Read every source of the matrix and normalize what changed",
-		Long: "Reads the artefact families of the agents detected on this machine, normalizes\n" +
+		Long: "Reads the artefact families of the agents detected on this machine, plus any\n" +
+			"HOME-shaped remote roots declared under [[sources.remote]], normalizes\n" +
 			"them into the database and refreshes the search index.\n\n" +
 			"Pass one extracted ChatGPT or Claude export directory to import that snapshot.\n" +
 			"Without a directory, only live agent sources are read.\n\n" +
@@ -130,6 +131,7 @@ func renderIngest(env *cliEnv, result service.IngestResult, verbose bool) {
 			axi.Quantity(int64(result.FilesRead), "file"), axi.Number(int64(result.FilesSkipped)),
 			axi.Number(int64(result.FilesExcluded)),
 			axi.Duration(result.ElapsedMS))
+		renderIngestRootScans(env, result)
 	} else {
 		env.print("ingest: %s seen · %s parsed · %s skipped · %s excluded · %s · %s",
 			axi.Quantity(int64(result.FilesSeen), "file"),
@@ -214,6 +216,25 @@ func coverageCounters(counts map[string]int) string {
 	}
 	return strings.Join(parts, " ")
 }
+func renderIngestRootScans(env *cliEnv, result service.IngestResult) {
+	if len(result.RootScans) == 0 {
+		return
+	}
+	env.print("roots:")
+	for _, scan := range result.RootScans {
+		machine := scan.Machine
+		if machine == "" {
+			machine = "local"
+		}
+		env.print("  %s · %s seen · %s pending · %s skipped · %s excluded",
+			machine,
+			axi.Quantity(int64(scan.FilesSeen), "file"),
+			axi.Number(int64(scan.FilesRead)),
+			axi.Number(int64(scan.FilesSkipped)),
+			axi.Number(int64(scan.FilesExcluded)))
+	}
+}
+
 func renderIngestSources(env *cliEnv, result service.IngestResult) {
 	for _, name := range ingest.SortedSources(result.Sources) {
 		counts := result.Sources[name]
@@ -396,5 +417,21 @@ func ingestSources(file config.File, home, runnerDir string) ingest.Roots {
 			RunnerDir:      runnerDir,
 			WorkspaceRoots: file.DefaultList(keyWorkspaceRoots),
 			SubagentRoots:  file.DefaultList(keySubagentRoots),
+			RemoteSources:  remoteIngestSources(file),
 		})
+}
+
+func remoteIngestSources(file config.File) []ingest.RemoteSource {
+	if len(file.RemoteSources) == 0 {
+		return nil
+	}
+	out := make([]ingest.RemoteSource, 0, len(file.RemoteSources))
+	for _, remote := range file.RemoteSources {
+		out = append(out, ingest.RemoteSource{
+			Machine:         remote.Machine,
+			Root:            remote.Root,
+			StaleAfterHours: remote.StaleAfterHours,
+		})
+	}
+	return out
 }

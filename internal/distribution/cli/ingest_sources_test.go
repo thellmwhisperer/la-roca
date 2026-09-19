@@ -38,3 +38,20 @@ func TestIngestSourcesReadDeclaredPaths(t *testing.T) {
 		})
 	}
 }
+
+func TestIngestSourcesResolveConfiguredRemoteRoots(t *testing.T) {
+	mirror := t.TempDir()
+	path := filepath.Join(t.TempDir(), "config.toml")
+	content := "[[sources.remote]]\nmachine = \"mini\"\nroot = \"" + mirror + "\"\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	file, err := config.LoadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roots := ingestSources(file, "/synthetic/home", "/synthetic/runner")
+	if len(roots.Remotes) != 1 || roots.Remotes[0].Machine != "mini" || roots.Remotes[0].Home != mirror {
+		t.Fatalf("remotes = %+v", roots.Remotes)
+	}
+}

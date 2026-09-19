@@ -17,7 +17,7 @@ const (
 	// BundledSource is what the installer records for this package, and it is
 	// what discovery reads to know the corpus attach alias is the kernel's own.
 	BundledSource = plugin.BundledSource
-	SchemaVersion = 5
+	SchemaVersion = 6
 	IndexVersion  = 3
 )
 
@@ -155,6 +155,9 @@ func prepareIngestProvenance(path string) error {
 			return fmt.Errorf("add session_versions.source_surface: %w", err)
 		}
 	}
+	if err := ensureMachineColumns(context.Background(), tx); err != nil {
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit bundled %s provenance migration: %w", Name, err)
 	}
@@ -210,4 +213,27 @@ func columnExists(ctx context.Context, db *sql.Tx, table, column string) (bool, 
 		return false, fmt.Errorf("inspect %s columns: %w", table, err)
 	}
 	return columns[column], nil
+}
+
+func ensureMachineColumns(ctx context.Context, tx *sql.Tx) error {
+	for _, table := range []string{"sessions", "exchanges", "thinking_blocks", "tool_uses"} {
+		present, err := tableExists(tx, table)
+		if err != nil {
+			return err
+		}
+		if !present {
+			continue
+		}
+		hasColumn, err := columnExists(ctx, tx, table, "machine")
+		if err != nil {
+			return err
+		}
+		if hasColumn {
+			continue
+		}
+		if _, err := tx.Exec(`ALTER TABLE ` + table + ` ADD COLUMN machine TEXT`); err != nil {
+			return fmt.Errorf("add %s.machine: %w", table, err)
+		}
+	}
+	return nil
 }
