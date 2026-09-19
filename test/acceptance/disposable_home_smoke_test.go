@@ -149,6 +149,10 @@ func TestPublishedReleaseUpdateInitSmoke(t *testing.T) {
 	if err != nil || updated.code != 0 {
 		t.Fatalf("published update: %v, code %d\n%s%s", err, updated.code, updated.stdout, updated.stderr)
 	}
+	installedVersion, err := exec.Command(m.binaryPath(), "version").CombinedOutput()
+	if err != nil || strings.TrimSpace(string(installedVersion)) != "roca "+theNewVersion {
+		t.Fatalf("updated executable reports %q, want roca %s: %v", strings.TrimSpace(string(installedVersion)), theNewVersion, err)
+	}
 	initialized, err := m.run(m.initCommand(true))
 	if err != nil || initialized.code != 0 {
 		t.Fatalf("init after published update: %v, code %d\n%s%s", err, initialized.code, initialized.stdout, initialized.stderr)
