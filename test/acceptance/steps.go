@@ -142,8 +142,14 @@ func registerSteps(ctx *godog.ScenarioContext, binary string) {
 	ctx.Given(`^a HOME with a database whose schema differs only in whitespace, comments and constraint order$`, m.dbWithDDLNoise)
 	ctx.Given(`^there is a memory with content longer than (\d+) characters$`, m.longMemory)
 	ctx.Given(`^there is a handoff memory about "([^"]*)"$`, m.aHandoffMemoryAbout)
+	ctx.Given(`^a frozen synthetic federation lab$`, m.aFrozenSyntheticFederationLab)
 
 	ctx.When(`^I run "([^"]*)"$`, m.iRun)
+	ctx.When(`^I exec the SQL "([^"]*)"$`, m.iExecSQL)
+	ctx.When(`^I exec the SQL "([^"]*)" with max-chars (\d+)$`, m.iExecSQLMaxChars)
+	ctx.When(`^I exec the SQL "([^"]*)" as json$`, m.iExecSQLJSON)
+	ctx.When(`^I store a pill with slug ([^ ]+) and content (.+)$`, m.iStorePill)
+	ctx.When(`^I vector-query "([^"]*)"$`, m.iVectorQuery)
 	ctx.When(`^I run "([^"]*)" a second time$`, m.iRun)
 	ctx.When(`^I run "roca exec" with the SQL it returned, in JSON format$`, m.iRunTheSQLItReturned)
 
