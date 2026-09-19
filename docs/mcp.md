@@ -24,26 +24,35 @@ without hybrid retrieval.
 
 The command is a foreground stdio shim. It forwards each MCP session to the
 one La Roca resident for that data directory; the shim owns no database handle.
-The resident opens core, ops, and corpus once, serves MCP and CLI calls over its
-private local socket, and stays alive when a client pipe closes. Its default
-socket is `<data-directory>/resident/resident.sock`, normally under `~/.roca`.
+The resident shares one service and its database pools across sessions, serves
+MCP and CLI calls over a private Unix socket, and stays alive when a client pipe
+closes. Database selection follows the [serving layout](architecture.md).
+Its default socket is `<data-directory>/resident/resident.sock`, normally under
+`~/.roca`.
 If none is listening, `mcp serve` starts it and waits for readiness.
 
-`roca exec`, `roca query`, `roca store`, `roca handoff`, `roca health`,
+`roca exec`, `roca query`, `roca store`, `roca handoff latest`, `roca health`,
 `roca doctor`, and `roca vector query` use the resident when it is running.
-They retain their bounded in-process path when it is down, so a resident crash
-does not require a client restart. An attached MCP shim reconnects, replays its
-MCP initialize handshake, and forwards the next request to the replacement.
-The resident owns checkpointing: writes checkpoint and truncate WAL after the
-call, and every request releases its read transaction before the response.
-This bounds the corpus WAL under concurrent MCP and CLI clients (#437).
+These CLI calls do not start the database resident: they use their existing
+local path if it is unavailable before dispatch. Errors after dispatch are
+returned without replaying the call locally. Read-only CLI invocations and
+commands outside this set use their local paths.
+
+An attached MCP shim reconnects on the next request after a disconnect and
+replays its MCP initialize handshake. Pending requests receive an error saying
+their outcome is unknown; they are not replayed, including writes. If the
+replacement cannot be started or connected, the shim exits with an error.
+Writes attempt a WAL checkpoint after committing; contention can leave WAL
+frames until another write attempts checkpointing. The maintenance semantics
+are owned by [`store.DB.Checkpoint`](../internal/store/store.go).
 
 The resident is separate from the embedding resident. When semantic search is
 enabled, `roca-vector` is the single model holder at
 `<data-directory>/vector-resident/resident.sock`; the database resident asks it
 for vector results. Different data directories have separate pairs of
-residents. `roca doctor` reports the database resident PID, uptime, attached
-clients, open connections, and every discovered `*.db-wal` size.
+residents. When it connects to the database resident, `roca doctor` reports its
+PID, uptime, attached clients, connections in its service pools, and discovered
+`*.db-wal` sizes beneath its data directory. These are not machine-wide counts.
 
 Closing an MCP session disconnects only that client. Both resident sockets are
 private and stale sockets from a killed process are replaced on the next start.
@@ -54,28 +63,37 @@ startup lock alongside the socket. Use a separate pair for each data context:
 the resident retains the database and plugin configuration of the session that
 started it.
 On Unix, the socket directory must be owned by the current user and private,
-and the socket path must be shorter than 100 bytes. A positive Go duration in
-`ROCA_VECTOR_RESIDENT_IDLE` overrides the idle period when a resident starts;
-the internal `_resident --idle` flag takes precedence.
+and the socket path must be shorter than 100 bytes. The model resident exits
+after five minutes with no clients attached by default. A positive Go duration
+in `ROCA_VECTOR_RESIDENT_IDLE` overrides that period when the model resident
+starts; its internal `_resident --idle` flag takes precedence. The database
+resident has no idle exit and can retain a model client between CLI queries.
 
-Preparation progress received by an MCP or CLI client goes to its standard
-error, leaving result output untouched. The detached database resident appends
-its own stdout and stderr to `<data-directory>/logs/resident.log`; the model
-resident uses `<data-directory>/logs/vector-resident.log`. If connecting or
-starting the model resident fails, serve emits a notice on stderr and keeps the
-core tools available without `roca_vector_query`. If an MCP or CLI client receives a
+The detached database resident appends stdout and stderr, including model
+preparation progress and MCP session diagnostics, to
+`<data-directory>/logs/resident.log` by default. A socket override places this
+log in `../logs/resident.log` relative to the socket directory. The model
+resident uses `<data-directory>/logs/vector-resident.log`. CLI calls that
+connect directly to the model resident print preparation progress on stderr.
+If the database resident cannot connect to or start the model resident for an
+MCP session, it logs a notice and keeps core tools available without
+`roca_vector_query`. If a model client receives a
 query's result or query error immediately before a disconnect, it preserves that
 reply. A disconnect without a reply for that query remains an error. Subsequent
 vector calls on the disconnected MCP session fail; a new MCP session can start
-or connect to a resident. If one resident reply exceeds the client read limit,
-the query succeeds with a notice and no vector results instead of failing with
-a scanner error; hybrid search keeps any full-text results.
+or connect to a model resident. The database resident drops a failed CLI vector
+connection so a later vector query can reconnect. If one model resident reply
+exceeds the client read limit, the query succeeds with a notice and no vector
+results instead of failing with a scanner error; hybrid search keeps any
+full-text results.
 
-If the CLI cannot establish a ready resident connection, it uses its in-process
-query path, which may load the model for that invocation. After establishing
-that connection, it returns query errors without retrying locally.
+On the local CLI query path, failure to establish a ready model resident
+connection falls back to the standalone query path, which may load the model
+for that invocation. After establishing a model connection, query errors are
+returned without retrying locally. A vector query dispatched to the database
+resident returns connection errors without this standalone fallback.
 
-After a companion update, if the primary resident does not advertise both
+After a companion update, if the primary model resident does not advertise both
 `expand_templates` and `min_score`, the CLI leaves it running and connects to
 or starts a separate resident using the updated companion. Its socket and
 startup lock append `.current` to the primary paths, including an overridden
@@ -88,13 +106,8 @@ If the selected resident still lacks a requested query option, the query fails
 with a restart instruction. Disconnect its clients and let the idle period
 expire before retrying with the updated companion.
 
-The same session parent raises every installed plugin that declares a
-`companion` in `plugin.json`. Each child is exec'd from the plugin directory
-with that declaration's fixed argv, over private pipes, and is reaped when
-serve exits. A companion crash is logged and retried with bounded backoff; a
-companion that keeps dying is reported once and left down. Queries continue
-either way. Plugins that omit the field are unchanged. The declaration and
-degradation contract live in [the plugin manifest](plugins.md#session-companions).
+Plugin child processes follow the declaration, ownership, and degradation
+contract in [session companions](plugins.md#session-companions).
 
 ```
 roca mcp serve
@@ -173,11 +186,11 @@ list; `playground_test.go` checks text budgets through the plugin boundary.
 
 ### On the protocol version
 
-The SDK's latest revision is 2026-07-28 and the server keeps no state between
-calls, which is what that revision is for. A client that still opens with the
-legacy `initialize` handshake negotiates `2025-11-25`, because `initialize` is
+The SDK's latest revision is 2026-07-28 and tool handlers do not depend on
+prior tool calls. A client that still opens with the legacy `initialize`
+handshake negotiates `2025-11-25`, because `initialize` is
 precisely what 2026-07-28 removes: the SDK caps the legacy path on purpose. Both
-answer the same, since there is nothing in the process to carry over.
+answer the same through the shared service.
 
 ---
 

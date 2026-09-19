@@ -1,6 +1,5 @@
-// Package resident is the small local transport used by the one-per-machine
-// La Roca resident. MCP sessions and one-shot CLI calls are deliberately thin
-// clients: only the resident opens SQLite.
+// Package resident provides the local transport for La Roca's database
+// resident. Client routing and lifecycle are documented in docs/mcp.md.
 package resident
 
 import (

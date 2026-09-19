@@ -13,10 +13,8 @@ import (
 
 // serveCommand is the first-class entry point for serving MCP.
 //
-// It is on demand and in the foreground: the agent launches it, it answers over
-// its standard input and output, and it dies when that pipe closes. There is no
-// daemon, no port and no supervisor, and this command is the whole of the
-// lifecycle those would have needed.
+// The foreground shim must keep stdout protocol-only. Resident ownership and
+// reconnect behavior are documented in docs/mcp.md.
 func serveCommand(env *cliEnv) *cobra.Command {
 	var residentMode bool
 	command := &cobra.Command{

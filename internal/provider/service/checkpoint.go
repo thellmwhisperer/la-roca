@@ -6,9 +6,8 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/store"
 )
 
-// Checkpoint bounds the resident's write tail. A busy checkpoint is harmless:
-// the next call retries it, while a live reader never gets to hold a service
-// read transaction beyond its request.
+// Checkpoint attempts maintenance on each distinct service database. Errors
+// are ignored so maintenance cannot turn a committed write into a failure.
 func (s *Service) Checkpoint(ctx context.Context) error {
 	if s == nil {
 		return nil

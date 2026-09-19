@@ -251,9 +251,8 @@ func (db *DB) Write(ctx context.Context, fn func(*sql.Tx) error) error {
 			}
 			continue
 		}
-		// Keep the WAL bounded while the owning resident is alive. A busy
-		// checkpoint is retried by the next write; it must not turn a committed
-		// write into an apparent failure.
+		// Checkpoint failure must not turn a committed write into an apparent
+		// failure. A later write attempts maintenance again.
 		_ = db.Checkpoint(ctx)
 		return nil
 	}
@@ -262,8 +261,8 @@ func (db *DB) Write(ctx context.Context, fn func(*sql.Tx) error) error {
 }
 
 // Checkpoint truncates this database's WAL when no reader is holding a frame.
-// The bounded context keeps maintenance from extending the request that caused
-// it, and a busy result is intentionally reported to the caller for diagnosis.
+// Maintenance uses a 250 ms context budget and reports a busy result to the
+// caller. It schedules no background retry; another call must try again.
 func (db *DB) Checkpoint(ctx context.Context) error {
 	if db == nil || db.sql == nil || db.transient || db.physicalReadOnly {
 		return nil

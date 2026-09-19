@@ -1,4 +1,4 @@
-// Package resident owns the one long-lived La Roca service on a machine.
+// Package resident serves a shared La Roca service for one data directory.
 package resident
 
 import (
@@ -250,9 +250,6 @@ func (s *Server) call(ctx context.Context, op string, raw json.RawMessage) (json
 	default:
 		return nil, fmt.Errorf("unknown resident operation %q", op)
 	}
-	// The service methods above return typed zero values alongside errors. Run
-	// them again through a small typed helper so no operation can accidentally
-	// hide its error behind a successful JSON null.
 	if value == nil {
 		return nil, fmt.Errorf("resident operation %q returned no result", op)
 	}
