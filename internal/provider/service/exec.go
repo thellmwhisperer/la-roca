@@ -130,7 +130,7 @@ func expandOpsLegacyIDs(statement string) string {
 		if qualifier != "" {
 			column = qualifier + ".id"
 			legacy = qualifier + ".legacy_id"
-			start = tokens[index].start
+			start = tokens[idIndex-2].start
 		}
 		replacements = append(replacements, opsSQLReplacement{
 			start: start,

@@ -88,6 +88,15 @@ func TestExecLegacyIDExpansionStaysInTheOpsQueryScope(t *testing.T) {
 	if result.RowCount != 1 || fmt.Sprint(result.Rows[0]["id"]) != fmt.Sprint(stored.ID) {
 		t.Fatalf("scoped legacy result = %+v, want id %d", result.Rows, stored.ID)
 	}
+	aliasedResult, err := svc.Exec(t.Context(), service.ExecRequest{SQL: `
+		SELECT m.id FROM plugin_roca_ops.memories AS m
+		WHERE m.id = '1152921504606853945'`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if aliasedResult.RowCount != 1 || fmt.Sprint(aliasedResult.Rows[0]["id"]) != fmt.Sprint(stored.ID) {
+		t.Fatalf("aliased legacy result = %+v, want id %d", aliasedResult.Rows, stored.ID)
+	}
 	cteResult, err := svc.Exec(t.Context(), service.ExecRequest{SQL: `
 		WITH ops_memories AS (SELECT * FROM plugin_roca_ops.memories)
 		SELECT id FROM ops_memories WHERE id = '1152921504606853945'`})
