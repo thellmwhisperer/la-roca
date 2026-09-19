@@ -14,7 +14,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -320,8 +319,23 @@ func caseIssue318(t *testing.T, lab *federationLab) {
 
 func caseIssue319(t *testing.T, lab *federationLab) {
 	got := lab.cli(t, 0, "exec", "SELECT id FROM plugin_roca_ops.memories LIMIT 1", "--json")
-	if !regexp.MustCompile(`"id"\s*:\s*"`).MatchString(got.stdout) {
-		t.Fatalf("ops id was not a JSON string:\n%s", got.stdout)
+	var result struct {
+		Rows []struct {
+			ID json.RawMessage `json:"id"`
+		} `json:"rows"`
+	}
+	if err := json.Unmarshal([]byte(got.stdout), &result); err != nil {
+		t.Fatalf("decode ops id response: %v\n%s", err, got.stdout)
+	}
+	if len(result.Rows) != 1 {
+		t.Fatalf("ops id rows = %d, want 1:\n%s", len(result.Rows), got.stdout)
+	}
+	id, err := strconv.ParseInt(string(result.Rows[0].ID), 10, 64)
+	if err != nil {
+		t.Fatalf("ops id was not a JSON integer: %v\n%s", err, got.stdout)
+	}
+	if id < 1 || id >= 1<<53 || len(strconv.FormatInt(id, 10)) > 12 {
+		t.Fatalf("ops id = %d, want a positive JS-safe integer of at most 12 digits:\n%s", id, got.stdout)
 	}
 }
 
