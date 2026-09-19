@@ -63,7 +63,7 @@
       "operation": "store",
       "exit_code": 1,
       "output": "",
-      "stderr": "error: La Roca is in read-only mode: this operation writes (operation: store); accepted layers for this surface: user, feedback, project, pattern, pill, discovery, handoff, handover, question, review, issue, protocol; example: layer=discovery content=\"found that X\" (correlation_id: <correlation_id>)\n"
+      "stderr": "error: La Roca is in read-only mode: this operation writes (operation: store); accepted layers for this surface: user, feedback, project, pattern, pill, discovery, handoff, handoff-retirement, handover, question, review, issue, protocol; example: layer=discovery content=\"found that X\" (correlation_id: <correlation_id>)\n"
     },
     {
       "name": "cli.store.read-only-count",
@@ -123,7 +123,7 @@
       "surface": "mcp",
       "operation": "store",
       "is_error": true,
-      "output": "La Roca is in read-only mode: this operation writes (operation: store); accepted layers for this surface: user, feedback, project, pattern, pill, discovery, handoff, handover, question, review, issue, protocol; example: layer=discovery content=\"found that X\"\ncorrelation_id: <correlation_id>\n"
+      "output": "La Roca is in read-only mode: this operation writes (operation: store); accepted layers for this surface: user, feedback, project, pattern, pill, discovery, handoff, handoff-retirement, handover, question, review, issue, protocol; example: layer=discovery content=\"found that X\"\ncorrelation_id: <correlation_id>\n"
     },
     {
       "name": "mcp.store.read-only-count",
