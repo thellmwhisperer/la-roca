@@ -58,3 +58,26 @@ stdout/stderr does not contain: idx_sessions_exact_payload
 The placement command must succeed with the duplicate corpus sessions in
 place. It retains the same-named prior index; exact-payload uniqueness remains
 pending until the exact-dedup maintenance flow removes the clones.
+
+## unique guard plus empty-surface clone
+
+The live hub residual is not the prior non-unique index. The unique hash
+guard is already installed, schema version is still below the current
+declaration, and two session rows share every payload column except
+`source_surface` (one empty, one already labeled). Filling the empty one
+would collide. Repeat the isolated lab prefix, then replace the corpus
+SQL with:
+
+```sh
+sqlite3 "$CORPUS" <<'SQL'
+UPDATE plugin_schema SET schema_version = schema_version - 1;
+INSERT INTO sessions(session_id, source_agent, title, started_at, metadata, source_surface)
+VALUES ('labeled', 'claude', 'same', '2026-08-16T10:00:00Z', '{}', 'Claude Code'),
+       ('unlabeled', 'claude', 'same', '2026-08-16T10:00:00Z', '{}', ''),
+       ('fillable', 'claude', 'other', '2026-08-16T10:00:00Z', '{}', '');
+SQL
+```
+
+Re-run the three commands above. Place must exit 0. `unlabeled` stays
+empty. `fillable` becomes `Claude Code`. stdout/stderr still does not
+contain `idx_sessions_exact_payload`.

@@ -207,7 +207,7 @@ func backfillMachine(ctx context.Context, tx *sql.Tx) error {
 		if !present {
 			continue
 		}
-		if _, err := tx.ExecContext(ctx, "UPDATE "+table+" SET machine = ? WHERE machine IS NULL", machine); err != nil {
+		if _, err := tx.ExecContext(ctx, "UPDATE OR IGNORE "+table+" SET machine = ? WHERE machine IS NULL", machine); err != nil {
 			return fmt.Errorf("backfill %s.machine: %w", table, err)
 		}
 	}
