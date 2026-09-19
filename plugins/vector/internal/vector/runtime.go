@@ -146,6 +146,67 @@ func LockStateUsage(directory string) (func() error, error) {
 	return release, nil
 }
 
+// AcquireIngestClaim takes the same worker claim the background install
+// worker uses, so a second `ingest --delta` fails immediately instead of
+// waiting on index locks until the embedding scheduler reports a stall.
+func AcquireIngestClaim(directory string) (func() error, error) {
+	if directory == "" {
+		return nil, fmt.Errorf("vector state directory is required")
+	}
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		return nil, err
+	}
+	claimPath := filepath.Join(directory, WorkerClaimFilename)
+	claim, err := claimWorker(claimPath)
+	if err != nil {
+		return nil, err
+	}
+	if claim == nil {
+		return nil, alreadyRunningError(directory)
+	}
+	removeClaim := true
+	defer func() {
+		if !removeClaim {
+			return
+		}
+		claim.Close()
+		_ = os.Remove(claimPath)
+	}()
+	runID, err := newWorkerRunID()
+	if err != nil {
+		return nil, err
+	}
+	claimBytes, err := EncodeWorkerClaim(os.Getpid(), runID)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := claim.Write(claimBytes); err != nil {
+		return nil, err
+	}
+	if err := claim.Close(); err != nil {
+		return nil, err
+	}
+	removeClaim = false
+	release, err := LockWorkerClaim(directory)
+	if err != nil {
+		_ = os.Remove(claimPath)
+		return nil, err
+	}
+	return func() error {
+		err := release()
+		ReleaseWorkerClaim(directory)
+		return err
+	}, nil
+}
+
+func alreadyRunningError(directory string) error {
+	claim, err := readWorkerClaim(directory)
+	if err != nil || claim.PID <= 0 {
+		return fmt.Errorf("vector ingest is already running")
+	}
+	return fmt.Errorf("vector ingest is already running (pid %d)", claim.PID)
+}
+
 func Launch(request LaunchRequest) (LaunchResult, error) {
 	if request.Executable == "" || request.DataDir == "" {
 		return LaunchResult{}, fmt.Errorf("vector worker executable and data directory are required")

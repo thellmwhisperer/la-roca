@@ -131,6 +131,28 @@ func TestWorkerRunningRequiresTheClaimOwnerLock(t *testing.T) {
 	}
 }
 
+func TestAcquireIngestClaimRefusesALiveWorker(t *testing.T) {
+	directory := t.TempDir()
+	first, err := AcquireIngestClaim(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = AcquireIngestClaim(directory)
+	if err == nil || !strings.Contains(err.Error(), "vector ingest is already running") {
+		t.Fatalf("overlapping claim = %v", err)
+	}
+	if err := first(); err != nil {
+		t.Fatal(err)
+	}
+	second, err := AcquireIngestClaim(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := second(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestLockWorkerClaimRequiresActivityInvalidation(t *testing.T) {
 	directory := t.TempDir()
 	claimPath := filepath.Join(directory, WorkerClaimFilename)

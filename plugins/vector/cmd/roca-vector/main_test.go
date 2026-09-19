@@ -186,6 +186,21 @@ func TestDeltaFlagAndReadOnlyBoundaryAreExplicit(t *testing.T) {
 	}
 }
 
+func TestDeltaIngestRefusesALiveWorkerClaim(t *testing.T) {
+	state := t.TempDir()
+	release, err := vector.AcquireIngestClaim(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = release() }()
+	root := rootCommand(&environment{stateDir: state, dbPath: filepath.Join(t.TempDir(), "roca.db")})
+	root.SetArgs([]string{"ingest", "--delta"})
+	err = root.Execute()
+	if err == nil || !strings.Contains(err.Error(), "vector ingest is already running") {
+		t.Fatalf("overlapping delta = %v", err)
+	}
+}
+
 func TestReadOnlyEmbedderDoesNotCreateLogsOrDownloadState(t *testing.T) {
 	root := t.TempDir()
 	dataDir := filepath.Join(root, "data")
@@ -219,6 +234,10 @@ func TestTargetedSessionDeltaIsObservableAndIdempotentThroughCLI(t *testing.T) {
 	}
 	vectorPath := filepath.Join(state, vector.DatabaseFilename)
 	if err := os.WriteFile(vectorPath, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	staleLock := vectorPath + ".index.lock"
+	if err := os.WriteFile(staleLock, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -275,6 +294,9 @@ done
 	first := executeForOutput(t, env, "ingest", "--delta", "--reembed", "--source", "sessions")
 	if !strings.Contains(first, "vector reembed (sessions): 2 added") {
 		t.Fatalf("initial targeted delta output = %q", first)
+	}
+	if _, err := os.Stat(staleLock); !os.IsNotExist(err) {
+		t.Fatalf("finished delta left a stale index lock: %v", err)
 	}
 	repeatedReembed := executeForOutput(t, env, "ingest", "--delta", "--reembed", "--source", "sessions")
 	if !strings.Contains(repeatedReembed, "vector reembed (sessions): 0 added · 0 updated · 0 removed · 2 unchanged") {
