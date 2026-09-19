@@ -1,11 +1,12 @@
 package mcpplug
 
 import (
+	"encoding/json"
+	"strconv"
 	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/thellmwhisperer/la-roca/internal/jsonid"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
@@ -178,7 +179,7 @@ type storeArgs struct {
 
 	Project    string         `json:"project,omitempty" jsonschema:"project scope; omit for global"`
 	Status     string         `json:"status,omitempty" jsonschema:"active, pending or resolved,default=active"`
-	Supersedes jsonid.Decimal `json:"supersedes,omitempty" jsonschema:"id of the memory this one replaces, as a decimal string; a JSON number is still accepted"`
+	Supersedes optionalID     `json:"supersedes,omitempty" jsonschema:"id of the memory this one replaces"`
 	Metadata   map[string]any `json:"metadata,omitempty" jsonschema:"structured tags; agent, model and surface belong to the identity card and are refused here"`
 }
 
@@ -190,7 +191,7 @@ func (a storeArgs) request(authorship service.Authorship) service.StoreRequest {
 		Authorship: authorship,
 		Project:    a.Project,
 		Status:     a.Status,
-		Supersedes: a.Supersedes.Int64(),
+		Supersedes: int64(a.Supersedes),
 		Metadata:   a.Metadata,
 	}
 }
@@ -228,4 +229,27 @@ func init() {
 		prop.Types = []string{"string", "integer"}
 	}
 	storeTool.InputSchema = schema
+}
+
+type optionalID int64
+
+func (id *optionalID) UnmarshalJSON(data []byte) error {
+	s := strings.TrimSpace(string(data))
+	if s == "" || s == "null" {
+		*id = 0
+		return nil
+	}
+	if strings.HasPrefix(s, "\"") {
+		var text string
+		if err := json.Unmarshal(data, &text); err != nil {
+			return err
+		}
+		s = text
+	}
+	n, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
+	if err != nil {
+		return err
+	}
+	*id = optionalID(n)
+	return nil
 }

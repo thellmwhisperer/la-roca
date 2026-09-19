@@ -13,7 +13,8 @@ CREATE TABLE IF NOT EXISTS memories (
   status          TEXT DEFAULT 'active' CHECK (status IN ('active', 'pending', 'resolved')),
   supersedes      INTEGER,
   created_at      TEXT DEFAULT (datetime('now')),
-  expires_at      TEXT
+  expires_at      TEXT,
+  legacy_id       INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_memories_layer ON memories(layer);
@@ -37,13 +38,6 @@ CREATE TABLE IF NOT EXISTS layers (
   capabilities    TEXT DEFAULT '{}',
   since_version   TEXT
 );
-
--- The operational half issues identifiers above 2^60 so no ops memory ever
--- answers to the same id as a core memory while both halves are read as one.
--- The seed is conditional: a database that already counts keeps its own place.
-INSERT INTO sqlite_sequence(name, seq)
-SELECT 'memories', 1152921504606846976
-WHERE NOT EXISTS (SELECT 1 FROM sqlite_sequence WHERE name = 'memories');
 
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
   content,

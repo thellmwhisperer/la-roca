@@ -127,3 +127,91 @@ func TestRocaOpsExactStoreGuardIncludesExpiry(t *testing.T) {
 		t.Fatal("different ops expiry was coalesced")
 	}
 }
+
+func TestOpsStoreIssuesShortIdsAndKeepsHistoricalIdsAddressable(t *testing.T) {
+	svc, plugins := enabledRocaOps(t)
+	opsDB := openRocaOps(t, plugins)
+	defer opsDB.Close()
+	const historical int64 = 1152921504606853945
+	if _, err := opsDB.Exec(`INSERT INTO memories (id, layer, content, origin, project, status, created_at)
+		VALUES (?, 'handoff', 'pre-migration workspace handoff', 'agent', 'workspace', 'active', '2026-01-01 00:00:00')`,
+		historical); err != nil {
+		t.Fatal(err)
+	}
+	opsPath := filepath.Join(plugins, rocaops.Name, rocaops.DatabaseFilename)
+	if err := rocaops.ApplySchema(opsPath); err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := svc.Store(t.Context(), service.StoreRequest{
+		Layer: "discovery", Project: "la-roca-e2e", Content: "id-size probe",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ID < 1 || first.ID > 1<<53-1 {
+		t.Fatalf("stored id %d is not a newly issued sqlite id", first.ID)
+	}
+
+	var compactID int64
+	if err := opsDB.QueryRow(`SELECT id FROM memories WHERE legacy_id = ?`, historical).Scan(&compactID); err != nil {
+		t.Fatalf("historical id %d is not addressable through legacy_id: %v", historical, err)
+	}
+	resolved, err := svc.ResolveMemory(t.Context(), historical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.CanonicalID != compactID {
+		t.Fatalf("resolve %d = %+v, want canonical %d", historical, resolved, compactID)
+	}
+	handoffs, err := svc.LatestHandoffs(t.Context(), "workspace")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, row := range handoffs.Handoffs {
+		if row.ID == compactID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("handoff latest dropped compacted historical row %d: %+v", compactID, handoffs.Handoffs)
+	}
+
+	second, err := svc.Store(t.Context(), service.StoreRequest{
+		Layer: "discovery", Project: "la-roca-e2e", Content: "id-size probe 2",
+		Supersedes: first.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var supersedes sql.NullInt64
+	if err := opsDB.QueryRow(`SELECT supersedes FROM memories WHERE id = ?`, second.ID).Scan(&supersedes); err != nil {
+		t.Fatal(err)
+	}
+	if !supersedes.Valid || supersedes.Int64 != first.ID {
+		t.Fatalf("supersedes = %+v, want %d", supersedes, first.ID)
+	}
+	const dedupAlias int64 = 1152921504606853999
+	if _, err := opsDB.Exec(`CREATE TABLE IF NOT EXISTS memory_id_remaps (
+		old_id INTEGER PRIMARY KEY, canonical_id INTEGER NOT NULL REFERENCES memories(id))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := opsDB.Exec(`INSERT INTO memory_id_remaps(old_id, canonical_id) VALUES (?, ?)`, dedupAlias, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	third, err := svc.Store(t.Context(), service.StoreRequest{
+		Layer: "discovery", Project: "la-roca-e2e", Content: "id-size probe 3",
+		Supersedes: dedupAlias,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := opsDB.QueryRow(`SELECT supersedes FROM memories WHERE id = ?`, third.ID).Scan(&supersedes); err != nil {
+		t.Fatal(err)
+	}
+	if !supersedes.Valid || supersedes.Int64 != first.ID {
+		t.Fatalf("dedup alias supersedes = %+v, want %d", supersedes, first.ID)
+	}
+}

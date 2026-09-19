@@ -3,29 +3,62 @@ package cli
 import (
 	"encoding/json"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 )
 
-func TestOpsMemoryIDsAreDecimalStringsUnderJSON(t *testing.T) {
-	fixtureInstallation(t)
+func jsonInt(t *testing.T, value any) int64 {
+	t.Helper()
+	switch v := value.(type) {
+	case float64:
+		return int64(v)
+	case int64:
+		return v
+	case json.Number:
+		n, err := v.Int64()
+		if err != nil {
+			t.Fatalf("id %v: %v", value, err)
+		}
+		return n
+	case string:
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			t.Fatalf("id %q: %v", v, err)
+		}
+		return n
+	default:
+		t.Fatalf("id = %#v, want a JSON number", value)
+		return 0
+	}
+}
+
+func TestOpsMemoryIDsAreSQLiteAssignedAndLegacyIdsResolve(t *testing.T) {
+	home := fixtureInstallation(t).home
+	const historical int64 = 1152921504606853945
+	insertOpsMemory(t, home, opsMemory{
+		id: historical, layer: "handoff", project: "workspace",
+		createdAt: "2026-01-01 00:00:00", content: "pre-migration workspace handoff",
+	})
+	if err := rocaops.ApplySchema(filepath.Join(home, ".roca", "plugins", "roca-ops", "roca-ops.db")); err != nil {
+		t.Fatal(err)
+	}
 
 	stored := mustJSON(t, runRoot(t, contractBuild(), "store", "--layer", "discovery",
-		"--content", "ops identifier fixture", "--origin", "agent", "--json"))
-	id, ok := stored["id"].(string)
-	if !ok || id == "" {
-		t.Fatalf("store --json id = %#v, want a decimal string", stored["id"])
+		"--project", "la-roca-e2e", "--content", "id-size probe", "--origin", "agent", "--json"))
+	numeric := jsonInt(t, stored["id"])
+	if numeric < 1 || numeric > 1<<53-1 {
+		t.Fatalf("store --json id = %d, want a sqlite id below 2^53", numeric)
 	}
-	numeric, err := strconv.ParseInt(id, 10, 64)
-	if err != nil || numeric <= 1<<53 {
-		t.Fatalf("store --json id = %q, want an ops id above 2^53", id)
-	}
+	id := strconv.FormatInt(numeric, 10)
 
 	raw := runRoot(t, contractBuild(), "exec",
-		"SELECT id FROM plugin_roca_ops.memories LIMIT 1", "--json")
-	if strings.Contains(raw, `"id": `+id) && !strings.Contains(raw, `"id": "`+id) {
-		t.Fatalf("exec --json still emitted a JSON number:\n%s", raw)
+		"SELECT id FROM plugin_roca_ops.memories ORDER BY created_at DESC LIMIT 1", "--json")
+	if strings.Contains(raw, `"id": "`+id+`"`) {
+		t.Fatalf("exec --json still wrapped the id as a string:\n%s", raw)
 	}
 	doc := mustJSON(t, raw)
 	rows, _ := doc["rows"].([]any)
@@ -33,35 +66,70 @@ func TestOpsMemoryIDsAreDecimalStringsUnderJSON(t *testing.T) {
 		t.Fatalf("exec returned no rows:\n%s", raw)
 	}
 	first, _ := rows[0].(map[string]any)
-	if first["id"] != id {
-		t.Fatalf("exec id = %#v, want %q", first["id"], id)
+	if jsonInt(t, first["id"]) != numeric {
+		t.Fatalf("exec id = %#v, want %d", first["id"], numeric)
 	}
 
 	if _, err := exec.LookPath("node"); err == nil {
 		cmd := exec.Command("node", "-e",
-			`const j=JSON.parse(require("fs").readFileSync(0,"utf8")); process.stdout.write(String(j.rows[0].id))`)
+			`const d=JSON.parse(require("fs").readFileSync(0));const id=d.rows[0].id;if(!(Number(id)<2**53))process.exit(1);process.stdout.write(String(id))`)
 		cmd.Stdin = strings.NewReader(raw)
 		out, err := cmd.Output()
 		if err != nil {
 			t.Fatalf("node parse: %v", err)
 		}
 		if string(out) != id {
-			t.Fatalf("node parsed %q, want the exact id %q", out, id)
+			t.Fatalf("node parsed %q, want %q", out, id)
 		}
 	}
 
+	historicalText := strconv.FormatInt(historical, 10)
+	kept := mustJSON(t, runRoot(t, contractBuild(), "exec",
+		"SELECT id FROM plugin_roca_ops.memories WHERE id='"+historicalText+"'", "--json"))
+	keptRows, _ := kept["rows"].([]any)
+	if len(keptRows) != 1 {
+		t.Fatalf("historical id %s was not addressable:\n%s", historicalText, kept)
+	}
+	handoff := mustJSON(t, runRoot(t, contractBuild(), "handoff", "latest",
+		"--project", "workspace", "--json"))
+	listed, _ := handoff["handoffs"].([]any)
+	if len(listed) == 0 {
+		t.Fatalf("handoff latest dropped the pre-migration row:\n%s", handoff)
+	}
+
 	replacement := mustJSON(t, runRoot(t, contractBuild(), "store", "--layer", "discovery",
-		"--content", "ops identifier replacement", "--origin", "agent",
+		"--project", "la-roca-e2e", "--content", "id-size probe 2", "--origin", "agent",
 		"--supersedes", id, "--json"))
-	if replacement["id"] == nil || replacement["id"] == id {
+	replacementID := jsonInt(t, replacement["id"])
+	if replacementID == 0 || replacementID == numeric {
 		t.Fatalf("replacement = %#v, want a new memory", replacement)
 	}
 	pointed := mustJSON(t, runRoot(t, contractBuild(), "exec",
-		"SELECT id FROM plugin_roca_ops.memories WHERE supersedes = "+id, "--json"))
+		"SELECT supersedes FROM plugin_roca_ops.memories WHERE id = "+strconv.FormatInt(replacementID, 10), "--json"))
 	pointedRows, _ := pointed["rows"].([]any)
 	if len(pointedRows) != 1 {
 		t.Fatalf("supersedes %s did not land on the original row:\n%s", id, pointed)
 	}
+	pointedRow, _ := pointedRows[0].(map[string]any)
+	if jsonInt(t, pointedRow["supersedes"]) != numeric {
+		t.Fatalf("supersedes = %#v, want %d", pointedRow["supersedes"], numeric)
+	}
+}
+
+func TestStoreAfterDeleteDoesNotReuseID(t *testing.T) {
+	home := fixtureInstallation(t).home
+	first := mustJSON(t, runRoot(t, contractBuild(), "store", "--layer", "pill",
+		"--content", "disposable pill", "--origin", "agent",
+		"--metadata", `{"pill_slug":"tmp-x"}`, "--json"))
+	a := jsonInt(t, first["id"])
+	runRoot(t, contractBuild(), "pill", "delete", "tmp-x")
+	second := mustJSON(t, runRoot(t, contractBuild(), "store", "--layer", "discovery",
+		"--content", "after delete", "--origin", "agent", "--json"))
+	b := jsonInt(t, second["id"])
+	if b <= a {
+		t.Fatalf("id after delete = %d, want greater than %d", b, a)
+	}
+	_ = home
 }
 
 func TestStoreSupersedesStillAcceptsTheNumericForm(t *testing.T) {
@@ -78,7 +146,7 @@ func TestStoreMetadataKeepsAnUnsafeIdInsideTheBlob(t *testing.T) {
 	const unsafe = "1152921504606853875"
 	stored := mustJSON(t, runRoot(t, contractBuild(), "store", "--layer", "discovery",
 		"--content", "metadata identifier fixture", "--origin", "agent",
-		"--metadata", `{"supersedes": `+unsafe+`} `+"\n\t", "--json"))
+		"--metadata", `{"supersedes": "`+unsafe+`"}`, "--json"))
 	if stored["id"] == nil {
 		t.Fatalf("store --json lost its id: %v", stored)
 	}
