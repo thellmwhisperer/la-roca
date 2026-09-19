@@ -25,9 +25,9 @@
         "tables": [
           {
             "name": "sessions",
-            "description": "Harvested conversation sessions with source, project, timing, title, and source metadata.",
-            "questions": ["Which sessions were harvested?"],
-            "columns": ["session_id", "source_agent", "project", "started_at", "ended_at", "duration_minutes", "title", "metadata", "source_surface"]
+            "description": "Harvested conversation sessions with source, project, timing, title, source metadata, and the machine that produced them.",
+            "questions": ["Which sessions were harvested?", "Which machine produced a session?"],
+            "columns": ["session_id", "source_agent", "project", "started_at", "ended_at", "duration_minutes", "title", "metadata", "source_surface", "machine"]
           },
           {
             "name": "memories",
@@ -39,19 +39,19 @@
             "name": "exchanges",
             "description": "Immutable human and agent exchanges with timestamps and source-recorded model usage provenance.",
             "questions": ["What was said in harvested conversations?"],
-            "columns": ["id", "session_id", "exchange_number", "is_after_compaction", "human_text", "agent_text", "human_timestamp", "agent_timestamp", "response_latency_ms", "model", "provider", "tokens_in", "tokens_out", "tokens_reasoning", "cost_usd"]
+            "columns": ["id", "session_id", "exchange_number", "is_after_compaction", "human_text", "agent_text", "human_timestamp", "agent_timestamp", "response_latency_ms", "model", "provider", "tokens_in", "tokens_out", "tokens_reasoning", "cost_usd", "machine"]
           },
           {
             "name": "tool_uses",
             "description": "Tool calls harvested from sessions and exchanges, including failures and initiative classification; a NULL exchange_number identifies a session-level call.",
             "questions": ["Which tools were used and which calls failed?"],
-            "columns": ["id", "session_id", "exchange_number", "tool_name", "tool_params_summary", "had_error", "error_message", "initiative_type"]
+            "columns": ["id", "session_id", "exchange_number", "tool_name", "tool_params_summary", "had_error", "error_message", "initiative_type", "machine"]
           },
           {
             "name": "thinking_blocks",
             "description": "Reasoning blocks harvested from sessions and exchanges.",
             "questions": ["What reasoning was recorded in the harvested corpus?"],
-            "columns": ["id", "session_id", "exchange_number", "position_in_session", "depth", "caution_ratio", "word_count", "is_after_compaction", "full_text"]
+            "columns": ["id", "session_id", "exchange_number", "position_in_session", "depth", "caution_ratio", "word_count", "is_after_compaction", "full_text", "machine"]
           },
           {
             "name": "memories_fts",

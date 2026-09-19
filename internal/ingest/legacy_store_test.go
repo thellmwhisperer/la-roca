@@ -385,16 +385,17 @@ func TestLegacyStoreSkipsExactPayloadOverlapAndContinues(t *testing.T) {
 	if err := corpus.Write(context.Background(), func(tx *sql.Tx) error {
 		_, err := tx.Exec(`INSERT INTO sessions
 			(session_id, source_agent, source_surface, project, started_at, ended_at,
-			 duration_minutes, title, metadata)
+			 duration_minutes, title, metadata, machine)
 			VALUES (?, 'codex', ?, 'demo', '2026-08-01 13:00:00', '2026-08-01 13:01:00',
-			        1, 'overlap fixture', '{}')`,
+			        1, 'overlap fixture', '{}', 'hub')`,
 			legacyFederatedPayloadSession, ingestprovenance.LegacyStore)
 		return err
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	roots := ResolveRoots(Environment{GOOS: "darwin", Home: t.TempDir()}, Settings{LegacyStoreDB: path})
+	roots := ResolveRoots(Environment{GOOS: "darwin", Home: t.TempDir(), Hostname: "hub"},
+		Settings{LegacyStoreDB: path})
 	var progress []string
 	options := Options{Roots: roots, Ops: ops, Progress: func(line string) { progress = append(progress, line) }}
 	result, err := Run(context.Background(), corpus, registry(t), options)

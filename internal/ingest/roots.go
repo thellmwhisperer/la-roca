@@ -25,6 +25,8 @@ type Environment struct {
 	Home string
 	// Getenv reads the environment. A nil one is a machine with nothing declared.
 	Getenv func(string) string
+	// Hostname labels the local root. Empty falls through to the process hostname.
+	Hostname string
 }
 
 func (e Environment) get(key string) string {
@@ -66,6 +68,15 @@ type Settings struct {
 	// SubagentRoots are the Claude projects roots the subagent transcripts are
 	// discovered under. Empty means the resolved Claude projects root.
 	SubagentRoots []string
+	// RemoteSources are HOME-shaped mirrors of other machines.
+	RemoteSources []RemoteSource
+}
+
+// RemoteSource is one configured mirror: the machine name stamps every row
+// ingested from Root, which is a tree with the same shape as that machine's HOME.
+type RemoteSource struct {
+	Machine string
+	Root    string
 }
 
 // Roots are the resolved locations of every source in the v1 matrix.
@@ -110,6 +121,15 @@ type Roots struct {
 	ChatGPTWebExports []string
 	SubagentRoots     []string
 	Workspace         WorkspaceRoots
+	// Machine is the label stamped on every row ingested from this tree.
+	// The local root uses the hub hostname; a remote mirror uses its configured name.
+	Machine string
+	// Remote is true when this tree is a configured mirror, not this machine's HOME.
+	Remote bool
+	// Remotes are additional HOME-shaped trees resolved from [[sources.remote]].
+	Remotes []Roots
+	// Warnings describe configured roots that were rejected before scanning.
+	Warnings []string
 }
 
 // These environment variable names are stable for operator compatibility.
@@ -133,8 +153,49 @@ const (
 	envLocalAppData         = "LOCALAPPDATA"
 )
 
-// ResolveRoots decides where every source lives on this machine.
+// ResolveRoots decides where every source lives on this machine, then resolves
+// each configured remote mirror as its own HOME-shaped tree.
 func ResolveRoots(env Environment, settings Settings) Roots {
+	roots := resolveOne(env, settings)
+	roots.Machine = localHostname(env)
+	seenRoots := map[string]string{canonicalRoot(env.Home): "the local HOME"}
+	for _, remote := range settings.RemoteSources {
+		machine := strings.TrimSpace(remote.Machine)
+		root := expand(env, strings.TrimSpace(remote.Root))
+		if machine == "" || root == "" {
+			continue
+		}
+		canonical := canonicalRoot(root)
+		if owner, found := seenRoots[canonical]; found {
+			roots.Warnings = append(roots.Warnings, fmt.Sprintf(
+				"remote source %q at %s was ignored because it duplicates %s",
+				machine, root, owner))
+			continue
+		}
+		seenRoots[canonical] = fmt.Sprintf("remote source %q", machine)
+		remoteEnv := env
+		remoteEnv.Home = root
+		remoteEnv.Getenv = nil
+		resolved := resolveOne(remoteEnv, Settings{})
+		resolved.Machine = machine
+		resolved.Remote = true
+		roots.Remotes = append(roots.Remotes, resolved)
+	}
+	return roots
+}
+
+func canonicalRoot(path string) string {
+	path = filepath.Clean(path)
+	if absolute, err := filepath.Abs(path); err == nil {
+		path = absolute
+	}
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
+	return filepath.Clean(path)
+}
+
+func resolveOne(env Environment, settings Settings) Roots {
 	claude := join(env, env.Home, ".claude")
 	codexRoot := pick(env, settings.CodexRoot, envCodexRoot, join(env, env.Home, ".codex"))
 	piRoot := pick(env, settings.PiRoot, envPiRoot, join(env, env.Home, ".pi"))
@@ -177,12 +238,22 @@ func ResolveRoots(env Environment, settings Settings) Roots {
 		RunnerDir:    expand(env, settings.RunnerDir),
 		Workspace:    ResolveWorkspaceRoots(expandAll(env, settings.WorkspaceRoots)),
 	}
-
 	roots.SubagentRoots = expandAll(env, settings.SubagentRoots)
 	if len(roots.SubagentRoots) == 0 {
 		roots.SubagentRoots = []string{roots.ClaudeProjects}
 	}
 	return roots
+}
+
+func localHostname(env Environment) string {
+	if strings.TrimSpace(env.Hostname) != "" {
+		return strings.TrimSpace(env.Hostname)
+	}
+	name, err := os.Hostname()
+	if err != nil || strings.TrimSpace(name) == "" {
+		return "local"
+	}
+	return name
 }
 
 // WithExportPath adds one extracted account export to this invocation. The

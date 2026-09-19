@@ -33,7 +33,9 @@ func TestManifestReportsAContentFileMarkedSeenWithoutALandedMemory(t *testing.T)
 	world := newWorld(t)
 	roots := world.roots()
 	memory := filepath.Join(roots.ClaudeProjects, world.projectDir(), "memory", "note.md")
-	fingerprint, err := targetFingerprint(Target{Path: memory, Kind: parsers.KindClaudeMemory})
+	fingerprint, err := targetFingerprint(Target{
+		Path: memory, Kind: parsers.KindClaudeMemory, Machine: roots.Machine,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -195,7 +195,11 @@ func readExpectedInventories(ctx context.Context,
 		inventory := newSourceInventory()
 		inventories[source.Database] = inventory
 		for _, table := range archiveSourceTables {
-			rows, err := source.db.QueryContext(ctx, table.query)
+			query, err := queryForTable(ctx, source.db, table)
+			if err != nil {
+				return nil, err
+			}
+			rows, err := source.db.QueryContext(ctx, query)
 			if err != nil {
 				return nil, fmt.Errorf("read frozen %s.%s for reconciliation: %w",
 					source.Database, table.sourceTable, err)

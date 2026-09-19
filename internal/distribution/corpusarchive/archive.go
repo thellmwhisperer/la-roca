@@ -270,7 +270,11 @@ func sessionArchiveCoordinatesNeedRebuild(ctx context.Context, destination *sql.
 ) (bool, error) {
 	table := archiveSourceTables[0]
 	for _, source := range sources {
-		rows, err := source.db.QueryContext(ctx, table.query)
+		query, err := queryForTable(ctx, source.db, table)
+		if err != nil {
+			return false, err
+		}
+		rows, err := source.db.QueryContext(ctx, query)
 		if err != nil {
 			return false, err
 		}

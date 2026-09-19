@@ -39,6 +39,7 @@ type Target struct {
 	Kind        string
 	SourceAgent string
 	Project     string
+	Machine     string
 
 	// ParserVersion invalidates a previously recorded fingerprint when the
 	// target's reader learns to extract more from an otherwise unchanged file.
@@ -100,7 +101,7 @@ func TargetFingerprint(target Target) (string, error) {
 		return "", err
 	}
 	if !target.IncludeSQLiteWAL {
-		return parserAwareFingerprint(main, target.ParserVersion), nil
+		return parserAwareFingerprint(machineAwareFingerprint(main, target.Machine), target.ParserVersion), nil
 	}
 	wal, err := Fingerprint(target.Path + "-wal")
 	if err != nil {
@@ -128,7 +129,14 @@ func TargetFingerprint(target Target) (string, error) {
 		}
 		combined += ":companions:" + fmt.Sprintf("%x", digest.Sum(nil))
 	}
-	return parserAwareFingerprint(combined, target.ParserVersion), nil
+	return parserAwareFingerprint(machineAwareFingerprint(combined, target.Machine), target.ParserVersion), nil
+}
+
+func machineAwareFingerprint(fingerprint, machine string) string {
+	if machine == "" {
+		return fingerprint
+	}
+	return fingerprint + ":machine:" + machine
 }
 
 func parserAwareFingerprint(fingerprint, version string) string {
@@ -178,10 +186,16 @@ func Unchanged(state map[string]FileState, path, fingerprint string) bool {
 // UnchangedMetadata reports whether metadata matches the prefix of a successful
 // content fingerprint. It is intended only as a fallback after content
 // fingerprinting fails for a non-database target.
-func UnchangedMetadata(state map[string]FileState, path, metadata string) bool {
+func UnchangedMetadata(state map[string]FileState, path, metadata string, machine ...string) bool {
 	known, ok := state[path]
-	return ok && known.LastError == "" && metadata != "" &&
-		strings.HasPrefix(known.Fingerprint, metadata+":")
+	if !ok || known.LastError != "" || metadata == "" ||
+		!strings.HasPrefix(known.Fingerprint, metadata+":") {
+		return false
+	}
+	if len(machine) == 0 || machine[0] == "" {
+		return true
+	}
+	return strings.Contains(known.Fingerprint, ":machine:"+machine[0])
 }
 
 // RecordState upserts one target's state in the caller's transaction. Keeping

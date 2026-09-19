@@ -15,7 +15,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   duration_minutes INTEGER,
   title         TEXT,
   metadata      TEXT DEFAULT '{}',
-  source_surface TEXT
+  source_surface TEXT,
+  machine       TEXT
 );
 
 CREATE TABLE IF NOT EXISTS memories (
@@ -71,7 +72,8 @@ CREATE TABLE IF NOT EXISTS exchanges (
   tokens_in             INTEGER,
   tokens_out            INTEGER,
   tokens_reasoning      INTEGER,
-  cost_usd              REAL
+  cost_usd              REAL,
+  machine               TEXT
 );
 
 CREATE TABLE IF NOT EXISTS tool_uses (
@@ -82,7 +84,8 @@ CREATE TABLE IF NOT EXISTS tool_uses (
   tool_params_summary   TEXT,
   had_error             INTEGER DEFAULT 0,
   error_message         TEXT,
-  initiative_type       TEXT
+  initiative_type       TEXT,
+  machine               TEXT
 );
 
 CREATE TABLE IF NOT EXISTS thinking_blocks (
@@ -94,7 +97,8 @@ CREATE TABLE IF NOT EXISTS thinking_blocks (
   caution_ratio         REAL,
   word_count            INTEGER,
   is_after_compaction   INTEGER DEFAULT 0,
-  full_text             TEXT
+  full_text             TEXT,
+  machine               TEXT
 );
 
 -- Incremental ingest state

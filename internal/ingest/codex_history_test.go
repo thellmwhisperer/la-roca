@@ -203,7 +203,7 @@ func TestCodexHistoryRefreshExactPayloadAliasDoesNotAbort(t *testing.T) {
 	const offender = "019aba72-aa57-7d93-a12c-b6e65c0dca6b"
 	const alias = offender + "-history-envelope-alias"
 	home := t.TempDir()
-	roots := ResolveRoots(Environment{GOOS: "darwin", Home: home}, Settings{})
+	roots := ResolveRoots(Environment{GOOS: "darwin", Home: home, Hostname: "hub"}, Settings{})
 	if err := os.MkdirAll(roots.CodexRoot, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -222,12 +222,12 @@ func TestCodexHistoryRefreshExactPayloadAliasDoesNotAbort(t *testing.T) {
 	}
 	exec(t, db.SQL(), `INSERT INTO sessions
 		(session_id, source_agent, source_surface, started_at, ended_at,
-		 duration_minutes, title, project, metadata)
+		 duration_minutes, title, project, metadata, machine)
 		VALUES
 		(?, 'codex', 'Codex CLI',
-		 '2025-11-25T09:57:52Z', '2025-11-25T16:18:52Z', 381, NULL, '.codex', '{}'),
+		 '2025-11-25T09:57:52Z', '2025-11-25T16:18:52Z', 381, NULL, '.codex', '{}', 'hub'),
 		(?, 'codex', NULL,
-		 NULL, NULL, NULL, NULL, NULL, '{}')`, alias, offender)
+		 NULL, NULL, NULL, NULL, NULL, '{}', 'hub')`, alias, offender)
 
 	result, err := Run(ctx, db, registry(t), Options{Roots: roots})
 	if err != nil {

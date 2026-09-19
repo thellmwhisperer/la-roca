@@ -846,3 +846,63 @@ func TestAnEquivalentTableHeaderIsEditedAndNotDuplicated(t *testing.T) {
 		}
 	}
 }
+
+func TestRemoteSourcesAreReadFromArrayOfTables(t *testing.T) {
+	path := write(t, `
+[[sources.remote]]
+machine = "mini"
+root = "~/.roca-sources/mini"
+
+[[sources.remote]]
+machine = "studio"
+root = "/mirrors/studio"
+`)
+	file, err := LoadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(file.Warnings) != 0 {
+		t.Fatalf("warnings = %v", file.Warnings)
+	}
+	if len(file.RemoteSources) != 2 {
+		t.Fatalf("remotes = %+v", file.RemoteSources)
+	}
+	if file.RemoteSources[0].Machine != "mini" || file.RemoteSources[0].Root != "~/.roca-sources/mini" {
+		t.Fatalf("first remote = %+v", file.RemoteSources[0])
+	}
+	if file.RemoteSources[1].Machine != "studio" || file.RemoteSources[1].Root != "/mirrors/studio" {
+		t.Fatalf("second remote = %+v", file.RemoteSources[1])
+	}
+
+	invalid := write(t, `
+[[sources.remote]]
+machine = ""
+root = "/mirrors/empty"
+
+[sources.other]
+root = "/nope"
+`)
+	file, err = LoadFile(invalid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(file.RemoteSources) != 0 {
+		t.Fatalf("invalid remotes were kept: %+v", file.RemoteSources)
+	}
+	if len(file.Warnings) < 2 {
+		t.Fatalf("warnings = %v, want the empty table and the unknown key", file.Warnings)
+	}
+
+	single := write(t, `
+[sources.remote]
+machine = "mini"
+root = "/mirrors/mini"
+`)
+	file, err = LoadFile(single)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(file.RemoteSources) != 0 || len(file.Warnings) == 0 {
+		t.Fatalf("single remote table = %+v, warnings = %v", file.RemoteSources, file.Warnings)
+	}
+}

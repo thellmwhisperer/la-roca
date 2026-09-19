@@ -8,6 +8,8 @@
 
 ### Features
 
+* **ingest:** one hub can read HOME-shaped mirrors of another machine via `[[sources.remote]]`. Sessions, exchanges, thinking blocks, and tool calls are stamped with that machine name; the local root uses this hostname. Removing the config entry stops reading that root and leaves already ingested rows.
+
 * **plugins:** `roca mcp serve` raises plugin-declared session companions. A `plugin.json` may name an executable inside the plugin directory plus fixed argv; serve starts that child for the session, reaps it on exit, retries crashes with bounded backoff, and leaves a dying companion down without blocking queries. Plugins without the field are unchanged. Telemetry is JSONL under the data directory logs area, never a database.
 
 * **vector:** ship a local embedding engine inside the vector companion. The user downloads exactly one embeddings model. macOS and Linux no longer need a separate embedding runtime; Windows keeps the previous path until its native lane exists. Indexing walks newest material first. Engine timings land in rotated JSONL under the data directory logs area, never in a database.
