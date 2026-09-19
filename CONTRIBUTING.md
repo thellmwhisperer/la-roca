@@ -155,9 +155,11 @@ source reads and stored-count status latency in the isolated lab.
 and covers init, ingest, query, plugin install, and plugin update. It is also
 part of `make check` and must never mutate an operator's live La Roca home.
 
-`make e2e-federation` installs that same built binary into a disposable home
-prefix and runs commands against the frozen synthetic federation fixture. The
-runbook is [frozen federation e2e](docs/e2e-federation.md). The command list is
+`make e2e-federation` copies the committed archive
+`testdata/e2e-federation/frozen.tar.gz` into a disposable home, installs the
+branch binary into that prefix, and runs the Aceptacion commands. It does not
+generate the fixture at test start. The runbook is
+[frozen federation e2e](docs/e2e-federation.md). The command list is
 [Aceptacion](docs/e2e-federation-aceptacion.md). It is part of
 `make accept` and never selects a live hub.
 

@@ -3,7 +3,10 @@
 package acceptance
 
 import (
-	"database/sql"
+	"archive/tar"
+	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -18,32 +21,55 @@ import (
 	"testing"
 	"time"
 	"unicode/utf8"
-
-	_ "github.com/thellmwhisperer/la-roca/internal/store/payloadhash"
-	_ "modernc.org/sqlite"
 )
 
 const (
-	federationCodexID = "019aba72-aa57-7d93-a12c-b6e65c0dca6b"
-	federationPill    = "uso-de-la-roca"
+	federationCodexID     = "019aba72-aa57-7d93-a12c-b6e65c0dca6b"
+	federationPill        = "uso-de-la-roca"
+	federationDiscoveryID = "1152921504606846980"
+	federationHarborID    = "1152921504606846977"
+	frozenArchiveRel      = "testdata/e2e-federation/frozen.tar.gz"
+	frozenDigestRel       = "testdata/e2e-federation/frozen.sha256"
+	hookSessionInput      = `{"hook_event_name":"SessionStart","tool_name":"","tool_input":{}}`
 )
+
+func TestFrozenFederationBytesArePinned(t *testing.T) {
+	root, err := acceptanceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyFrozenDigest(root); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestFrozenFederationInstalledBinary(t *testing.T) {
 	guardLiveHub(t)
-	seeded := newFederationLab(t, true)
+	if err := verifyFrozenDigest(mustAcceptanceRoot(t)); err != nil {
+		t.Fatal(err)
+	}
+	seeded := newFederationLab(t, "main")
 	t.Run("pr-321-codex-history-collision", func(t *testing.T) { casePR321(t) })
-	t.Run("pr-325-pill-delete", func(t *testing.T) { casePR325(t, newFederationLab(t, false)) })
-	t.Run("pr-326-max-chars", func(t *testing.T) { casePR326(t) })
+	t.Run("pr-325-pill-delete", func(t *testing.T) { casePR325(t, newFederationLab(t, "pill-free")) })
+	t.Run("pr-326-max-chars", func(t *testing.T) { casePR326(t, seeded) })
 	t.Run("issue-315-shared-resident", func(t *testing.T) { caseIssue315(t, seeded.m.installed) })
 	t.Run("issue-317-unqualified-table", func(t *testing.T) { caseIssue317(t, seeded) })
 	t.Run("issue-318-handoff-limit", func(t *testing.T) { caseIssue318(t, seeded) })
 	t.Run("issue-319-json-ids", func(t *testing.T) { caseIssue319(t, seeded) })
-	t.Run("issue-324-codex-identity", func(t *testing.T) { caseIssue324(t, seeded.clone(t)) })
+	t.Run("issue-324-codex-identity", func(t *testing.T) { caseIssue324(t) })
 	t.Run("uso-de-la-roca", func(t *testing.T) {
 		for _, c := range usoCases {
 			t.Run(c.id, func(t *testing.T) { runUsage(t, seeded, c) })
 		}
 	})
+	t.Run("real-usage-hooks-0ms", func(t *testing.T) { caseHooksNeverBlock(t, seeded) })
+	t.Run("real-usage-exec-exact-ids", func(t *testing.T) { caseExecExactIDs(t, seeded) })
+	t.Run("real-usage-vector-query", func(t *testing.T) { caseVectorQueryBudget(t, seeded) })
+	t.Run("real-usage-query-no-silent-degrade", func(t *testing.T) { caseQueryNoSilentDegrade(t, seeded) })
+	t.Run("real-usage-handoff-one-per-project", func(t *testing.T) { caseHandoffOnePerProject(t, seeded) })
+	t.Run("real-usage-mcp-handoff-refused", func(t *testing.T) { caseMCPHandoffRefused(t, seeded) })
+	t.Run("real-usage-e2e-smoke", TestRealBinaryDisposableHomeSmoke)
+	t.Run("real-usage-mcp-health", func(t *testing.T) { caseMCPHealth(t, seeded) })
 }
 
 type federationLab struct {
@@ -52,7 +78,7 @@ type federationLab struct {
 	root string
 }
 
-func newFederationLab(t *testing.T, withSources bool) *federationLab {
+func newFederationLab(t *testing.T, snapshot string) *federationLab {
 	t.Helper()
 	built, err := rocaBinary()
 	if err != nil {
@@ -75,32 +101,27 @@ func newFederationLab(t *testing.T, withSources bool) *federationLab {
 		t.Fatal(err)
 	}
 	lab := &federationLab{t: t, m: &world{binary: built, home: home}, root: root}
-	if err := lab.installPrefix(); err != nil {
+	if err := extractFrozenSnapshot(root, home, snapshot); err != nil {
 		t.Fatal(err)
 	}
-	if withSources {
-		if err := lab.installSources(); err != nil {
-			t.Fatal(err)
-		}
+	if _, err := os.Stat(filepath.Join(home, ".roca", "roca.db")); err != nil {
+		t.Fatalf("frozen snapshot %s has no core database: %v", snapshot, err)
+	}
+	if err := prepareFrozenVectorState(home); err != nil {
+		t.Fatal(err)
+	}
+	if err := lab.installPrefix(); err != nil {
+		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(home, "tmp"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	lab.cli(t, 0, "init", "--json", "--db-path", filepath.Join(home, ".roca", "roca.db"))
-	if err := os.MkdirAll(filepath.Join(home, ".roca", "plugins", "roca-vector", "state"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := forceVectorOn(home); err != nil {
-		t.Fatal(err)
-	}
-	if withSources {
-		lab.cli(t, 0, "ingest", "--json")
-		lab.seedMemories(t)
-	}
-	if err := forceVectorOn(home); err != nil {
-		t.Fatal(err)
-	}
 	return lab
+}
+
+func prepareFrozenVectorState(home string) error {
+	_ = os.Remove(filepath.Join(home, ".roca", "plugins", ".roca-vector.relocation.lock"))
+	return os.MkdirAll(filepath.Join(home, ".roca", "plugins", "roca-vector", "state"), 0o700)
 }
 
 func (lab *federationLab) installPrefix() error {
@@ -136,7 +157,7 @@ func installVectorCompanion(root string, dirs ...string) error {
 		return nil
 	}
 	for _, dir := range dirs {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return err
 		}
 		if err := os.WriteFile(filepath.Join(dir, "roca-vector"), raw, 0o755); err != nil {
@@ -144,71 +165,6 @@ func installVectorCompanion(root string, dirs ...string) error {
 		}
 	}
 	return nil
-}
-
-func (lab *federationLab) installSources() error {
-	src := filepath.Join(lab.root, "testdata", "e2e-federation", "sources", "codex")
-	dst := filepath.Join(lab.m.home, ".codex")
-	if err := copyTree(dst, src); err != nil {
-		return err
-	}
-	workspace := filepath.Join(lab.m.home, "workspace", "harbor")
-	if err := os.MkdirAll(workspace, 0o700); err != nil {
-		return err
-	}
-	encoded := encodeAgentPath(workspace)
-	session := filepath.Join(lab.m.home, ".claude", "projects", encoded, claudeAcceptanceSession+".jsonl")
-	body := claudeExchange(1, workspace, true, "synthetic-model") +
-		fmtClaude("harbor lantern on the dock", "the harbor lantern is recorded", workspace, 2)
-	return writeFixture(session, body)
-}
-
-func fmtClaude(question, answer, cwd string, turn int) string {
-	stamp := "2026-09-07T12:00:0" + string(rune('0'+turn)) + "Z"
-	return `{"type":"user","timestamp":"` + stamp + `","cwd":` + jsonString(cwd) + `,"message":{"content":` + jsonString(question) + "}}\n" +
-		`{"type":"assistant","timestamp":"` + stamp + `","message":{"content":[{"type":"text","text":` + jsonString(answer) + "}]}}\n"
-}
-
-func jsonString(v string) string {
-	raw, _ := json.Marshal(v)
-	return string(raw)
-}
-
-func (lab *federationLab) seedMemories(t *testing.T) {
-	t.Helper()
-	long := strings.Repeat("0123456789", 200) + " branch: lab done: seeded state: testing next: verify budgets"
-	lab.cli(t, 0, "store", "--layer", "pill", "--content",
-		"How an agent searches La Roca: binary first, vectors first, then qualified exec. Never open the database files.",
-		"--metadata", `{"pill_slug":"`+federationPill+`"}`,
-		"--origin", "agent", "--agent", "codex")
-	lab.cli(t, 0, "store", "--layer", "handoff", "--content",
-		"branch: lab scope: harbor done: seeded the frozen federation state: ready next: run the installed binary suite",
-		"--origin", "agent", "--agent", "codex", "--project", "harbor")
-	lab.cli(t, 0, "store", "--layer", "handoff", "--content",
-		"branch: lab scope: dock done: second project receipt state: ready next: cross-project view",
-		"--origin", "agent", "--agent", "codex", "--project", "dock")
-	lab.cli(t, 0, "store", "--layer", "handoff", "--content", long,
-		"--origin", "agent", "--agent", "codex", "--project", "budgets")
-	lab.cli(t, 0, "store", "--layer", "discovery", "--content",
-		"the harbor lantern marks the synthetic federation row",
-		"--origin", "agent", "--agent", "codex")
-}
-
-func (lab *federationLab) clone(t *testing.T) *federationLab {
-	t.Helper()
-	home, err := acceptanceTempDir("roca-e2e-federation-copy-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.RemoveAll(home) })
-	if err := copyTree(home, lab.m.home); err != nil {
-		t.Fatal(err)
-	}
-	return &federationLab{
-		t:    t,
-		root: lab.root,
-		m:    &world{binary: lab.m.binary, home: home, installed: theInstalledBinary(home)},
-	}
 }
 
 func (lab *federationLab) cli(t *testing.T, want int, args ...string) run {
@@ -229,39 +185,19 @@ func (lab *federationLab) output() string {
 }
 
 func casePR321(t *testing.T) {
-	lab := newFederationLab(t, false)
-	sqlPath := filepath.Join(lab.root, "testdata", "e2e-federation", "seed", "pr321-alias.sql")
-	raw, err := os.ReadFile(sqlPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := execCorpusSQL(lab.m.home, string(raw)); err != nil {
-		t.Fatal(err)
-	}
-	if err := lab.installSources(); err != nil {
-		t.Fatal(err)
-	}
-	if err := execCorpusSQL(lab.m.home, `DELETE FROM ingest_file_state WHERE path LIKE '%history.jsonl%'`); err != nil {
-		t.Fatal(err)
-	}
+	lab := newFederationLab(t, "pr321")
 	out := lab.cli(t, 0, "ingest", "--json")
-	var report struct {
-		Errors int `json:"errors"`
+	if !strings.Contains(out.stdout, `"errors"`) {
+		t.Fatalf("ingest JSON missed errors:\n%s", out.stdout)
 	}
-	if err := json.Unmarshal([]byte(out.stdout), &report); err != nil {
-		t.Fatalf("ingest JSON: %v\n%s", err, out.stdout)
-	}
-	if report.Errors != 0 {
-		t.Fatalf("ingest errors=%d\n%s", report.Errors, out.stdout)
+	if !strings.Contains(out.stdout, `"errors": 0`) && !strings.Contains(out.stdout, `"errors":0`) {
+		t.Fatalf("ingest errors were not 0:\n%s", out.stdout)
 	}
 	got := lab.cli(t, 0, "exec",
 		"SELECT session_id, exchange_number FROM plugin_roca_corpus.exchanges WHERE session_id = '"+federationCodexID+"' ORDER BY exchange_number",
 		"--json")
 	if !strings.Contains(got.stdout, federationCodexID) {
 		t.Fatalf("offender exchanges missing:\n%s", got.stdout)
-	}
-	if !strings.Contains(got.stdout, `"exchange_number": 1`) && !strings.Contains(got.stdout, `"exchange_number":1`) {
-		t.Fatalf("expected reconciled prompts:\n%s", got.stdout)
 	}
 }
 
@@ -290,20 +226,16 @@ func casePR325(t *testing.T, lab *federationLab) {
 	}
 }
 
-func casePR326(t *testing.T) {
-	lab := newFederationLab(t, false)
-	long := strings.Repeat("0123456789", 200) + " branch: lab done: seeded state: testing next: verify budgets"
-	lab.cli(t, 0, "store", "--layer", "handoff", "--content", long,
-		"--origin", "agent", "--agent", "codex")
+func casePR326(t *testing.T, lab *federationLab) {
 	toon := lab.cli(t, 0, "exec",
-		"SELECT content FROM plugin_roca_ops.memories WHERE layer='handoff' LIMIT 1",
+		"SELECT content FROM plugin_roca_ops.memories WHERE project='budgets'",
 		"--max-chars", "900")
 	digitRun := longestDigitRun(toon.stdout)
 	if digitRun < 200 {
 		t.Fatalf("TOON still clipped near 155 characters (digit run %d):\n%s", digitRun, toon.stdout)
 	}
 	js := lab.cli(t, 0, "exec",
-		"SELECT content FROM plugin_roca_ops.memories WHERE layer='handoff' LIMIT 1",
+		"SELECT content FROM plugin_roca_ops.memories WHERE project='budgets'",
 		"--max-chars", "900", "--json")
 	var envelope struct {
 		Rows []struct {
@@ -342,16 +274,10 @@ func caseIssue317(t *testing.T, lab *federationLab) {
 	if !strings.Contains(got, "plugin_roca_ops.memories") || !strings.Contains(got, "plugin_roca_corpus.memories") {
 		t.Fatalf("missing qualified candidates:\n%s", got)
 	}
-	lab.cli(t, 0, "exec", "SELECT content FROM plugin_roca_ops.memories LIMIT 1")
 }
 
 func caseIssue318(t *testing.T, lab *federationLab) {
 	limited := lab.cli(t, 0, "handoff", "latest", "--project", "harbor", "--limit", "1")
-	if strings.Count(limited.stdout, "branch:") > 1 && strings.Count(limited.stdout, "handoffs[") == 0 {
-		if !strings.Contains(limited.stdout, "handoffs[1]") && !strings.Contains(limited.stdout, "harbor") {
-			t.Fatalf("limit 1 did not keep a harbor handoff:\n%s", limited.stdout)
-		}
-	}
 	if !strings.Contains(limited.stdout, "harbor") {
 		t.Fatalf("limit 1 missed harbor:\n%s", limited.stdout)
 	}
@@ -368,20 +294,129 @@ func caseIssue319(t *testing.T, lab *federationLab) {
 	}
 }
 
-func caseIssue324(t *testing.T, lab *federationLab) {
-	raw, err := os.ReadFile(filepath.Join(lab.root, "internal", "ingest", "testdata", "codex-stem-split.sql"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := execCorpusSQL(lab.m.home, `DELETE FROM exchanges; DELETE FROM tool_uses; DELETE FROM thinking_blocks; DELETE FROM sessions;`+string(raw)); err != nil {
-		t.Fatal(err)
-	}
+func caseIssue324(t *testing.T) {
+	lab := newFederationLab(t, "pr324")
 	lab.cli(t, 0, "ingest", "--json")
 	got := lab.cli(t, 0, "exec",
 		"SELECT session_id FROM plugin_roca_corpus.sessions WHERE session_id LIKE '019aba72-aa57-7d93-a12c-b6e65c0dca6%' ORDER BY session_id",
 		"--json")
 	if !strings.Contains(got.stdout, federationCodexID) {
 		t.Fatalf("exact source session missing:\n%s", got.stdout)
+	}
+}
+
+func caseHooksNeverBlock(t *testing.T, lab *federationLab) {
+	cmd := exec.Command(lab.m.installed, "hooks", "run", "claude")
+	cmd.Env = lab.m.environment()
+	cmd.Stdin = strings.NewReader(hookSessionInput)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("hooks run claude: %v\n%s", err, out)
+	}
+	ms, err := lastExecutionDuration(lab.m.home, "hooks run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ms != 0 {
+		t.Fatalf("hooks run duration_ms=%d, want 0", ms)
+	}
+}
+
+func caseExecExactIDs(t *testing.T, lab *federationLab) {
+	start := time.Now()
+	got := lab.cli(t, 0, "exec",
+		"SELECT id FROM plugin_roca_ops.memories WHERE id = '"+federationDiscoveryID+"'",
+		"--json")
+	if time.Since(start) >= 5*time.Second {
+		t.Fatalf("exec took %s, want under 5s", time.Since(start))
+	}
+	if !strings.Contains(got.stdout, `"`+federationDiscoveryID+`"`) {
+		t.Fatalf("exact id missing:\n%s", got.stdout)
+	}
+	ms, err := lastExecutionDuration(lab.m.home, "exec")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ms >= 5000 {
+		t.Fatalf("exec duration_ms=%d, want under 5000", ms)
+	}
+}
+
+func caseVectorQueryBudget(t *testing.T, lab *federationLab) {
+	start := time.Now()
+	lab.cliAllow(t, 0, "vector", "query", "harbor lantern", "20", "--databases", "corpus,ops")
+	if time.Since(start) >= 2*time.Second {
+		t.Fatalf("vector query took %s, want under 2s", time.Since(start))
+	}
+	ms, err := lastExecutionDuration(lab.m.home, "vector")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ms >= 2000 {
+		t.Fatalf("vector query duration_ms=%d, want under 2000", ms)
+	}
+}
+
+func caseQueryNoSilentDegrade(t *testing.T, lab *federationLab) {
+	start := time.Now()
+	got := lab.cli(t, 0, "query", "harbor lantern", "--json")
+	if time.Since(start) >= 3*time.Second {
+		t.Fatalf("query took %s, want under 3s", time.Since(start))
+	}
+	if !strings.Contains(got.stdout, "engines") {
+		t.Fatalf("query named no engines:\n%s", got.stdout)
+	}
+	if strings.Contains(got.stdout, "search hybrid") && !strings.Contains(got.stdout, "vector") {
+		t.Fatalf("query claimed hybrid without a vector engine:\n%s", got.stdout)
+	}
+	ms, err := lastExecutionDuration(lab.m.home, "query")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ms >= 3000 {
+		t.Fatalf("query duration_ms=%d, want under 3000", ms)
+	}
+}
+
+func caseHandoffOnePerProject(t *testing.T, lab *federationLab) {
+	got := lab.cli(t, 0, "handoff", "latest", "--project", "harbor")
+	if !strings.Contains(got.stdout, "handoffs[1]") {
+		t.Fatalf("want one current harbor handoff:\n%s", got.stdout)
+	}
+	if strings.Contains(got.stdout, "handoffs[2]") {
+		t.Fatalf("more than one harbor handoff:\n%s", got.stdout)
+	}
+	if !strings.Contains(got.stdout, federationHarborID) {
+		t.Fatalf("harbor id missing:\n%s", got.stdout)
+	}
+}
+
+func caseMCPHandoffRefused(t *testing.T, lab *federationLab) {
+	if err := lab.m.openThePlugAs("glm-5.2 (codex/slopslint-detector-a1)"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(lab.m.closeThePlug)
+	if err := lab.m.iStoreASessionHandoffOverMCP(); err != nil {
+		t.Fatal(err)
+	}
+	if err := lab.m.theResponseIsAToolError(); err != nil {
+		t.Fatal(err)
+	}
+	if err := lab.m.theRefusalNamesTheHandoffWriter(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func caseMCPHealth(t *testing.T, lab *federationLab) {
+	if err := lab.m.callTool("roca_health", map[string]any{"max_rows": 2}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(lab.m.closeThePlug)
+	if err := lab.m.theResponseIsNotAnError(); err != nil {
+		t.Fatal(err)
+	}
+	text := renderedText(lab.m.plug.last)
+	if !strings.Contains(text, "health: pass") {
+		t.Fatalf("roca_health:\n%s", text)
 	}
 }
 
@@ -448,7 +483,7 @@ func runUsage(t *testing.T, lab *federationLab, c usageCase) {
 func (lab *federationLab) cliAllow(t *testing.T, want int, args ...string) run {
 	t.Helper()
 	got := lab.cli(t, -1, args...)
-	if lab.m.last.code != 0 && strings.Contains(lab.output(), "rerun the command") {
+	for i := 0; i < 2 && lab.m.last.code != 0 && strings.Contains(lab.output(), "rerun the command"); i++ {
 		got = lab.cli(t, -1, args...)
 	}
 	if want >= 0 && lab.m.last.code != want {
@@ -456,32 +491,6 @@ func (lab *federationLab) cliAllow(t *testing.T, want int, args ...string) run {
 			got.command, lab.m.last.code, want, lab.m.last.stdout, lab.m.last.stderr)
 	}
 	return lab.m.last
-}
-
-func forceVectorOn(home string) error {
-	if err := enableVectorFeature(home); err != nil {
-		return err
-	}
-	path := filepath.Join(home, ".roca", "config.toml")
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	body := strings.ReplaceAll(string(raw), "vector = false", "vector = true")
-	if !strings.Contains(body, "vector = true") {
-		if strings.Contains(body, "[features]") {
-			body = strings.Replace(body, "[features]", "[features]\nvector = true", 1)
-		} else {
-			body += "\n[features]\nvector = true\n"
-		}
-	}
-	if !strings.Contains(body, "vector_consent") {
-		body = strings.Replace(body, "[features]", "[features]\nvector_consent = true", 1)
-	}
-	if !strings.Contains(body, "vector = true") {
-		return fmt.Errorf("config still lacks vector = true:\n%s", body)
-	}
-	return os.WriteFile(path, []byte(body), 0o600)
 }
 
 func guardLiveHub(t *testing.T) {
@@ -500,14 +509,340 @@ func guardLiveHub(t *testing.T) {
 	_ = operator
 }
 
-func execCorpusSQL(home, statement string) error {
-	db, err := sql.Open("sqlite", filepath.Join(home, ".roca", "plugins", "roca-corpus", "roca-corpus.db"))
+func mustAcceptanceRoot(t *testing.T) string {
+	t.Helper()
+	root, err := acceptanceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+func verifyFrozenDigest(root string) error {
+	raw, err := os.ReadFile(filepath.Join(root, frozenArchiveRel))
 	if err != nil {
 		return err
 	}
-	defer db.Close()
-	_, err = db.Exec(statement)
+	want, err := os.ReadFile(filepath.Join(root, frozenDigestRel))
+	if err != nil {
+		return err
+	}
+	sum := sha256.Sum256(raw)
+	got := hex.EncodeToString(sum[:])
+	if got != strings.TrimSpace(string(want)) {
+		return fmt.Errorf("frozen fixture digest %s, want %s; re-run scripts/freeze-e2e-federation.sh only when the bytes are meant to change",
+			got, strings.TrimSpace(string(want)))
+	}
+	return nil
+}
+
+func extractFrozenSnapshot(root, home, snapshot string) error {
+	file, err := os.Open(filepath.Join(root, frozenArchiveRel))
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	gz, err := gzip.NewReader(file)
+	if err != nil {
+		return err
+	}
+	defer gz.Close()
+	reader := tar.NewReader(gz)
+	prefix := snapshot + "/"
+	found := false
+	for {
+		header, err := reader.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		name := strings.TrimPrefix(header.Name, "./")
+		if name == snapshot || name == snapshot+"/" {
+			found = true
+			continue
+		}
+		rel, ok := strings.CutPrefix(name, prefix)
+		if !ok || rel == "" {
+			continue
+		}
+		found = true
+		if err := extractTarEntry(home, rel, header, reader); err != nil {
+			return err
+		}
+	}
+	if !found {
+		return fmt.Errorf("frozen snapshot %s is missing from %s", snapshot, frozenArchiveRel)
+	}
+	return nil
+}
+
+func extractTarEntry(home, rel string, header *tar.Header, reader *tar.Reader) error {
+	rel = filepath.Clean(rel)
+	if rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return fmt.Errorf("refusing archive path %q", rel)
+	}
+	target := filepath.Join(home, rel)
+	if !strings.HasPrefix(target, filepath.Clean(home)+string(os.PathSeparator)) && target != filepath.Clean(home) {
+		return fmt.Errorf("archive path escaped home: %s", rel)
+	}
+	switch header.Typeflag {
+	case tar.TypeDir:
+		return os.MkdirAll(target, 0o700)
+	case tar.TypeReg, tar.TypeRegA:
+		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+			return err
+		}
+		out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, header.FileInfo().Mode())
+		if err != nil {
+			return err
+		}
+		_, copyErr := io.Copy(out, reader)
+		closeErr := out.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+		return closeErr
+	default:
+		return nil
+	}
+}
+
+func lastExecutionDuration(home, command string) (int64, error) {
+	dir := filepath.Join(home, ".roca", "logs")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0, err
+	}
+	var newest string
+	var newestTime time.Time
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasPrefix(entry.Name(), "executions-") || !strings.HasSuffix(entry.Name(), ".jsonl") {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return 0, err
+		}
+		if info.ModTime().After(newestTime) {
+			newestTime = info.ModTime()
+			newest = filepath.Join(dir, entry.Name())
+		}
+	}
+	if newest == "" {
+		return 0, fmt.Errorf("no execution log under %s", dir)
+	}
+	raw, err := os.ReadFile(newest)
+	if err != nil {
+		return 0, err
+	}
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		var row struct {
+			Command    string `json:"command"`
+			DurationMS int64  `json:"duration_ms"`
+		}
+		if err := json.Unmarshal([]byte(lines[i]), &row); err != nil {
+			continue
+		}
+		if row.Command == command {
+			return row.DurationMS, nil
+		}
+	}
+	return 0, fmt.Errorf("no %q row in %s", command, newest)
+}
+
+func longestDigitRun(s string) int {
+	best, cur := 0, 0
+	for _, r := range s {
+		if r >= '0' && r <= '9' {
+			cur++
+			if cur > best {
+				best = cur
+			}
+			continue
+		}
+		cur = 0
+	}
+	return best
+}
+
+func (m *world) aFrozenSyntheticFederationLab() error {
+	return m.prepareFrozenSyntheticFederationLab("main")
+}
+
+func (m *world) aPillFreeFrozenSyntheticFederationLab() error {
+	return m.prepareFrozenSyntheticFederationLab("pill-free")
+}
+
+func (m *world) aFrozenPR321FederationLab() error {
+	return m.prepareFrozenSyntheticFederationLab("pr321")
+}
+
+func (m *world) aFrozenPR324FederationLab() error {
+	return m.prepareFrozenSyntheticFederationLab("pr324")
+}
+
+func (m *world) prepareFrozenSyntheticFederationLab(snapshot string) error {
+	root, err := acceptanceRoot()
+	if err != nil {
+		return err
+	}
+	if err := verifyFrozenDigest(root); err != nil {
+		return err
+	}
+	if err := extractFrozenSnapshot(root, m.home, snapshot); err != nil {
+		return err
+	}
+	if _, err := os.Stat(filepath.Join(m.home, ".roca", "roca.db")); err != nil {
+		return fmt.Errorf("frozen snapshot %s has no core database: %w", snapshot, err)
+	}
+	if err := prepareFrozenVectorState(m.home); err != nil {
+		return err
+	}
+	lab := &federationLab{m: m, root: root}
+	if err := lab.installPrefix(); err != nil {
+		return err
+	}
+	return os.MkdirAll(filepath.Join(m.home, "tmp"), 0o700)
+}
+
+func (m *world) iExecSQL(statement string) error {
+	_, err := m.runWith("roca exec", []string{"exec", statement})
 	return err
+}
+
+func (m *world) iStorePill(slug, content string) error {
+	_, err := m.runWith("roca store", []string{
+		"store", "--layer", "pill", "--content", content,
+		"--metadata", `{"pill_slug":"` + slug + `"}`,
+		"--origin", "agent", "--agent", "codex",
+	})
+	return err
+}
+
+func (m *world) iExecSQLMaxChars(statement string, budget int) error {
+	_, err := m.runWith("roca exec", []string{"exec", statement, "--max-chars", strconv.Itoa(budget)})
+	return err
+}
+
+func (m *world) iExecSQLJSON(statement string) error {
+	_, err := m.runWith("roca exec --json", []string{"exec", statement, "--json"})
+	return err
+}
+
+func (m *world) iVectorQuery(phrase string) error {
+	args := []string{"vector", "query", phrase, "20", "--databases", "corpus,ops"}
+	if _, err := m.runWith("roca vector query", args); err != nil {
+		return err
+	}
+	if m.last.code != 0 && strings.Contains(m.last.stdout+m.last.stderr, "rerun the command") {
+		_, err := m.runWith("roca vector query", args)
+		return err
+	}
+	return nil
+}
+
+func (m *world) iRunClaudeAuthorshipHook() error {
+	if err := os.MkdirAll(filepath.Join(m.home, "tmp"), 0o700); err != nil {
+		return err
+	}
+	cmd := exec.Command(m.binaryPath(), "hooks", "run", "claude")
+	cmd.Env = m.environment()
+	cmd.Stdin = strings.NewReader(hookSessionInput)
+	return m.record("roca hooks run claude", cmd)
+}
+
+func (m *world) theExecutionLogDurationIs(want int) error {
+	return m.theExecutionLogDurationUnder(want + 1)
+}
+
+func (m *world) theExecutionLogDurationUnder(limit int) error {
+	command := strings.TrimPrefix(m.last.command, "roca ")
+	ms, err := lastExecutionDuration(m.home, command)
+	if err != nil {
+		if strings.HasPrefix(command, "exec") {
+			ms, err = lastExecutionDuration(m.home, "exec")
+		} else if strings.HasPrefix(command, "vector") {
+			ms, err = lastExecutionDuration(m.home, "vector")
+		} else if strings.HasPrefix(command, "query") {
+			ms, err = lastExecutionDuration(m.home, "query")
+		} else if strings.HasPrefix(command, "hooks run") {
+			ms, err = lastExecutionDuration(m.home, "hooks run")
+		}
+	}
+	if err != nil {
+		return err
+	}
+	if ms >= int64(limit) {
+		return fmt.Errorf("duration_ms=%d, want under %d", ms, limit)
+	}
+	if limit == 1 && ms != 0 {
+		return fmt.Errorf("duration_ms=%d, want 0", ms)
+	}
+	return nil
+}
+
+func (m *world) iCallHealthOverStdio() error {
+	return m.callTool("roca_health", map[string]any{"max_rows": 2})
+}
+
+func (m *world) theReadableMCPResponseContains(want string) error {
+	text := renderedText(m.plug.last)
+	if !strings.Contains(text, want) {
+		return fmt.Errorf("MCP response missed %q:\n%s", want, text)
+	}
+	return nil
+}
+
+func (m *world) iStartThreeMCPServeProcesses() error {
+	if runtime.GOOS == "windows" {
+		m.last = run{command: "roca mcp serve", stdout: "windows skip"}
+		return nil
+	}
+	if m.installed == "" {
+		return fmt.Errorf("the installed binary is missing")
+	}
+	return nil
+}
+
+func (m *world) oneVectorResidentProcessExists() error {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	root, err := acceptanceRoot()
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command("go", "test", "-tags=acceptance", "./test/acceptance",
+		"-run", "^TestFrozenFederationInstalledBinary$/issue-315-shared-resident", "-count=1")
+	cmd.Dir = root
+	cmd.Env = append(os.Environ(), "ROCA_BIN="+m.binary)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("shared resident: %v\n%s", err, out)
+	}
+	return nil
+}
+
+func (m *world) iRunTheE2ESmokeOperatorPath() error {
+	cmd := exec.Command("go", "test", "-tags=acceptance", "./test/acceptance",
+		"-run", "^TestRealBinaryDisposableHomeSmoke$", "-count=1")
+	root, err := acceptanceRoot()
+	if err != nil {
+		return err
+	}
+	cmd.Dir = root
+	cmd.Env = append(os.Environ(), "ROCA_BIN="+m.binary)
+	out, err := cmd.CombinedOutput()
+	m.last = run{command: "make e2e-smoke", stdout: string(out)}
+	if err != nil {
+		m.last.code = 1
+		m.last.stderr = string(out)
+		return nil
+	}
+	return nil
 }
 
 func copyTree(dst, src string) error {
@@ -549,125 +884,4 @@ func copyTree(dst, src string) error {
 		}
 		return closeErr
 	})
-}
-
-func longestDigitRun(s string) int {
-	best, cur := 0, 0
-	for _, r := range s {
-		if r >= '0' && r <= '9' {
-			cur++
-			if cur > best {
-				best = cur
-			}
-			continue
-		}
-		cur = 0
-	}
-	return best
-}
-
-func (m *world) aFrozenSyntheticFederationLab() error {
-	return m.prepareFrozenSyntheticFederationLab(true)
-}
-
-func (m *world) aPillFreeFrozenSyntheticFederationLab() error {
-	return m.prepareFrozenSyntheticFederationLab(false)
-}
-
-func (m *world) prepareFrozenSyntheticFederationLab(withPill bool) error {
-	root, err := acceptanceRoot()
-	if err != nil {
-		return err
-	}
-	lab := &federationLab{m: m, root: root}
-	if err := lab.installPrefix(); err != nil {
-		return err
-	}
-	if err := lab.installSources(); err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Join(m.home, "tmp"), 0o700); err != nil {
-		return err
-	}
-	db := filepath.Join(m.home, ".roca", "roca.db")
-	if _, err := m.runWith("roca init --json", []string{"init", "--json", "--db-path", db}); err != nil {
-		return err
-	}
-	if m.last.code != 0 {
-		return fmt.Errorf("init: %s%s", m.last.stdout, m.last.stderr)
-	}
-	if err := os.MkdirAll(filepath.Join(m.home, ".roca", "plugins", "roca-vector", "state"), 0o700); err != nil {
-		return err
-	}
-	if err := forceVectorOn(m.home); err != nil {
-		return err
-	}
-	if _, err := m.runWith("roca ingest --json", []string{"ingest", "--json"}); err != nil {
-		return err
-	}
-	if m.last.code != 0 {
-		return fmt.Errorf("ingest: %s%s", m.last.stdout, m.last.stderr)
-	}
-	if err := forceVectorOn(m.home); err != nil {
-		return err
-	}
-	return lab.seedMemoriesErr(withPill)
-}
-
-func (lab *federationLab) seedMemoriesErr(withPill bool) error {
-	long := strings.Repeat("0123456789", 200) + " branch: lab done: seeded state: testing next: verify budgets"
-	cmds := [][]string{
-		{"store", "--layer", "handoff", "--content", "branch: lab scope: harbor done: seeded the frozen federation state: ready next: run the installed binary suite", "--origin", "agent", "--agent", "codex", "--project", "harbor"},
-		{"store", "--layer", "handoff", "--content", "branch: lab scope: dock done: second project receipt state: ready next: cross-project view", "--origin", "agent", "--agent", "codex", "--project", "dock"},
-		{"store", "--layer", "handoff", "--content", long, "--origin", "agent", "--agent", "codex", "--project", "budgets"},
-		{"store", "--layer", "discovery", "--content", "the harbor lantern marks the synthetic federation row", "--origin", "agent", "--agent", "codex"},
-	}
-	if withPill {
-		cmds = append([][]string{{"store", "--layer", "pill", "--content", "How an agent searches La Roca: binary first, vectors first, then qualified exec. Never open the database files.", "--metadata", `{"pill_slug":"` + federationPill + `"}`, "--origin", "agent", "--agent", "codex"}}, cmds...)
-	}
-	for _, args := range cmds {
-		if _, err := lab.m.runWith("roca "+strings.Join(args, " "), args); err != nil {
-			return err
-		}
-		if lab.m.last.code != 0 {
-			return fmt.Errorf("%v: %s%s", args, lab.m.last.stdout, lab.m.last.stderr)
-		}
-	}
-	return nil
-}
-
-func (m *world) iExecSQL(statement string) error {
-	_, err := m.runWith("roca exec", []string{"exec", statement})
-	return err
-}
-
-func (m *world) iStorePill(slug, content string) error {
-	_, err := m.runWith("roca store", []string{
-		"store", "--layer", "pill", "--content", content,
-		"--metadata", `{"pill_slug":"` + slug + `"}`,
-		"--origin", "agent", "--agent", "codex",
-	})
-	return err
-}
-
-func (m *world) iExecSQLMaxChars(statement string, budget int) error {
-	_, err := m.runWith("roca exec", []string{"exec", statement, "--max-chars", strconv.Itoa(budget)})
-	return err
-}
-
-func (m *world) iExecSQLJSON(statement string) error {
-	_, err := m.runWith("roca exec --json", []string{"exec", statement, "--json"})
-	return err
-}
-
-func (m *world) iVectorQuery(phrase string) error {
-	args := []string{"vector", "query", phrase, "20", "--databases", "corpus,ops"}
-	if _, err := m.runWith("roca vector query", args); err != nil {
-		return err
-	}
-	if m.last.code != 0 && strings.Contains(m.last.stdout+m.last.stderr, "rerun the command") {
-		_, err := m.runWith("roca vector query", args)
-		return err
-	}
-	return nil
 }

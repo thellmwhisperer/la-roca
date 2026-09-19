@@ -1,6 +1,7 @@
 # Aceptacion
 
-Fixture: testdata/e2e-federation copied into a disposable HOME.
+Fixture: testdata/e2e-federation/frozen.tar.gz extracted into a disposable HOME.
+Digest: testdata/e2e-federation/frozen.sha256
 Binary: that HOME's .local/bin/roca.
 Live hub: never selected.
 
@@ -27,7 +28,7 @@ exit: 0
 stdout contains: 0
 
 ## 326
-command: roca exec SELECT content FROM plugin_roca_ops.memories WHERE layer='handoff' LIMIT 1 --max-chars 900
+command: roca exec SELECT content FROM plugin_roca_ops.memories WHERE project='budgets' --max-chars 900
 exit: 0
 stdout digit run: >= 200
 
@@ -157,3 +158,52 @@ stdout contains: vectors first
 ## 1733215
 command: roca handoff latest --project harbor
 exit: 0
+
+## real-usage-hooks
+command: roca hooks run claude
+stdin: {"hook_event_name":"SessionStart","tool_name":"","tool_input":{}}
+exit: 0
+duration_ms: 0
+
+## real-usage-exec
+command: roca exec SELECT id FROM plugin_roca_ops.memories WHERE id = '1152921504606846980' --json
+exit: 0
+duration_ms: < 5000
+stdout contains: 1152921504606846980
+
+## real-usage-vector
+command: roca vector query harbor lantern 20 --databases corpus,ops
+exit: 0
+duration_ms: < 2000
+
+## real-usage-query
+command: roca query harbor lantern --json
+exit: 0
+duration_ms: < 3000
+stdout contains: engines
+stdout does not contain: search hybrid
+
+## real-usage-handoff
+command: roca handoff latest --project harbor
+exit: 0
+stdout contains: handoffs[1]
+stdout contains: 1152921504606846977
+stdout does not contain: handoffs[2]
+
+## real-usage-mcp-handoff
+command: roca mcp serve
+tool: roca_store
+client: glm-5.2 (codex/slopslint-detector-a1)
+layer: handoff
+exit: tool error
+output contains: handoff refused
+
+## real-usage-e2e-smoke
+command: make e2e-smoke
+exit: 0
+
+## real-usage-mcp-health
+command: roca mcp serve
+tool: roca_health
+exit: 0
+stdout contains: health: pass
