@@ -137,11 +137,7 @@ func TestEnsureInstallsTheBundledResidentDataOnlyPluginAndPreservesItsDatabase(t
 }
 
 func TestEnsureDoesNotTouchTheDatabaseWhenTheInstalledVersionMatches(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "plugins")
-	bin := filepath.Join(t.TempDir(), "bin")
-	if _, err := rocaops.Ensure(root, bin, "v-test"); err != nil {
-		t.Fatal(err)
-	}
+	root, bin := installOpsFixture(t)
 	writer, err := sql.Open("sqlite", filepath.Join(root, rocaops.Name, rocaops.DatabaseFilename))
 	if err != nil {
 		t.Fatal(err)
@@ -181,11 +177,7 @@ func TestEnsureDoesNotTouchTheDatabaseWhenTheInstalledVersionMatches(t *testing.
 }
 
 func TestFreshOpsSchemaSeedsTheReservedShortMemoryRange(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "plugins")
-	bin := filepath.Join(t.TempDir(), "bin")
-	if _, err := rocaops.Ensure(root, bin, "v-test"); err != nil {
-		t.Fatal(err)
-	}
+	root, _ := installOpsFixture(t)
 	db, err := sql.Open("sqlite", filepath.Join(root, rocaops.Name, rocaops.DatabaseFilename))
 	if err != nil {
 		t.Fatal(err)
@@ -209,4 +201,14 @@ func TestFreshOpsSchemaSeedsTheReservedShortMemoryRange(t *testing.T) {
 	if !jsonid.Allocated(id) {
 		t.Fatalf("unspecified insert id = %d, want a short id", id)
 	}
+}
+
+func installOpsFixture(t *testing.T) (string, string) {
+	t.Helper()
+	root := filepath.Join(t.TempDir(), "plugins")
+	bin := filepath.Join(t.TempDir(), "bin")
+	if _, err := rocaops.Ensure(root, bin, "v-test"); err != nil {
+		t.Fatal(err)
+	}
+	return root, bin
 }
