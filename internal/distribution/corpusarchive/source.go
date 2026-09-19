@@ -35,7 +35,6 @@ type archiveRecord struct {
 	exchangeNumber   sql.NullInt64
 	ordinal          sql.NullInt64
 	statePath        sql.NullString
-	machine          sql.NullString
 }
 
 type occurrenceTracker struct {
@@ -584,13 +583,12 @@ func scanSession(rows *sql.Rows, _ *occurrenceTracker) (archiveRecord, error) {
 		endedAt, duration, title, metadata, machine}
 	return archiveRecord{
 		sourceKey:        canonicalDigest("session-key", sessionID),
-		digest:           canonicalDigest("session", currentValues...),
+		digest:           canonicalDigest("session", currentValues[:len(currentValues)-1]...),
 		currentDigest:    canonicalDigest("session-current", currentValues[1:]...),
 		destinationTable: "session_versions", values: values,
 		currentValues: currentValues,
 		sourceRowID:   sql.NullInt64{Int64: rowID, Valid: true},
 		sessionID:     sql.NullString{String: sessionID, Valid: true},
-		machine:       machine,
 	}, nil
 }
 
@@ -612,7 +610,6 @@ func scanExchange(rows *sql.Rows, tracker *occurrenceTracker) (archiveRecord, er
 		currentValues: payload.currentValues(),
 		sourceRowID:   sql.NullInt64{Int64: id, Valid: true},
 		sessionID:     payload.sessionID, exchangeNumber: payload.number, ordinal: ordinal,
-		machine: payload.machine,
 	}, nil
 }
 
@@ -629,12 +626,11 @@ func scanToolUse(rows *sql.Rows, tracker *occurrenceTracker) (archiveRecord, err
 		return archiveRecord{}, fmt.Errorf("tool use %d has no deterministic parent turn", id)
 	}
 	currentValues := []any{sessionID.String, number, name, params, hadError, errorMessage, initiative, machine}
-	digest := canonicalDigest("tool-use", currentValues...)
+	digest := canonicalDigest("tool-use", currentValues[:len(currentValues)-1]...)
 	ordinal := tracker.next(sessionID, number, digest)
 	record := childRecord("tool_use_versions", id, sessionID, number, ordinal, digest,
 		[]any{sessionID.String, number, name, hadError, initiative})
 	record.currentValues = currentValues
-	record.machine = machine
 	return record, nil
 }
 
@@ -658,7 +654,6 @@ func scanThinkingBlock(rows *sql.Rows, tracker *occurrenceTracker) (archiveRecor
 	record := childRecord("thinking_block_versions", id, sessionID, number, ordinal, digest, values)
 	record.currentValues = append(slices.Clone(values), fullText)
 	record.currentValues = append(record.currentValues, machine)
-	record.machine = machine
 	return record, nil
 }
 

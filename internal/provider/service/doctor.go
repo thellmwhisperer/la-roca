@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
@@ -76,15 +75,6 @@ type DoctorReport struct {
 	CapabilityProposals []string `json:"capability_proposals,omitempty"`
 	// Query is the effective hybrid retrieval knobs after config and defaults.
 	Query QueryDoctor `json:"query"`
-	// RemoteSources are configured HOME-shaped mirrors.
-	RemoteSources []RemoteSourceDoctor `json:"remote_sources,omitempty"`
-}
-
-// RemoteSourceDoctor is one configured mirror `roca doctor` lists.
-type RemoteSourceDoctor struct {
-	Machine string `json:"machine"`
-	Root    string `json:"root"`
-	Present bool   `json:"present"`
 }
 
 // QueryDoctor is the effective [query] hybrid knobs `roca doctor` prints.
@@ -129,11 +119,9 @@ func (s *Service) Doctor(ctx context.Context) (DoctorReport, error) {
 		Bedrock:        bedrock,
 		DetectedAgents: ingest.DetectAgents(s.opts.Sources),
 
-		PromptPath:    promptPath,
-		PromptExists:  promptErr == nil && promptInfo.Mode().IsRegular(),
-		Query:         queryDoctor(s.QuerySettings()),
-		RemoteSources: remoteSourceDoctor(s.opts.Sources),
-		Warnings:      append(slices.Clone(s.opts.ConfigWarnings), s.opts.Sources.Warnings...),
+		PromptPath:   promptPath,
+		PromptExists: promptErr == nil && promptInfo.Mode().IsRegular(),
+		Query:        queryDoctor(s.QuerySettings()),
 	}
 	unregistered, err := s.unregisteredLayers(ctx)
 	if err != nil {
@@ -150,21 +138,6 @@ func (s *Service) Doctor(ctx context.Context) (DoctorReport, error) {
 		}
 	}
 	return report, nil
-}
-
-func remoteSourceDoctor(roots ingest.Roots) []RemoteSourceDoctor {
-	if len(roots.Remotes) == 0 {
-		return nil
-	}
-	report := make([]RemoteSourceDoctor, 0, len(roots.Remotes))
-	for _, remote := range roots.Remotes {
-		entry := RemoteSourceDoctor{Machine: remote.Machine, Root: remote.Home}
-		if info, err := os.Stat(remote.Home); err == nil && info.IsDir() {
-			entry.Present = true
-		}
-		report = append(report, entry)
-	}
-	return report
 }
 
 func queryDoctor(settings search.Settings) QueryDoctor {

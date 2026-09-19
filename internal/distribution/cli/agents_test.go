@@ -74,23 +74,3 @@ func TestDoctorNamesDetectedAgents(t *testing.T) {
 		}
 	})
 }
-
-func TestDoctorListsRemoteRoots(t *testing.T) {
-	var output strings.Builder
-	renderDoctor(&cliEnv{out: &output}, service.DoctorReport{
-		RemoteSources: []service.RemoteSourceDoctor{
-			{Machine: "mini", Root: "/mirrors/mini", Present: true},
-			{Machine: "studio", Root: "/mirrors/studio", Present: false},
-		},
-	})
-	out := output.String()
-	for _, want := range []string{
-		"remote sources:",
-		"mini · /mirrors/mini · present",
-		"studio · /mirrors/studio · missing",
-	} {
-		if !strings.Contains(out, want) {
-			t.Errorf("want %q in\n%s", want, out)
-		}
-	}
-}

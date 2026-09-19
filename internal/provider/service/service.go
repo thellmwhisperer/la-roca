@@ -80,8 +80,6 @@ type Options struct {
 	// configuration names the file, never a TOML table.
 	ConfigPath   string
 	ConfigExists bool
-	// ConfigWarnings are configuration declarations this build did not understand.
-	ConfigWarnings []string
 	// Sources is where every agent's artefacts live on this machine, already
 	// resolved from the home, the environment and the configuration. It is
 	// resolved by the surface and handed over, so this object never guesses at a
