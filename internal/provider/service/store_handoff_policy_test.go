@@ -1,6 +1,7 @@
 package service_test
 
 import (
+	"database/sql"
 	"fmt"
 	"strings"
 	"testing"
@@ -220,6 +221,163 @@ func TestStoreAppliesTheHandoffPolicyThroughTheHandoverAlias(t *testing.T) {
 	if err == nil {
 		t.Fatal("handover alias skipped the handoff writer policy")
 	}
+}
+
+func TestStoreAutoSupersedesThePreviousCurrentHandoffForAProject(t *testing.T) {
+	svc, _ := serviceWithPaths(t)
+	ctx := t.Context()
+
+	tests := []struct {
+		name string
+		run  func(*testing.T)
+	}{
+		{"same project without supersedes", func(t *testing.T) {
+			first := mustStoreHandoff(t, svc, "la-roca-e2e-handoff-auto", "handoff auto A")
+			second := mustStoreHandoff(t, svc, "la-roca-e2e-handoff-auto", "handoff auto B")
+			if second.ID == first.ID {
+				t.Fatal("second store reused the first id")
+			}
+			got := memorySupersedes(t, svc, second.ID)
+			if !got.Valid || got.Int64 != first.ID {
+				t.Fatalf("second supersedes = %+v, want %d", got, first.ID)
+			}
+			if n := currentHandoffCount(t, svc, "la-roca-e2e-handoff-auto"); n != 1 {
+				t.Fatalf("current handoffs = %d, want 1", n)
+			}
+		}},
+		{"other project stays current", func(t *testing.T) {
+			alpha := mustStoreHandoff(t, svc, "alpha-handoff", "alpha first")
+			mustStoreHandoff(t, svc, "beta-handoff", "beta first")
+			if got := memorySupersedes(t, svc, alpha.ID); got.Valid {
+				t.Fatalf("other-project handoff was superseded: %+v", got)
+			}
+		}},
+		{"explicit supersedes is kept", func(t *testing.T) {
+			first := mustStoreHandoff(t, svc, "explicit-handoff", "explicit A")
+			second := mustStoreHandoff(t, svc, "explicit-handoff", "explicit B")
+			third := sessionHandoff("explicit C")
+			third.Project = "explicit-handoff"
+			third.Supersedes = first.ID
+			got, err := svc.Store(ctx, third)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pointed := memorySupersedes(t, svc, got.ID)
+			if !pointed.Valid || pointed.Int64 != first.ID {
+				t.Fatalf("explicit supersedes = %+v, want %d (not auto %d)", pointed, first.ID, second.ID)
+			}
+		}},
+		{"non-handoff layer is not auto-superseded", func(t *testing.T) {
+			first, err := svc.Store(ctx, service.StoreRequest{
+				Layer: "discovery", Project: "layer-guard", Content: "discovery A",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			second, err := svc.Store(ctx, service.StoreRequest{
+				Layer: "discovery", Project: "layer-guard", Content: "discovery B",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := memorySupersedes(t, svc, second.ID); got.Valid {
+				t.Fatalf("discovery store auto-superseded: %+v first=%d", got, first.ID)
+			}
+		}},
+		{"project-less handoffs stay independent", func(t *testing.T) {
+			first, err := svc.Store(ctx, sessionHandoff("global A"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			second, err := svc.Store(ctx, sessionHandoff("global B"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := memorySupersedes(t, svc, second.ID); got.Valid {
+				t.Fatalf("global handoff auto-superseded: %+v first=%d", got, first.ID)
+			}
+			if n := currentHandoffCount(t, svc, ""); n < 2 {
+				t.Fatalf("global currents = %d, want both", n)
+			}
+		}},
+		{"retry of the current handoff is skipped", func(t *testing.T) {
+			first := mustStoreHandoff(t, svc, "retry-handoff", "same body")
+			retry := sessionHandoff("same body")
+			retry.Project = "retry-handoff"
+			got, err := svc.Store(ctx, retry)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !got.Skipped || got.ID != first.ID {
+				t.Fatalf("retry = %+v, want skipped id %d", got, first.ID)
+			}
+		}},
+		{"handover alias auto-supersedes", func(t *testing.T) {
+			first := sessionHandoff("alias A")
+			first.Layer = "handover"
+			first.Project = "alias-handoff"
+			stored, err := svc.Store(ctx, first)
+			if err != nil {
+				t.Fatal(err)
+			}
+			second := sessionHandoff("alias B")
+			second.Layer = "handover"
+			second.Project = "alias-handoff"
+			got, err := svc.Store(ctx, second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pointed := memorySupersedes(t, svc, got.ID)
+			if !pointed.Valid || pointed.Int64 != stored.ID {
+				t.Fatalf("handover alias supersedes = %+v, want %d", pointed, stored.ID)
+			}
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, test.run)
+	}
+}
+
+func mustStoreHandoff(t *testing.T, svc *service.Service, project, body string) service.StoreResult {
+	t.Helper()
+	req := sessionHandoff(body)
+	req.Project = project
+	result, err := svc.Store(t.Context(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ID == 0 || result.Skipped {
+		t.Fatalf("store %q = %+v", body, result)
+	}
+	return result
+}
+
+func memorySupersedes(t *testing.T, svc *service.Service, id int64) sql.NullInt64 {
+	t.Helper()
+	var value sql.NullInt64
+	if err := svc.DB().SQL().QueryRow(`SELECT supersedes FROM memories WHERE id = ?`, id).Scan(&value); err != nil {
+		t.Fatal(err)
+	}
+	return value
+}
+
+func currentHandoffCount(t *testing.T, svc *service.Service, project string) int {
+	t.Helper()
+	query := `SELECT COUNT(*) FROM memories
+		WHERE layer = 'handoff' AND status = 'active'
+		  AND id NOT IN (SELECT supersedes FROM memories WHERE supersedes IS NOT NULL)`
+	var args []any
+	if project == "" {
+		query += " AND project IS NULL"
+	} else {
+		query += " AND project = ?"
+		args = append(args, project)
+	}
+	var n int
+	if err := svc.DB().SQL().QueryRow(query, args...).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
 }
 
 func sessionWriter() service.Authorship {

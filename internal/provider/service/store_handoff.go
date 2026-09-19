@@ -1,6 +1,9 @@
 package service
 
 import (
+	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"regexp"
 	"slices"
@@ -156,4 +159,54 @@ func refuseHandoffShape(content string) error {
 	return fmt.Errorf(
 		"a handoff must use the labels %s (missing or blank %s); a SUPERSEDE in prose goes with --supersedes",
 		acceptedHandoffLabels, strings.Join(missing, ", "))
+}
+
+type handoffAutoSupersede struct {
+	currentID         int64
+	currentSupersedes any
+}
+
+// planHandoffAutoSupersede fills the one-current-per-project contract when the
+// writer did not name a predecessor. An explicit supersedes, a non-handoff
+// layer, and a project-less write stay as the caller sent them.
+func planHandoffAutoSupersede(ctx context.Context, db memoryQuerier, physical string, req StoreRequest) (handoffAutoSupersede, error) {
+	if physical != "handoff" || req.Supersedes != 0 {
+		return handoffAutoSupersede{}, nil
+	}
+	project := strings.TrimSpace(req.Project)
+	if project == "" {
+		return handoffAutoSupersede{}, nil
+	}
+	id, supersedes, err := currentProjectHandoff(ctx, db, project)
+	if err != nil || id == 0 {
+		return handoffAutoSupersede{}, err
+	}
+	return handoffAutoSupersede{currentID: id, currentSupersedes: supersedes}, nil
+}
+
+func currentProjectHandoff(ctx context.Context, db memoryQuerier, project string) (int64, any, error) {
+	var id int64
+	var supersedes sql.NullInt64
+	err := db.QueryRowContext(ctx, `
+		SELECT candidate.id, candidate.supersedes
+		FROM memories AS candidate
+		WHERE candidate.layer = 'handoff'
+		  AND candidate.status = 'active'
+		  AND candidate.project = ?
+		  AND NOT EXISTS (
+		      SELECT 1 FROM memories AS replacement
+		      WHERE replacement.supersedes = candidate.id
+		  )
+		ORDER BY candidate.created_at DESC, candidate.id DESC
+		LIMIT 1`, project).Scan(&id, &supersedes)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil, nil
+	}
+	if err != nil {
+		return 0, nil, fmt.Errorf("look for the current project handoff: %w", err)
+	}
+	if supersedes.Valid {
+		return id, supersedes.Int64, nil
+	}
+	return id, nil, nil
 }

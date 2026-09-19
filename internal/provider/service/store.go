@@ -169,11 +169,29 @@ func (s *Service) Store(ctx context.Context, req StoreRequest) (result StoreResu
 		}
 	}
 	err = target.Write(ctx, func(tx *sql.Tx) error {
+		planned, err := planHandoffAutoSupersede(ctx, tx, physical, req)
+		if err != nil {
+			return err
+		}
+		if planned.currentID != 0 {
+			req.Supersedes = planned.currentID
+		}
 		payload := memoryPayload{
 			layer: physical, content: content, metadata: metadata, origin: origin,
 			sourceAgent: authorship.Agent, sourceModel: authorship.Model,
 			sourceSurface: authorship.Surface, project: orNull(req.Project), status: status,
 			supersedes: orNull(req.Supersedes), expiresAt: expiresAt,
+		}
+		if planned.currentID != 0 {
+			retry := payload
+			retry.supersedes = planned.currentSupersedes
+			if existing, Found, err := identicalMemory(ctx, tx, retry, s.opts.RocaOpsEnabled); err != nil {
+				return err
+			} else if Found && existing == planned.currentID {
+				result.ID, result.Skipped = existing, true
+				result.DuplicateSource, result.DuplicateSurface = authorship.Agent, authorship.Surface
+				return nil
+			}
 		}
 		if existing, Found, err := identicalMemory(ctx, tx, payload, s.opts.RocaOpsEnabled); err != nil {
 			return err
