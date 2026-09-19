@@ -421,7 +421,7 @@ var usoCases = []usageCase{
 func runUsage(t *testing.T, lab *federationLab, c usageCase) {
 	t.Helper()
 	if c.id == "4269" {
-		cmd := exec.Command("roca", "version")
+		cmd := exec.Command("sh", "-c", "roca version")
 		cmd.Env = []string{
 			"HOME=" + lab.m.home,
 			"PATH=" + filepath.Dir(lab.m.installed),
