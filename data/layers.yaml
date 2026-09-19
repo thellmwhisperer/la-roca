@@ -96,6 +96,19 @@ layers:
       load_at_session_start: true
     hints: [handoff, handoffs]
 
+  - name: handoff-retirement
+    description: Internal markers that retire branched handoff heads.
+    ingest_allowed: false
+    is_coordination: false
+    search_excluded: true
+    alias_of:
+    deprecated: false
+    added_by: kernel
+    since_version: 1.87.3
+    lifecycle: internal
+    capabilities: {}
+    hints: []
+
   - name: handover
     description: Accepted on ingest; normalized to handoff before write.
     ingest_allowed: true

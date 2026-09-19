@@ -253,8 +253,11 @@ func TestStoreAutoSupersedesThePreviousCurrentHandoffForAProject(t *testing.T) {
 			if got := memorySupersedes(t, svc, third.ID); !got.Valid || got.Int64 != second {
 				t.Fatalf("new handoff supersedes = %+v, want %d", got, second)
 			}
-			if got := memorySupersedes(t, svc, second); !got.Valid || got.Int64 != first {
-				t.Fatalf("repaired handoff supersedes = %+v, want %d", got, first)
+			if got := memorySupersedes(t, svc, first); got.Valid {
+				t.Fatalf("repaired handoff predecessor changed = %+v", got)
+			}
+			if !memoryIsSuperseded(t, svc, first) {
+				t.Fatalf("older handoff %d is still current", first)
 			}
 			if n := currentHandoffCount(t, svc, project); n != 1 {
 				t.Fatalf("repaired current handoffs = %d, want 1", n)
@@ -288,6 +291,13 @@ func TestStoreAutoSupersedesThePreviousCurrentHandoffForAProject(t *testing.T) {
 			if n := issueCurrentHandoffCount(t, svc, project); n != 1 {
 				t.Fatalf("issue non-superseded count = %d, want 1", n)
 			}
+			report, err := svc.Health(ctx, service.HealthRequest{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if report.Checks["runtime_layers_not_in_registry"].Status != service.HealthPass {
+				t.Fatalf("runtime layer health = %+v", report.Checks["runtime_layers_not_in_registry"])
+			}
 		}},
 		{"inactive handoffs do not retire the active head", func(t *testing.T) {
 			for _, status := range []string{"pending", "resolved"} {
@@ -309,23 +319,23 @@ func TestStoreAutoSupersedesThePreviousCurrentHandoffForAProject(t *testing.T) {
 				})
 			}
 		}},
-		{"trimmed project identity is stored consistently", func(t *testing.T) {
-			first := mustStoreHandoff(t, svc, "trimmed-handoff", "trimmed A")
+		{"project identity stays exact", func(t *testing.T) {
+			mustStoreHandoff(t, svc, "trimmed-handoff", "trimmed A")
 			second := sessionHandoff("trimmed B")
 			second.Project = " trimmed-handoff "
 			stored, err := svc.Store(ctx, second)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := memorySupersedes(t, svc, stored.ID); !got.Valid || got.Int64 != first.ID {
-				t.Fatalf("trimmed project supersedes = %+v, want %d", got, first.ID)
+			if got := memorySupersedes(t, svc, stored.ID); got.Valid {
+				t.Fatalf("distinct project identity supersedes = %+v", got)
 			}
 			var project string
 			if err := svc.DB().SQL().QueryRow("SELECT project FROM memories WHERE id = ?", stored.ID).Scan(&project); err != nil {
 				t.Fatal(err)
 			}
-			if project != "trimmed-handoff" {
-				t.Fatalf("stored project = %q, want trimmed identity", project)
+			if project != " trimmed-handoff " {
+				t.Fatalf("stored project = %q, want exact identity", project)
 			}
 		}},
 		{"other project stays current", func(t *testing.T) {
@@ -395,6 +405,29 @@ func TestStoreAutoSupersedesThePreviousCurrentHandoffForAProject(t *testing.T) {
 				t.Fatalf("retry = %+v, want skipped id %d", got, first.ID)
 			}
 		}},
+		{"retry repairs all current heads before skipping", func(t *testing.T) {
+			project := "retry-repair-handoff"
+			first := insertHandoffRow(t, svc, project, "retry A", "2026-08-01 00:00:00", 0)
+			second := insertHandoffRow(t, svc, project, "retry B", "2026-08-02 00:00:00", 0)
+			retry := sessionHandoff("retry B")
+			retry.Project = project
+			got, err := svc.Store(ctx, retry)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !got.Skipped || got.ID != second {
+				t.Fatalf("retry = %+v, want skipped id %d", got, second)
+			}
+			if memorySupersedes(t, svc, first).Valid {
+				t.Fatal("repair overwrote the older handoff predecessor")
+			}
+			if !memoryIsSuperseded(t, svc, first) {
+				t.Fatalf("older current handoff %d was not retired", first)
+			}
+			if n := currentHandoffCount(t, svc, project); n != 1 {
+				t.Fatalf("current handoffs = %d, want 1", n)
+			}
+		}},
 		{"handover alias auto-supersedes", func(t *testing.T) {
 			first := sessionHandoff("alias A")
 			first.Layer = "handover"
@@ -447,9 +480,9 @@ func memorySupersedes(t *testing.T, svc *service.Service, id int64) sql.NullInt6
 func insertHandoffRow(t *testing.T, svc *service.Service, project, body, createdAt string, supersedes int64) int64 {
 	t.Helper()
 	result, err := svc.DB().SQL().Exec(
-		`INSERT INTO memories (layer, content, origin, source_agent, source_model, source_surface, project, status, supersedes, created_at)
-		 VALUES ('handoff', ?, 'agent', 'claude', 'sonnet', 'cli', ?, 'active', ?, ?)`,
-		shapedHandoff(body), project, orNullInt64(supersedes), createdAt)
+		`INSERT INTO memories (layer, content, metadata, origin, source_agent, source_model, source_surface, project, status, supersedes, created_at)
+		 VALUES ('handoff', ?, '{}', 'agent', 'claude', 'sonnet', 'cli', ?, 'active', ?, ?)`,
+		strings.TrimSpace(shapedHandoff(body)), project, orNullInt64(supersedes), createdAt)
 	if err != nil {
 		t.Fatal(err)
 	}

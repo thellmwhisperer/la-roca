@@ -127,9 +127,6 @@ func (s *Service) Store(ctx context.Context, req StoreRequest) (result StoreResu
 	if err != nil {
 		return StoreResult{}, err
 	}
-	if physical == "handoff" {
-		req.Project = strings.TrimSpace(req.Project)
-	}
 	metadata, err := encodeMetadata(req.Metadata)
 	if err != nil {
 		return StoreResult{}, err
@@ -185,6 +182,9 @@ func (s *Service) Store(ctx context.Context, req StoreRequest) (result StoreResu
 			sourceSurface: authorship.Surface, project: orNull(req.Project), status: status,
 			supersedes: orNull(req.Supersedes), expiresAt: expiresAt,
 		}
+		if err := repairHandoffHeads(ctx, tx, planned.currentIDs); err != nil {
+			return err
+		}
 		if planned.currentID != 0 {
 			retry := payload
 			retry.supersedes = planned.currentSupersedes
@@ -195,9 +195,6 @@ func (s *Service) Store(ctx context.Context, req StoreRequest) (result StoreResu
 				result.DuplicateSource, result.DuplicateSurface = authorship.Agent, authorship.Surface
 				return nil
 			}
-		}
-		if err := repairHandoffHeads(ctx, tx, planned.currentIDs); err != nil {
-			return err
 		}
 		if existing, Found, err := identicalMemory(ctx, tx, payload, s.opts.RocaOpsEnabled); err != nil {
 			return err

@@ -173,7 +173,7 @@ func planHandoffAutoSupersede(ctx context.Context, db memoryQuerier, physical st
 	if physical != "handoff" || status != "active" || req.Supersedes != 0 {
 		return handoffAutoSupersede{}, nil
 	}
-	project := strings.TrimSpace(req.Project)
+	project := req.Project
 	if project == "" {
 		return handoffAutoSupersede{}, nil
 	}
@@ -234,21 +234,9 @@ func currentProjectHandoffs(ctx context.Context, db memoryQuerier, project strin
 // incoming store will supersede. It never overwrites a head that already names
 // a predecessor: that rewrite would drop the old pointer and resurrect it.
 func repairHandoffHeads(ctx context.Context, db *sql.Tx, currentIDs []int64) error {
-	for i := 1; i < len(currentIDs); i++ {
-		var previous sql.NullInt64
-		if err := db.QueryRowContext(ctx,
-			`SELECT supersedes FROM memories WHERE id = ?`, currentIDs[i]).Scan(&previous); err != nil {
-			return fmt.Errorf("read current project handoff predecessor: %w", err)
-		}
-		if previous.Valid {
-			if err := retireHandoffHead(ctx, db, currentIDs[i-1]); err != nil {
-				return err
-			}
-			continue
-		}
-		if _, err := db.ExecContext(ctx,
-			`UPDATE memories SET supersedes = ? WHERE id = ?`, currentIDs[i-1], currentIDs[i]); err != nil {
-			return fmt.Errorf("repair current project handoff heads: %w", err)
+	for _, id := range currentIDs[:max(0, len(currentIDs)-1)] {
+		if err := retireHandoffHead(ctx, db, id); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -270,7 +258,7 @@ func retireHandoffHead(ctx context.Context, db *sql.Tx, id int64) error {
 	}
 	_, err := db.ExecContext(ctx, `
 		INSERT INTO memories (layer, content, origin, source_agent, source_model, source_surface, project, status, supersedes)
-		VALUES ('knowledge', 'retired a parallel current handoff', 'agent', 'unknown', 'unknown', 'cli', ?, 'resolved', ?)`,
+		VALUES ('handoff-retirement', 'retired a parallel current handoff', 'agent', 'unknown', 'unknown', 'unknown', ?, 'resolved', ?)`,
 		project, id)
 	if err != nil {
 		return fmt.Errorf("retire a parallel current handoff: %w", err)
