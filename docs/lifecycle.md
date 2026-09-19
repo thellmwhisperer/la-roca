@@ -200,7 +200,10 @@ worker `state/` directory is preserved byte for byte. An unowned or externally
 sourced vector installation is named and left untouched instead of being
 overwritten. Existing data, configuration and agent integrations remain in
 place. If bundled placement or verification fails, the previous core remains
-active.
+active. Leftover exact-payload session clones do not fail corpus place: the
+prior uniqueness guard stays and new nullable columns still land. Read-only
+`roca doctor` and `roca vector query` answer when the only schema gap is
+missing nullable columns; a writable open adopts those columns.
 
 The `roca`, `roca-operations`, and `roca-vector` skills, the generated
 `roca-semantica` catalog skill, `prompt.md`, and

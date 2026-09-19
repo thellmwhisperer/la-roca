@@ -213,6 +213,19 @@ func preflightHashGuards(ctx context.Context, db *sql.DB) error {
 		}
 		return fmt.Errorf("preflight hash guards: %w", err)
 	}
+	installed, err := exactdedup.GuardsInstalled(ctx, tx)
+	if err != nil {
+		if rollbackErr := tx.Rollback(); rollbackErr != nil {
+			return fmt.Errorf("preflight hash guards: %v; rollback preflight: %w", err, rollbackErr)
+		}
+		return fmt.Errorf("preflight hash guards: %w", err)
+	}
+	if !installed {
+		if rollbackErr := tx.Rollback(); rollbackErr != nil {
+			return fmt.Errorf("preflight hash guards: exact duplicates remain; rollback preflight: %w", rollbackErr)
+		}
+		return fmt.Errorf("preflight hash guards: exact duplicates remain; run the exact dedup dry-run and apply first")
+	}
 	if err := tx.Rollback(); err != nil {
 		return fmt.Errorf("rollback hash-guard preflight: %w", err)
 	}

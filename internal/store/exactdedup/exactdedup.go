@@ -691,6 +691,16 @@ func EnsureTableGuards(ctx context.Context, db queryExecutor, only ...string) er
 		if err == nil && normalizeDDL(installed.String) == normalizeDDL(statement) {
 			continue
 		}
+		duplicates, dupErr := exactPayloadDuplicateGroups(ctx, db, spec)
+		if dupErr != nil {
+			return dupErr
+		}
+		if duplicates > 0 {
+			// Leave the prior index in place. Schema adoption and bundled
+			// plugin place must finish when leftover exact clones block a
+			// newer unique expression.
+			continue
+		}
 		if err == nil {
 			if _, err := db.ExecContext(ctx, "DROP INDEX "+name); err != nil {
 				return fmt.Errorf("refresh exact-payload guard %s: %w", name, err)
@@ -705,6 +715,16 @@ func EnsureTableGuards(ctx context.Context, db queryExecutor, only ...string) er
 		}
 	}
 	return nil
+}
+
+func exactPayloadDuplicateGroups(ctx context.Context, db querier, spec tableSpec) (int, error) {
+	query := fmt.Sprintf(`SELECT COUNT(*) FROM (SELECT %s FROM %s GROUP BY 1 HAVING COUNT(*) > 1)`,
+		guardKeyExpression(spec.payload), spec.name)
+	var groups int
+	if err := db.QueryRowContext(ctx, query).Scan(&groups); err != nil {
+		return 0, fmt.Errorf("count exact %s duplicates before refreshing the guard: %w", spec.name, err)
+	}
+	return groups, nil
 }
 
 func guardKeyExpression(names []string) string {
