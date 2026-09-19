@@ -81,16 +81,21 @@ codex-identity-test: build ## Paired Codex session identity regression on a decl
 	ROCA_BIN=$(abspath $(BIN)) go test -tags=acceptance ./test/acceptance -run '^TestCodexIdentityPublished$$' -v -count=1
 
 .PHONY: accept accept-index split-oracle e2e-smoke e2e-federation
+ROCA_PUBLISHED_BIN ?= $(shell command -v roca 2>/dev/null)
+ROCA_E2E_VECTOR_MODEL ?= $(HOME)/.roca/models/nomic-embed-text-v2-moe/a5db3381f2e514d3490a3a31fe70eb1a65e95016c85c6c2c23223b810806594f.gguf
 # Pin the suite to the artefact this recipe's `build` just wrote. An inherited
 # ROCA_BIN, including a stub, cannot select a different binary.
 accept: build accept-index ## The godog acceptance suites against the real binary
 	ROCA_BIN=$(BIN) ROCA_PLAYGROUND_INTEGRATION= ROCA_PLAYGROUND_FEATURES= ROCA_PUBLISHED_BIN= ROCA_AUDIT_PUBLISHED_BIN= go test -tags=acceptance ./test/acceptance -count=1
 
 e2e-smoke: build ## Real binary in a disposable home: init, ingest, query, plugin install and update
-	ROCA_BIN=$(BIN) ROCA_PLAYGROUND_INTEGRATION= ROCA_PLAYGROUND_FEATURES= ROCA_PUBLISHED_BIN= go test -tags=acceptance ./test/acceptance -run '^TestRealBinaryDisposableHomeSmoke$$' -count=1
+	@test -x "$(ROCA_PUBLISHED_BIN)" || { echo "set ROCA_PUBLISHED_BIN to an installed published release" >&2; exit 1; }
+	ROCA_BIN=$(BIN) ROCA_PLAYGROUND_INTEGRATION= ROCA_PLAYGROUND_FEATURES= ROCA_PUBLISHED_BIN="$(ROCA_PUBLISHED_BIN)" go test -tags=acceptance ./test/acceptance -run '^(TestPublishedReleaseUpdateInitSmoke|TestRealBinaryDisposableHomeSmoke)$$' -count=1
 
 e2e-federation: build ## Installed binary against the frozen synthetic federation fixture
-	ROCA_BIN=$(BIN) ROCA_PLAYGROUND_INTEGRATION= ROCA_PLAYGROUND_FEATURES= ROCA_PUBLISHED_BIN= go test -tags=acceptance ./test/acceptance -run '^TestFrozenFederationInstalledBinary$$' -count=1 -v
+	@test -x "$(ROCA_PUBLISHED_BIN)" || { echo "set ROCA_PUBLISHED_BIN to an installed published release" >&2; exit 1; }
+	@test -f "$(ROCA_E2E_VECTOR_MODEL)" || { echo "set ROCA_E2E_VECTOR_MODEL to the pinned embedding model" >&2; exit 1; }
+	ROCA_BIN=$(BIN) ROCA_PLAYGROUND_INTEGRATION= ROCA_PLAYGROUND_FEATURES= ROCA_PUBLISHED_BIN="$(ROCA_PUBLISHED_BIN)" ROCA_E2E_VECTOR_MODEL="$(ROCA_E2E_VECTOR_MODEL)" go test -tags=acceptance ./test/acceptance -run '^TestFrozenFederationInstalledBinary$$' -count=1 -v
 
 split-oracle: build ## Record and replay the DATA SPLIT compatibility goldens
 	ROCA_BIN=$(BIN) ROCA_PLAYGROUND_INTEGRATION= ROCA_PLAYGROUND_FEATURES= ROCA_PUBLISHED_BIN= go test -tags=acceptance ./test/acceptance -run '^TestDataSplitCompatibilityOracle$$' -count=1

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -119,6 +120,56 @@ func TestRealBinaryDisposableHomeSmoke(t *testing.T) {
 
 	if _, err := os.Stat(livePlugin); !os.IsNotExist(err) {
 		t.Fatal("the smoke plugin landed outside the disposable home")
+	}
+}
+
+// TestPublishedReleaseUpdateInitSmoke starts from an actual published binary,
+// updates it through the real release protocol to the branch artefact, and
+// initializes an otherwise clean disposable HOME with the updated executable.
+func TestPublishedReleaseUpdateInitSmoke(t *testing.T) {
+	published := strings.TrimSpace(os.Getenv("ROCA_PUBLISHED_BIN"))
+	if published == "" {
+		t.Fatal("ROCA_PUBLISHED_BIN is required for the published update smoke")
+	}
+	info, err := os.Stat(published)
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
+		t.Fatalf("published binary %s is not executable: %v", published, err)
+	}
+	version, err := exec.Command(published, "version").CombinedOutput()
+	if err != nil || !strings.HasPrefix(string(version), "roca v") || strings.Contains(string(version), "dirty") {
+		t.Fatalf("ROCA_PUBLISHED_BIN is not a published release: %v\n%s", err, version)
+	}
+
+	binary, err := rocaBinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	home, err := acceptanceTempDir("roca-published-update-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(home) })
+	if err := os.MkdirAll(filepath.Join(home, "tmp"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	m := &world{binary: binary, home: home, releaseStamped: published}
+	t.Cleanup(m.closeTheChannel)
+	channel := m.theChannel()
+	if err := m.installBinary(); err != nil {
+		t.Fatal(err)
+	}
+	channel.publishNew = true
+	updated, err := m.run("roca update")
+	if err != nil || updated.code != 0 {
+		t.Fatalf("published update: %v, code %d\n%s%s", err, updated.code, updated.stdout, updated.stderr)
+	}
+	initialized, err := m.run(m.initCommand(true))
+	if err != nil || initialized.code != 0 {
+		t.Fatalf("init after published update: %v, code %d\n%s%s", err, initialized.code, initialized.stdout, initialized.stderr)
+	}
+	var result map[string]any
+	if err := json.Unmarshal([]byte(initialized.stdout), &result); err != nil || result["database"] != "created" {
+		t.Fatalf("init did not create the clean home: %v\n%s", err, initialized.stdout)
 	}
 }
 

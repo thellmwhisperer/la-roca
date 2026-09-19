@@ -30,6 +30,7 @@ const (
 	federationHarborID    = "1152921504606846977"
 	frozenArchiveRel      = "testdata/e2e-federation/frozen.tar.gz"
 	frozenDigestRel       = "testdata/e2e-federation/frozen.sha256"
+	vectorModelSHA        = "a5db3381f2e514d3490a3a31fe70eb1a65e95016c85c6c2c23223b810806594f"
 	hookSessionInput      = `{"hook_event_name":"SessionStart","tool_name":"","tool_input":{}}`
 )
 
@@ -68,14 +69,13 @@ func TestFrozenFederationInstalledBinary(t *testing.T) {
 	t.Run("real-usage-query-no-silent-degrade", func(t *testing.T) { caseQueryNoSilentDegrade(t, seeded) })
 	t.Run("real-usage-handoff-one-per-project", func(t *testing.T) { caseHandoffOnePerProject(t, seeded) })
 	t.Run("real-usage-mcp-handoff-refused", func(t *testing.T) { caseMCPHandoffRefused(t, seeded) })
-	t.Run("real-usage-e2e-smoke", TestRealBinaryDisposableHomeSmoke)
+	t.Run("real-usage-e2e-smoke", TestPublishedReleaseUpdateInitSmoke)
 	t.Run("real-usage-mcp-health", func(t *testing.T) { caseMCPHealth(t, seeded) })
 }
 
 type federationLab struct {
-	t    *testing.T
-	m    *world
-	root string
+	t *testing.T
+	m *world
 }
 
 func newFederationLab(t *testing.T, snapshot string) *federationLab {
@@ -100,23 +100,42 @@ func newFederationLab(t *testing.T, snapshot string) *federationLab {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lab := &federationLab{t: t, m: &world{binary: built, home: home}, root: root}
+	lab := &federationLab{t: t, m: &world{binary: built, home: home}}
 	if err := extractFrozenSnapshot(root, home, snapshot); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(home, ".roca", "roca.db")); err != nil {
 		t.Fatalf("frozen snapshot %s has no core database: %v", snapshot, err)
 	}
-	if err := prepareFrozenVectorState(home); err != nil {
+	if err := installFrozenVectorModel(home); err != nil {
 		t.Fatal(err)
 	}
 	if err := lab.installPrefix(); err != nil {
+		t.Fatal(err)
+	}
+	if err := prepareFrozenVectorState(home); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(home, "tmp"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	return lab
+}
+
+func installFrozenVectorModel(home string) error {
+	source := strings.TrimSpace(os.Getenv("ROCA_E2E_VECTOR_MODEL"))
+	if source == "" {
+		return fmt.Errorf("ROCA_E2E_VECTOR_MODEL is required for the ready-index acceptance path")
+	}
+	info, err := os.Stat(source)
+	if err != nil || !info.Mode().IsRegular() {
+		return fmt.Errorf("pinned embedding model %s is not a regular file: %w", source, err)
+	}
+	directory := filepath.Join(home, ".roca", "models", "nomic-embed-text-v2-moe")
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		return err
+	}
+	return os.Symlink(source, filepath.Join(directory, vectorModelSHA+".gguf"))
 }
 
 func prepareFrozenVectorState(home string) error {
@@ -143,28 +162,18 @@ func (lab *federationLab) installPrefix() error {
 	if err := os.WriteFile(filepath.Join(binDir, "roca"), raw, 0o755); err != nil {
 		return err
 	}
-	if err := installVectorCompanion(lab.root, filepath.Dir(target), binDir); err != nil {
+	lab.m.installed = target
+	command := exec.Command(target, "--db-path", filepath.Join(lab.m.home, ".roca", "roca.db"),
+		"--json", "_install-bundled-plugins")
+	command.Env = lab.m.environment()
+	if output, err := command.CombinedOutput(); err != nil {
+		return fmt.Errorf("install bundled plugins in frozen home: %w\n%s", err, output)
+	}
+	vector, err := os.ReadFile(filepath.Join(filepath.Dir(target), "roca-vector"))
+	if err != nil {
 		return err
 	}
-	lab.m.installed = target
-	return nil
-}
-
-func installVectorCompanion(root string, dirs ...string) error {
-	src := filepath.Join(root, ".tmp", "roca-vector-native")
-	raw, err := os.ReadFile(src)
-	if err != nil {
-		return nil
-	}
-	for _, dir := range dirs {
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return err
-		}
-		if err := os.WriteFile(filepath.Join(dir, "roca-vector"), raw, 0o755); err != nil {
-			return err
-		}
-	}
-	return nil
+	return os.WriteFile(filepath.Join(binDir, "roca-vector"), vector, 0o755)
 }
 
 func (lab *federationLab) cli(t *testing.T, want int, args ...string) run {
@@ -484,10 +493,28 @@ func caseExecExactIDs(t *testing.T, lab *federationLab) {
 }
 
 func caseVectorQueryBudget(t *testing.T, lab *federationLab) {
+	// The resident pays the native model load once; the operator path being
+	// budgeted is the ready, already-warm index used by subsequent queries.
+	lab.cli(t, 0, "vector", "query", "warm harbor index", "1", "--databases", "corpus,ops", "--json")
 	start := time.Now()
-	lab.cliAllow(t, 0, "vector", "query", "harbor lantern", "20", "--databases", "corpus,ops")
+	got := lab.cli(t, 0, "vector", "query", "harbor lantern", "20", "--databases", "corpus,ops", "--json")
 	if time.Since(start) >= 2*time.Second {
 		t.Fatalf("vector query took %s, want under 2s", time.Since(start))
+	}
+	var answer struct {
+		VectorExecuted bool     `json:"vector_executed"`
+		Notices        []string `json:"notices"`
+	}
+	if err := json.Unmarshal([]byte(got.stdout), &answer); err != nil {
+		t.Fatalf("vector query is not JSON: %v\n%s", err, got.stdout)
+	}
+	if !answer.VectorExecuted {
+		t.Fatalf("vector query did not execute the ready index: notices=%v\n%s", answer.Notices, got.stdout)
+	}
+	for _, notice := range answer.Notices {
+		if strings.Contains(strings.ToLower(notice), "fts-only") || strings.Contains(strings.ToLower(notice), "unavailable") {
+			t.Fatalf("vector query degraded despite the ready index: %s", notice)
+		}
 	}
 	ms, err := lastExecutionDuration(lab.m.home, "vector")
 	if err != nil {
@@ -840,11 +867,11 @@ func (m *world) prepareFrozenSyntheticFederationLab(snapshot string) error {
 	if _, err := os.Stat(filepath.Join(m.home, ".roca", "roca.db")); err != nil {
 		return fmt.Errorf("frozen snapshot %s has no core database: %w", snapshot, err)
 	}
-	if err := prepareFrozenVectorState(m.home); err != nil {
+	lab := &federationLab{m: m}
+	if err := lab.installPrefix(); err != nil {
 		return err
 	}
-	lab := &federationLab{m: m, root: root}
-	if err := lab.installPrefix(); err != nil {
+	if err := prepareFrozenVectorState(m.home); err != nil {
 		return err
 	}
 	return os.MkdirAll(filepath.Join(m.home, "tmp"), 0o700)

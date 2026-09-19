@@ -10,9 +10,17 @@ if [ ! -x bin/roca ]; then
   exit 1
 fi
 
-stage="$(mktemp -d /tmp/roca-e2e-federation.XXXXXX)"
+mkdir -p .tmp
+stage="$(mktemp -d "$(pwd)/.tmp/roca-e2e-federation.XXXXXX")"
 cleanup() { rm -rf "$stage"; }
 trap cleanup EXIT
+
+model="${ROCA_E2E_VECTOR_MODEL:-}"
+if [ ! -f "$model" ]; then
+  echo "set ROCA_E2E_VECTOR_MODEL to the pinned embedding model" >&2
+  exit 1
+fi
+model_sha="a5db3381f2e514d3490a3a31fe70eb1a65e95016c85c6c2c23223b810806594f"
 
 roca="$(pwd)/bin/roca"
 root="$(pwd)"
@@ -43,6 +51,10 @@ if "vector_consent" not in body:
     body = body.replace("[features]", "[features]\nvector_consent = true", 1)
 path.write_text(body)
 PY
+  env -i HOME="$home" PATH="$home/bin:/usr/bin:/bin" TMPDIR="$home/tmp" ROCA_MODELS_ORDER=none \
+    "$home/bin/roca" --db-path "$home/.roca/roca.db" --json _install-bundled-plugins >/dev/null
+  mkdir -p "$home/.roca/models/nomic-embed-text-v2-moe"
+  ln -s "$model" "$home/.roca/models/nomic-embed-text-v2-moe/$model_sha.gguf"
 }
 
 copy_sources() {
@@ -105,9 +117,26 @@ init_home "$pr324"
 copy_sources "$pr324"
 apply_sql "$pr324/.roca/plugins/roca-corpus/roca-corpus.db" testdata/e2e-federation/seed/pr324-stem.sql
 
-# Optional tiny vector sidecars. A missing model is not a freeze failure.
-for home in "$main" "$pill_free"; do
-  run_roca "$home" vector ingest --delta >/dev/null 2>&1 || true
+# The ready sidecars are part of the frozen contract. The large pinned model is
+# supplied only while freezing and is deliberately excluded from the archive.
+for home in "$main"; do
+  rm -f "$home/.roca/plugins/.roca-vector.relocation.lock"
+  state="$home/.roca/plugins/roca-vector/state"
+  mkdir -p "$state"
+  run_roca "$home" vector install --json >/dev/null
+  for _ in $(seq 1 600); do
+    [ -f "$state/completion.json" ] && break
+    sleep 0.1
+  done
+  python3 - "$state/completion.json" <<'PY_COMPLETION'
+import json, pathlib, sys
+path = pathlib.Path(sys.argv[1])
+if not path.is_file():
+    raise SystemExit("vector freeze worker did not complete")
+completion = json.loads(path.read_text())
+if completion.get("exit_status") != 0:
+    raise SystemExit(f"vector freeze worker failed: {completion}")
+PY_COMPLETION
 done
 
 archive_root="$stage/archive"
@@ -116,9 +145,10 @@ for name in main pill-free pr321 pr324; do
   src="$stage/$name"
   dest="$archive_root/$name"
   mkdir -p "$dest"
-  rm -rf "$src/.roca/logs" "$src/tmp" "$src/bin"
+  rm -rf "$src/.roca/logs" "$src/.roca/models" "$src/tmp" "$src/bin"
+  rm -rf "$src/.roca/plugins/roca-vector"
+  rm -f "$src/.local/bin/roca-vector"
   rm -f "$src/.roca/plugins/.roca-vector.relocation.lock"
-  mkdir -p "$src/.roca/plugins/roca-vector/state"
   cp -R "$src/." "$dest/"
 done
 
