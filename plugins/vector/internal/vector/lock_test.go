@@ -55,7 +55,9 @@ func TestClearUnheldIndexLocksRemovesAStaleFileAndLeavesAHeldOne(t *testing.T) {
 	}
 	defer release()
 
-	ClearUnheldIndexLocks([]string{stale, live})
+	if err := ClearUnheldIndexLocks([]string{stale, live}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := os.Stat(stale + ".index.lock"); !os.IsNotExist(err) {
 		t.Fatalf("stale lock still present: %v", err)
 	}

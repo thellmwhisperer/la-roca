@@ -206,7 +206,7 @@ func ingestCommand(env *environment) *cobra.Command {
 		Use:   "ingest --delta",
 		Short: "Embed only new or changed chunks from declared databases",
 		Args:  cobra.NoArgs,
-		RunE: func(command *cobra.Command, _ []string) error {
+		RunE: func(command *cobra.Command, _ []string) (err error) {
 			if !delta {
 				return fmt.Errorf("vector ingest is incremental; pass --delta")
 			}
@@ -260,8 +260,10 @@ func ingestCommand(env *environment) *cobra.Command {
 			if federated {
 				sidecars = federation.SidecarPaths()
 			}
-			vector.ClearUnheldIndexLocks(sidecars)
-			defer vector.ClearUnheldIndexLocks(sidecars)
+			if err := vector.ClearUnheldIndexLocks(sidecars); err != nil {
+				return err
+			}
+			defer func() { err = errors.Join(err, vector.ClearUnheldIndexLocks(sidecars)) }()
 			if err := env.calmGate().Wait(command.Context()); err != nil {
 				return err
 			}
