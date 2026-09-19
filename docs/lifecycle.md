@@ -214,9 +214,12 @@ can remove the clone. Read-only
 missing `machine` column on one of the four harvest tables; a writable open
 adopts those columns. If an installed bundled plugin ledger is already newer
 than this binary, place leaves that identity and physical shape untouched
-instead of rolling the update back. Attach accepts extra physical columns the
-current semantic layer has not declared yet, so doctor and vector query do not
-skip the plugin for that class of ahead-of-binary drift.
+instead of rolling the update back. Attach accepts extra physical columns on a
+bundled plugin the current semantic layer has not declared yet, so doctor and
+vector query do not skip that plugin for ahead-of-binary drift. Third-party and
+legacy plugins still require an exact column match. `SELECT *` against an ahead
+bundled table is refused, including bracket-quoted and backtick-quoted schema
+names.
 
 The `roca`, `roca-operations`, and `roca-vector` skills, the generated
 `roca-semantica` catalog skill, `prompt.md`, and

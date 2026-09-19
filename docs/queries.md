@@ -116,10 +116,11 @@ right operand is qualified, the gate prints this form. When an authored query
 names an unknown column, the error also lists the visible columns of the tables
 that query referenced.
 
-When a plugin database has extra physical columns that its installed semantic
-layer does not yet declare, name the result columns explicitly. `SELECT *` and
-qualified wildcard result columns are refused for queries that reference that
-plugin, so an older binary cannot expose an undeclared column by accident.
+When a bundled plugin database has extra physical columns that its installed
+semantic layer does not yet declare, name the result columns explicitly.
+`SELECT *` and qualified wildcard result columns are refused for queries that
+reference that plugin, including bracket-quoted and backtick-quoted schema
+names, so an older binary cannot expose an undeclared column by accident.
 Doctor, vector queries, and explicit-column `roca exec` reads continue to use
 the plugin.
 

@@ -42,6 +42,16 @@ func TestFixturePluginsDiscoverValidateAndDeclareCustody(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := plugin.Validate(context.Background(), byName["well-formed"]); err != nil {
+		t.Fatalf("maintenance tables skipped the plugin: %v", err)
+	}
+	db, err = sql.Open("sqlite", byName["well-formed"].Database)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.Exec(`ALTER TABLE receipts ADD COLUMN machine TEXT`); err != nil {
 		db.Close()
 		t.Fatal(err)
@@ -49,12 +59,45 @@ func TestFixturePluginsDiscoverValidateAndDeclareCustody(t *testing.T) {
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := plugin.Validate(context.Background(), byName["well-formed"]); err != nil {
-		t.Fatalf("maintenance tables or extra physical columns skipped the plugin: %v", err)
+	if _, err := plugin.Validate(context.Background(), byName["well-formed"]); err == nil ||
+		!strings.Contains(err.Error(), "machine") {
+		t.Fatalf("third-party extra physical columns passed with %v", err)
 	}
 	if _, err := plugin.Validate(context.Background(), byName["lying"]); err == nil ||
 		!strings.Contains(err.Error(), "outstanding_cents") {
 		t.Fatalf("lying semantic layer passed with %v", err)
+	}
+}
+
+func TestBundledPluginAllowsExtraPhysicalColumns(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "plugin.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE receipts (id INTEGER); ALTER TABLE receipts ADD COLUMN machine TEXT`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, plugin.ManifestFilename),
+		[]byte(`{"schema":1,"source":"`+plugin.BundledSource+`"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	database, err := plugin.Validate(t.Context(), plugin.Descriptor{
+		Name: "roca-ops", Directory: directory, Database: path,
+		Semantic: plugin.Semantic{Tables: []plugin.SemanticTable{{
+			Name: "receipts", Columns: []string{"id"},
+		}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !database.PhysicalColumnsAhead {
+		t.Fatal("bundled extra physical columns were not marked ahead")
 	}
 }
 

@@ -93,8 +93,13 @@ func (s *Service) prepareExec(ctx context.Context, statement string, cursor bool
 			plugin.MaxAttached, strings.Join(route.OmittedSources(), ", ")), DegradedInvalidSQL)
 	}
 	if sqlgate.HasResultWildcard(statement) {
+		schemas := sqlgate.ReferencedSchemas(statement)
 		for _, database := range route.Databases {
-			if database.PhysicalColumnsAhead && len(plugin.Referenced(statement, []plugin.Descriptor{database.Descriptor})) > 0 {
+			if !database.PhysicalColumnsAhead {
+				continue
+			}
+			if schemaReferenced(schemas, database.Schema) ||
+				len(plugin.Referenced(statement, []plugin.Descriptor{database.Descriptor})) > 0 {
 				return PluginRoute{}, "", logfile.Typed(fmt.Errorf(
 					"wildcard SELECTs are unavailable for plugin %s while its physical schema is ahead of the semantic layer",
 					database.Source()), DegradedInvalidSQL)
@@ -122,6 +127,15 @@ func (s *Service) prepareExec(ctx context.Context, statement string, cursor bool
 	}
 	ok = true
 	return route, validated, nil
+}
+
+func schemaReferenced(schemas []string, name string) bool {
+	for _, schema := range schemas {
+		if strings.EqualFold(schema, name) {
+			return true
+		}
+	}
+	return false
 }
 
 func typedExecError(err error) error {
