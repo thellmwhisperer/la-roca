@@ -22,6 +22,13 @@ Most users need to do nothing: an already signed-in Codex or Claude CLI is detec
 
 The bootstrap JSON field `external_credential` is now named `command_transport`; it reports that the selected model runs through a local agent CLI without implying that La Roca owns authentication.
 
+## [1.88.2](https://github.com/thellmwhisperer/la-roca/compare/v1.88.1...v1.88.2) (2026-09-19)
+
+
+### Bug Fixes
+
+* **service:** enforce exec timeouts across full SQLite scans ([#441](https://github.com/thellmwhisperer/la-roca/issues/441)) ([1e961e6](https://github.com/thellmwhisperer/la-roca/commit/1e961e63285d92737443e878f64ca234464c4a57))
+
 ## [1.88.1](https://github.com/thellmwhisperer/la-roca/compare/v1.88.0...v1.88.1) (2026-09-19)
 
 
