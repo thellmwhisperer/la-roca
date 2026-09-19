@@ -11,12 +11,7 @@ import (
 )
 
 func TestExecRefusesAnUnqualifiedTableSharedByAttachedPlugins(t *testing.T) {
-	paths, plugins := scopedBundledPlugins(t)
-	svc := initialized(t, paths, func(options *service.Options) {
-		options.PluginDir = plugins
-		options.RocaOpsEnabled = true
-		options.CorpusEnabled = true
-	})
+	svc, _ := initializedScopedBundledPlugins(t)
 	if _, err := svc.Store(t.Context(), service.StoreRequest{
 		Layer: "discovery", Content: "synthetic proceso carwow marker",
 	}); err != nil {
@@ -68,12 +63,7 @@ func TestExecRefusesAnUnqualifiedTableSharedByAttachedPlugins(t *testing.T) {
 }
 
 func TestExecLegacyIDExpansionStaysInTheOpsQueryScope(t *testing.T) {
-	paths, plugins := scopedBundledPlugins(t)
-	svc := initialized(t, paths, func(options *service.Options) {
-		options.PluginDir = plugins
-		options.RocaOpsEnabled = true
-		options.CorpusEnabled = true
-	})
+	svc, plugins := initializedScopedBundledPlugins(t)
 	stored, err := svc.Store(t.Context(), service.StoreRequest{Layer: "discovery", Content: "synthetic scoped legacy id"})
 	if err != nil {
 		t.Fatal(err)
@@ -107,4 +97,15 @@ func TestExecLegacyIDExpansionStaysInTheOpsQueryScope(t *testing.T) {
 	if cteResult.RowCount != 1 || fmt.Sprint(cteResult.Rows[0]["id"]) != fmt.Sprint(stored.ID) {
 		t.Fatalf("CTE legacy result = %+v, want id %d", cteResult.Rows, stored.ID)
 	}
+}
+
+func initializedScopedBundledPlugins(t *testing.T) (*service.Service, string) {
+	t.Helper()
+	paths, plugins := scopedBundledPlugins(t)
+	svc := initialized(t, paths, func(options *service.Options) {
+		options.PluginDir = plugins
+		options.RocaOpsEnabled = true
+		options.CorpusEnabled = true
+	})
+	return svc, plugins
 }
