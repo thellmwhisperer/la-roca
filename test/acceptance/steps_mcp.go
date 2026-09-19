@@ -135,7 +135,7 @@ func (m *world) openThePlugAs(name string) error {
 	if m.plug.session != nil {
 		m.closeThePlug()
 	}
-	command := exec.Command(m.binary, "mcp", "serve")
+	command := exec.Command(m.binaryPath(), "mcp", "serve")
 	command.Env = m.environment()
 	command.Stderr = os.Stderr
 
