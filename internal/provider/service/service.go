@@ -276,6 +276,28 @@ func (s *Service) servingLayout() ReadLayout {
 // yet.
 func (s *Service) DB() *store.DB { return s.db }
 
+func (s *Service) OpenConnections() int {
+	if s == nil {
+		return 0
+	}
+	seen := map[*sql.DB]bool{}
+	total := 0
+	for _, database := range []*store.DB{s.db, s.legacy, s.hubDB, s.ops, s.corpus, s.layerDB} {
+		if database == nil {
+			continue
+		}
+		for _, pool := range database.Pools() {
+			if pool != nil && !seen[pool] {
+				seen[pool] = true
+				total += pool.Stats().OpenConnections
+			}
+		}
+	}
+	return total
+}
+
+func (s *Service) ConfiguredDBPath() string { return s.opts.DBPath }
+
 // DataDir is the operator-owned directory where file traces live.
 func (s *Service) DataDir() string { return s.dataDir() }
 

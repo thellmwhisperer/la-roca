@@ -125,6 +125,21 @@ func executeWithOptions(env *cliEnv, args []string, in io.Reader, plugins bool) 
 		env.loadCommandFeatures()
 	}
 	root := rootCommand(env)
+	if handled, residentErr := env.tryResident(context.Background(), args); handled {
+		command, commandArgs, _, _ := residentCommandArgs(args)
+		env.auditCommand = command
+		env.auditArgs = redactPluginArguments(commandArgs)
+		if residentErr != nil {
+			residentErr = logfile.Correlate(residentErr)
+			env.code = ExitError
+		}
+		if !env.skipExecutionLog && !env.forceReadOnly {
+			if logErr := env.logExecution(nil, started, env.code, residentErr); logErr != nil {
+				fmt.Fprintf(env.errOut, "warning: this run is not in the execution log: %v\n", logErr)
+			}
+		}
+		return env.code, residentErr
+	}
 	if plugins {
 		if handled, code, err := dispatchPlugin(env, root, args, env.features); handled {
 			env.auditCommand = args[0]

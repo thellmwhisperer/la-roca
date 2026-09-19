@@ -464,11 +464,12 @@ or undeclared vector coverage on the database's existing FTS/SQL path.
 
 ### Session companions
 
-An optional `companion` object asks `roca mcp serve` to raise one child
-process for the lifetime of that session: stdin and stdout belong to the
-parent, the child dies when stdin closes, and there is no port, pid file, or
-daemon. Plugins without the field keep today's behavior. The vector embedding
-resident has a separate [MCP lifecycle](mcp.md#1-roca-mcp-serve-the-mcp-over-stdio).
+An optional `companion` object asks the database resident to start one child
+process per MCP session. Its stdin and stdout belong to the resident; the child
+is reaped when that session ends, even while other sessions remain attached.
+The child dies when stdin closes and needs no port or pid file. Plugins without
+the field keep today's behavior. Database and model processes follow the
+[resident lifecycle](mcp.md#1-roca-mcp-serve-the-mcp-over-stdio).
 
 ```json
 "companion": {
@@ -484,8 +485,8 @@ concurrent serve sessions is the plugin's own responsibility; the server raises
 one candidate per session.
 
 A missing or non-executable companion does not take the server down. Serve
-starts, writes one notice on standard error plus a JSONL line under the data
-directory logs area, and keeps answering. A companion that exits cleanly
+starts, writes one notice to the resident's stderr log plus a JSONL line under
+the data directory logs area, and keeps answering. A companion that exits cleanly
 (exit 0) is left down without the `stopped` notice or telemetry. A crash — a
 non-zero exit or a start failure after the executable resolved — is retried
 with bounded backoff, and a companion that keeps crashing is reported once and

@@ -158,13 +158,33 @@ func runLatestHandoffs(ctx context.Context, env *cliEnv, opts latestHandoffOptio
 	if opts.allProjects {
 		return runLatestHandoffsAllProjects(ctx, env, opts)
 	}
-	return runSessionContext(ctx, env, opts.project, latestHandoffLoader(opts.limit),
-		func(list service.HandoffList) string {
-			if opts.headChars > 0 {
-				return axi.HandoffHeads(list, opts.headChars)
+	render := func(list service.HandoffList) string {
+		if opts.headChars > 0 {
+			return axi.HandoffHeads(list, opts.headChars)
+		}
+		return axi.Handoffs(list)
+	}
+	project, err := resolveProject(opts.project)
+	if err != nil {
+		return err
+	}
+	var result service.HandoffList
+	if handled, err := env.callResident(ctx, "handoff_latest", map[string]string{"project": project}, &result); handled {
+		if err != nil {
+			if strings.HasPrefix(err.Error(), "no handoff for project") {
+				env.print("%s", err.Error())
+				return nil
 			}
-			return axi.Handoffs(list)
-		})
+			return err
+		}
+		result.Handoffs = limitSlice(result.Handoffs, opts.limit)
+		if env.json {
+			return env.printJSON(result)
+		}
+		env.print("%s", render(result))
+		return nil
+	}
+	return runSessionContext(ctx, env, project, latestHandoffLoader(opts.limit), render)
 }
 
 func runSessionContext[T any](ctx context.Context, env *cliEnv, project string,
@@ -206,12 +226,19 @@ func runLatestHandoffsAllProjects(ctx context.Context, env *cliEnv, opts latestH
 	if headChars == 0 {
 		headChars = claudeHandoffHeadChars
 	}
-	svc, _, err := env.openSessionContextService()
-	if err != nil {
-		return err
+	var result service.HandoffLab
+	handled, err := env.callResident(ctx, "handoff_all", struct {
+		Since     time.Time `json:"since"`
+		HeadChars int       `json:"head_chars"`
+	}{since, headChars}, &result)
+	if !handled {
+		svc, _, openErr := env.openSessionContextService()
+		if openErr != nil {
+			return openErr
+		}
+		defer svc.Close()
+		result, err = svc.LatestHandoffsByProject(ctx, since, headChars)
 	}
-	defer svc.Close()
-	result, err := svc.LatestHandoffsByProject(ctx, since, headChars)
 	if err != nil {
 		return err
 	}

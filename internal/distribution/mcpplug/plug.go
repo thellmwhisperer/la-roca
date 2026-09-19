@@ -12,7 +12,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/thellmwhisperer/la-roca/internal/distribution/playground"
 	"io"
 	"os"
 	"strings"
@@ -22,6 +21,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/axi"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/playground"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
@@ -609,6 +609,27 @@ func scrubDataDir(text, dataDir string) string {
 // the pipe. Closing this session must only disconnect its vector client;
 // the shared resident's lifecycle is documented in docs/mcp.md.
 func Serve(ctx context.Context, svc *service.Service, build Build) error {
+	return serveSession(ctx, svc, func(resident *residentVector) error {
+		return serveOver(ctx, svc, build, &mcp.StdioTransport{}, resident)
+	})
+}
+
+// ServeConnection serves one MCP session over a resident-owned connection.
+// The connection is supplied by the resident so the shim process never opens
+// the service or a database.
+func ServeConnection(ctx context.Context, svc *service.Service, build Build, conn io.ReadWriteCloser, readOnly bool) error {
+	return serveSession(ctx, svc, func(resident *residentVector) error {
+		server := newServer(svc, build, resident)
+		if readOnly {
+			mcp.AddTool(server, storeTool, func(context.Context, *mcp.CallToolRequest, storeArgs) (*mcp.CallToolResult, any, error) {
+				return nil, nil, errors.New("La Roca is in read-only mode: this operation writes (operation: store)")
+			})
+		}
+		return server.Run(ctx, &mcp.IOTransport{Reader: conn, Writer: conn})
+	})
+}
+
+func serveSession(ctx context.Context, svc *service.Service, run func(*residentVector) error) error {
 	resident, err := consentedResident(ctx, svc)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "notice: semantic search will load when first used")
@@ -618,7 +639,7 @@ func Serve(ctx context.Context, svc *service.Service, build Build) error {
 	}
 	companions := startPluginCompanions(svc.PluginDir(), svc.DataDir(), os.Stderr)
 	defer companions.Close()
-	return serveOver(ctx, svc, build, &mcp.StdioTransport{}, resident)
+	return run(resident)
 }
 
 func consentedResident(ctx context.Context, svc *service.Service) (*residentVector, error) {
