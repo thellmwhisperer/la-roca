@@ -128,18 +128,23 @@ func (s *Service) execute(ctx context.Context, stmt, term string, maxChars int) 
 	return s.ExecuteWithPlugins(ctx, stmt, term, maxChars, nil)
 }
 
-// queryExecutionBudget is how long validated SQL may run, and whether it is
-// bounded at all. A positive budget is the one that was asked for; an explicit
-// zero is the operator removing the bound on purpose; anything else, including
-// a value no statement could meet, falls back to the shipped default.
+// queryExecutionBudget is how long validated SQL may run. A positive budget is
+// the one that was asked for. Zero, a negative value, or an absent setting all
+// use DefaultQueryTimeout. Exec is always bounded: a bad SELECT cannot hold
+// the database past the limit.
 func (s *Service) queryExecutionBudget() (time.Duration, bool) {
 	if s.opts.QueryTimeout > 0 {
 		return s.opts.QueryTimeout, true
 	}
-	if s.opts.QueryTimeoutSet && s.opts.QueryTimeout == 0 {
-		return 0, false
-	}
 	return DefaultQueryTimeout, true
+}
+
+func (s *Service) boundedExecTimeout(budget execBudget) time.Duration {
+	if budget.set && budget.timeout > 0 {
+		return budget.timeout
+	}
+	timeout, _ := s.queryExecutionBudget()
+	return timeout
 }
 
 func executionError(parent, queryCtx context.Context, timeout time.Duration, err error) error {

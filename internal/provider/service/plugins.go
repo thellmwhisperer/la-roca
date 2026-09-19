@@ -536,28 +536,19 @@ func (s *Service) executeWithPluginsBudget(ctx context.Context, statement, term 
 
 func (s *Service) executeWithDatabase(ctx context.Context, statement, term string,
 	maxChars int, databases []plugin.Database, target *store.DB, budget execBudget) ([]string, []map[string]any, error) {
-	timeout, bounded := s.queryExecutionBudget()
-	if budget.set {
-		timeout, bounded = budget.timeout, budget.timeout > 0
-	}
-	queryCtx := ctx
-	var cancel context.CancelFunc = func() {}
-	if bounded {
-		queryCtx, cancel = context.WithTimeout(ctx, timeout)
-	}
+	timeout := s.boundedExecTimeout(budget)
+	queryCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	connection, attached, err := s.openQueryConnectionOn(queryCtx, target)
 	if err != nil {
 		return nil, nil, executionError(ctx, queryCtx, timeout, err)
 	}
 	defer func() { closeQueryConnection(connection, attached) }()
-	if bounded {
-		releaseBound, bindErr := store.BoundConnection(queryCtx, connection)
-		if bindErr != nil {
-			return nil, nil, executionError(ctx, queryCtx, timeout, bindErr)
-		}
-		defer releaseBound()
+	releaseBound, bindErr := store.BoundConnection(queryCtx, connection)
+	if bindErr != nil {
+		return nil, nil, executionError(ctx, queryCtx, timeout, bindErr)
 	}
+	defer releaseBound()
 	var onDemand []plugin.Database
 	for _, database := range databases {
 		if database.Semantic.Attachment != plugin.AttachmentResident {

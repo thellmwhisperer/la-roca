@@ -29,10 +29,11 @@ prompt defenses belong to the [model-invoking playground](models.md#what-happens
 reading of the rows. CLI `roca exec` and MCP `roca_exec` run your own `SELECT`
 through the same read-only gate and use the configured
 [`query.timeout_ms`](models.md#the-configuration). On the CLI, `--timeout-ms N`
-overrides that statement budget for one invocation; `0` disables the bound. The
-bound cancels the SQLite statement itself, including scans that continue after
-the first row, so a bad query cannot hold the database past the limit. Vector
-indexing's statement-budget exceptions are owned by [Local vector
+overrides that statement budget for one invocation; `0` uses the default
+five-second bound. The bound always applies on CLI and MCP exec: it cannot be
+switched off. The bound cancels the SQLite statement itself, including scans
+that continue after the first row, so a bad query cannot hold the database past
+the limit. Vector indexing's statement-budget exceptions are owned by [Local vector
 search](vector.md#index-declared-databases); query-time source lookups keep the
 interactive budget.
 

@@ -98,6 +98,32 @@ func TestExecStopsAQueryThatExceedsTheCostBudget(t *testing.T) {
 	}
 }
 
+func TestExecZeroTimeoutStillAppliesTheDefaultBound(t *testing.T) {
+	paths := freshPaths(t)
+	svc := serviceOn(t, paths, func(options *service.Options) {
+		options.QueryTimeoutSet = true
+	})
+	if _, err := svc.Init(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	_, err := svc.Exec(t.Context(), service.ExecRequest{
+		SQL: `WITH RECURSIVE costly(n) AS (
+			SELECT 1 UNION ALL SELECT n + 1 FROM costly WHERE n < 100000000
+		) SELECT sum(n) FROM costly`,
+		TimeoutSet: true,
+	})
+	if err == nil {
+		t.Fatal("explicit zero timeout completed without the default bound")
+	}
+	if got := logfile.ErrorType(err); got != service.DegradedTimeout {
+		t.Fatalf("error_type = %q, want %q (%v)", got, service.DegradedTimeout, err)
+	}
+	if time.Since(started) > 6*time.Second {
+		t.Fatalf("default bound took %s", time.Since(started))
+	}
+}
+
 func TestExecTimeoutReleasesTheDatabaseForAWriter(t *testing.T) {
 	paths := freshPaths(t)
 	svc := serviceOn(t, paths, func(options *service.Options) {
