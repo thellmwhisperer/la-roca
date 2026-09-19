@@ -231,6 +231,18 @@ layer: handoff
 exit: tool error
 output contains: handoff refused
 
+## 427 MCP historical id
+command: roca mcp serve
+tool: roca_exec
+SQL: SELECT id, legacy_id FROM plugin_roca_ops.memories WHERE id = '1152921504606846980'
+exit: 0
+output contains: 1152921504606846980
+tool: roca_store
+supersedes: 1152921504606846980
+exit: 0
+metadata id: JS-safe integer of at most 12 digits
+expect: replacement supersedes exactly the migrated row
+
 ## real-usage-e2e-smoke
 command: make e2e-smoke
 exit: 0

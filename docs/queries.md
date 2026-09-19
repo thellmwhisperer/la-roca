@@ -126,9 +126,10 @@ tool metadata are JSON numbers. New operational identifiers are at most 12
 decimal digits and are assigned by SQLite `INTEGER PRIMARY KEY AUTOINCREMENT`,
 so they stay below JavaScript's 2^53 safe integer. The version-6 adoption pass
 renumbers historical 2^60 identifiers to 1..N in creation order and stores the
-old value in `legacy_id`. `exec`, `handoff latest`, `--supersedes`, and MCP
-still resolve an old identifier through that column. SQL TOON quotes integers
-outside the JavaScript safe range.
+old value in `legacy_id`. `exec`, `--supersedes`, and MCP still resolve an old
+identifier through `legacy_id` or a retained exact-dedup alias, and `handoff
+latest` continues to list migrated handoffs. SQL TOON quotes integers outside
+the JavaScript safe range.
 
 Pass the returned ID to CLI `roca store --supersedes` or MCP `roca_store`
 `supersedes`. MCP still accepts a decimal string for a historical identifier.

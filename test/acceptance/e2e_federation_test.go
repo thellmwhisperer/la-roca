@@ -67,6 +67,7 @@ func TestFrozenFederationInstalledBinary(t *testing.T) {
 	t.Run("real-usage-query-no-silent-degrade", func(t *testing.T) { caseQueryNoSilentDegrade(t, seeded) })
 	t.Run("real-usage-handoff-one-per-project", func(t *testing.T) { caseHandoffOnePerProject(t, seeded) })
 	t.Run("real-usage-mcp-handoff-refused", func(t *testing.T) { caseMCPHandoffRefused(t, seeded) })
+	t.Run("issue-427-mcp-legacy-id", func(t *testing.T) { caseMCPHistoricalID(t, seeded) })
 	t.Run("real-usage-mcp-health", func(t *testing.T) { caseMCPHealth(t, seeded) })
 }
 
@@ -645,6 +646,48 @@ func caseMCPHandoffRefused(t *testing.T, lab *federationLab) {
 	if err := lab.m.theRefusalNamesTheHandoffWriter(); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func caseMCPHistoricalID(t *testing.T, lab *federationLab) {
+	if err := lab.m.callTool("roca_exec", map[string]any{
+		"sql": "SELECT id, legacy_id FROM plugin_roca_ops.memories WHERE id = '" + federationDiscoveryID + "'",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if lab.m.plug.last.IsError {
+		t.Fatalf("MCP exec rejected historical id: %s", renderedText(lab.m.plug.last))
+	}
+	text := renderedText(lab.m.plug.last)
+	if !strings.Contains(text, federationDiscoveryID) {
+		t.Fatalf("MCP exec dropped historical id %s:\n%s", federationDiscoveryID, text)
+	}
+
+	if err := lab.m.callTool("roca_store", map[string]any{
+		"layer": "discovery", "project": "la-roca-e2e",
+		"content": "MCP historical id replacement", "supersedes": federationDiscoveryID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if lab.m.plug.last.IsError {
+		t.Fatalf("MCP store rejected historical supersedes: %s", renderedText(lab.m.plug.last))
+	}
+	storedID, err := jsonInteger(lab.m.plug.last.Meta["id"])
+	if err != nil || storedID < 1 || storedID >= 1<<53 || len(strconv.FormatInt(storedID, 10)) > 12 {
+		t.Fatalf("MCP store id = %#v, want a JS-safe JSON integer of at most 12 digits: %v", lab.m.plug.last.Meta["id"], err)
+	}
+	lab.cli(t, 0, "exec", "SELECT COUNT(*) AS n FROM plugin_roca_ops.memories replacement JOIN plugin_roca_ops.memories original ON replacement.supersedes = original.id WHERE replacement.content = 'MCP historical id replacement' AND original.legacy_id = "+federationDiscoveryID, "--json")
+	var result struct {
+		Rows []struct {
+			N int `json:"n"`
+		} `json:"rows"`
+	}
+	if err := json.Unmarshal([]byte(lab.m.last.stdout), &result); err != nil {
+		t.Fatalf("decode MCP replacement proof: %v\n%s", err, lab.m.last.stdout)
+	}
+	if len(result.Rows) != 1 || result.Rows[0].N != 1 {
+		t.Fatalf("MCP historical supersedes did not resolve exactly once: %+v", result.Rows)
+	}
+	lab.m.closeThePlug()
 }
 
 func caseMCPHealth(t *testing.T, lab *federationLab) {
