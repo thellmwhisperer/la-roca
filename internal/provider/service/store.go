@@ -127,6 +127,9 @@ func (s *Service) Store(ctx context.Context, req StoreRequest) (result StoreResu
 	if err != nil {
 		return StoreResult{}, err
 	}
+	if physical == "handoff" {
+		req.Project = strings.TrimSpace(req.Project)
+	}
 	metadata, err := encodeMetadata(req.Metadata)
 	if err != nil {
 		return StoreResult{}, err
@@ -169,7 +172,7 @@ func (s *Service) Store(ctx context.Context, req StoreRequest) (result StoreResu
 		}
 	}
 	err = target.Write(ctx, func(tx *sql.Tx) error {
-		planned, err := planHandoffAutoSupersede(ctx, tx, physical, req)
+		planned, err := planHandoffAutoSupersede(ctx, tx, physical, req, status)
 		if err != nil {
 			return err
 		}
@@ -192,6 +195,9 @@ func (s *Service) Store(ctx context.Context, req StoreRequest) (result StoreResu
 				result.DuplicateSource, result.DuplicateSurface = authorship.Agent, authorship.Surface
 				return nil
 			}
+		}
+		if err := repairHandoffHeads(ctx, tx, planned.currentIDs); err != nil {
+			return err
 		}
 		if existing, Found, err := identicalMemory(ctx, tx, payload, s.opts.RocaOpsEnabled); err != nil {
 			return err
@@ -258,6 +264,7 @@ func explicitExpiry(metadata map[string]any) (any, error) {
 
 type memoryQuerier interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }
 
 type memoryPayload struct {

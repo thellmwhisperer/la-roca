@@ -245,6 +245,60 @@ func TestStoreAutoSupersedesThePreviousCurrentHandoffForAProject(t *testing.T) {
 				t.Fatalf("current handoffs = %d, want 1", n)
 			}
 		}},
+		{"repairs pre-existing multiple current heads", func(t *testing.T) {
+			project := "repair-handoff"
+			first := insertCurrentHandoff(t, svc, project, "repair A", "2026-08-01 00:00:00")
+			second := insertCurrentHandoff(t, svc, project, "repair B", "2026-08-02 00:00:00")
+			third := mustStoreHandoff(t, svc, project, "repair C")
+			if got := memorySupersedes(t, svc, third.ID); !got.Valid || got.Int64 != second {
+				t.Fatalf("new handoff supersedes = %+v, want %d", got, second)
+			}
+			if got := memorySupersedes(t, svc, second); !got.Valid || got.Int64 != first {
+				t.Fatalf("repaired handoff supersedes = %+v, want %d", got, first)
+			}
+			if n := currentHandoffCount(t, svc, project); n != 1 {
+				t.Fatalf("repaired current handoffs = %d, want 1", n)
+			}
+		}},
+		{"inactive handoffs do not retire the active head", func(t *testing.T) {
+			for _, status := range []string{"pending", "resolved"} {
+				t.Run(status, func(t *testing.T) {
+					project := "inactive-" + status
+					active := mustStoreHandoff(t, svc, project, "active")
+					request := sessionHandoff(status)
+					request.Project, request.Status = project, status
+					stored, err := svc.Store(ctx, request)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if got := memorySupersedes(t, svc, stored.ID); got.Valid {
+						t.Fatalf("%s handoff supersedes = %+v", status, got)
+					}
+					if got := memorySupersedes(t, svc, active.ID); got.Valid {
+						t.Fatalf("active handoff was superseded by %s: %+v", status, got)
+					}
+				})
+			}
+		}},
+		{"trimmed project identity is stored consistently", func(t *testing.T) {
+			first := mustStoreHandoff(t, svc, "trimmed-handoff", "trimmed A")
+			second := sessionHandoff("trimmed B")
+			second.Project = " trimmed-handoff "
+			stored, err := svc.Store(ctx, second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := memorySupersedes(t, svc, stored.ID); !got.Valid || got.Int64 != first.ID {
+				t.Fatalf("trimmed project supersedes = %+v, want %d", got, first.ID)
+			}
+			var project string
+			if err := svc.DB().SQL().QueryRow("SELECT project FROM memories WHERE id = ?", stored.ID).Scan(&project); err != nil {
+				t.Fatal(err)
+			}
+			if project != "trimmed-handoff" {
+				t.Fatalf("stored project = %q, want trimmed identity", project)
+			}
+		}},
 		{"other project stays current", func(t *testing.T) {
 			alpha := mustStoreHandoff(t, svc, "alpha-handoff", "alpha first")
 			mustStoreHandoff(t, svc, "beta-handoff", "beta first")
@@ -359,6 +413,22 @@ func memorySupersedes(t *testing.T, svc *service.Service, id int64) sql.NullInt6
 		t.Fatal(err)
 	}
 	return value
+}
+
+func insertCurrentHandoff(t *testing.T, svc *service.Service, project, body, createdAt string) int64 {
+	t.Helper()
+	result, err := svc.DB().SQL().Exec(
+		`INSERT INTO memories (layer, content, origin, source_agent, source_model, source_surface, project, status, created_at)
+		 VALUES ('handoff', ?, 'agent', 'claude', 'sonnet', 'cli', ?, 'active', ?)`,
+		shapedHandoff(body), project, createdAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
 }
 
 func currentHandoffCount(t *testing.T, svc *service.Service, project string) int {

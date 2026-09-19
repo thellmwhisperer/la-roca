@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"regexp"
 	"slices"
@@ -164,30 +163,41 @@ func refuseHandoffShape(content string) error {
 type handoffAutoSupersede struct {
 	currentID         int64
 	currentSupersedes any
+	currentIDs        []int64
 }
 
 // planHandoffAutoSupersede fills the one-current-per-project contract when the
 // writer did not name a predecessor. An explicit supersedes, a non-handoff
 // layer, and a project-less write stay as the caller sent them.
-func planHandoffAutoSupersede(ctx context.Context, db memoryQuerier, physical string, req StoreRequest) (handoffAutoSupersede, error) {
-	if physical != "handoff" || req.Supersedes != 0 {
+func planHandoffAutoSupersede(ctx context.Context, db memoryQuerier, physical string, req StoreRequest, status string) (handoffAutoSupersede, error) {
+	if physical != "handoff" || status != "active" || req.Supersedes != 0 {
 		return handoffAutoSupersede{}, nil
 	}
 	project := strings.TrimSpace(req.Project)
 	if project == "" {
 		return handoffAutoSupersede{}, nil
 	}
-	id, supersedes, err := currentProjectHandoff(ctx, db, project)
-	if err != nil || id == 0 {
+	heads, err := currentProjectHandoffs(ctx, db, project)
+	if err != nil || len(heads) == 0 {
 		return handoffAutoSupersede{}, err
 	}
-	return handoffAutoSupersede{currentID: id, currentSupersedes: supersedes}, nil
+	current := heads[len(heads)-1]
+	ids := make([]int64, len(heads))
+	for i, head := range heads {
+		ids[i] = head.id
+	}
+	return handoffAutoSupersede{
+		currentID: current.id, currentSupersedes: current.supersedes, currentIDs: ids,
+	}, nil
 }
 
-func currentProjectHandoff(ctx context.Context, db memoryQuerier, project string) (int64, any, error) {
-	var id int64
-	var supersedes sql.NullInt64
-	err := db.QueryRowContext(ctx, `
+type currentHandoffHead struct {
+	id         int64
+	supersedes any
+}
+
+func currentProjectHandoffs(ctx context.Context, db memoryQuerier, project string) ([]currentHandoffHead, error) {
+	rows, err := db.QueryContext(ctx, `
 		SELECT candidate.id, candidate.supersedes
 		FROM memories AS candidate
 		WHERE candidate.layer = 'handoff'
@@ -197,16 +207,35 @@ func currentProjectHandoff(ctx context.Context, db memoryQuerier, project string
 		      SELECT 1 FROM memories AS replacement
 		      WHERE replacement.supersedes = candidate.id
 		  )
-		ORDER BY candidate.created_at DESC, candidate.id DESC
-		LIMIT 1`, project).Scan(&id, &supersedes)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, nil, nil
-	}
+		ORDER BY candidate.created_at ASC, candidate.id ASC`, project)
 	if err != nil {
-		return 0, nil, fmt.Errorf("look for the current project handoff: %w", err)
+		return nil, fmt.Errorf("look for the current project handoffs: %w", err)
 	}
-	if supersedes.Valid {
-		return id, supersedes.Int64, nil
+	defer rows.Close()
+	var heads []currentHandoffHead
+	for rows.Next() {
+		var head currentHandoffHead
+		var supersedes sql.NullInt64
+		if err := rows.Scan(&head.id, &supersedes); err != nil {
+			return nil, fmt.Errorf("read the current project handoffs: %w", err)
+		}
+		if supersedes.Valid {
+			head.supersedes = supersedes.Int64
+		}
+		heads = append(heads, head)
 	}
-	return id, nil, nil
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read the current project handoffs: %w", err)
+	}
+	return heads, nil
+}
+
+func repairHandoffHeads(ctx context.Context, db *sql.Tx, currentIDs []int64) error {
+	for i := 1; i < len(currentIDs); i++ {
+		if _, err := db.ExecContext(ctx,
+			`UPDATE memories SET supersedes = ? WHERE id = ?`, currentIDs[i-1], currentIDs[i]); err != nil {
+			return fmt.Errorf("repair current project handoff heads: %w", err)
+		}
+	}
+	return nil
 }
