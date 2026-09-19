@@ -401,7 +401,7 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 					legacyFingerprint = ""
 				}
 			}
-			if legacyFingerprint == "" {
+			if opts.DryRun || legacyFingerprint == "" {
 				result.addMessageCoverage(source, stateMessageCoverage(state[target.Path]))
 				result.FilesSkipped++
 				scan.FilesSkipped++

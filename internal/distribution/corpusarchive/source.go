@@ -34,6 +34,7 @@ type archiveRecord struct {
 	exchangeNumber   sql.NullInt64
 	ordinal          sql.NullInt64
 	statePath        sql.NullString
+	machine          string
 }
 
 type occurrenceTracker struct {
@@ -48,14 +49,17 @@ type exchangePayload struct {
 	model, provider                      sql.NullString
 	tokensIn, tokensOut, tokensReasoning sql.NullInt64
 	cost                                 sql.NullFloat64
+	machine                              string
 }
 
 func scanExchangePayload(rows *sql.Rows, identity any) (exchangePayload, error) {
 	var payload exchangePayload
+	var machine sql.NullString
 	err := rows.Scan(identity, &payload.sessionID, &payload.number, &payload.compacted,
 		&payload.human, &payload.agent, &payload.humanAt, &payload.agentAt,
 		&payload.latency, &payload.model, &payload.provider, &payload.tokensIn,
-		&payload.tokensOut, &payload.tokensReasoning, &payload.cost)
+		&payload.tokensOut, &payload.tokensReasoning, &payload.cost, &machine)
+	payload.machine = sourceMachine(machine)
 	return payload, err
 }
 
@@ -71,14 +75,14 @@ func (payload exchangePayload) digestValues() []any {
 	return []any{payload.sessionID.String, payload.number, payload.compacted,
 		payload.human, payload.agent, payload.humanAt, payload.agentAt, payload.latency,
 		payload.model, payload.provider, payload.tokensIn, payload.tokensOut,
-		payload.tokensReasoning, payload.cost}
+		payload.tokensReasoning, payload.cost, payload.machine}
 }
 
 func (payload exchangePayload) insertValues() []any {
 	return []any{payload.sessionID.String, payload.number, payload.compacted,
 		payload.humanAt, payload.agentAt, payload.latency,
 		payload.model, payload.provider, payload.tokensIn, payload.tokensOut,
-		payload.tokensReasoning, payload.cost}
+		payload.tokensReasoning, payload.cost, payload.machine}
 }
 
 func (payload exchangePayload) provenanceValues() []any {
@@ -95,7 +99,7 @@ var archiveSourceTables = []archiveTable{
 		sourceTable: "sessions", migration: "corpus-archive-sessions",
 		destinationTable: "session_versions",
 		query: `SELECT rowid, session_id, source_agent, source_surface, project, started_at, ended_at,
-			duration_minutes, title, metadata FROM sessions ORDER BY session_id`,
+			duration_minutes, title, metadata, machine FROM sessions ORDER BY session_id`,
 		scan: scanSession,
 	},
 	{
@@ -104,7 +108,7 @@ var archiveSourceTables = []archiveTable{
 		query: `SELECT id, session_id, exchange_number, is_after_compaction,
 			human_text, agent_text, human_timestamp, agent_timestamp,
 			response_latency_ms, model, provider, tokens_in, tokens_out,
-			tokens_reasoning, cost_usd FROM exchanges
+			tokens_reasoning, cost_usd, machine FROM exchanges
 			ORDER BY session_id, exchange_number, id`,
 		scan: scanExchange,
 	},
@@ -112,7 +116,7 @@ var archiveSourceTables = []archiveTable{
 		sourceTable: "tool_uses", migration: "corpus-archive-tool-uses",
 		destinationTable: "tool_use_versions",
 		query: `SELECT id, session_id, exchange_number, tool_name,
-			tool_params_summary, had_error, error_message, initiative_type
+			tool_params_summary, had_error, error_message, initiative_type, machine
 			FROM tool_uses ORDER BY session_id, exchange_number, id`,
 		scan: scanToolUse,
 	},
@@ -120,7 +124,7 @@ var archiveSourceTables = []archiveTable{
 		sourceTable: "thinking_blocks", migration: "corpus-archive-thinking-blocks",
 		destinationTable: "thinking_block_versions",
 		query: `SELECT id, session_id, exchange_number, position_in_session, depth,
-			caution_ratio, word_count, is_after_compaction, full_text
+			caution_ratio, word_count, is_after_compaction, full_text, machine
 			FROM thinking_blocks ORDER BY session_id, exchange_number, id`,
 		scan: scanThinkingBlock,
 	},
@@ -182,7 +186,7 @@ func materializeCurrent(ctx context.Context, destination *sql.DB, sources []prep
 		return fmt.Errorf("begin current corpus materialization: %w", err)
 	}
 	defer tx.Rollback()
-	type sourceSession struct{ database, sessionID string }
+	type sourceSession struct{ database, sessionID, machine string }
 	sessionAliases := map[sourceSession]string{}
 	canonicalSessions := map[string]string{}
 	sessionTable := archiveSourceTables[0]
@@ -202,7 +206,7 @@ func materializeCurrent(ctx context.Context, destination *sql.DB, sources []prep
 					canonical = record.sessionID.String
 					canonicalSessions[record.currentDigest] = canonical
 				}
-				sessionAliases[sourceSession{source.Database, record.sessionID.String}] = canonical
+				sessionAliases[sourceSession{source.Database, record.sessionID.String, record.machine}] = canonical
 				if canonical != record.sessionID.String {
 					return nil
 				}
@@ -217,7 +221,7 @@ func materializeCurrent(ctx context.Context, destination *sql.DB, sources []prep
 			if err := scanRecords(ctx, source.db, table, func(record archiveRecord) error {
 				if record.sessionID.Valid {
 					if canonical := sessionAliases[sourceSession{
-						source.Database, record.sessionID.String,
+						source.Database, record.sessionID.String, record.machine,
 					}]; canonical != "" && canonical != record.sessionID.String {
 						record.currentValues = slices.Clone(record.currentValues)
 						record.currentValues[0] = canonical
@@ -238,19 +242,12 @@ func materializeCurrent(ctx context.Context, destination *sql.DB, sources []prep
 func materializeRecord(ctx context.Context, tx *sql.Tx, record archiveRecord) error {
 	var query string
 	args := record.currentValues
-	machine, err := os.Hostname()
-	if err != nil || strings.TrimSpace(machine) == "" {
-		machine = "local"
-	} else {
-		machine = strings.TrimSpace(machine)
-	}
 	switch record.destinationTable {
 	case "session_versions":
 		query = `INSERT INTO sessions
 			(session_id, source_agent, source_surface, project, started_at, ended_at,
 			 duration_minutes, title, metadata, machine)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(session_id) DO NOTHING`
-		args = append(slices.Clone(args), machine)
 	case "exchange_versions":
 		query = `INSERT OR IGNORE INTO exchanges
 			(session_id, exchange_number, is_after_compaction, human_text, agent_text,
@@ -258,7 +255,7 @@ func materializeRecord(ctx context.Context, tx *sql.Tx, record archiveRecord) er
 			 tokens_in, tokens_out, tokens_reasoning, cost_usd, machine)
 			SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (
 			 SELECT 1 FROM exchanges WHERE session_id IS ? AND exchange_number IS ?)`
-		args = append(slices.Clone(args), machine, args[0], args[1])
+		args = append(slices.Clone(args), args[0], args[1])
 	case "tool_use_versions":
 		query = `INSERT INTO tool_uses
 			(session_id, exchange_number, tool_name, tool_params_summary, had_error,
@@ -266,9 +263,8 @@ func materializeRecord(ctx context.Context, tx *sql.Tx, record archiveRecord) er
 			SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (
 			 SELECT 1 FROM tool_uses WHERE session_id IS ? AND exchange_number IS ?
 			   AND tool_name IS ? AND tool_params_summary IS ? AND had_error IS ?
-			   AND error_message IS ? AND initiative_type IS ?)`
+				 AND error_message IS ? AND initiative_type IS ?)`
 		whereArgs := slices.Clone(args)
-		args = append(slices.Clone(args), machine)
 		args = append(args, whereArgs...)
 	case "thinking_block_versions":
 		query = `INSERT OR IGNORE INTO thinking_blocks
@@ -277,7 +273,7 @@ func materializeRecord(ctx context.Context, tx *sql.Tx, record archiveRecord) er
 			SELECT ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (
 			 SELECT 1 FROM thinking_blocks WHERE session_id IS ? AND exchange_number IS ?
 			   AND position_in_session IS ?)`
-		args = append(slices.Clone(args), machine, args[0], args[1], args[2])
+		args = append(slices.Clone(args), args[0], args[1], args[2])
 	case "ingest_file_state_versions":
 		query = `INSERT INTO ingest_file_state
 			(path, source_kind, source_agent, project, fingerprint, last_synced_at,
@@ -466,22 +462,22 @@ func insertStatement(destinationTable string) (string, error) {
 	case "session_versions":
 		return `INSERT OR IGNORE INTO session_versions
 			(version_digest, session_id, source_agent, source_surface, project, started_at, ended_at,
-			 duration_minutes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, nil
+			 duration_minutes, machine) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, nil
 	case "exchange_versions":
 		return `INSERT OR IGNORE INTO exchange_versions
 			(version_digest, session_id, exchange_number, is_after_compaction,
 			 human_timestamp, agent_timestamp, response_latency_ms,
-			 model, provider, tokens_in, tokens_out, tokens_reasoning, cost_usd)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, nil
+			 model, provider, tokens_in, tokens_out, tokens_reasoning, cost_usd, machine)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, nil
 	case "tool_use_versions":
 		return `INSERT OR IGNORE INTO tool_use_versions
-			(version_digest, session_id, exchange_number, tool_name, had_error, initiative_type)
-			VALUES (?, ?, ?, ?, ?, ?)`, nil
+			(version_digest, session_id, exchange_number, tool_name, had_error, initiative_type, machine)
+			VALUES (?, ?, ?, ?, ?, ?, ?)`, nil
 	case "thinking_block_versions":
 		return `INSERT OR IGNORE INTO thinking_block_versions
 			(version_digest, session_id, exchange_number, position_in_session, depth,
-			 caution_ratio, word_count, is_after_compaction)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, nil
+			 caution_ratio, word_count, is_after_compaction, machine)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, nil
 	case "ingest_file_state_versions":
 		return `INSERT OR IGNORE INTO ingest_file_state_versions
 			(version_digest, path, source_kind, source_agent, project, fingerprint,
@@ -522,16 +518,17 @@ func validateRecordedTable(ctx context.Context, destination *sql.DB,
 func scanSession(rows *sql.Rows, _ *occurrenceTracker) (archiveRecord, error) {
 	var rowID int64
 	var sessionID string
-	var sourceAgent, sourceSurface, project, startedAt, endedAt, title, metadata sql.NullString
+	var sourceAgent, sourceSurface, project, startedAt, endedAt, title, metadata, machineValue sql.NullString
 	var duration sql.NullInt64
 	if err := rows.Scan(&rowID, &sessionID, &sourceAgent, &sourceSurface, &project, &startedAt, &endedAt,
-		&duration, &title, &metadata); err != nil {
+		&duration, &title, &metadata, &machineValue); err != nil {
 		return archiveRecord{}, err
 	}
+	machine := sourceMachine(machineValue)
 	values := []any{sessionID, sourceAgent, sourceSurface, project, startedAt, endedAt,
-		duration}
+		duration, machine}
 	currentValues := []any{sessionID, sourceAgent, sourceSurface, project, startedAt,
-		endedAt, duration, title, metadata}
+		endedAt, duration, title, metadata, machine}
 	return archiveRecord{
 		sourceKey:        canonicalDigest("session-key", sessionID),
 		digest:           canonicalDigest("session", currentValues...),
@@ -540,6 +537,7 @@ func scanSession(rows *sql.Rows, _ *occurrenceTracker) (archiveRecord, error) {
 		currentValues: currentValues,
 		sourceRowID:   sql.NullInt64{Int64: rowID, Valid: true},
 		sessionID:     sql.NullString{String: sessionID, Valid: true},
+		machine:       machine,
 	}, nil
 }
 
@@ -561,48 +559,68 @@ func scanExchange(rows *sql.Rows, tracker *occurrenceTracker) (archiveRecord, er
 		currentValues: payload.currentValues(),
 		sourceRowID:   sql.NullInt64{Int64: id, Valid: true},
 		sessionID:     payload.sessionID, exchangeNumber: payload.number, ordinal: ordinal,
+		machine:       payload.machine,
 	}, nil
 }
 
 func scanToolUse(rows *sql.Rows, tracker *occurrenceTracker) (archiveRecord, error) {
 	var id int64
-	var sessionID, name, params, errorMessage, initiative sql.NullString
+	var sessionID, name, params, errorMessage, initiative, machineValue sql.NullString
 	var number, hadError sql.NullInt64
 	if err := rows.Scan(&id, &sessionID, &number, &name, &params, &hadError,
-		&errorMessage, &initiative); err != nil {
+		&errorMessage, &initiative, &machineValue); err != nil {
 		return archiveRecord{}, err
 	}
 	if !sessionID.Valid {
 		return archiveRecord{}, fmt.Errorf("tool use %d has no deterministic parent turn", id)
 	}
-	currentValues := []any{sessionID.String, number, name, params, hadError, errorMessage, initiative}
+	machine := sourceMachine(machineValue)
+	currentValues := []any{sessionID.String, number, name, params, hadError, errorMessage, initiative, machine}
 	digest := canonicalDigest("tool-use", currentValues...)
 	ordinal := tracker.next(sessionID, number, digest)
 	record := childRecord("tool_use_versions", id, sessionID, number, ordinal, digest,
-		[]any{sessionID.String, number, name, hadError, initiative})
+		[]any{sessionID.String, number, name, hadError, initiative, machine})
 	record.currentValues = currentValues
+	record.machine = machine
 	return record, nil
 }
 
 func scanThinkingBlock(rows *sql.Rows, tracker *occurrenceTracker) (archiveRecord, error) {
 	var id int64
-	var sessionID, depth, fullText sql.NullString
+	var sessionID, depth, fullText, machineValue sql.NullString
 	var number, wordCount, compacted sql.NullInt64
 	var position, caution sql.NullFloat64
 	if err := rows.Scan(&id, &sessionID, &number, &position, &depth, &caution,
-		&wordCount, &compacted, &fullText); err != nil {
+		&wordCount, &compacted, &fullText, &machineValue); err != nil {
 		return archiveRecord{}, err
 	}
 	if !sessionID.Valid {
 		return archiveRecord{}, fmt.Errorf("thinking block %d has no deterministic parent turn", id)
 	}
+	machine := sourceMachine(machineValue)
 	digest := canonicalDigest("thinking-block", sessionID.String, number, position, depth, caution,
-		wordCount, compacted, fullText)
+		wordCount, compacted, fullText, machine)
 	ordinal := tracker.next(sessionID, number, digest)
-	values := []any{sessionID.String, number, position, depth, caution, wordCount, compacted}
+	values := []any{sessionID.String, number, position, depth, caution, wordCount, compacted, machine}
 	record := childRecord("thinking_block_versions", id, sessionID, number, ordinal, digest, values)
-	record.currentValues = append(slices.Clone(values), fullText)
+	record.currentValues = append(slices.Clone(values[:7]), fullText, machine)
+	record.machine = machine
 	return record, nil
+}
+
+func sourceMachine(value sql.NullString) string {
+	if value.Valid && strings.TrimSpace(value.String) != "" {
+		return strings.TrimSpace(value.String)
+	}
+	return localMachine()
+}
+
+func localMachine() string {
+	machine, err := os.Hostname()
+	if err != nil || strings.TrimSpace(machine) == "" {
+		return "local"
+	}
+	return strings.TrimSpace(machine)
 }
 
 func childRecord(destination string, id int64, sessionID sql.NullString,

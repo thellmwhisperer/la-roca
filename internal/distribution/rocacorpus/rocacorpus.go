@@ -19,7 +19,7 @@ const (
 	// BundledSource is what the installer records for this package, and it is
 	// what discovery reads to know the corpus attach alias is the kernel's own.
 	BundledSource = plugin.BundledSource
-	SchemaVersion = 8
+	SchemaVersion = 9
 	IndexVersion  = 3
 )
 
@@ -248,7 +248,8 @@ func columnExists(ctx context.Context, db *sql.Tx, table, column string) (bool, 
 }
 
 func ensureMachineColumns(ctx context.Context, tx *sql.Tx) error {
-	for _, table := range []string{"sessions", "exchanges", "thinking_blocks", "tool_uses"} {
+	for _, table := range []string{"sessions", "exchanges", "thinking_blocks", "tool_uses",
+		"session_versions", "exchange_versions", "thinking_block_versions", "tool_use_versions"} {
 		present, err := tableExists(tx, table)
 		if err != nil {
 			return err

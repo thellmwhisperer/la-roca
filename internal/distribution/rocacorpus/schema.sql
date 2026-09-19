@@ -215,6 +215,7 @@ CREATE TABLE IF NOT EXISTS session_versions (
   started_at       TEXT,
   ended_at         TEXT,
   duration_minutes INTEGER,
+  machine          TEXT,
   observed_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -233,6 +234,7 @@ CREATE TABLE IF NOT EXISTS exchange_versions (
   tokens_out          INTEGER,
   tokens_reasoning    INTEGER,
   cost_usd            REAL,
+  machine             TEXT,
   observed_at         TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -244,6 +246,7 @@ CREATE TABLE IF NOT EXISTS tool_use_versions (
   tool_name           TEXT,
   had_error           INTEGER,
   initiative_type     TEXT,
+  machine             TEXT,
   observed_at         TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -257,6 +260,7 @@ CREATE TABLE IF NOT EXISTS thinking_block_versions (
   caution_ratio       REAL,
   word_count          INTEGER,
   is_after_compaction INTEGER,
+  machine             TEXT,
   observed_at         TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
