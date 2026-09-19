@@ -37,7 +37,8 @@ Two kinds of freshness, two commands:
   outdated or a documented feature is missing, update before debugging. The
   first run after an update may adopt new schema columns or rebuild derived
   indexes, which can take a couple of minutes on a large corpus: that is work,
-  not a hang, and source rows are never rewritten.
+  not a hang. Schema adoption may fill a newly introduced column on existing
+  rows; ordinary ingest remains incremental.
 - **Data**: the database only knows what the last ingest read. `roca ingest`
   reads every agent source and normalizes what changed; it is incremental, so
   routine runs are cheap. If a question is about today's sessions and the

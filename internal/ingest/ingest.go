@@ -221,6 +221,7 @@ type harvestCursorState struct {
 	ExchangeCursors      map[string]int `json:"exchange_cursors,omitempty"`
 	LastExchangeComplete bool           `json:"last_exchange_complete"`
 	ParserVersion        string         `json:"parser_version"`
+	Machine              string         `json:"machine,omitempty"`
 }
 
 type harvestCursorSeed struct {
@@ -351,7 +352,8 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 			metadata, metadataErr := incrementality.MetadataFingerprint(target.Path)
 			isDatabase := target.Kind == parsers.KindOpenCodeDB || target.Kind == parsers.KindZCodeDB ||
 				target.Kind == parsers.KindHermesDB || target.Kind == parsers.KindLegacyStoreDB
-			if metadataErr == nil && !isDatabase && incrementality.UnchangedMetadata(state, target.Path, metadata) {
+			if metadataErr == nil && !isDatabase && incrementality.UnchangedMetadata(
+				state, target.Path, metadata, target.Machine) {
 				result.FilesSkipped++
 				result.categorizeFile("skipped", "unchanged fingerprint")
 				result.Coverage.skip(target.Path, "unchanged metadata after fingerprint failure")
@@ -639,6 +641,7 @@ func ingestOne(ctx context.Context, db Database, layers layerResolver, opts Opti
 		kept = append(kept, session)
 	}
 	records.Sessions = kept
+	labelRecords(target, &records)
 	result.addMessageCoverage(target.SourceAgent, records.MessageCoverage)
 	result.ExchangesHeld += records.Deferred
 	if records.Seen.Sessions > 0 || records.Seen.Messages > 0 {
@@ -704,6 +707,7 @@ func ingestOne(ctx context.Context, db Database, layers layerResolver, opts Opti
 			summary["exchange_cursors"] = cursor.ExchangeCursors
 			summary["last_exchange_complete"] = cursor.LastExchangeComplete
 			summary["parser_version"] = cursor.ParserVersion
+			summary["machine"] = cursor.Machine
 		} else if info, statErr := os.Stat(target.Path); statErr == nil {
 			summary["byte_offset"] = info.Size()
 		}
@@ -923,7 +927,8 @@ func cursorContent(target Target, previous incrementality.FileState,
 	var cursor harvestCursorState
 	if json.Unmarshal(previous.Metadata, &cursor) != nil || cursor.ByteOffset <= 0 ||
 		cursor.ByteOffset >= int64(len(content)) || cursor.PrefixDigest == "" ||
-		!cursor.LastExchangeComplete || cursor.ParserVersion != readingVersion(target.Kind) {
+		!cursor.LastExchangeComplete || cursor.ParserVersion != readingVersion(target.Kind) ||
+		cursor.Machine != target.Machine {
 		return content, harvestCursorSeed{}
 	}
 	if target.Kind == parsers.KindCodexHistory && len(cursor.ExchangeCursors) == 0 {
@@ -1236,7 +1241,7 @@ func recordHarvestCursor(target Target, seed harvestCursorSeed, full []byte, rec
 	result.harvestCursors[target.Path] = harvestCursorState{
 		ByteOffset: int64(len(full)), PrefixDigest: digestBytes(full), ExchangeCursor: exchangeCursor,
 		ExchangeCursors: exchangeCursors, LastExchangeComplete: records.Deferred == 0,
-		ParserVersion: readingVersion(target.Kind),
+		ParserVersion: readingVersion(target.Kind), Machine: target.Machine,
 	}
 }
 
@@ -1250,6 +1255,7 @@ func digestBytes(content []byte) string {
 // declared, then what the path encodes. The path is the last resort because its
 // encoding is lossy.
 func resolveProjects(ctx context.Context, opts Options, target Target, records *parsers.Records) {
+	roots := owningRoots(opts, target)
 	for i := range records.Memories {
 		memory := &records.Memories[i]
 		cwd, _ := memory.Metadata["cwd"].(string)
@@ -1281,7 +1287,7 @@ func resolveProjects(ctx context.Context, opts Options, target Target, records *
 		if fromContent != "" {
 			session.Project = fromContent
 		} else if session.Project == "" {
-			if fromPath, ok := ProjectFromPath(target.Path, opts.Roots.Workspace); ok {
+			if fromPath, ok := ProjectFromPath(target.Path, roots.Workspace); ok {
 				session.Project = fromPath
 			}
 		}
@@ -1295,7 +1301,8 @@ func resolveProjects(ctx context.Context, opts Options, target Target, records *
 // what turns `codex` into a named agent, and it may upgrade a row this ingest
 // itself wrote as generic before the state database existed.
 func enrichCodexSession(ctx context.Context, opts Options, target Target, session *parsers.Session) {
-	enrichment := enrichCodex(ctx, opts.Roots.CodexStateDB, session.ID, target.Path)
+	roots := owningRoots(opts, target)
+	enrichment := enrichCodex(ctx, roots.CodexStateDB, session.ID, target.Path)
 	if len(enrichment.Metadata) == 0 {
 		return
 	}
@@ -1377,6 +1384,11 @@ func declaredRoots(roots Roots) map[string]string {
 		"grok_memtrace":              roots.GrokMemtrace,
 		"claude_export":              strings.Join(roots.ClaudeWebExports, string(os.PathListSeparator)),
 		"chatgpt_export":             strings.Join(roots.ChatGPTWebExports, string(os.PathListSeparator)),
+	}
+	for _, remote := range roots.Remotes {
+		if remote.Machine != "" && remote.Home != "" {
+			declared["remote."+remote.Machine] = remote.Home
+		}
 	}
 	maps.DeleteFunc(declared, func(_, value string) bool { return value == "" })
 	return declared
