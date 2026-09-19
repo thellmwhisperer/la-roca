@@ -240,6 +240,7 @@ func (c *Client) Query(ctx context.Context, in Request) (json.RawMessage, error)
 	err := c.encoder.Encode(request)
 	c.writeMu.Unlock()
 	if err != nil {
+		c.fail(err)
 		return nil, fmt.Errorf("ask semantic search: %w", err)
 	}
 	var response envelope
@@ -355,4 +356,13 @@ func (c *Client) PrewarmMS() int64 {
 	c.stateMu.Lock()
 	defer c.stateMu.Unlock()
 	return c.prewarmMS
+}
+
+func (c *Client) Failed() bool {
+	select {
+	case <-c.failed:
+		return true
+	default:
+		return false
+	}
 }

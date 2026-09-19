@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 	"github.com/thellmwhisperer/la-roca/internal/securefile"
+	resident "github.com/thellmwhisperer/la-roca/pkg/resident"
 )
 
 const (
@@ -63,11 +65,7 @@ func doctorCommand(env *cliEnv) *cobra.Command {
 				}
 				return err
 			}
-			err := env.serviceRunE(func(cmd *cobra.Command, _ []string, svc *service.Service) error {
-				report, err := svc.Doctor(cmd.Context())
-				if err != nil {
-					return err
-				}
+			render := func(report service.DoctorReport, dataDir string) error {
 				proposals, err := env.openCapabilityProposals()
 				if err != nil {
 					return err
@@ -75,7 +73,7 @@ func doctorCommand(env *cliEnv) *cobra.Command {
 				for _, proposal := range proposals {
 					report.CapabilityProposals = append(report.CapabilityProposals, proposal.Proposal.Alert)
 				}
-				audit := logfile.New(svc.DataDir())
+				audit := logfile.New(dataDir)
 				failures, logErr := audit.RecentQueryFailures(
 					time.Now(), doctorQueryFailureWindow, doctorQueryFailureLimit)
 				if logErr != nil {
@@ -101,7 +99,31 @@ func doctorCommand(env *cliEnv) *cobra.Command {
 					_, err = env.reconcileCapabilities(cmd, true, true)
 				}
 				return err
-			})(cmd, args)
+			}
+			var report service.DoctorReport
+			handled, err := env.callResident(cmd.Context(), "doctor", struct{}{}, &report)
+			if handled {
+				if err == nil {
+					paths, pathErr := env.resolvePaths()
+					if pathErr != nil {
+						return pathErr
+					}
+					report.DBPath = paths.DB
+					var status resident.Status
+					if statusHandled, statusErr := env.callResident(cmd.Context(), "status", struct{}{}, &status); statusHandled && statusErr == nil {
+						report.Resident = &status
+					}
+					err = render(report, filepath.Dir(paths.DB))
+				}
+			} else {
+				err = env.serviceRunE(func(cmd *cobra.Command, _ []string, svc *service.Service) error {
+					report, err := svc.Doctor(cmd.Context())
+					if err != nil {
+						return err
+					}
+					return render(report, svc.DataDir())
+				})(cmd, args)
+			}
 			if err != nil && len(foreignOwned) > 0 {
 				renderForeignOwnedStateTo(env.errOut, foreignOwned)
 			}
@@ -193,6 +215,7 @@ func renderDoctor(env *cliEnv, report service.DoctorReport) {
 		env.print("configuration: %s (does not exist: defaults in use)", report.ConfigPath)
 	}
 	env.print("%s", renderQueryKnobs(report.Query))
+	renderResidentDoctor(env, report.Resident)
 	env.print("agents detected: %s", detectedAgentsLine(report.DetectedAgents))
 	env.print("agents not found: %s", missingAgentsLine(report.DetectedAgents))
 	env.print("authentication: local agent models use their own CLI sessions; La Roca stores no secrets")
@@ -227,6 +250,35 @@ func renderDoctor(env *cliEnv, report service.DoctorReport) {
 			env.print("  - %s", proposal)
 		}
 	}
+}
+
+func renderResidentDoctor(env *cliEnv, report *resident.Status) {
+	if report == nil {
+		env.print("resident: down")
+		return
+	}
+	env.print("resident: pid=%d · uptime=%s · attached clients=%d · open connections=%d",
+		report.PID, doctorDuration(report.UptimeMS), report.AttachedClients, report.OpenConnections)
+	if len(report.WAL) == 0 {
+		env.print("resident WALs: none")
+		return
+	}
+	env.print("resident WALs:")
+	paths := make([]string, 0, len(report.WAL))
+	for path := range report.WAL {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	for _, path := range paths {
+		env.print("  %s · %d bytes", path, report.WAL[path])
+	}
+}
+
+func doctorDuration(milliseconds int64) string {
+	if milliseconds < 1000 {
+		return fmt.Sprintf("%dms", milliseconds)
+	}
+	return (time.Duration(milliseconds) * time.Millisecond).String()
 }
 
 func renderQueryKnobs(query service.QueryDoctor) string {

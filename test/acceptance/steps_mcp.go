@@ -140,6 +140,13 @@ func (m *world) openThePlugAs(name string) error {
 	if m.plug.session != nil {
 		m.closeThePlug()
 	}
+	if m.residentSocket == "" {
+		socket, cleanup, err := acceptanceResident()
+		if err != nil {
+			return err
+		}
+		m.residentSocket, m.residentCleanup = socket, cleanup
+	}
 	command := exec.Command(m.binaryPath(), "mcp", "serve")
 	command.Env = m.environment()
 	command.Stderr = os.Stderr
