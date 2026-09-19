@@ -45,6 +45,7 @@ func TestFrozenFederationBytesArePinned(t *testing.T) {
 }
 
 func TestFrozenFederationInstalledBinary(t *testing.T) {
+	requireFrozenFederationPrerequisites(t)
 	guardLiveHub(t)
 	if err := verifyFrozenDigest(mustAcceptanceRoot(t)); err != nil {
 		t.Fatal(err)
@@ -71,6 +72,16 @@ func TestFrozenFederationInstalledBinary(t *testing.T) {
 	t.Run("real-usage-mcp-handoff-refused", func(t *testing.T) { caseMCPHandoffRefused(t, seeded) })
 	t.Run("real-usage-e2e-smoke", TestPublishedReleaseUpdateInitSmoke)
 	t.Run("real-usage-mcp-health", func(t *testing.T) { caseMCPHealth(t, seeded) })
+}
+
+func requireFrozenFederationPrerequisites(t *testing.T) {
+	t.Helper()
+	if strings.TrimSpace(os.Getenv("ROCA_E2E_VECTOR_MODEL")) == "" {
+		t.Skip("set ROCA_E2E_VECTOR_MODEL to run the ready-index federation acceptance")
+	}
+	if strings.TrimSpace(os.Getenv("ROCA_PUBLISHED_BIN")) == "" {
+		t.Skip("set ROCA_PUBLISHED_BIN to run the published-release federation acceptance")
+	}
 }
 
 type federationLab struct {

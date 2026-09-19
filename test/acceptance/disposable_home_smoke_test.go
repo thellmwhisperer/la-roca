@@ -122,7 +122,7 @@ func TestRealBinaryDisposableHomeSmoke(t *testing.T) {
 func TestPublishedReleaseUpdateInitSmoke(t *testing.T) {
 	published := strings.TrimSpace(os.Getenv("ROCA_PUBLISHED_BIN"))
 	if published == "" {
-		t.Fatal("ROCA_PUBLISHED_BIN is required for the published update smoke")
+		t.Skip("set ROCA_PUBLISHED_BIN to run the published update smoke")
 	}
 	info, err := os.Stat(published)
 	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
