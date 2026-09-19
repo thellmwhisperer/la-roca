@@ -86,10 +86,6 @@ hostname. The same project path on two machines stays distinguishable, and
 removing the `[[sources.remote]]` entry stops reading that root without
 deleting rows already written.
 
-`roca ingest --dry-run` reports file counts per root. `roca doctor` lists each
-remote root and marks a mirror stale when its newest file is older than
-`stale_after_hours` (24 when the key is omitted).
-
 ## Import an Anthropic data export
 
 Request the official export from Claude web or Desktop under **Settings →

@@ -200,31 +200,18 @@ type Result struct {
 	After  Tables `json:"counts_after"`
 	Delta  Tables `json:"delta"`
 
-	WorkspaceRoots Workspace         `json:"workspace_roots"`
-	DetectedAgents []string          `json:"detected_agents"`
-	MissingAgents  []string          `json:"agents_not_found"`
-	Roots          map[string]string `json:"roots"`
-	// RootScans is what each HOME-shaped root contributed, local first.
-	RootScans   []RootScan              `json:"root_scans,omitempty"`
-	Warnings    []string                `json:"warnings,omitempty"`
-	ElapsedMS   int64                   `json:"elapsed_ms"`
-	SourceStats map[string]*SourceStats `json:"-"`
-	Coverage    CoverageReport          `json:"coverage"`
+	WorkspaceRoots Workspace               `json:"workspace_roots"`
+	DetectedAgents []string                `json:"detected_agents"`
+	MissingAgents  []string                `json:"agents_not_found"`
+	Roots          map[string]string       `json:"roots"`
+	Warnings       []string                `json:"warnings,omitempty"`
+	ElapsedMS      int64                   `json:"elapsed_ms"`
+	SourceStats    map[string]*SourceStats `json:"-"`
+	Coverage       CoverageReport          `json:"coverage"`
 	// categories indexes DiscardSummary while the run is collapsing into it.
 	categories     map[string]int                `json:"-"`
 	fileCategories map[string]int                `json:"-"`
 	harvestCursors map[string]harvestCursorState `json:"-"`
-}
-
-// RootScan is one HOME-shaped tree this run looked at.
-type RootScan struct {
-	Machine       string `json:"machine"`
-	Root          string `json:"root"`
-	FilesSeen     int    `json:"files_seen"`
-	FilesRead     int    `json:"files_read"`
-	FilesSkipped  int    `json:"files_skipped"`
-	FilesExcluded int    `json:"files_excluded"`
-	FilesErrored  int    `json:"files_errored,omitempty"`
 }
 
 type harvestCursorState struct {
@@ -234,7 +221,6 @@ type harvestCursorState struct {
 	ExchangeCursors      map[string]int `json:"exchange_cursors,omitempty"`
 	LastExchangeComplete bool           `json:"last_exchange_complete"`
 	ParserVersion        string         `json:"parser_version"`
-	Machine              string         `json:"machine,omitempty"`
 }
 
 type harvestCursorSeed struct {
@@ -265,7 +251,6 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 		DetectedAgents: orEmpty(plan.DetectedAgents),
 		MissingAgents:  MissingAgentFamilies(plan.DetectedAgents),
 		Roots:          declaredRoots(opts.Roots),
-		RootScans:      seedRootScans(opts.Roots),
 		Warnings:       plan.Warnings,
 		SourceStats:    map[string]*SourceStats{},
 		FilesSeen:      len(plan.Targets) + len(plan.Excluded),
@@ -290,9 +275,6 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 		stats.RecordsExcluded += records
 		stats.FilesExcluded++
 		result.FilesExcluded++
-		scan := result.rootScan(target)
-		scan.FilesSeen++
-		scan.FilesExcluded++
 		result.categorizeFile("excluded", target.ExclusionReason)
 		// A file the scan refuses on purpose is not a failure to read one: it is
 		// this build declining to ingest something it decided is not corpus.
@@ -364,8 +346,6 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 				})
 			}
 		}
-		scan := result.rootScan(target)
-		scan.FilesSeen++
 		fingerprint, err := targetFingerprint(target)
 		if err != nil {
 			metadata, metadataErr := incrementality.MetadataFingerprint(target.Path)
@@ -373,7 +353,6 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 				target.Kind == parsers.KindHermesDB || target.Kind == parsers.KindLegacyStoreDB
 			if metadataErr == nil && !isDatabase && incrementality.UnchangedMetadata(state, target.Path, metadata) {
 				result.FilesSkipped++
-				scan.FilesSkipped++
 				result.categorizeFile("skipped", "unchanged fingerprint")
 				result.Coverage.skip(target.Path, "unchanged metadata after fingerprint failure")
 				finishTarget()
@@ -381,39 +360,23 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 			}
 			result.fingerprintFailure(target, err)
 			if os.IsNotExist(err) {
-				scan.FilesSkipped++
 				result.Coverage.skip(target.Path, "disappeared after scan")
 			} else {
-				scan.FilesErrored++
 				result.Coverage.skip(target.Path, "fingerprint failed")
 			}
 			finishTarget()
 			continue
 		}
-		unchanged, legacyFingerprint := targetUnchanged(state, target, fingerprint)
-		if unchanged {
-			if legacyFingerprint != "" && !opts.DryRun {
-				if err := promoteFingerprint(ctx, db, target, fingerprint, legacyFingerprint); err != nil {
-					result.Warnings = append(result.Warnings,
-						fmt.Sprintf("could not promote the machine-aware fingerprint for %s: %v",
-							target.Path, err))
-				} else {
-					legacyFingerprint = ""
-				}
-			}
-			if opts.DryRun || legacyFingerprint == "" {
-				result.addMessageCoverage(source, stateMessageCoverage(state[target.Path]))
-				result.FilesSkipped++
-				scan.FilesSkipped++
-				result.categorizeFile("skipped", "unchanged fingerprint")
-				result.Coverage.skip(target.Path, "unchanged fingerprint")
-				finishTarget()
-				continue
-			}
+		if incrementality.Unchanged(state, target.Path, fingerprint) {
+			result.addMessageCoverage(source, stateMessageCoverage(state[target.Path]))
+			result.FilesSkipped++
+			result.categorizeFile("skipped", "unchanged fingerprint")
+			result.Coverage.skip(target.Path, "unchanged fingerprint")
+			finishTarget()
+			continue
 		}
 		if opts.DryRun {
 			result.FilesRead++
-			scan.FilesRead++
 			result.categorizeFile("pending", "new or changed fingerprint")
 			stats.Read++
 			result.Coverage.skip(target.Path, "dry run pending")
@@ -425,7 +388,6 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 			announced[source] = true
 		}
 		result.FilesRead++
-		scan.FilesRead++
 		result.categorizeFile("parsed", "new or changed fingerprint")
 		stats.Read++
 		discardsBefore, excludedBefore := result.RecordsDiscarded, result.RecordsExcluded
@@ -478,27 +440,6 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 		}
 	}
 	return result, nil
-}
-
-func promoteFingerprint(ctx context.Context, db Database, target Target,
-	fingerprint, legacyFingerprint string) error {
-	return db.Write(ctx, func(tx *sql.Tx) error {
-		updated, err := tx.ExecContext(ctx, `UPDATE ingest_file_state
-			SET fingerprint = ?, last_synced_at = datetime('now')
-			WHERE path = ? AND fingerprint = ? AND COALESCE(last_error, '') = ''`,
-			fingerprint, target.Path, legacyFingerprint)
-		if err != nil {
-			return err
-		}
-		count, err := updated.RowsAffected()
-		if err != nil {
-			return err
-		}
-		if count != 1 {
-			return fmt.Errorf("state for %s changed during promotion", target.Path)
-		}
-		return nil
-	})
 }
 
 func excludedRecordCount(target Target) int {
@@ -764,7 +705,6 @@ func ingestOne(ctx context.Context, db Database, layers layerResolver, opts Opti
 			summary["exchange_cursors"] = cursor.ExchangeCursors
 			summary["last_exchange_complete"] = cursor.LastExchangeComplete
 			summary["parser_version"] = cursor.ParserVersion
-			summary["machine"] = cursor.Machine
 		} else if info, statErr := os.Stat(target.Path); statErr == nil {
 			summary["byte_offset"] = info.Size()
 		}
@@ -984,8 +924,7 @@ func cursorContent(target Target, previous incrementality.FileState,
 	var cursor harvestCursorState
 	if json.Unmarshal(previous.Metadata, &cursor) != nil || cursor.ByteOffset <= 0 ||
 		cursor.ByteOffset >= int64(len(content)) || cursor.PrefixDigest == "" ||
-		!cursor.LastExchangeComplete || cursor.ParserVersion != readingVersion(target.Kind) ||
-		cursor.Machine != target.Machine {
+		!cursor.LastExchangeComplete || cursor.ParserVersion != readingVersion(target.Kind) {
 		return content, harvestCursorSeed{}
 	}
 	if target.Kind == parsers.KindCodexHistory && len(cursor.ExchangeCursors) == 0 {
@@ -1298,7 +1237,7 @@ func recordHarvestCursor(target Target, seed harvestCursorSeed, full []byte, rec
 	result.harvestCursors[target.Path] = harvestCursorState{
 		ByteOffset: int64(len(full)), PrefixDigest: digestBytes(full), ExchangeCursor: exchangeCursor,
 		ExchangeCursors: exchangeCursors, LastExchangeComplete: records.Deferred == 0,
-		ParserVersion: readingVersion(target.Kind), Machine: target.Machine,
+		ParserVersion: readingVersion(target.Kind),
 	}
 }
 
@@ -1449,24 +1388,6 @@ func declaredRoots(roots Roots) map[string]string {
 	}
 	maps.DeleteFunc(declared, func(_, value string) bool { return value == "" })
 	return declared
-}
-
-func seedRootScans(roots Roots) []RootScan {
-	scans := []RootScan{{Machine: roots.Machine, Root: roots.Home}}
-	for _, remote := range roots.Remotes {
-		scans = append(scans, RootScan{Machine: remote.Machine, Root: remote.Home})
-	}
-	return scans
-}
-
-func (r *Result) rootScan(target Target) *RootScan {
-	for i := range r.RootScans {
-		if r.RootScans[i].Machine == target.Machine && r.RootScans[i].Root == target.RootHome {
-			return &r.RootScans[i]
-		}
-	}
-	r.RootScans = append(r.RootScans, RootScan{Machine: target.Machine, Root: target.RootHome})
-	return &r.RootScans[len(r.RootScans)-1]
 }
 
 // SortedSources is the report's source names in a stable order, for the readable

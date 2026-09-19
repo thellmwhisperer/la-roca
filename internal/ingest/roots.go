@@ -75,14 +75,9 @@ type Settings struct {
 // RemoteSource is one configured mirror: the machine name stamps every row
 // ingested from Root, which is a tree with the same shape as that machine's HOME.
 type RemoteSource struct {
-	Machine         string
-	Root            string
-	StaleAfterHours int
+	Machine string
+	Root    string
 }
-
-// DefaultStaleAfterHours is how old the newest file in a remote mirror may be
-// before doctor reports the mirror as stale.
-const DefaultStaleAfterHours = 24
 
 // Roots are the resolved locations of every source in the v1 matrix.
 type Roots struct {
@@ -131,9 +126,6 @@ type Roots struct {
 	Machine string
 	// Remote is true when this tree is a configured mirror, not this machine's HOME.
 	Remote bool
-	// StaleAfterHours is how old the newest file may be before doctor calls a
-	// remote mirror stale. Zero means DefaultStaleAfterHours. Local roots ignore it.
-	StaleAfterHours int
 	// Remotes are additional HOME-shaped trees resolved from [[sources.remote]].
 	Remotes []Roots
 }
@@ -170,17 +162,12 @@ func ResolveRoots(env Environment, settings Settings) Roots {
 		if machine == "" || root == "" {
 			continue
 		}
-		hours := remote.StaleAfterHours
-		if hours <= 0 {
-			hours = DefaultStaleAfterHours
-		}
 		remoteEnv := env
 		remoteEnv.Home = root
 		remoteEnv.Getenv = nil
 		resolved := resolveOne(remoteEnv, Settings{})
 		resolved.Machine = machine
 		resolved.Remote = true
-		resolved.StaleAfterHours = hours
 		roots.Remotes = append(roots.Remotes, resolved)
 	}
 	return roots

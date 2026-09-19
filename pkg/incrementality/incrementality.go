@@ -39,7 +39,6 @@ type Target struct {
 	Kind        string
 	SourceAgent string
 	Project     string
-	Machine     string
 
 	// ParserVersion invalidates a previously recorded fingerprint when the
 	// target's reader learns to extract more from an otherwise unchanged file.
@@ -101,7 +100,7 @@ func TargetFingerprint(target Target) (string, error) {
 		return "", err
 	}
 	if !target.IncludeSQLiteWAL {
-		return parserAwareFingerprint(main, target.ParserVersion, target.Machine), nil
+		return parserAwareFingerprint(main, target.ParserVersion), nil
 	}
 	wal, err := Fingerprint(target.Path + "-wal")
 	if err != nil {
@@ -129,13 +128,10 @@ func TargetFingerprint(target Target) (string, error) {
 		}
 		combined += ":companions:" + fmt.Sprintf("%x", digest.Sum(nil))
 	}
-	return parserAwareFingerprint(combined, target.ParserVersion, target.Machine), nil
+	return parserAwareFingerprint(combined, target.ParserVersion), nil
 }
 
-func parserAwareFingerprint(fingerprint, version, machine string) string {
-	if machine != "" {
-		fingerprint += ":machine:" + machine
-	}
+func parserAwareFingerprint(fingerprint, version string) string {
 	if version == "" {
 		return fingerprint
 	}

@@ -1,10 +1,7 @@
 package ingest
 
 import (
-	"io/fs"
-	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/thellmwhisperer/la-roca/pkg/parsers"
 )
@@ -17,34 +14,6 @@ func QualifySessionID(machine, id string) string {
 		return id
 	}
 	return machine + "/" + id
-}
-
-// NewestModTime is the mtime of the newest regular file under root.
-func NewestModTime(root string) (time.Time, bool) {
-	if strings.TrimSpace(root) == "" {
-		return time.Time{}, false
-	}
-	resolved, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		return time.Time{}, false
-	}
-	var newest time.Time
-	found := false
-	filepath.WalkDir(resolved, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil || !entry.Type().IsRegular() {
-			return nil
-		}
-		info, infoErr := entry.Info()
-		if infoErr != nil {
-			return nil
-		}
-		if !found || info.ModTime().After(newest) {
-			newest = info.ModTime()
-			found = true
-		}
-		return nil
-	})
-	return newest, found
 }
 
 func owningRoots(opts Options, target Target) Roots {

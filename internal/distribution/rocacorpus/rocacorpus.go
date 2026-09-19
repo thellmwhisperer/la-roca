@@ -19,7 +19,7 @@ const (
 	// BundledSource is what the installer records for this package, and it is
 	// what discovery reads to know the corpus attach alias is the kernel's own.
 	BundledSource = plugin.BundledSource
-	SchemaVersion = 9
+	SchemaVersion = 7
 	IndexVersion  = 3
 )
 
@@ -160,11 +160,6 @@ func prepareIngestProvenance(path string) error {
 	if err := ensureMachineColumns(context.Background(), tx); err != nil {
 		return err
 	}
-	for _, trigger := range []string{"sessions_au", "exchanges_au", "thinking_au"} {
-		if _, err := tx.Exec("DROP TRIGGER IF EXISTS " + trigger); err != nil {
-			return fmt.Errorf("retire %s: %w", trigger, err)
-		}
-	}
 	if err := backfillMachine(context.Background(), tx); err != nil {
 		return err
 	}
@@ -248,8 +243,7 @@ func columnExists(ctx context.Context, db *sql.Tx, table, column string) (bool, 
 }
 
 func ensureMachineColumns(ctx context.Context, tx *sql.Tx) error {
-	for _, table := range []string{"sessions", "exchanges", "thinking_blocks", "tool_uses",
-		"session_versions", "exchange_versions", "thinking_block_versions", "tool_use_versions"} {
+	for _, table := range []string{"sessions", "exchanges", "thinking_blocks", "tool_uses"} {
 		present, err := tableExists(tx, table)
 		if err != nil {
 			return err

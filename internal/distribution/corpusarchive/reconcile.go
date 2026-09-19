@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"slices"
 	"sort"
 )
 
@@ -455,18 +454,18 @@ func retainedCoordinateQuery(destinationTable string) (string, error) {
 	switch destinationTable {
 	case "session_versions":
 		return `SELECT version_digest, session_id, source_agent, source_surface, project,
-			started_at, ended_at, duration_minutes, machine FROM session_versions`, nil
+			started_at, ended_at, duration_minutes FROM session_versions`, nil
 	case "exchange_versions":
 		return `SELECT version_digest, session_id, exchange_number, is_after_compaction,
 			human_timestamp, agent_timestamp, response_latency_ms, model, provider,
-			tokens_in, tokens_out, tokens_reasoning, cost_usd, machine FROM exchange_versions`, nil
+			tokens_in, tokens_out, tokens_reasoning, cost_usd FROM exchange_versions`, nil
 	case "tool_use_versions":
 		return `SELECT version_digest, session_id, exchange_number, tool_name, had_error,
-			initiative_type, machine FROM tool_use_versions`, nil
+			initiative_type FROM tool_use_versions`, nil
 	case "thinking_block_versions":
 		return `SELECT version_digest, session_id, exchange_number, position_in_session,
 			depth, caution_ratio, word_count, is_after_compaction
-			, machine FROM thinking_block_versions`, nil
+			FROM thinking_block_versions`, nil
 	case "ingest_file_state_versions":
 		return `SELECT version_digest, path, source_kind, source_agent, project, fingerprint,
 			last_synced_at, last_error, metadata FROM ingest_file_state_versions`, nil
@@ -481,46 +480,43 @@ func scanRetainedCoordinateDigest(rows *sql.Rows, destinationTable string) (stri
 	switch destinationTable {
 	case "session_versions":
 		var sessionID string
-		var agent, surface, project, started, ended, machine sql.NullString
+		var agent, surface, project, started, ended sql.NullString
 		var duration sql.NullInt64
 		if err := rows.Scan(&stored, &sessionID, &agent, &surface, &project, &started,
-			&ended, &duration, &machine); err != nil {
+			&ended, &duration); err != nil {
 			return "", "", err
 		}
-		values = []any{sessionID, agent, surface, project, started, ended, duration,
-			sourceMachine(machine)}
+		values = []any{sessionID, agent, surface, project, started, ended, duration}
 	case "exchange_versions":
 		var sessionID string
 		var number, compacted, latency, tokensIn, tokensOut, tokensReasoning sql.NullInt64
-		var humanAt, agentAt, model, provider, machine sql.NullString
+		var humanAt, agentAt, model, provider sql.NullString
 		var cost sql.NullFloat64
 		if err := rows.Scan(&stored, &sessionID, &number, &compacted, &humanAt, &agentAt,
-			&latency, &model, &provider, &tokensIn, &tokensOut, &tokensReasoning, &cost,
-			&machine); err != nil {
+			&latency, &model, &provider, &tokensIn, &tokensOut, &tokensReasoning, &cost); err != nil {
 			return "", "", err
 		}
 		values = []any{sessionID, number, compacted, humanAt, agentAt, latency, model,
-			provider, tokensIn, tokensOut, tokensReasoning, cost, sourceMachine(machine)}
+			provider, tokensIn, tokensOut, tokensReasoning, cost}
 	case "tool_use_versions":
 		var sessionID string
 		var number, hadError sql.NullInt64
-		var name, initiative, machine sql.NullString
+		var name, initiative sql.NullString
 		if err := rows.Scan(&stored, &sessionID, &number, &name, &hadError,
-			&initiative, &machine); err != nil {
+			&initiative); err != nil {
 			return "", "", err
 		}
-		values = []any{sessionID, number, name, hadError, initiative, sourceMachine(machine)}
+		values = []any{sessionID, number, name, hadError, initiative}
 	case "thinking_block_versions":
 		var sessionID string
 		var number, wordCount, compacted sql.NullInt64
 		var position, caution sql.NullFloat64
-		var depth, machine sql.NullString
+		var depth sql.NullString
 		if err := rows.Scan(&stored, &sessionID, &number, &position, &depth, &caution,
-			&wordCount, &compacted, &machine); err != nil {
+			&wordCount, &compacted); err != nil {
 			return "", "", err
 		}
-		values = []any{sessionID, number, position, depth, caution, wordCount, compacted,
-			sourceMachine(machine)}
+		values = []any{sessionID, number, position, depth, caution, wordCount, compacted}
 	case "ingest_file_state_versions":
 		row, err := scanIngestFileStateRow(rows)
 		if err != nil {
@@ -537,7 +533,7 @@ func scanRetainedCoordinateDigest(rows *sql.Rows, destinationTable string) (stri
 
 func retainedCoordinateDigest(destinationTable string, values ...any) string {
 	if destinationTable == "exchange_versions" {
-		values = append(slices.Clone(values[:6]), values[len(values)-1])
+		values = values[:6]
 	}
 	return canonicalDigest("retained-"+destinationTable, values...)
 }

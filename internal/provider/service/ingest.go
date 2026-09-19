@@ -146,7 +146,6 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (IngestResult, 
 		LiveProgress:           s.opts.IngestProgress,
 	})
 	result := IngestResult{Result: report}
-	result.Warnings = append(result.Warnings, s.opts.ConfigWarnings...)
 	if err != nil {
 		result.TotalElapsedMS = time.Since(started).Milliseconds()
 		return result, err

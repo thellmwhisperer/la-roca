@@ -236,17 +236,11 @@ func renderDoctorRemoteSources(env *cliEnv, remotes []service.RemoteSourceDoctor
 	}
 	env.print("remote sources:")
 	for _, remote := range remotes {
-		state := "current"
+		state := "present"
 		if !remote.Present {
 			state = "missing"
-		} else if remote.Stale {
-			state = "stale"
 		}
-		detail := fmt.Sprintf("threshold %dh", remote.StaleAfterHours)
-		if remote.NewestAgeHours != nil {
-			detail = fmt.Sprintf("newest file %dh ago, %s", *remote.NewestAgeHours, detail)
-		}
-		env.print("  %s · %s · %s · %s", remote.Machine, remote.Root, state, detail)
+		env.print("  %s · %s · %s", remote.Machine, remote.Root, state)
 	}
 }
 

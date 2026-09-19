@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math"
 	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -692,9 +691,8 @@ type LayoutConfig struct {
 // with the machine that produced the artefacts. Transport of the mirror is
 // outside this product.
 type RemoteSource struct {
-	Machine         string
-	Root            string
-	StaleAfterHours int
+	Machine string
+	Root    string
 }
 
 func defaultLayout() LayoutConfig { return LayoutConfig{Serving: LayoutLegacyServing} }
@@ -914,12 +912,10 @@ func readRemoteSources(section map[string]any, path string, warnings *[]string) 
 	}
 	var remotes []RemoteSource
 	seen := map[string]bool{}
-	seenRoots := map[string]bool{}
-	localRoot := remoteRootKey("~")
 	for _, entry := range entries {
 		for _, key := range sortedKeys(entry) {
 			switch key {
-			case "machine", "root", "stale_after_hours":
+			case "machine", "root":
 			default:
 				*warnings = append(*warnings, unknownKey("sources.remote."+key, path))
 			}
@@ -936,49 +932,10 @@ func readRemoteSources(section map[string]any, path string, warnings *[]string) 
 				"a machine name used once"))
 			continue
 		}
-		rootKey := remoteRootKey(root)
-		if rootKey != "" && (seenRoots[rootKey] || rootKey == localRoot) {
-			*warnings = append(*warnings, invalidValue("sources.remote.root", path,
-				"a root used once and different from the local HOME"))
-			continue
-		}
 		seen[machine] = true
-		seenRoots[rootKey] = true
-		remote := RemoteSource{Machine: machine, Root: root}
-		if raw, ok := entry["stale_after_hours"]; ok {
-			hours, ok := readNumber(raw)
-			if !ok || hours < 1 {
-				*warnings = append(*warnings, invalidValue("sources.remote.stale_after_hours", path,
-					"a whole number of hours, one or more"))
-			} else {
-				remote.StaleAfterHours = hours
-			}
-		}
-		remotes = append(remotes, remote)
+		remotes = append(remotes, RemoteSource{Machine: machine, Root: root})
 	}
 	return remotes
-}
-
-func remoteRootKey(root string) string {
-	root = strings.TrimSpace(root)
-	if root == "" {
-		return ""
-	}
-	if home, err := os.UserHomeDir(); err == nil {
-		switch {
-		case root == "~":
-			root = home
-		case strings.HasPrefix(root, "~/"), strings.HasPrefix(root, `~\`):
-			root = filepath.Join(home, root[2:])
-		}
-	}
-	if absolute, err := filepath.Abs(root); err == nil {
-		root = absolute
-	}
-	if resolved, err := filepath.EvalSymlinks(root); err == nil {
-		root = resolved
-	}
-	return filepath.Clean(root)
 }
 
 func remoteSourceEntries(value any) []map[string]any {

@@ -146,7 +146,7 @@ CREATE TRIGGER IF NOT EXISTS exchanges_ad AFTER DELETE ON exchanges BEGIN
   INSERT INTO exchanges_fts(exchanges_fts, rowid, human_text, agent_text)
     VALUES ('delete', old.id, old.human_text, old.agent_text);
 END;
-CREATE TRIGGER IF NOT EXISTS exchanges_au AFTER UPDATE OF human_text, agent_text ON exchanges BEGIN
+CREATE TRIGGER IF NOT EXISTS exchanges_au AFTER UPDATE ON exchanges BEGIN
   INSERT INTO exchanges_fts(exchanges_fts, rowid, human_text, agent_text)
     VALUES ('delete', old.id, old.human_text, old.agent_text);
   INSERT INTO exchanges_fts(rowid, human_text, agent_text)
@@ -159,7 +159,7 @@ END;
 CREATE TRIGGER IF NOT EXISTS thinking_ad AFTER DELETE ON thinking_blocks BEGIN
   INSERT INTO thinking_fts(thinking_fts, rowid, full_text) VALUES ('delete', old.id, old.full_text);
 END;
-CREATE TRIGGER IF NOT EXISTS thinking_au AFTER UPDATE OF full_text ON thinking_blocks BEGIN
+CREATE TRIGGER IF NOT EXISTS thinking_au AFTER UPDATE ON thinking_blocks BEGIN
   INSERT INTO thinking_fts(thinking_fts, rowid, full_text) VALUES ('delete', old.id, old.full_text);
   INSERT INTO thinking_fts(rowid, full_text) VALUES (new.id, new.full_text);
 END;
@@ -171,7 +171,7 @@ CREATE TRIGGER IF NOT EXISTS sessions_ad AFTER DELETE ON sessions BEGIN
   INSERT INTO sessions_fts(sessions_fts, rowid, title, project)
     VALUES ('delete', old.rowid, old.title, old.project);
 END;
-CREATE TRIGGER IF NOT EXISTS sessions_au AFTER UPDATE OF title, project ON sessions BEGIN
+CREATE TRIGGER IF NOT EXISTS sessions_au AFTER UPDATE ON sessions BEGIN
   INSERT INTO sessions_fts(sessions_fts, rowid, title, project)
     VALUES ('delete', old.rowid, old.title, old.project);
   INSERT INTO sessions_fts(rowid, title, project) VALUES (new.rowid, new.title, new.project);
@@ -215,7 +215,6 @@ CREATE TABLE IF NOT EXISTS session_versions (
   started_at       TEXT,
   ended_at         TEXT,
   duration_minutes INTEGER,
-  machine          TEXT,
   observed_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -234,7 +233,6 @@ CREATE TABLE IF NOT EXISTS exchange_versions (
   tokens_out          INTEGER,
   tokens_reasoning    INTEGER,
   cost_usd            REAL,
-  machine             TEXT,
   observed_at         TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -246,7 +244,6 @@ CREATE TABLE IF NOT EXISTS tool_use_versions (
   tool_name           TEXT,
   had_error           INTEGER,
   initiative_type     TEXT,
-  machine             TEXT,
   observed_at         TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -260,7 +257,6 @@ CREATE TABLE IF NOT EXISTS thinking_block_versions (
   caution_ratio       REAL,
   word_count          INTEGER,
   is_after_compaction INTEGER,
-  machine             TEXT,
   observed_at         TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

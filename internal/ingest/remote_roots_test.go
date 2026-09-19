@@ -1,7 +1,6 @@
 package ingest
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,19 +27,6 @@ func TestRemoteSourceRootsIngestByMachine(t *testing.T) {
 	})
 	if combined.Machine != "hub" || len(combined.Remotes) != 1 || combined.Remotes[0].Machine != "mini" {
 		t.Fatalf("roots machine=%q remotes=%+v", combined.Machine, combined.Remotes)
-	}
-
-	dry, err := Run(context.Background(), rocaDatabase(t), registry(t),
-		Options{Roots: combined, DryRun: true})
-	if err != nil {
-		t.Fatalf("dry-run: %v", err)
-	}
-	byMachine := map[string]RootScan{}
-	for _, scan := range dry.RootScans {
-		byMachine[scan.Machine] = scan
-	}
-	if byMachine["hub"].FilesSeen == 0 || byMachine["mini"].FilesSeen == 0 {
-		t.Fatalf("dry-run counts by root = %+v", dry.RootScans)
 	}
 
 	db, result := runIngest(t, combined)
@@ -139,7 +125,6 @@ func TestQualifySessionID(t *testing.T) {
 	if got := QualifySessionID("", "abc"); got != "abc" {
 		t.Fatalf("local id changed: %q", got)
 	}
-
 }
 
 func writeClaudeSession(t *testing.T, roots Roots, cwd, sessionID string) {

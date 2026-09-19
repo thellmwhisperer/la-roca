@@ -131,7 +131,6 @@ func renderIngest(env *cliEnv, result service.IngestResult, verbose bool) {
 			axi.Quantity(int64(result.FilesRead), "file"), axi.Number(int64(result.FilesSkipped)),
 			axi.Number(int64(result.FilesExcluded)),
 			axi.Duration(result.ElapsedMS))
-		renderIngestRootScans(env, result)
 	} else {
 		env.print("ingest: %s seen · %s parsed · %s skipped · %s excluded · %s · %s",
 			axi.Quantity(int64(result.FilesSeen), "file"),
@@ -215,28 +214,6 @@ func coverageCounters(counts map[string]int) string {
 		return "none"
 	}
 	return strings.Join(parts, " ")
-}
-func renderIngestRootScans(env *cliEnv, result service.IngestResult) {
-	if len(result.RootScans) == 0 {
-		return
-	}
-	env.print("roots:")
-	for _, scan := range result.RootScans {
-		machine := scan.Machine
-		if machine == "" {
-			machine = "local"
-		}
-		line := fmt.Sprintf("  %s · %s seen · %s pending · %s skipped · %s excluded",
-			machine,
-			axi.Quantity(int64(scan.FilesSeen), "file"),
-			axi.Number(int64(scan.FilesRead)),
-			axi.Number(int64(scan.FilesSkipped)),
-			axi.Number(int64(scan.FilesExcluded)))
-		if scan.FilesErrored > 0 {
-			line += fmt.Sprintf(" · %s errors", axi.Number(int64(scan.FilesErrored)))
-		}
-		env.print("%s", line)
-	}
 }
 
 func renderIngestSources(env *cliEnv, result service.IngestResult) {
@@ -432,9 +409,8 @@ func remoteIngestSources(file config.File) []ingest.RemoteSource {
 	out := make([]ingest.RemoteSource, 0, len(file.RemoteSources))
 	for _, remote := range file.RemoteSources {
 		out = append(out, ingest.RemoteSource{
-			Machine:         remote.Machine,
-			Root:            remote.Root,
-			StaleAfterHours: remote.StaleAfterHours,
+			Machine: remote.Machine,
+			Root:    remote.Root,
 		})
 	}
 	return out
