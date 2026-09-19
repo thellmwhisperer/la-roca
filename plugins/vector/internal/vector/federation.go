@@ -1452,7 +1452,7 @@ func (d DeclaredCorpus) opsCanonicalMap(ids []string) (map[string]string, error)
 	for index, id := range ids {
 		args[index] = id
 	}
-	rows, err := conn.Query(`SELECT CAST(old_id AS TEXT), CAST(canonical_id AS TEXT) FROM memory_id_remaps WHERE CAST(old_id AS TEXT) IN (`+placeholders+`)`, args...)
+	rows, err := conn.Query(`SELECT CAST(old_id AS TEXT), CAST(canonical_id AS TEXT) FROM memory_id_remaps WHERE old_id IN (`+placeholders+`)`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("read roca-ops remaps: %w", err)
 	}
