@@ -230,12 +230,50 @@ func currentProjectHandoffs(ctx context.Context, db memoryQuerier, project strin
 	return heads, nil
 }
 
+// repairHandoffHeads retires every current head except the newest, which the
+// incoming store will supersede. It never overwrites a head that already names
+// a predecessor: that rewrite would drop the old pointer and resurrect it.
 func repairHandoffHeads(ctx context.Context, db *sql.Tx, currentIDs []int64) error {
 	for i := 1; i < len(currentIDs); i++ {
+		var previous sql.NullInt64
+		if err := db.QueryRowContext(ctx,
+			`SELECT supersedes FROM memories WHERE id = ?`, currentIDs[i]).Scan(&previous); err != nil {
+			return fmt.Errorf("read current project handoff predecessor: %w", err)
+		}
+		if previous.Valid {
+			if err := retireHandoffHead(ctx, db, currentIDs[i-1]); err != nil {
+				return err
+			}
+			continue
+		}
 		if _, err := db.ExecContext(ctx,
 			`UPDATE memories SET supersedes = ? WHERE id = ?`, currentIDs[i-1], currentIDs[i]); err != nil {
 			return fmt.Errorf("repair current project handoff heads: %w", err)
 		}
+	}
+	return nil
+}
+
+func retireHandoffHead(ctx context.Context, db *sql.Tx, id int64) error {
+	var n int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM memories WHERE supersedes = ?`, id).Scan(&n); err != nil {
+		return fmt.Errorf("check whether a handoff head is already retired: %w", err)
+	}
+	if n > 0 {
+		return nil
+	}
+	var project sql.NullString
+	if err := db.QueryRowContext(ctx,
+		`SELECT project FROM memories WHERE id = ?`, id).Scan(&project); err != nil {
+		return fmt.Errorf("read the retired handoff project: %w", err)
+	}
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO memories (layer, content, origin, source_agent, source_model, source_surface, project, status, supersedes)
+		VALUES ('knowledge', 'retired a parallel current handoff', 'agent', 'unknown', 'unknown', 'cli', ?, 'resolved', ?)`,
+		project, id)
+	if err != nil {
+		return fmt.Errorf("retire a parallel current handoff: %w", err)
 	}
 	return nil
 }

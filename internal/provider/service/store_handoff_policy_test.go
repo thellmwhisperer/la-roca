@@ -247,8 +247,8 @@ func TestStoreAutoSupersedesThePreviousCurrentHandoffForAProject(t *testing.T) {
 		}},
 		{"repairs pre-existing multiple current heads", func(t *testing.T) {
 			project := "repair-handoff"
-			first := insertCurrentHandoff(t, svc, project, "repair A", "2026-08-01 00:00:00")
-			second := insertCurrentHandoff(t, svc, project, "repair B", "2026-08-02 00:00:00")
+			first := insertHandoffRow(t, svc, project, "repair A", "2026-08-01 00:00:00", 0)
+			second := insertHandoffRow(t, svc, project, "repair B", "2026-08-02 00:00:00", 0)
 			third := mustStoreHandoff(t, svc, project, "repair C")
 			if got := memorySupersedes(t, svc, third.ID); !got.Valid || got.Int64 != second {
 				t.Fatalf("new handoff supersedes = %+v, want %d", got, second)
@@ -258,6 +258,35 @@ func TestStoreAutoSupersedesThePreviousCurrentHandoffForAProject(t *testing.T) {
 			}
 			if n := currentHandoffCount(t, svc, project); n != 1 {
 				t.Fatalf("repaired current handoffs = %d, want 1", n)
+			}
+		}},
+		{"forked current heads keep their predecessors", func(t *testing.T) {
+			project := "fork-handoff"
+			ancestorA := insertHandoffRow(t, svc, project, "ancestor A", "2026-08-01 00:00:00", 0)
+			ancestorB := insertHandoffRow(t, svc, project, "ancestor B", "2026-08-02 00:00:00", 0)
+			first := insertHandoffRow(t, svc, project, "fork A", "2026-08-03 00:00:00", ancestorA)
+			second := insertHandoffRow(t, svc, project, "fork B", "2026-08-04 00:00:00", ancestorB)
+			third := mustStoreHandoff(t, svc, project, "fork C")
+			if got := memorySupersedes(t, svc, third.ID); !got.Valid || got.Int64 != second {
+				t.Fatalf("new handoff supersedes = %+v, want %d", got, second)
+			}
+			if got := memorySupersedes(t, svc, second); !got.Valid || got.Int64 != ancestorB {
+				t.Fatalf("fork head predecessor overwritten: %+v, want %d", got, ancestorB)
+			}
+			if got := memorySupersedes(t, svc, first); !got.Valid || got.Int64 != ancestorA {
+				t.Fatalf("other fork head predecessor overwritten: %+v, want %d", got, ancestorA)
+			}
+			if !memoryIsSuperseded(t, svc, first) {
+				t.Fatalf("older fork head %d is still current", first)
+			}
+			if !memoryIsSuperseded(t, svc, ancestorA) || !memoryIsSuperseded(t, svc, ancestorB) {
+				t.Fatal("rewriting the fork resurrected an ancestor")
+			}
+			if n := currentHandoffCount(t, svc, project); n != 1 {
+				t.Fatalf("fork current handoffs = %d, want 1", n)
+			}
+			if n := issueCurrentHandoffCount(t, svc, project); n != 1 {
+				t.Fatalf("issue non-superseded count = %d, want 1", n)
 			}
 		}},
 		{"inactive handoffs do not retire the active head", func(t *testing.T) {
@@ -415,12 +444,12 @@ func memorySupersedes(t *testing.T, svc *service.Service, id int64) sql.NullInt6
 	return value
 }
 
-func insertCurrentHandoff(t *testing.T, svc *service.Service, project, body, createdAt string) int64 {
+func insertHandoffRow(t *testing.T, svc *service.Service, project, body, createdAt string, supersedes int64) int64 {
 	t.Helper()
 	result, err := svc.DB().SQL().Exec(
-		`INSERT INTO memories (layer, content, origin, source_agent, source_model, source_surface, project, status, created_at)
-		 VALUES ('handoff', ?, 'agent', 'claude', 'sonnet', 'cli', ?, 'active', ?)`,
-		shapedHandoff(body), project, createdAt)
+		`INSERT INTO memories (layer, content, origin, source_agent, source_model, source_surface, project, status, supersedes, created_at)
+		 VALUES ('handoff', ?, 'agent', 'claude', 'sonnet', 'cli', ?, 'active', ?, ?)`,
+		shapedHandoff(body), project, orNullInt64(supersedes), createdAt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -429,6 +458,33 @@ func insertCurrentHandoff(t *testing.T, svc *service.Service, project, body, cre
 		t.Fatal(err)
 	}
 	return id
+}
+
+func orNullInt64(id int64) any {
+	if id == 0 {
+		return nil
+	}
+	return id
+}
+
+func memoryIsSuperseded(t *testing.T, svc *service.Service, id int64) bool {
+	t.Helper()
+	var n int
+	if err := svc.DB().SQL().QueryRow(`SELECT COUNT(*) FROM memories WHERE supersedes = ?`, id).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n > 0
+}
+
+func issueCurrentHandoffCount(t *testing.T, svc *service.Service, project string) int {
+	t.Helper()
+	var n int
+	if err := svc.DB().SQL().QueryRow(`SELECT COUNT(*) FROM memories
+		WHERE project = ? AND layer = 'handoff'
+		  AND id NOT IN (SELECT supersedes FROM memories WHERE supersedes IS NOT NULL)`, project).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
 }
 
 func currentHandoffCount(t *testing.T, svc *service.Service, project string) int {
