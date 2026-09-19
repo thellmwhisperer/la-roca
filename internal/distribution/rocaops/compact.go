@@ -32,6 +32,9 @@ func compactMemoryIDs(path string) error {
 		return fmt.Errorf("count oversized memory ids: %w", err)
 	}
 	if oversized == 0 {
+		if err := clearLegacySequence(ctx, tx); err != nil {
+			return err
+		}
 		return tx.Commit()
 	}
 	if err := dropMemoryFTSTriggers(tx); err != nil {
@@ -50,6 +53,24 @@ func compactMemoryIDs(path string) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+func clearLegacySequence(ctx context.Context, tx *sql.Tx) error {
+	var seq sql.NullInt64
+	if err := tx.QueryRowContext(ctx,
+		`SELECT seq FROM sqlite_sequence WHERE name = 'memories'`).Scan(&seq); err != nil {
+		if err == sql.ErrNoRows {
+			return nil
+		}
+		return fmt.Errorf("read memories sqlite_sequence: %w", err)
+	}
+	if !seq.Valid || seq.Int64 <= jsSafeInteger {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM sqlite_sequence WHERE name = 'memories'`); err != nil {
+		return fmt.Errorf("clear legacy memories sqlite_sequence: %w", err)
+	}
+	return nil
 }
 
 func createMemoryFTSTriggers(tx *sql.Tx) error {

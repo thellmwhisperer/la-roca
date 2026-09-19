@@ -64,6 +64,51 @@ func TestCompactMemoryIDsRestoresMemoryFTSBehavior(t *testing.T) {
 	assertMemoryFTSCount(t, db, "after update", 0)
 }
 
+func TestCompactMemoryIDsClearsLegacySequenceWhenMemoriesAreEmpty(t *testing.T) {
+	path := filepath.Join(t.TempDir(), DatabaseFilename)
+	db, err := bundledplugin.OpenDatabase(path, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(schema); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO memories (id, layer, content, origin)
+		VALUES (?, 'discovery', 'legacy sequence', 'agent')`, int64(jsSafeInteger+1)); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DELETE FROM memories`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := compactMemoryIDs(path); err != nil {
+		t.Fatal(err)
+	}
+	db, err = bundledplugin.OpenDatabase(path, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	result, err := db.Exec(`INSERT INTO memories (layer, content, origin)
+		VALUES ('discovery', 'after empty migration', 'agent')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != 1 {
+		t.Fatalf("post-migration empty id = %d, want 1", id)
+	}
+}
+
 func assertMemoryFTSCount(t *testing.T, db *sql.DB, term string, want int) {
 	t.Helper()
 	var got int
