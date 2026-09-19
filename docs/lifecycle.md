@@ -201,7 +201,8 @@ sourced vector installation is named and left untouched instead of being
 overwritten. Existing data, configuration and agent integrations remain in
 place. If bundled placement or verification fails, the previous core remains
 active. Leftover exact-payload session clones do not fail corpus place: the
-prior uniqueness guard stays and new nullable columns still land. Read-only
+prior same-named index stays, with exact-payload uniqueness pending until dedup,
+and new nullable columns still land. Read-only
 `roca doctor` and `roca vector query` answer when the only schema gap is a
 missing `machine` column on one of the four harvest tables; a writable open
 adopts those columns.
