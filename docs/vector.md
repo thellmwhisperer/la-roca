@@ -329,6 +329,18 @@ process watchdog around indexing. Progress refreshes its heartbeat; ten minutes
 without progress makes a sibling process verify the worker's process-start
 identity, append `semantic search stalled` to `worker.log`, and send SIGTERM.
 That watchdog does not wrap queries, residents, or foreground `ingest --delta`.
+Foreground `ingest --delta` takes the same worker claim as the install worker:
+`roca vector status` shows the worker while the delta runs, and a second
+`ingest --delta` exits immediately with the running pid instead of waiting on
+index locks until the 30-minute stall. A non-zero ingest always names the
+failure: silent exits print `plugin vector exited with code N without writing a
+reason`, and a pass that already wrote progress still ends with
+`plugin vector exited with code N` so the execution log is never a bare
+`command exited with code 1`. When the pass ends, leftover `.index.lock` files
+that nobody holds are removed so status does not report `stale` after a
+finished or failed night. A later morning check should read
+`~/.roca/logs/executions-*.jsonl` and `plugin_roca_cron.journeys`, not only
+the ride's own exit code.
 
 For a non-default database:
 

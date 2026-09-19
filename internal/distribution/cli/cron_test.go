@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -36,10 +37,7 @@ gate = "after_ingest"
 			t.Setenv("HOME", home)
 			t.Setenv("ROCA_MODELS_ORDER", "none")
 			writeConfig(t, home, test.config)
-			if _, err := rocacron.Ensure(filepath.Join(home, ".roca", "plugins"),
-				filepath.Join(home, ".local", "bin"), "test"); err != nil {
-				t.Fatal(err)
-			}
+			ensureCronInstalled(t, home)
 			env, output, warnings := newCronTestEnv()
 			code, err := executeWithEnv(env, test.args, nil)
 			if err != nil || code != ExitOK {
@@ -87,6 +85,32 @@ func TestCronListAndDryRunRemainAvailableInReadOnlyMode(t *testing.T) {
 	}
 }
 
+func TestCronHourlyVectorDeltaRecordsAFailedShellRide(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix shell ride")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("ROCA_MODELS_ORDER", "none")
+	writeConfig(t, home, `[features]
+cron = true
+
+[ride.vector_delta]
+train = "hourly"
+command = "echo vector-delta-progress >&2; exit 1"
+`)
+	ensureCronInstalled(t, home)
+	env, output, warnings := newCronTestEnv()
+	code, err := executeWithEnv(env, []string{"cron", "run", "hourly"}, nil)
+	if err != nil || code != ExitError ||
+		!strings.Contains(output.String(), "vector_delta") ||
+		!strings.Contains(output.String(), "exit=1") ||
+		!strings.Contains(warnings.String(), "vector-delta-progress") {
+		t.Fatalf("hourly vector_delta = code %d err %v out=%q errOut=%q",
+			code, err, output.String(), warnings.String())
+	}
+}
+
 func TestCronRunRejectsAnUnusableOperatorRideFile(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -127,4 +151,12 @@ func newCronTestEnv() (*cliEnv, *strings.Builder, *strings.Builder) {
 	output := &strings.Builder{}
 	warnings := &strings.Builder{}
 	return &cliEnv{build: Build{Version: "test"}, out: output, errOut: warnings}, output, warnings
+}
+
+func ensureCronInstalled(t *testing.T, home string) {
+	t.Helper()
+	if _, err := rocacron.Ensure(filepath.Join(home, ".roca", "plugins"),
+		filepath.Join(home, ".local", "bin"), "test"); err != nil {
+		t.Fatal(err)
+	}
 }
