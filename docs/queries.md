@@ -294,8 +294,7 @@ historical behavior: every current handoff is printed with complete content.
 A positive limit keeps only the first N handoffs in newest-first order, without
 clipping their content; negative limits are rejected. It chooses only project
 handoffs after that filtering; when none remain, it reports that the project has
-no handoff and names projects that do. A later row alone does not supersede an
-earlier handoff: a short worker receipt must name its predecessor to replace it.
+no handoff and names projects that do.
 
 `roca handoff latest --all-projects [--since 30d] [--limit N]` prints one row per
 project with a current handoff, newest first, as
@@ -321,7 +320,7 @@ roca handoff latest --all-projects --since 30d
 
 A handoff is written only on explicit operator instruction. The
 [handoff write policy](operations.md#handoff-writes) owns the allowed writers,
-required shape, and replacement contract.
+recommended shape, and replacement contract.
 
 ### Deleting a pill
 
