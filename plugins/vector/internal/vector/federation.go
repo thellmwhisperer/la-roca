@@ -1741,6 +1741,14 @@ func SidecarPath(databasePath string) string {
 	return strings.TrimSuffix(databasePath, extension) + ".vector" + extension
 }
 
+func (f Federation) SidecarPaths() []string {
+	paths := make([]string, 0, len(f.databases))
+	for _, database := range f.databases {
+		paths = append(paths, SidecarPath(f.databasePath(database)))
+	}
+	return paths
+}
+
 // InitOwnedSidecar writes the owned sidecar schema used by install and ingest.
 // An empty file is not enough: delta ingest inspects owner metadata before it
 // opens a writer.
