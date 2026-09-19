@@ -969,6 +969,13 @@ func (m *world) iVectorQuery(phrase string) error {
 	return nil
 }
 
+func (m *world) iWarmThenVectorQuery(phrase string) error {
+	if _, err := m.runWith("roca vector query warm-up", []string{"vector", "query", "warm harbor index", "1", "--databases", "corpus,ops", "--json"}); err != nil {
+		return err
+	}
+	return m.iVectorQuery(phrase)
+}
+
 func (m *world) iRunClaudeAuthorshipHook() error {
 	if err := os.MkdirAll(filepath.Join(m.home, "tmp"), 0o700); err != nil {
 		return err

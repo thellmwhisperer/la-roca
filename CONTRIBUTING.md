@@ -151,23 +151,11 @@ harnesses did with the hook, and for the two defects only a live session found.
 See [D8/D9 source generation evidence](docs/d8-d9-evidence.md) for unchanged-pass
 source reads and stored-count status latency in the isolated lab.
 
-`make e2e-smoke` runs two disposable-home paths: the branch binary's init,
-ingest, query, plugin install, and plugin update path; and an installed
-published release updating to the branch artefact before initializing a clean
-home. It uses `roca` from `PATH` as the published release by default; set
-`ROCA_PUBLISHED_BIN` to select another executable. The branch-only path is also
-part of `make check`. Neither path may mutate an operator's live La Roca home.
-
-`make e2e-federation` extracts the committed archive
-`testdata/e2e-federation/frozen.tar.gz` into disposable homes, installs the
-branch binary into those prefixes, and runs the Aceptacion commands. The ready
-index and published upgrade fail closed when their prerequisites are absent;
-they never skip. The [runbook](docs/e2e-federation.md) owns those requirements
-and their overrides. It does not generate the fixture at test start. The
-command list is [Aceptacion](docs/e2e-federation-aceptacion.md). The hermetic
-cases (frozen digest, Gherkin without a ready index or published upgrade,
-hooks at 0 ms, exec, query honesty, handoff, MCP, Codex identity) are part of
-`make accept`. Never selects a live hub.
+`make e2e-smoke` runs the branch operator path and the published-release update
+path in disposable homes. `make e2e-federation` runs the frozen installed-binary
+suite. Their prerequisites, isolation rules, coverage, and overrides are owned
+by the [frozen federation runbook](docs/e2e-federation.md); the exact commands
+and assertions are owned by [Aceptacion](docs/e2e-federation-aceptacion.md).
 
 `make upgrade-gauntlet` is the second gate every pull request has to pass: it
 upgrades the committed homes of older releases through the current binary.

@@ -76,8 +76,11 @@ exit: 0
 expect: frozen identity counts unchanged
 
 ## 232991
-command: roca vector query harbor lantern 20 --databases corpus,ops
+command: roca vector query harbor lantern 20 --databases corpus,ops --json
 exit: 0
+JSON vector_executed: true
+notices do not contain: fts-only
+notices do not contain: unavailable
 
 ## 233400
 command: roca exec SELECT content FROM plugin_roca_ops.memories WHERE content LIKE '%harbor lantern%'
@@ -93,8 +96,11 @@ command: roca exec SELECT COUNT(*) AS memories FROM plugin_roca_ops.memories
 exit: 0
 
 ## 238277
-command: roca vector query harbor lantern 20 --databases corpus,ops
+command: roca vector query harbor lantern 20 --databases corpus,ops --json
 exit: 0
+JSON vector_executed: true
+notices do not contain: fts-only
+notices do not contain: unavailable
 
 ## 244386
 command: roca exec SELECT layer, COUNT(*) AS n FROM plugin_roca_ops.memories GROUP BY layer
@@ -118,8 +124,11 @@ command: roca doctor
 exit: 0
 
 ## 5740
-command: roca vector query harbor lantern 20 --databases corpus,ops
+command: roca vector query harbor lantern 20 --databases corpus,ops --json
 exit: 0
+JSON vector_executed: true
+notices do not contain: fts-only
+notices do not contain: unavailable
 
 ## 5950
 command: roca exec SELECT content FROM plugin_roca_ops.memories LIMIT 1
@@ -131,16 +140,22 @@ exit: 0
 stdout contains: roca
 
 ## 4657
-command: roca vector query harbor lantern 20 --databases corpus,ops
+command: roca vector query harbor lantern 20 --databases corpus,ops --json
 exit: 0
+JSON vector_executed: true
+notices do not contain: fts-only
+notices do not contain: unavailable
 
 ## 44508
 command: roca query harbor lantern
 exit: 0
 
 ## 125372
-command: roca vector query I inspected the harbor lantern 20 --databases corpus,ops
+command: roca vector query I inspected the harbor lantern 20 --databases corpus,ops --json
 exit: 0
+JSON vector_executed: true
+notices do not contain: fts-only
+notices do not contain: unavailable
 
 ## 126485
 command: roca exec SELECT content FROM plugin_roca_ops.memories WHERE layer='discovery'

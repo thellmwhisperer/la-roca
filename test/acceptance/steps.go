@@ -155,6 +155,7 @@ func registerSteps(ctx *godog.ScenarioContext, binary string) {
 	ctx.When(`^I exec the SQL "([^"]*)" as json$`, m.iExecSQLJSON)
 	ctx.When(`^I store a pill with slug ([^ ]+) and content (.+)$`, m.iStorePill)
 	ctx.When(`^I vector-query "([^"]*)"$`, m.iVectorQuery)
+	ctx.When(`^I warm the vector index and vector-query "([^"]*)"$`, m.iWarmThenVectorQuery)
 	ctx.When(`^I run the claude authorship hook$`, m.iRunClaudeAuthorshipHook)
 	ctx.When(`^I start three mcp serve processes$`, m.iStartThreeMCPServeProcesses)
 	ctx.When(`^I call the health tool over stdio$`, m.iCallHealthOverStdio)

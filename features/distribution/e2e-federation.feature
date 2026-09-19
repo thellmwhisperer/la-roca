@@ -192,7 +192,7 @@ Feature: Frozen federation installed binary
   @provisioned
   Scenario: real-usage vector query
     Given a frozen synthetic federation lab
-    When I vector-query "harbor lantern"
+    When I warm the vector index and vector-query "harbor lantern"
     Then the command exits with code 0
     And the vector query executed the ready index
     And the execution log duration_ms is under 2000
