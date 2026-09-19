@@ -321,6 +321,57 @@ func TestHealthAnswersInReadOnlyMode(t *testing.T) {
 	}
 }
 
+func TestHealthAnswersInReadOnlyModeWithMissingMachineColumns(t *testing.T) {
+	paths := freshPaths(t)
+	ready := serviceOn(t, paths)
+	if _, err := ready.Init(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := ready.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", paths.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range []string{"sessions", "exchanges", "thinking_blocks", "tool_uses"} {
+		if _, err := db.Exec("ALTER TABLE " + table + " DROP COLUMN machine"); err != nil {
+			db.Close()
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := serviceOn(t, paths, func(o *service.Options) { o.ReadOnly = true }).
+		Health(context.Background(), service.HealthRequest{})
+	if err != nil {
+		t.Fatalf("Health on missing machine columns: %v", err)
+	}
+	if report.Status != service.HealthPass {
+		t.Errorf("status = %q, want %q", report.Status, service.HealthPass)
+	}
+
+	writable := serviceOn(t, paths)
+	if _, err := writable.EnsureSchema(context.Background()); err != nil {
+		t.Fatalf("writable adoption: %v", err)
+	}
+	db, err = sql.Open("sqlite", paths.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var present int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'machine'`).
+		Scan(&present); err != nil {
+		t.Fatal(err)
+	}
+	if present != 1 {
+		t.Fatal("writable adoption did not restore sessions.machine")
+	}
+}
+
 // v1 has no `runs` table: it is v2 scope and the binary creates none. A health
 // report that named a check over it would be naming a component this version
 // does not have.

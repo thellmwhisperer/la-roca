@@ -165,6 +165,8 @@ runbook is [frozen federation e2e](docs/e2e-federation.md). The command list is
 upgrades the committed homes of older releases through the current binary.
 [Releases](docs/releases.md#schema-migration-definition-of-done) explains
 when a change owes the gauntlet a new frozen home.
+The [1.87 schema-adoption acceptance](docs/schema-adoption-187-aceptacion.md)
+reproduces its read-only and corpus-placement regressions in an isolated home.
 
 `make split-oracle` replays the core DATA SPLIT compatibility cases on their own,
 the executable definition of zero behavior change for core CLI and MCP users that
