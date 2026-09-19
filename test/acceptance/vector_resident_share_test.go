@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/thellmwhisperer/la-roca/pkg/resident"
 	"github.com/thellmwhisperer/la-roca/test/testfixture"
 )
 
@@ -138,12 +139,26 @@ func threeServeResidentPS(t *testing.T, binary, fake string, idle time.Duration)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
 	socket := filepath.Join(socketDir, "resident.sock")
+	// Both residents need short socket paths, independent of t.TempDir's name.
+	databaseSocket := filepath.Join(socketDir, "db", "resident.sock")
 	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		raw, err := resident.Call(ctx, resident.Options{Socket: databaseSocket}, "status", nil)
+		if err == nil {
+			var status resident.Status
+			if json.Unmarshal(raw, &status) == nil && status.PID > 0 {
+				if process, err := os.FindProcess(status.PID); err == nil {
+					_ = process.Kill()
+				}
+			}
+		}
 		testfixture.KillResidents(socket)
 		_ = os.Remove(socket)
 		_ = os.Remove(socket + ".lock")
 	})
 	env := append(m.environment(),
+		"ROCA_RESIDENT_SOCKET="+databaseSocket,
 		"ROCA_VECTOR_RESIDENT_BINARY="+fake,
 		"ROCA_VECTOR_RESIDENT_SOCKET="+socket,
 		"ROCA_VECTOR_RESIDENT_IDLE="+idle.String(),

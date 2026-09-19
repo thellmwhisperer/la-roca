@@ -10,6 +10,7 @@ import (
 
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
 	"github.com/thellmwhisperer/la-roca/internal/store/search"
+	resident "github.com/thellmwhisperer/la-roca/pkg/resident"
 )
 
 // DoctorReport is the installation's diagnosis: where its data is, what it
@@ -74,7 +75,8 @@ type DoctorReport struct {
 	// fills them from the reconciliation registry before rendering this report.
 	CapabilityProposals []string `json:"capability_proposals,omitempty"`
 	// Query is the effective hybrid retrieval knobs after config and defaults.
-	Query QueryDoctor `json:"query"`
+	Query    QueryDoctor      `json:"query"`
+	Resident *resident.Status `json:"resident,omitempty"`
 }
 
 // QueryDoctor is the effective [query] hybrid knobs `roca doctor` prints.

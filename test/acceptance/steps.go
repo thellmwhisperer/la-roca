@@ -22,7 +22,9 @@ import (
 // last output it gave. Anything the binary creates outside this HOME is
 // residue.
 type world struct {
-	binary string
+	residentSocket  string
+	residentCleanup func()
+	binary          string
 	// releaseStamped is a copy of this product built with a clean release version
 	// linked in. `roca update` refuses to overwrite a build that is not a
 	// published release, so the scenario that drives the whole update flow
@@ -127,6 +129,12 @@ func registerSteps(ctx *godog.ScenarioContext, binary string) {
 		return c, nil
 	})
 	ctx.After(func(c context.Context, _ *godog.Scenario, err error) (context.Context, error) {
+		defer func() {
+			if m.residentCleanup != nil {
+				m.residentCleanup()
+				m.residentSocket, m.residentCleanup = "", nil
+			}
+		}()
 		// A traceback in the operator's face is always a failure, whether the
 		// step asserted it explicitly or not.
 		if trace := hasTraceback(m.last); trace != "" && err == nil {
@@ -471,6 +479,7 @@ func (m *world) environment() []string {
 	}
 	environment := append([]string{
 		"HOME=" + m.home,
+		"ROCA_RESIDENT_SOCKET=" + m.residentSocket,
 		"PATH=" + path,
 		"TMPDIR=" + filepath.Join(m.home, "tmp"),
 	}, m.modelEnvironment()...)

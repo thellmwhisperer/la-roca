@@ -83,7 +83,8 @@ orphan_scopes:
       - "internal/distribution/cli/openfiles_darwin.go"
       - "internal/distribution/cli/openfiles_linux.go"
       - "internal/distribution/cli/openfiles_other.go"
-      # Internal resident-query dispatch helper; cli.go owns the public seam.
+      # Internal resident dispatch helpers; cli.go owns the public seam.
+      - "internal/distribution/cli/resident.go"
       - "internal/distribution/cli/vector_query_resident.go"
 
 # Claims select the same registered capability files. Any new registrator or
@@ -106,7 +107,8 @@ claims:
         - "internal/distribution/cli/openfiles_darwin.go"
         - "internal/distribution/cli/openfiles_linux.go"
         - "internal/distribution/cli/openfiles_other.go"
-        # Internal resident-query dispatch helper; cli.go owns the public seam.
+        # Internal resident dispatch helpers; cli.go owns the public seam.
+        - "internal/distribution/cli/resident.go"
         - "internal/distribution/cli/vector_query_resident.go"
     mcp_tools:
       files: ["internal/distribution/mcpplug/tools.go"]

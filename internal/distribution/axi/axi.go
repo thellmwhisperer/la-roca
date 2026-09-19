@@ -20,6 +20,7 @@ tool result.
 package axi
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"sort"
@@ -52,7 +53,7 @@ func RowOutputWithBudget(columns []string, rows []map[string]any, budget int, te
 	if len(rows) == 1 && len(columns) == 1 && len(rows[0]) == 1 {
 		if value, ok := rows[0][columns[0]]; ok && value != nil {
 			switch value.(type) {
-			case bool, int, int8, int16, int32, int64,
+			case json.Number, bool, int, int8, int16, int32, int64,
 				uint, uint8, uint16, uint32, uint64, float32, float64:
 				return toonValue(value, "", budget)
 			}
@@ -133,6 +134,11 @@ func toonValue(value any, term string, budget int) string {
 		return toonString(excerpt(string(v), term, budget))
 	case bool:
 		return strconv.FormatBool(v)
+	case json.Number:
+		if integer, err := v.Int64(); err == nil {
+			return toonInteger(integer)
+		}
+		return v.String()
 	case int:
 		return toonInteger(int64(v))
 	case int64:

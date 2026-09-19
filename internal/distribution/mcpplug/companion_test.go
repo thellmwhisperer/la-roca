@@ -2,6 +2,7 @@ package mcpplug
 
 import (
 	"context"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -372,4 +373,37 @@ func (s *safeBuffer) String() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.b.String()
+}
+
+func TestServeConnectionOwnsSessionCompanions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix companion")
+	}
+	root, data := t.TempDir(), t.TempDir()
+	started, stopped := filepath.Join(data, "started"), filepath.Join(data, "stopped")
+	installCompanion(t, root, "mirror", "roca-mirror", nil,
+		"#!/bin/sh\necho started > "+started+"\ntrap 'echo stopped > "+stopped+"' EXIT\nwhile IFS= read -r line; do :; done\n")
+	svc, err := service.Open(service.Options{DBPath: filepath.Join(data, "roca.db"), DataDir: data, PluginDir: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Close()
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- ServeConnection(ctx, svc, Build{}, server, false) }()
+	waitFor(t, func() bool { _, err := os.Stat(started); return err == nil })
+	client.Close()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("MCP session did not close")
+	}
+	waitFor(t, func() bool { _, err := os.Stat(stopped); return err == nil })
 }

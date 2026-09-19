@@ -39,6 +39,7 @@ type DB struct {
 	// plugin databases.
 	transient bool
 
+	poolMu      sync.Mutex
 	once        sync.Once
 	readOnly    *sql.DB
 	readOnlyErr error
@@ -164,6 +165,8 @@ func (db *DB) ReadOnly() (*sql.DB, error) {
 	if db.transient || db.physicalReadOnly {
 		return db.sql, nil
 	}
+	db.poolMu.Lock()
+	defer db.poolMu.Unlock()
 	db.once.Do(func() {
 		_, dsn, err := sqliteFileDSN(db.path, url.Values{
 			"_pragma": {
@@ -248,10 +251,33 @@ func (db *DB) Write(ctx context.Context, fn func(*sql.Tx) error) error {
 			}
 			continue
 		}
+		// Checkpoint failure must not turn a committed write into an apparent
+		// failure. A later write attempts maintenance again.
+		_ = db.Checkpoint(ctx)
 		return nil
 	}
 	return fmt.Errorf("the database is still busy after %d write attempts: %w",
 		writeRetries, last)
+}
+
+// Checkpoint truncates this database's WAL when no reader is holding a frame.
+// Maintenance uses a 250 ms context budget and reports a busy result to the
+// caller. It schedules no background retry; another call must try again.
+func (db *DB) Checkpoint(ctx context.Context) error {
+	if db == nil || db.sql == nil || db.transient || db.physicalReadOnly {
+		return nil
+	}
+	checkpointCtx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
+	defer cancel()
+	var busy, frames, checkpointed int
+	if err := db.sql.QueryRowContext(checkpointCtx,
+		"PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &frames, &checkpointed); err != nil {
+		return err
+	}
+	if busy != 0 {
+		return fmt.Errorf("WAL checkpoint is busy (%d frames remain)", frames-checkpointed)
+	}
+	return nil
 }
 
 // ApplySchema creates whichever v1 tables and indexes are missing. It is
@@ -290,4 +316,10 @@ func isDatabaseBusy(err error) bool {
 	}
 	primary := serr.Code() & 0xff
 	return primary == 5 || primary == 6 // SQLITE_BUSY, SQLITE_LOCKED
+}
+
+func (db *DB) Pools() []*sql.DB {
+	db.poolMu.Lock()
+	defer db.poolMu.Unlock()
+	return []*sql.DB{db.sql, db.readOnly}
 }

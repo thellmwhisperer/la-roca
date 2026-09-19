@@ -34,6 +34,8 @@ type distributionWorld struct {
 	tool      *mcp.CallToolResult
 	tools     *mcp.ListToolsResult
 	state     map[string]any
+
+	residentCleanup func()
 }
 
 const distributionPreparedConfig = "[models]\norder = [\"none\"]\n\n" +
@@ -223,8 +225,13 @@ func (w *distributionWorld) openMCP() error {
 	if err := w.ensurePrepared(); err != nil {
 		return err
 	}
+	socket, cleanup, err := acceptanceResident()
+	if err != nil {
+		return err
+	}
+	w.residentCleanup = cleanup
 	command := exec.Command(w.installed, "mcp", "serve")
-	command.Env = distributionEnvironment(w.home, w.installed)
+	command.Env = replaceEnvironment(distributionEnvironment(w.home, w.installed), "ROCA_RESIDENT_SOCKET", "ROCA_RESIDENT_SOCKET="+socket)
 	var stderr strings.Builder
 	command.Stderr = &stderr
 	client := mcp.NewClient(&mcp.Implementation{Name: "distribution-acceptance", Version: "1"}, nil)
@@ -256,4 +263,8 @@ func (w *distributionWorld) closeMCP() {
 		_ = w.session.Close()
 	}
 	w.session = nil
+	if w.residentCleanup != nil {
+		w.residentCleanup()
+		w.residentCleanup = nil
+	}
 }
