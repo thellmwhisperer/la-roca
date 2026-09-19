@@ -204,7 +204,12 @@ active. If leftover exact-payload session clones would prevent corpus place
 from refreshing an existing `idx_sessions_exact_payload`, that prior same-named
 index stays, new nullable columns still land, and exact-payload uniqueness
 remains pending until the [dedup maintenance flow](operations.md#exact-duplicate-maintenance)
-removes the clones. Read-only
+removes the clones. Provenance and machine backfills use `UPDATE OR IGNORE` so
+a live unique guard plus historical clones that differ only by an empty
+`source_surface` (or a missing `machine`) cannot roll the place back; colliding
+fields remain empty until an operator manually normalizes the differing
+provenance or machine values; once they are exact duplicates, the dedup flow
+can remove the clone. Read-only
 `roca doctor` and `roca vector query` answer when the only schema gap is a
 missing `machine` column on one of the four harvest tables; a writable open
 adopts those columns.
