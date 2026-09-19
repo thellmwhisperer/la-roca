@@ -5,8 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/migrationledger"
 )
@@ -227,8 +229,26 @@ func materializeCurrent(ctx context.Context, destination *sql.DB, sources []prep
 			}
 		}
 	}
+	if err := backfillNullMachines(ctx, tx); err != nil {
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit current corpus materialization: %w", err)
+	}
+	return nil
+}
+
+func backfillNullMachines(ctx context.Context, tx *sql.Tx) error {
+	machine, err := os.Hostname()
+	if err != nil || strings.TrimSpace(machine) == "" {
+		machine = "local"
+	} else {
+		machine = strings.TrimSpace(machine)
+	}
+	for _, table := range []string{"sessions", "exchanges", "thinking_blocks", "tool_uses"} {
+		if _, err := tx.ExecContext(ctx, "UPDATE "+table+" SET machine = ? WHERE machine IS NULL", machine); err != nil {
+			return fmt.Errorf("backfill %s.machine after materialization: %w", table, err)
+		}
 	}
 	return nil
 }

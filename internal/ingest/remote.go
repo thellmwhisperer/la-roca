@@ -25,9 +25,13 @@ func NewestModTime(root string) (time.Time, bool) {
 	if strings.TrimSpace(root) == "" {
 		return time.Time{}, false
 	}
+	resolved, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return time.Time{}, false
+	}
 	var newest time.Time
 	found := false
-	filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+	filepath.WalkDir(resolved, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil || !entry.Type().IsRegular() {
 			return nil
 		}

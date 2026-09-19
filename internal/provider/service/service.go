@@ -84,7 +84,8 @@ type Options struct {
 	// resolved from the home, the environment and the configuration. It is
 	// resolved by the surface and handed over, so this object never guesses at a
 	// path of its own.
-	Sources ingest.Roots
+	Sources        ingest.Roots
+	ConfigWarnings []string
 	// Progress receives terse human-readable phase lines. Structured surfaces
 	// leave it nil and receive only the result.
 	Progress func(string)
