@@ -54,6 +54,8 @@ func TestMakeAcceptanceAndE2ESmokePinTheBuiltBinaryOverInheritedROCABin(t *testi
 				"PATH="+fakeTools+string(os.PathListSeparator)+os.Getenv("PATH"),
 				"REAL_GO="+goTool,
 				"ROCA_BIN="+stub,
+				"ROCA_PUBLISHED_BIN="+built,
+				"ROCA_E2E_VECTOR_MODEL="+built,
 				"ROCA_MAKE_BIN_PIN_PROBE=1",
 			)
 			out, err := cmd.CombinedOutput()
