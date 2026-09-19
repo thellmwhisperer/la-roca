@@ -30,10 +30,14 @@ Reading order, from operator to contributor:
    reports, the privacy-safe `roca doctor --report` support snapshot,
    redaction, retention, and the read-only boundary.
 10. [Architecture](architecture.md): the database-neutral kernel, current domain
-   map, query path, and internal import rule.
+    map, query path, and internal import rule.
 11. [Releases](releases.md): how versions are cut and artefacts are built.
 12. [Project memory](project-memory.md): contributor-agent notes that travel
     with the code (build, test, release, architecture, and sharp edges).
+13. [Frozen federation e2e](e2e-federation.md): installed-binary commands
+    against a synthetic copy of the bundled federation, never a live hub.
+14. [Federation e2e Aceptacion](e2e-federation-aceptacion.md): the exact
+    commands and expected results for that suite.
 
 The [README](../README.md) is the front page; these pages carry the depth.
 [CONTRIBUTING.md](../CONTRIBUTING.md) owns build and test.
