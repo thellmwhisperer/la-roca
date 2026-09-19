@@ -9,6 +9,18 @@ import (
 
 const opsID int64 = 1152921504606853875
 
+func TestAllocatedAcceptsTwelveDigitIdsAndRejectsHistoricalOpsIds(t *testing.T) {
+	if !Allocated(1) || !Allocated(MaxAllocated) {
+		t.Fatal("1 and MaxAllocated must be newly issued ids")
+	}
+	if Allocated(0) || Allocated(MaxAllocated+1) || Allocated(opsID) {
+		t.Fatal("zero, 13-digit, and historical 2^60 ids are not newly issued")
+	}
+	if Unsafe(MaxAllocated) {
+		t.Fatal("MaxAllocated must stay inside JavaScript's safe integer range")
+	}
+}
+
 func TestAJSONNumberLosesTheOpsIdThatAStringKeeps(t *testing.T) {
 	asNumber, err := json.Marshal(opsID)
 	if err != nil {

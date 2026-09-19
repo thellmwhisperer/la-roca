@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
+	"github.com/thellmwhisperer/la-roca/internal/jsonid"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
@@ -22,16 +23,17 @@ func TestStoreMetadataAndSupersedesKeepOpsIdsAsStrings(t *testing.T) {
 	if !ok || id == "" {
 		t.Fatalf("MCP store metadata id = %#v, want a decimal string", created.Meta["id"])
 	}
-	if _, err := strconv.ParseInt(id, 10, 64); err != nil {
-		t.Fatalf("MCP store id %q is not an integer: %v", id, err)
+	numeric, err := strconv.ParseInt(id, 10, 64)
+	if err != nil || !jsonid.Allocated(numeric) {
+		t.Fatalf("MCP store id %q, want a short newly issued integer: %v", id, err)
 	}
 
 	execed := callTool(t, session, "roca_exec", map[string]any{
 		"sql": "SELECT id FROM plugin_roca_ops.memories LIMIT 1",
 	})
 	text := renderedText(execed)
-	if !strings.Contains(text, `"`+id+`"`) {
-		t.Fatalf("MCP exec TOON did not quote the ops id:\n%s", text)
+	if !strings.Contains(text, id) {
+		t.Fatalf("MCP exec TOON lost the ops id:\n%s", text)
 	}
 
 	replaced := callTool(t, session, "roca_store", map[string]any{

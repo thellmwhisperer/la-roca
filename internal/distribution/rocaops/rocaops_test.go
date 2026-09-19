@@ -10,6 +10,7 @@ import (
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/plugininstall"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
+	"github.com/thellmwhisperer/la-roca/internal/jsonid"
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 	_ "modernc.org/sqlite"
 )
@@ -176,5 +177,36 @@ func TestEnsureDoesNotTouchTheDatabaseWhenTheInstalledVersionMatches(t *testing.
 	}
 	if string(got) != string(sentinel) {
 		t.Fatalf("same-version ensure changed the custody database: %q", got)
+	}
+}
+
+func TestFreshOpsSchemaDoesNotSeedUnsafeMemoryIds(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "plugins")
+	bin := filepath.Join(t.TempDir(), "bin")
+	if _, err := rocaops.Ensure(root, bin, "v-test"); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(root, rocaops.Name, rocaops.DatabaseFilename))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var seq sql.NullInt64
+	if err := db.QueryRow(`SELECT seq FROM sqlite_sequence WHERE name = 'memories'`).Scan(&seq); err != nil && err != sql.ErrNoRows {
+		t.Fatal(err)
+	}
+	if seq.Valid && !jsonid.Allocated(seq.Int64) && seq.Int64 != 0 {
+		t.Fatalf("fresh sqlite_sequence = %d, want no 2^60 seed", seq.Int64)
+	}
+	result, err := db.Exec(`INSERT INTO memories (layer, content, origin) VALUES ('discovery', 'fresh schema id', 'agent')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !jsonid.Allocated(id) {
+		t.Fatalf("unspecified insert id = %d, want a short id", id)
 	}
 }

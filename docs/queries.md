@@ -124,8 +124,12 @@ For a common authored query, see the README's
 Memory identifiers in SQL JSON results, memory-operation envelopes, and MCP
 tool metadata are decimal strings, including small core IDs. SQL TOON output
 quotes IDs outside JavaScript's safe integer range; safe numeric IDs can appear
-unquoted. Keep returned ID strings intact in JavaScript: converting them to
-`Number` can round an ops ID and point a later write at the wrong row.
+unquoted. New operational memory identifiers are allocated below JavaScript's
+2^53 safe integer and at most 12 digits. Historical identifiers issued from
+2^60 stay stored as they are and remain addressable through `exec`,
+`handoff latest`, `--supersedes`, and MCP. Keep returned ID strings intact in
+JavaScript: converting a historical ops ID to `Number` still rounds it and can
+point a later write at the wrong row.
 
 SQL result conversion recognizes identity column names and stringifies integers
 outside JavaScript's safe range even under other aliases. Safe non-identity

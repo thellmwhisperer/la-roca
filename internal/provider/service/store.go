@@ -234,10 +234,15 @@ func (s *Service) Store(ctx context.Context, req StoreRequest) (result StoreResu
 		arguments := []any{physical, content, metadata, origin, authorship.Agent, authorship.Model,
 			authorship.Surface, orNull(req.Project), status, orNull(req.Supersedes)}
 		if s.opts.RocaOpsEnabled {
-			statement = `INSERT INTO memories (layer, content, metadata, origin, source_agent,
+			id, err := nextShortMemoryID(ctx, tx)
+			if err != nil {
+				return err
+			}
+			statement = `INSERT INTO memories (id, layer, content, metadata, origin, source_agent,
 			                       source_model, source_surface, project, status, supersedes, expires_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-			arguments = append(arguments, expiresAt)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			arguments = append([]any{id}, append(arguments, expiresAt)...)
+			result.ID = id
 		}
 		outcome, err := tx.ExecContext(ctx, statement, arguments...)
 		if pluginOrigin {
@@ -248,6 +253,9 @@ func (s *Service) Store(ctx context.Context, req StoreRequest) (result StoreResu
 		}
 		if err != nil {
 			return fmt.Errorf("store the memory: %w", err)
+		}
+		if result.ID != 0 {
+			return nil
 		}
 		result.ID, err = outcome.LastInsertId()
 		return err
@@ -451,4 +459,21 @@ func orNull[T comparable](value T) any {
 		return nil
 	}
 	return value
+}
+
+func nextShortMemoryID(ctx context.Context, tx *sql.Tx) (int64, error) {
+	var next int64
+	err := tx.QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(id), 0) + 1 FROM memories WHERE id <= ?`, jsonid.MaxAllocated).
+		Scan(&next)
+	if err != nil {
+		return 0, fmt.Errorf("allocate a short memory id: %w", err)
+	}
+	if next < 1 {
+		next = 1
+	}
+	if !jsonid.Allocated(next) {
+		return 0, fmt.Errorf("short memory ids are exhausted")
+	}
+	return next, nil
 }

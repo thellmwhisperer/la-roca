@@ -10,6 +10,7 @@ import (
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
+	"github.com/thellmwhisperer/la-roca/internal/jsonid"
 
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
@@ -125,5 +126,61 @@ func TestRocaOpsExactStoreGuardIncludesExpiry(t *testing.T) {
 	}
 	if near.Skipped || near.ID == first.ID {
 		t.Fatal("different ops expiry was coalesced")
+	}
+}
+
+func TestOpsStoreIssuesShortIdsAndKeepsHistoricalIdsAddressable(t *testing.T) {
+	svc, plugins := enabledRocaOps(t)
+	opsDB := openRocaOps(t, plugins)
+	defer opsDB.Close()
+	const historical int64 = 1152921504606853945
+	if _, err := opsDB.Exec(`INSERT INTO memories (id, layer, content, origin, project, status, created_at)
+		VALUES (?, 'handoff', 'pre-migration workspace handoff', 'agent', 'workspace', 'active', '2026-01-01 00:00:00')`,
+		historical); err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := svc.Store(t.Context(), service.StoreRequest{
+		Layer: "discovery", Project: "la-roca-e2e", Content: "id-size probe",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !jsonid.Allocated(first.ID) {
+		t.Fatalf("stored id %d is not a short newly issued id", first.ID)
+	}
+
+	var got int64
+	if err := opsDB.QueryRow(`SELECT id FROM memories WHERE id = ?`, historical).Scan(&got); err != nil {
+		t.Fatalf("historical id %d is not addressable: %v", historical, err)
+	}
+	handoffs, err := svc.LatestHandoffs(t.Context(), "workspace")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, row := range handoffs.Handoffs {
+		if row.ID == historical {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("handoff latest dropped historical id %d: %+v", historical, handoffs.Handoffs)
+	}
+
+	second, err := svc.Store(t.Context(), service.StoreRequest{
+		Layer: "discovery", Project: "la-roca-e2e", Content: "id-size probe 2",
+		Supersedes: first.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var supersedes sql.NullInt64
+	if err := opsDB.QueryRow(`SELECT supersedes FROM memories WHERE id = ?`, second.ID).Scan(&supersedes); err != nil {
+		t.Fatal(err)
+	}
+	if !supersedes.Valid || supersedes.Int64 != first.ID {
+		t.Fatalf("supersedes = %+v, want %d", supersedes, first.ID)
 	}
 }
