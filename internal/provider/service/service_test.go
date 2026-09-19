@@ -107,8 +107,8 @@ func TestInitCreatesTheDatabaseAndSyncsTheLayerRegistry(t *testing.T) {
 	if err := svc.DB().SQL().QueryRow("SELECT COUNT(*) FROM layers").Scan(&layers); err != nil {
 		t.Fatalf("COUNT layers: %v", err)
 	}
-	if layers != 12 {
-		t.Errorf("layers synced = %d, want 12", layers)
+	if layers != 13 {
+		t.Errorf("layers synced = %d, want 13", layers)
 	}
 }
 
@@ -151,8 +151,8 @@ func TestInitIsIdempotent(t *testing.T) {
 	if err := svc.DB().SQL().QueryRow("SELECT COUNT(*) FROM layers").Scan(&layers); err != nil {
 		t.Fatalf("COUNT layers: %v", err)
 	}
-	if layers != 12 {
-		t.Errorf("layers = %d after two inits, want 12", layers)
+	if layers != 13 {
+		t.Errorf("layers = %d after two inits, want 13", layers)
 	}
 }
 
