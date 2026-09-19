@@ -182,7 +182,22 @@ func (s *Service) Store(ctx context.Context, req StoreRequest) (result StoreResu
 			sourceSurface: authorship.Surface, project: orNull(req.Project), status: status,
 			supersedes: orNull(req.Supersedes), expiresAt: expiresAt,
 		}
-		if err := repairHandoffHeads(ctx, tx, planned.currentIDs); err != nil {
+		if planned.currentID == 0 && req.Supersedes != 0 {
+			if existing, Found, err := identicalMemory(ctx, tx, payload, s.opts.RocaOpsEnabled); err != nil {
+				return err
+			} else if Found {
+				if planned.keepID == 0 && len(planned.currentIDs) > 0 {
+					planned.keepID = planned.currentIDs[len(planned.currentIDs)-1]
+				}
+				if err := repairHandoffHeads(ctx, tx, planned.currentIDs, planned.keepID); err != nil {
+					return err
+				}
+				result.ID, result.Skipped = existing, true
+				result.DuplicateSource, result.DuplicateSurface = authorship.Agent, authorship.Surface
+				return nil
+			}
+		}
+		if err := repairHandoffHeads(ctx, tx, planned.currentIDs, planned.keepID); err != nil {
 			return err
 		}
 		if planned.currentID != 0 {

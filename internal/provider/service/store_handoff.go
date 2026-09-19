@@ -1,12 +1,14 @@
 package service
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"fmt"
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 )
 
 // Session harnesses are the interactive runtimes this product already stamps
@@ -164,13 +166,13 @@ type handoffAutoSupersede struct {
 	currentID         int64
 	currentSupersedes any
 	currentIDs        []int64
+	keepID            int64
 }
 
-// planHandoffAutoSupersede fills the one-current-per-project contract when the
-// writer did not name a predecessor. An explicit supersedes, a non-handoff
-// layer, and a project-less write stay as the caller sent them.
+// planHandoffAutoSupersede fills the one-current-per-project contract for an
+// active named project.
 func planHandoffAutoSupersede(ctx context.Context, db memoryQuerier, physical string, req StoreRequest, status string) (handoffAutoSupersede, error) {
-	if physical != "handoff" || status != "active" || req.Supersedes != 0 {
+	if physical != "handoff" || status != "active" {
 		return handoffAutoSupersede{}, nil
 	}
 	project := req.Project
@@ -181,24 +183,34 @@ func planHandoffAutoSupersede(ctx context.Context, db memoryQuerier, physical st
 	if err != nil || len(heads) == 0 {
 		return handoffAutoSupersede{}, err
 	}
-	current := heads[len(heads)-1]
 	ids := make([]int64, len(heads))
 	for i, head := range heads {
 		ids[i] = head.id
 	}
+	if req.Supersedes != 0 {
+		for _, head := range heads {
+			if head.id == req.Supersedes {
+				return handoffAutoSupersede{currentIDs: ids, keepID: req.Supersedes}, nil
+			}
+		}
+		return handoffAutoSupersede{currentIDs: ids}, nil
+	}
+	current := heads[len(heads)-1]
 	return handoffAutoSupersede{
-		currentID: current.id, currentSupersedes: current.supersedes, currentIDs: ids,
+		currentID: current.id, currentSupersedes: current.supersedes, currentIDs: ids, keepID: current.id,
 	}, nil
 }
 
 type currentHandoffHead struct {
-	id         int64
-	supersedes any
+	id             int64
+	supersedes     any
+	createdAt      time.Time
+	createdAtValid bool
 }
 
 func currentProjectHandoffs(ctx context.Context, db memoryQuerier, project string) ([]currentHandoffHead, error) {
 	rows, err := db.QueryContext(ctx, `
-		SELECT candidate.id, candidate.supersedes
+		SELECT candidate.id, candidate.supersedes, candidate.created_at
 		FROM memories AS candidate
 		WHERE candidate.layer = 'handoff'
 		  AND candidate.status = 'active'
@@ -207,7 +219,7 @@ func currentProjectHandoffs(ctx context.Context, db memoryQuerier, project strin
 		      SELECT 1 FROM memories AS replacement
 		      WHERE replacement.supersedes = candidate.id
 		  )
-		ORDER BY candidate.created_at ASC, candidate.id ASC`, project)
+		`, project)
 	if err != nil {
 		return nil, fmt.Errorf("look for the current project handoffs: %w", err)
 	}
@@ -216,25 +228,44 @@ func currentProjectHandoffs(ctx context.Context, db memoryQuerier, project strin
 	for rows.Next() {
 		var head currentHandoffHead
 		var supersedes sql.NullInt64
-		if err := rows.Scan(&head.id, &supersedes); err != nil {
+		var createdAt sql.NullString
+		if err := rows.Scan(&head.id, &supersedes, &createdAt); err != nil {
 			return nil, fmt.Errorf("read the current project handoffs: %w", err)
 		}
 		if supersedes.Valid {
 			head.supersedes = supersedes.Int64
 		}
+		head.createdAt, head.createdAtValid = normalizeCreatedAt(createdAt.String)
 		heads = append(heads, head)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("read the current project handoffs: %w", err)
 	}
+	slices.SortFunc(heads, func(left, right currentHandoffHead) int {
+		if left.createdAtValid != right.createdAtValid {
+			if left.createdAtValid {
+				return -1
+			}
+			return 1
+		}
+		if left.createdAtValid {
+			if left.createdAt.Before(right.createdAt) {
+				return -1
+			}
+			if left.createdAt.After(right.createdAt) {
+				return 1
+			}
+		}
+		return cmp.Compare(left.id, right.id)
+	})
 	return heads, nil
 }
 
-// repairHandoffHeads retires every current head except the newest, which the
-// incoming store will supersede. It never overwrites a head that already names
-// a predecessor: that rewrite would drop the old pointer and resurrect it.
-func repairHandoffHeads(ctx context.Context, db *sql.Tx, currentIDs []int64) error {
-	for _, id := range currentIDs[:max(0, len(currentIDs)-1)] {
+func repairHandoffHeads(ctx context.Context, db *sql.Tx, currentIDs []int64, keepID int64) error {
+	for _, id := range currentIDs {
+		if id == keepID {
+			continue
+		}
 		if err := retireHandoffHead(ctx, db, id); err != nil {
 			return err
 		}

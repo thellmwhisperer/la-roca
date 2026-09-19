@@ -359,6 +359,18 @@ func TestStoreAutoSupersedesThePreviousCurrentHandoffForAProject(t *testing.T) {
 			if !pointed.Valid || pointed.Int64 != first.ID {
 				t.Fatalf("explicit supersedes = %+v, want %d (not auto %d)", pointed, first.ID, second.ID)
 			}
+			if n := currentHandoffCount(t, svc, "explicit-handoff"); n != 1 {
+				t.Fatalf("explicit current handoffs = %d, want 1", n)
+			}
+		}},
+		{"auto supersede chooses the normalized newest head", func(t *testing.T) {
+			project := "timestamp-handoff"
+			first := insertHandoffRow(t, svc, project, "timestamp A", "2026-01-01 00:30:00", 0)
+			insertHandoffRow(t, svc, project, "timestamp B", "2026-01-01T01:00:00+02:00", 0)
+			third := mustStoreHandoff(t, svc, project, "timestamp C")
+			if got := memorySupersedes(t, svc, third.ID); !got.Valid || got.Int64 != first {
+				t.Fatalf("normalized newest supersedes = %+v, want %d", got, first)
+			}
 		}},
 		{"non-handoff layer is not auto-superseded", func(t *testing.T) {
 			first, err := svc.Store(ctx, service.StoreRequest{
