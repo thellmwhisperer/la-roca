@@ -160,9 +160,11 @@ A handoff is stored only on explicit operator instruction. `roca store` and
 the CLI or MCP surface. MCP stamps that harness from the client's identity card
 under the [memory authorship](#memory-authorship) contract. Its content must
 give nonblank values for `branch:`, `scope:`, or `branch/scope:`, followed by
-the literal labels `done:`, `state:` (or `current state:`), and `next:`; a
-replacement names its predecessor with CLI `--supersedes` or the MCP
-`supersedes` field rather than a SUPERSEDE in prose. A writer refusal names the
+the literal labels `done:`, `state:` (or `current state:`), and `next:`.
+Storing a new active handoff for a named project supersedes that project's
+previous current handoff. CLI `--supersedes` or the MCP `supersedes` field still
+names a specific predecessor when the writer wants something other than the
+current one; a SUPERSEDE in prose does not. A writer refusal names the
 agent, surface and origin it saw, lists the session writers, and shows those
 labels with one valid example. Rejections direct worker progress to tasks-axi,
 delivery to the `pr` field, session decisions to layer `decision`, and expiring

@@ -238,9 +238,9 @@ func (s *Service) DeletePill(ctx context.Context, slug string) (PillDeleteResult
 }
 
 // LatestHandoffs loads active handoffs for the project that no other memory has
-// superseded. It is not newest-by-clock: a later row that does not name a
-// predecessor leaves that predecessor current. A named project that has none
-// does not fall back to another project's rows or to globals.
+// superseded. Store writes automatically supersede the previous current named
+// project handoff unless the writer names a predecessor explicitly. A named
+// project that has none does not fall back to another project's rows or globals.
 func (s *Service) LatestHandoffs(ctx context.Context, project string) (HandoffList, error) {
 	rows, err := s.loadCurrentHandoffs(ctx, project)
 	if err != nil {
