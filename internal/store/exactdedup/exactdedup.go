@@ -638,6 +638,10 @@ func EnsureGuards(ctx context.Context, db queryExecutor) error {
 	return EnsureTableGuards(ctx, db)
 }
 
+func EnsureCorpusUpdateGuards(ctx context.Context, db queryExecutor) error {
+	return ensureTableGuards(ctx, db, true)
+}
+
 func GuardsInstalled(ctx context.Context, db interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 	QueryRowContext(context.Context, string, ...any) *sql.Row
@@ -667,6 +671,10 @@ func GuardsInstalled(ctx context.Context, db interface {
 }
 
 func EnsureTableGuards(ctx context.Context, db queryExecutor, only ...string) error {
+	return ensureTableGuards(ctx, db, false, only...)
+}
+
+func ensureTableGuards(ctx context.Context, db queryExecutor, allowSessionDuplicates bool, only ...string) error {
 	specs, err := specs(ctx, db)
 	if err != nil {
 		return err
@@ -691,6 +699,15 @@ func EnsureTableGuards(ctx context.Context, db queryExecutor, only ...string) er
 		if err == nil && normalizeDDL(installed.String) == normalizeDDL(statement) {
 			continue
 		}
+		if allowSessionDuplicates && spec.name == "sessions" && err == nil {
+			duplicates, dupErr := exactPayloadDuplicateGroups(ctx, db, spec)
+			if dupErr != nil {
+				return dupErr
+			}
+			if duplicates > 0 {
+				continue
+			}
+		}
 		if err == nil {
 			if _, err := db.ExecContext(ctx, "DROP INDEX "+name); err != nil {
 				return fmt.Errorf("refresh exact-payload guard %s: %w", name, err)
@@ -705,6 +722,16 @@ func EnsureTableGuards(ctx context.Context, db queryExecutor, only ...string) er
 		}
 	}
 	return nil
+}
+
+func exactPayloadDuplicateGroups(ctx context.Context, db querier, spec tableSpec) (int, error) {
+	query := fmt.Sprintf(`SELECT COUNT(*) FROM (SELECT %s FROM %s GROUP BY 1 HAVING COUNT(*) > 1)`,
+		guardKeyExpression(spec.payload), spec.name)
+	var groups int
+	if err := db.QueryRowContext(ctx, query).Scan(&groups); err != nil {
+		return 0, fmt.Errorf("count exact %s duplicates before refreshing the guard: %w", spec.name, err)
+	}
+	return groups, nil
 }
 
 func guardKeyExpression(names []string) string {
