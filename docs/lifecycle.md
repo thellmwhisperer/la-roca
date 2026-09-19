@@ -207,7 +207,9 @@ remains pending until the [dedup maintenance flow](operations.md#exact-duplicate
 removes the clones. Provenance and machine backfills use `UPDATE OR IGNORE` so
 a live unique guard plus historical clones that differ only by an empty
 `source_surface` (or `machine`) cannot roll the place back; colliding rows stay
-unlabeled until that same dedup flow. Read-only
+unlabeled until an operator manually normalizes the differing provenance or
+machine values; once they are exact duplicates, the dedup flow can remove the
+clone. Read-only
 `roca doctor` and `roca vector query` answer when the only schema gap is a
 missing `machine` column on one of the four harvest tables; a writable open
 adopts those columns.
