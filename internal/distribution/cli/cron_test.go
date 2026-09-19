@@ -37,10 +37,7 @@ gate = "after_ingest"
 			t.Setenv("HOME", home)
 			t.Setenv("ROCA_MODELS_ORDER", "none")
 			writeConfig(t, home, test.config)
-			if _, err := rocacron.Ensure(filepath.Join(home, ".roca", "plugins"),
-				filepath.Join(home, ".local", "bin"), "test"); err != nil {
-				t.Fatal(err)
-			}
+			ensureCronInstalled(t, home)
 			env, output, warnings := newCronTestEnv()
 			code, err := executeWithEnv(env, test.args, nil)
 			if err != nil || code != ExitOK {
@@ -102,10 +99,7 @@ cron = true
 train = "hourly"
 command = "echo vector-delta-progress >&2; exit 1"
 `)
-	if _, err := rocacron.Ensure(filepath.Join(home, ".roca", "plugins"),
-		filepath.Join(home, ".local", "bin"), "test"); err != nil {
-		t.Fatal(err)
-	}
+	ensureCronInstalled(t, home)
 	env, output, warnings := newCronTestEnv()
 	code, err := executeWithEnv(env, []string{"cron", "run", "hourly"}, nil)
 	if err != nil || code != ExitError ||
@@ -157,4 +151,12 @@ func newCronTestEnv() (*cliEnv, *strings.Builder, *strings.Builder) {
 	output := &strings.Builder{}
 	warnings := &strings.Builder{}
 	return &cliEnv{build: Build{Version: "test"}, out: output, errOut: warnings}, output, warnings
+}
+
+func ensureCronInstalled(t *testing.T, home string) {
+	t.Helper()
+	if _, err := rocacron.Ensure(filepath.Join(home, ".roca", "plugins"),
+		filepath.Join(home, ".local", "bin"), "test"); err != nil {
+		t.Fatal(err)
+	}
 }
