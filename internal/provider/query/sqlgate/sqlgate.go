@@ -451,16 +451,81 @@ func IsRowCount(stmt string) bool {
 
 func HasResultWildcard(stmt string) bool {
 	statements, err := rqlite.NewParser(strings.NewReader(stmt)).ParseStatements()
-	if err != nil {
-		return false
-	}
-	finder := resultWildcardFinder{}
-	for _, statement := range statements {
-		if _, err := rqlite.Walk(&finder, statement); err != nil {
-			return false
+	if err == nil {
+		finder := resultWildcardFinder{}
+		walked := true
+		for _, statement := range statements {
+			if _, walkErr := rqlite.Walk(&finder, statement); walkErr != nil {
+				walked = false
+				break
+			}
+		}
+		if walked && finder.found {
+			return true
 		}
 	}
-	return finder.found
+	return resultWildcardText(stmt)
+}
+
+var (
+	selectStar     = regexp.MustCompile(`(?i)\bSELECT\s+(?:DISTINCT\s+)?\*`)
+	qualifiedStar  = regexp.MustCompile("(?i)(?:\\w+|\"[^\"]+\"|`[^`]+`|\\[[^\\]]+\\])\\s*\\.\\s*\\*")
+	schemaDotIdent = regexp.MustCompile("(?i)(?:\\b([A-Za-z_][\\w]*)\\b|\"([^\"]+)\"|`([^`]+)`|\\[([^\\]]+)\\])\\s*\\.")
+)
+
+func resultWildcardText(stmt string) bool {
+	return selectStar.MatchString(stmt) || qualifiedStar.MatchString(stmt)
+}
+
+// ReferencedSchemas lists schema names in first-seen order. The parser sees
+// unquoted, double-quoted, and backtick-quoted identifiers; a text fallback
+// also sees SQLite bracket quotes the parser does not.
+func ReferencedSchemas(stmt string) []string {
+	if names := referencedSchemasParsed(stmt); len(names) > 0 {
+		return names
+	}
+	return referencedSchemasText(stmt)
+}
+
+func referencedSchemasParsed(stmt string) []string {
+	statements, err := rqlite.NewParser(strings.NewReader(stmt)).ParseStatements()
+	if err != nil {
+		return nil
+	}
+	finder := schemaReferenceFinder{seen: map[string]bool{}}
+	for _, statement := range statements {
+		if _, err := rqlite.Walk(&finder, statement); err != nil {
+			return nil
+		}
+	}
+	return finder.names
+}
+
+func referencedSchemasText(stmt string) []string {
+	seen := map[string]bool{}
+	var names []string
+	for _, match := range schemaDotIdent.FindAllStringSubmatch(stmt, -1) {
+		name := firstSubmatch(match[1:])
+		if name == "" {
+			continue
+		}
+		key := strings.ToLower(name)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		names = append(names, name)
+	}
+	return names
+}
+
+func firstSubmatch(groups []string) string {
+	for _, group := range groups {
+		if group != "" {
+			return group
+		}
+	}
+	return ""
 }
 
 type resultWildcardFinder struct {
@@ -481,6 +546,37 @@ func (f *resultWildcardFinder) Visit(node rqlite.Node) (rqlite.Visitor, rqlite.N
 
 func (f *resultWildcardFinder) VisitEnd(node rqlite.Node) (rqlite.Node, error) {
 	return node, nil
+}
+
+type schemaReferenceFinder struct {
+	names []string
+	seen  map[string]bool
+}
+
+func (f *schemaReferenceFinder) Visit(node rqlite.Node) (rqlite.Visitor, rqlite.Node, error) {
+	switch item := node.(type) {
+	case *rqlite.QualifiedTableName:
+		f.add(item.Schema)
+	case *rqlite.QualifiedRef:
+		f.add(item.Schema)
+	}
+	return f, node, nil
+}
+
+func (f *schemaReferenceFinder) VisitEnd(node rqlite.Node) (rqlite.Node, error) {
+	return node, nil
+}
+
+func (f *schemaReferenceFinder) add(ident *rqlite.Ident) {
+	if ident == nil || ident.Name == "" {
+		return
+	}
+	key := strings.ToLower(ident.Name)
+	if f.seen[key] {
+		return
+	}
+	f.seen[key] = true
+	f.names = append(f.names, ident.Name)
 }
 
 // withoutSemicolon leaves the statement ready for a LIMIT to be appended behind

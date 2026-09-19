@@ -60,6 +60,21 @@ func TestHasResultWildcardIgnoresAggregateStarsAndFindsNestedProjections(t *test
 	}
 }
 
+func TestReferencedSchemasSeesQuotedAndBracketedNames(t *testing.T) {
+	for _, statement := range []string{
+		`SELECT id FROM plugin_roca_ops.memories`,
+		`SELECT id FROM "plugin_roca_ops".memories`,
+		"SELECT id FROM `plugin_roca_ops`.memories",
+		`SELECT id FROM [plugin_roca_ops].memories`,
+		`SELECT plugin_roca_ops.* FROM plugin_roca_ops.memories`,
+	} {
+		got := sqlgate.ReferencedSchemas(statement)
+		if len(got) != 1 || !strings.EqualFold(got[0], "plugin_roca_ops") {
+			t.Fatalf("ReferencedSchemas(%q) = %v", statement, got)
+		}
+	}
+}
+
 // Only reads are allowed. The message is the acceptance suite's
 // contract, so it is checked literally.
 func TestTheGateLetsOnlySelectThrough(t *testing.T) {

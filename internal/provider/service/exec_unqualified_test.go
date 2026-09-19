@@ -83,10 +83,17 @@ func TestExecRejectsWildcardAgainstAnAheadPluginSchema(t *testing.T) {
 		options.PluginDir, options.RocaOpsEnabled = plugins, true
 	})
 
-	if _, err := svc.Exec(t.Context(), service.ExecRequest{
-		SQL: `SELECT * FROM plugin_roca_ops.memories LIMIT 1`,
-	}); err == nil || logfile.ErrorType(err) != service.DegradedInvalidSQL ||
-		!strings.Contains(err.Error(), "wildcard SELECTs are unavailable") {
-		t.Fatalf("ahead-schema wildcard result was accepted: %v", err)
+	for _, sql := range []string{
+		`SELECT * FROM plugin_roca_ops.memories LIMIT 1`,
+		`SELECT * FROM "plugin_roca_ops".memories LIMIT 1`,
+		"SELECT * FROM `plugin_roca_ops`.memories LIMIT 1",
+		`SELECT * FROM [plugin_roca_ops].memories LIMIT 1`,
+		`SELECT plugin_roca_ops.memories.* FROM plugin_roca_ops.memories LIMIT 1`,
+	} {
+		if _, err := svc.Exec(t.Context(), service.ExecRequest{SQL: sql}); err == nil ||
+			logfile.ErrorType(err) != service.DegradedInvalidSQL ||
+			!strings.Contains(err.Error(), "wildcard SELECTs are unavailable") {
+			t.Fatalf("ahead-schema wildcard %q was accepted: %v", sql, err)
+		}
 	}
 }

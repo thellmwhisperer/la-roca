@@ -468,14 +468,39 @@ func Relevant(question string, candidates []Descriptor) []Descriptor {
 }
 
 func Referenced(statement string, candidates []Descriptor) []Descriptor {
+	if schemas := sqlgate.ReferencedSchemas(statement); len(schemas) > 0 {
+		bySchema := make(map[string]Descriptor, len(candidates))
+		for _, candidate := range candidates {
+			bySchema[strings.ToLower(candidate.Schema)] = candidate
+		}
+		referenced := make([]Descriptor, 0, len(schemas))
+		seen := make(map[string]bool, len(schemas))
+		for _, schema := range schemas {
+			key := strings.ToLower(schema)
+			candidate, ok := bySchema[key]
+			if !ok || seen[key] {
+				continue
+			}
+			seen[key] = true
+			referenced = append(referenced, candidate)
+		}
+		if len(referenced) > 0 {
+			return referenced
+		}
+	}
+	return referencedByQuotedText(statement, candidates)
+}
+
+func referencedByQuotedText(statement string, candidates []Descriptor) []Descriptor {
 	type hit struct {
 		descriptor Descriptor
 		position   int
 	}
 	var hits []hit
 	for _, candidate := range candidates {
-		pattern := regexp.MustCompile(`(?i)(?:\b` + regexp.QuoteMeta(candidate.Schema) +
-			`\b|"` + regexp.QuoteMeta(candidate.Schema) + `")\s*\.`)
+		quoted := regexp.QuoteMeta(candidate.Schema)
+		pattern := regexp.MustCompile(`(?i)(?:\b` + quoted + `\b|"` + quoted +
+			`"|` + "`" + quoted + "`" + `|\[` + quoted + `])\s*\.`)
 		if location := pattern.FindStringIndex(statement); location != nil {
 			hits = append(hits, hit{candidate, location[0]})
 		}
@@ -583,7 +608,13 @@ func validate(ctx context.Context, descriptor Descriptor) (Database, error) {
 			return Database{}, fmt.Errorf("semantic layer columns for %s are %v but the database has %v",
 				name, table.Columns, inspected.Columns)
 		}
-		physicalColumnsAhead = physicalColumnsAhead || hasExtraPhysicalColumns(table.Columns, inspected.Columns)
+		if hasExtraPhysicalColumns(table.Columns, inspected.Columns) {
+			if !bundledPackage(descriptor.Directory) {
+				return Database{}, fmt.Errorf("semantic layer columns for %s are %v but the database has %v",
+					name, table.Columns, inspected.Columns)
+			}
+			physicalColumnsAhead = true
+		}
 	}
 	for name := range declared {
 		if sqlgate.IsHiddenTable(name) || shadows[strings.ToLower(name)] {
@@ -634,8 +665,7 @@ func validate(ctx context.Context, descriptor Descriptor) (Database, error) {
 }
 
 // physicalColumnsCover reports whether the live table has every declared
-// column. Extra physical columns are allowed: a newer binary may have adopted
-// the database before this release learned those names.
+// column. Extra physical columns are allowed only on a bundled plugin.
 func physicalColumnsCover(declared, actual []string) bool {
 	have := make(map[string]bool, len(actual))
 	for _, name := range actual {
