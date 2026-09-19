@@ -213,6 +213,56 @@ func TestExactPayloadGuardCanonicalizesSignedZero(t *testing.T) {
 	}
 }
 
+func TestEnsureCorpusUpdateGuardsLeavesPriorIndexWhenSessionDuplicatesRemain(t *testing.T) {
+	ctx := context.Background()
+	db, _ := openExactdedupDB(t)
+	defer db.Close()
+	if _, err := db.Exec(`DROP INDEX IF EXISTS idx_sessions_exact_payload`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE INDEX idx_sessions_exact_payload ON sessions(source_agent, title, metadata)`); err != nil {
+		t.Fatal(err)
+	}
+	for _, sessionID := range []string{"duplicate-a", "duplicate-b"} {
+		if _, err := db.Exec(`INSERT INTO sessions(session_id, source_agent, title, started_at, metadata)
+			VALUES (?, 'fixture', 'same', '2026-08-16T10:00:00Z', '{}')`, sessionID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := exactdedup.EnsureCorpusUpdateGuards(ctx, db); err != nil {
+		t.Fatalf("EnsureGuards with leftover duplicates = %v", err)
+	}
+	if err := exactdedup.EnsureCorpusUpdateGuards(ctx, db); err != nil {
+		t.Fatalf("EnsureGuards second pass = %v", err)
+	}
+	var indexSQL string
+	if err := db.QueryRow(`SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_sessions_exact_payload'`).
+		Scan(&indexSQL); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.ToLower(indexSQL), "roca_payload_hash") {
+		t.Fatalf("leftover duplicates replaced the prior guard: %s", indexSQL)
+	}
+}
+
+func TestEnsureGuardsRejectsDuplicateMemoriesWithoutPriorGuard(t *testing.T) {
+	ctx := context.Background()
+	db, _ := openExactdedupDB(t)
+	defer db.Close()
+	if _, err := db.Exec(`DROP INDEX IF EXISTS idx_memories_exact_payload`); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if _, err := db.Exec(`INSERT INTO memories(layer, content, metadata, origin, status)
+			VALUES ('project', 'duplicate memory', '{}', 'agent', 'active')`); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := exactdedup.EnsureGuards(ctx, db); err == nil {
+		t.Fatal("EnsureGuards accepted duplicate memories without a prior guard")
+	}
+}
+
 func assertTable(t *testing.T, report exactdedup.DatabaseReport, name string,
 	groups, losers, ambiguousGroups, ambiguousRows int) {
 	t.Helper()

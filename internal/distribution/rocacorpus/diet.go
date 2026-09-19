@@ -225,7 +225,7 @@ func installHashGuards(ctx context.Context, db *sql.DB) error {
 		return fmt.Errorf("begin hash-guard installation: %w", err)
 	}
 	defer tx.Rollback()
-	if err := exactdedup.EnsureGuards(ctx, tx); err != nil {
+	if err := exactdedup.EnsureCorpusUpdateGuards(ctx, tx); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {

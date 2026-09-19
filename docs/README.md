@@ -38,6 +38,9 @@ Reading order, from operator to contributor:
     against a synthetic copy of the bundled federation, never a live hub.
 14. [Federation e2e Aceptacion](e2e-federation-aceptacion.md): the exact
     commands and expected results for that suite.
+15. [Schema adoption Aceptacion](schema-adoption-187-aceptacion.md): doctor,
+    vector query, and bundled plugin place after the 1.87 machine-column
+    adoption, on an isolated lab prefix.
 
 The [README](../README.md) is the front page; these pages carry the depth.
 [CONTRIBUTING.md](../CONTRIBUTING.md) owns build and test.

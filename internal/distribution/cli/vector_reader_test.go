@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,7 +14,41 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 	"strings"
 	"testing"
+
+	_ "modernc.org/sqlite"
 )
+
+func TestDoctorAndVectorReaderSurviveMissingMachineColumns(t *testing.T) {
+	fixture := fixtureInstallation(t)
+	core := filepath.Join(fixture.home, ".roca", "roca.db")
+	dropMachineColumns(t, core)
+	doctor := runRoot(t, contractBuild(), "doctor")
+	if strings.Contains(doctor, "requires adoption") {
+		t.Fatalf("doctor still required adoption:\n%s", doctor)
+	}
+	dropMachineColumns(t, core)
+	output, err := runRootErr(t, contractBuild(), strings.NewReader(`{"sql":"SELECT 1 AS ok"}`+"\n"), "_vector-reader")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(output, "requires adoption") {
+		t.Fatalf("vector reader still required adoption:\n%s", output)
+	}
+}
+
+func dropMachineColumns(t *testing.T, path string) {
+	t.Helper()
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, table := range []string{"sessions", "exchanges", "thinking_blocks", "tool_uses"} {
+		if _, err := db.Exec("ALTER TABLE " + table + " DROP COLUMN machine"); err != nil {
+			t.Fatalf("drop %s.machine: %v", table, err)
+		}
+	}
+}
 
 func TestVectorReaderReadsDeclaredColumnTypeThroughMetadataOperation(t *testing.T) {
 	fixtureInstallation(t)

@@ -4,10 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/bundledplugin"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/plugininstall"
 	"github.com/thellmwhisperer/la-roca/internal/store/exactdedup"
 )
 
@@ -45,31 +47,20 @@ func TestVacuumHonorsCancellation(t *testing.T) {
 	}
 }
 
-func TestApplySchemaRefusesDuplicatesWithoutDroppingPriorGuard(t *testing.T) {
+func TestApplySchemaKeepsPriorGuardWhenExactDuplicatesRemain(t *testing.T) {
 	db, path := openSchemaDB(t)
-	statements := []string{
-		`DROP INDEX idx_sessions_exact_payload`,
-		`CREATE INDEX idx_sessions_exact_payload ON sessions(source_agent, title, metadata)`,
-		`INSERT INTO sessions(session_id, source_agent, title, started_at, metadata)
-		 VALUES ('duplicate-a', 'fixture', 'same', '2026-08-16T10:00:00Z', '{}')`,
-		`INSERT INTO sessions(session_id, source_agent, title, started_at, metadata)
-		 VALUES ('duplicate-b', 'fixture', 'same', '2026-08-16T10:00:00Z', '{}')`,
-	}
-	for _, statement := range statements {
-		if _, err := db.Exec(statement); err != nil {
-			db.Close()
-			t.Fatalf("fixture %q: %v", statement, err)
-		}
-	}
+	plantExactSessionDuplicates(t, db)
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
 
-	err := ApplySchema(path)
-	if err == nil || !strings.Contains(err.Error(), "exact dedup") {
-		t.Fatalf("ApplySchema duplicate error = %v", err)
+	if err := ApplySchema(path); err != nil {
+		t.Fatalf("ApplySchema duplicate upgrade = %v", err)
 	}
-	db, err = bundledplugin.OpenDatabase(path, true)
+	if err := ApplySchema(path); err != nil {
+		t.Fatalf("ApplySchema duplicate upgrade second pass = %v", err)
+	}
+	db, err := bundledplugin.OpenDatabase(path, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +71,62 @@ func TestApplySchemaRefusesDuplicatesWithoutDroppingPriorGuard(t *testing.T) {
 		t.Fatal(err)
 	}
 	if strings.Contains(strings.ToLower(indexSQL), "roca_payload_hash") {
-		t.Fatalf("failed preflight replaced the prior guard: %s", indexSQL)
+		t.Fatalf("duplicate upgrade replaced the prior guard: %s", indexSQL)
+	}
+	var sessions int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sessions`).Scan(&sessions); err != nil {
+		t.Fatal(err)
+	}
+	if sessions != 2 {
+		t.Fatalf("duplicate upgrade changed session count = %d", sessions)
+	}
+}
+
+func TestEnsureAllPlacesCorpusWhenExactSessionDuplicatesRemain(t *testing.T) {
+	root := t.TempDir()
+	bin := filepath.Join(t.TempDir(), "bin")
+	spec := BundleSpec()
+	if _, err := bundledplugin.Ensure(root, bin, "1.86.6", spec); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, Name, DatabaseFilename)
+	db, err := bundledplugin.OpenDatabase(path, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plantExactSessionDuplicates(t, db)
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := bundledplugin.EnsureAll(root, bin, "1.87.1", spec); err != nil {
+		t.Fatalf("EnsureAll with leftover session duplicates = %v", err)
+	}
+	if _, err := bundledplugin.EnsureAll(root, bin, "1.87.1", spec); err != nil {
+		t.Fatalf("EnsureAll second pass = %v", err)
+	}
+	manifest, err := plugininstall.ReadManifest(filepath.Join(root, Name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Version != "1.87.1" {
+		t.Fatalf("placed version = %q, want 1.87.1", manifest.Version)
+	}
+}
+
+func plantExactSessionDuplicates(t *testing.T, db *sql.DB) {
+	t.Helper()
+	for _, statement := range []string{
+		`DROP INDEX idx_sessions_exact_payload`,
+		`CREATE INDEX idx_sessions_exact_payload ON sessions(source_agent, title, metadata)`,
+		`INSERT INTO sessions(session_id, source_agent, title, started_at, metadata)
+		 VALUES ('duplicate-a', 'fixture', 'same', '2026-08-16T10:00:00Z', '{}')`,
+		`INSERT INTO sessions(session_id, source_agent, title, started_at, metadata)
+		 VALUES ('duplicate-b', 'fixture', 'same', '2026-08-16T10:00:00Z', '{}')`,
+	} {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatalf("fixture %q: %v", statement, err)
+		}
 	}
 }
 

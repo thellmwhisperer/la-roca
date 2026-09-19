@@ -308,7 +308,7 @@ func (s *Service) EnsureSchema(ctx context.Context) (search.Report, error) {
 		if err != nil {
 			return index, err
 		}
-		if report.Verdict != store.VerdictCurrent {
+		if report.Verdict != store.VerdictCurrent && !readableWithoutAdoption(report) {
 			return index, fmt.Errorf("the database schema requires adoption, but La Roca is in read-only mode: %s", report.Reason)
 		}
 	} else {
@@ -331,6 +331,37 @@ func (s *Service) EnsureSchema(ctx context.Context) (search.Report, error) {
 	}
 	s.schemaOK = true
 	return index, nil
+}
+
+// readableWithoutAdoption is the read-only door for a migratable schema whose
+// only repairs are missing machine columns on the four harvest tables. Vector
+// query and doctor --read-only must still answer; they must not write those columns in.
+func readableWithoutAdoption(report store.Report) bool {
+	if report.Verdict != store.VerdictMigratable {
+		return false
+	}
+	if len(report.Differences) == 0 {
+		return false
+	}
+	for _, difference := range report.Differences {
+		if !difference.Repairable || difference.Kind != "missing_column" ||
+			!readOnlyMachineColumn(difference.Table, difference.Column) {
+			return false
+		}
+	}
+	return true
+}
+
+func readOnlyMachineColumn(table, column string) bool {
+	if column != "machine" {
+		return false
+	}
+	switch table {
+	case "sessions", "exchanges", "thinking_blocks", "tool_uses":
+		return true
+	default:
+		return false
+	}
 }
 
 // TheGate opens the read-only gate the first time it is needed. It is an

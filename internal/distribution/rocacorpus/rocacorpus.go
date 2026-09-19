@@ -42,17 +42,6 @@ func applySchema(ctx context.Context, path string) error {
 	if err != nil {
 		return err
 	}
-	db, err := bundledplugin.OpenDatabase(path, false)
-	if err != nil {
-		return err
-	}
-	if err := preflightHashGuards(ctx, db); err != nil {
-		db.Close()
-		return fmt.Errorf("corpus schema upgrade requires exact dedup first: %w", err)
-	}
-	if err := db.Close(); err != nil {
-		return err
-	}
 	rewrote, err := applyStorageLaw(ctx, path, false)
 	if err != nil {
 		return err
@@ -65,7 +54,7 @@ func applySchema(ctx context.Context, path string) error {
 			return err
 		}
 	}
-	db, err = bundledplugin.OpenDatabase(path, false)
+	db, err := bundledplugin.OpenDatabase(path, false)
 	if err != nil {
 		return err
 	}
