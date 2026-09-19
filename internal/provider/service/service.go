@@ -47,8 +47,8 @@ type Options struct {
 	Version string
 	Commit  string
 	// QueryTimeout bounds execution after SQL passes the read-only gate.
-	// QueryTimeoutSet distinguishes an explicit zero, which disables the bound,
-	// from an absent setting, which uses DefaultQueryTimeout.
+	// QueryTimeoutSet distinguishes an explicit setting from an absent one.
+	// Zero or a negative value uses DefaultQueryTimeout; exec stays bounded.
 	QueryTimeout    time.Duration
 	QueryTimeoutSet bool
 	// DisableMissingReferentAsk is the opt-out escape hatch for asking the

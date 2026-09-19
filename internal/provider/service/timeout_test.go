@@ -13,7 +13,8 @@ func TestQueryExecutionBudgetDistinguishesDefaultDisabledAndConfigured(t *testin
 		enabled bool
 	}{
 		{name: "absent uses default", budget: DefaultQueryTimeout, enabled: true},
-		{name: "explicit zero disables", opts: Options{QueryTimeoutSet: true}},
+		{name: "explicit zero uses default", opts: Options{QueryTimeoutSet: true},
+			budget: DefaultQueryTimeout, enabled: true},
 		{name: "a bound no statement could meet falls back to default",
 			opts:   Options{QueryTimeout: -5 * time.Second, QueryTimeoutSet: true},
 			budget: DefaultQueryTimeout, enabled: true},

@@ -536,21 +536,19 @@ func (s *Service) executeWithPluginsBudget(ctx context.Context, statement, term 
 
 func (s *Service) executeWithDatabase(ctx context.Context, statement, term string,
 	maxChars int, databases []plugin.Database, target *store.DB, budget execBudget) ([]string, []map[string]any, error) {
-	timeout, bounded := s.queryExecutionBudget()
-	if budget.set {
-		timeout, bounded = budget.timeout, budget.timeout > 0
-	}
-	queryCtx := ctx
-	var cancel context.CancelFunc = func() {}
-	if bounded {
-		queryCtx, cancel = context.WithTimeout(ctx, timeout)
-	}
+	timeout := s.boundedExecTimeout(budget)
+	queryCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	connection, attached, err := s.openQueryConnectionOn(queryCtx, target)
 	if err != nil {
 		return nil, nil, executionError(ctx, queryCtx, timeout, err)
 	}
 	defer func() { closeQueryConnection(connection, attached) }()
+	releaseBound, bindErr := store.BoundConnection(queryCtx, connection)
+	if bindErr != nil {
+		return nil, nil, executionError(ctx, queryCtx, timeout, bindErr)
+	}
+	defer releaseBound()
 	var onDemand []plugin.Database
 	for _, database := range databases {
 		if database.Semantic.Attachment != plugin.AttachmentResident {
@@ -559,7 +557,7 @@ func (s *Service) executeWithDatabase(ctx context.Context, statement, term strin
 	}
 	newlyAttached, err := plugin.Attach(queryCtx, connection, onDemand)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, executionError(ctx, queryCtx, timeout, err)
 	}
 	attached = append(attached, newlyAttached...)
 	rows, err := connection.QueryContext(queryCtx, statement)
@@ -573,6 +571,9 @@ func (s *Service) executeWithDatabase(ctx context.Context, statement, term strin
 	}
 	if closeErr != nil {
 		return nil, nil, executionError(ctx, queryCtx, timeout, closeErr)
+	}
+	if err := finishedWithinBudget(ctx, queryCtx, timeout, nil); err != nil {
+		return nil, nil, err
 	}
 	if len(databases) > 0 {
 		columns, result = EnsureDatabaseColumn(columns, result, fallbackDatabase(statement, databases))

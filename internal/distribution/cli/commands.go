@@ -847,7 +847,7 @@ func execCommand(env *cliEnv) *cobra.Command {
 		}),
 	}
 	cmd.Flags().IntVar(&req.MaxChars, "max-chars", service.DefaultMaxChars, "character budget per text field")
-	cmd.Flags().IntVar(&timeoutMS, "timeout-ms", -1, "statement budget in milliseconds; 0 disables the bound")
+	cmd.Flags().IntVar(&timeoutMS, "timeout-ms", -1, "statement budget in milliseconds; 0 uses the default 5s bound")
 	return cmd
 }
 
