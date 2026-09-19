@@ -95,7 +95,7 @@ e2e-smoke: build ## Real binary in a disposable home: init, ingest, query, plugi
 e2e-federation: build ## Installed binary against the frozen synthetic federation fixture
 	@test -x "$(ROCA_PUBLISHED_BIN)" || { echo "set ROCA_PUBLISHED_BIN to an installed published release" >&2; exit 1; }
 	@test -f "$(ROCA_E2E_VECTOR_MODEL)" || { echo "set ROCA_E2E_VECTOR_MODEL to the pinned embedding model" >&2; exit 1; }
-	ROCA_BIN=$(BIN) ROCA_PLAYGROUND_INTEGRATION= ROCA_PLAYGROUND_FEATURES= ROCA_PUBLISHED_BIN="$(ROCA_PUBLISHED_BIN)" ROCA_E2E_VECTOR_MODEL="$(ROCA_E2E_VECTOR_MODEL)" go test -tags=acceptance ./test/acceptance -run '^TestFrozenFederationInstalledBinary$$' -count=1 -v
+	ROCA_BIN=$(BIN) ROCA_PLAYGROUND_INTEGRATION= ROCA_PLAYGROUND_FEATURES= ROCA_PUBLISHED_BIN="$(ROCA_PUBLISHED_BIN)" ROCA_E2E_VECTOR_MODEL="$(ROCA_E2E_VECTOR_MODEL)" go test -tags=acceptance,e2e_federation ./test/acceptance -run '^(TestFrozenFederationInstalledBinary|TestFrozenFederationProvisioned|TestFrozenFederationProvisionedJourney)$$' -count=1 -v
 
 split-oracle: build ## Record and replay the DATA SPLIT compatibility goldens
 	ROCA_BIN=$(BIN) ROCA_PLAYGROUND_INTEGRATION= ROCA_PLAYGROUND_FEATURES= ROCA_PUBLISHED_BIN= go test -tags=acceptance ./test/acceptance -run '^TestDataSplitCompatibilityOracle$$' -count=1

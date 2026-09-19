@@ -12,8 +12,9 @@ under test.
 
 The executable contract is [Aceptacion](e2e-federation-aceptacion.md). Its
 Gherkin companion is
-`features/distribution/e2e-federation.feature`, run by
-`TestJourneyAcceptanceSuite`.
+`features/distribution/e2e-federation.feature`. Hermetic scenarios run in
+`TestJourneyAcceptanceSuite`. Ready-index and published-upgrade scenarios are
+tagged `@provisioned` and run only by `TestFrozenFederationProvisionedJourney`.
 
 ## Run
 
@@ -35,13 +36,15 @@ make e2e-federation \
 ```
 
 That builds this tree's binary, copies it into `.local/bin` under a disposable
-HOME, extracts the frozen snapshots, and runs
-`TestFrozenFederationInstalledBinary`.
+HOME, extracts the frozen snapshots, and runs the hermetic
+`TestFrozenFederationInstalledBinary` plus the provisioned tests. Missing
+`ROCA_PUBLISHED_BIN` or `ROCA_E2E_VECTOR_MODEL` is a failure, never a skip.
 
-`make check` includes the Go cases through `make accept` and the Gherkin cases
-through `TestJourneyAcceptanceSuite`. `make e2e-smoke` runs both the shorter
-branch operator path and the published-release update followed by branch init
-on a clean home.
+`make check` includes the hermetic Go cases through `make accept` and the
+non-provisioned Gherkin cases through `TestJourneyAcceptanceSuite`. Those
+paths do not claim a ready vector index or a published upgrade. `make e2e-smoke`
+runs both the shorter branch operator path and the published-release update
+followed by branch init on a clean home.
 
 ## Coverage
 
@@ -60,7 +63,7 @@ those pull request and issue bodies:
 Plus one command case per uso-de-la-roca correction source (23 exchange ids),
 expressed as the binary command the agent should have run.
 
-Plus the eight real-usage paths from operator execution logs: hooks under 250 ms,
+Plus the eight real-usage paths from operator execution logs: hooks at 0 ms,
 exec of an exact frozen id under 5 s, a ready-index vector query under 2 s
 without degradation, query under 3 s without a silent hybrid claim, one current
 handoff per project, MCP handoff store refusal as contract, the

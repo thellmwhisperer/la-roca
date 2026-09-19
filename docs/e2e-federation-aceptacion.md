@@ -175,7 +175,7 @@ exit: 0
 command: roca hooks run claude
 stdin: {"hook_event_name":"SessionStart","tool_name":"","tool_input":{}}
 exit: 0
-duration_ms: < 250
+duration_ms: 0
 
 ## real-usage-exec
 command: roca exec SELECT id FROM plugin_roca_ops.memories WHERE id = '1152921504606846980' --json

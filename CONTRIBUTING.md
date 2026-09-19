@@ -160,12 +160,14 @@ part of `make check`. Neither path may mutate an operator's live La Roca home.
 
 `make e2e-federation` extracts the committed archive
 `testdata/e2e-federation/frozen.tar.gz` into disposable homes, installs the
-branch binary into those prefixes, and runs the Aceptacion commands. It also
-has external prerequisites for the update smoke and ready-index path; the
-[runbook](docs/e2e-federation.md) owns those requirements and their overrides.
-It does not generate the fixture at test start. The command list is
-[Aceptacion](docs/e2e-federation-aceptacion.md). It is part of
-`make accept` and never selects a live hub.
+branch binary into those prefixes, and runs the Aceptacion commands. The ready
+index and published upgrade fail closed when their prerequisites are absent;
+they never skip. The [runbook](docs/e2e-federation.md) owns those requirements
+and their overrides. It does not generate the fixture at test start. The
+command list is [Aceptacion](docs/e2e-federation-aceptacion.md). The hermetic
+cases (frozen digest, Gherkin without a ready index or published upgrade,
+hooks at 0 ms, exec, query honesty, handoff, MCP, Codex identity) are part of
+`make accept`. Never selects a live hub.
 
 `make upgrade-gauntlet` is the second gate every pull request has to pass: it
 upgrades the committed homes of older releases through the current binary.

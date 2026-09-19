@@ -182,6 +182,8 @@ func registerSteps(ctx *godog.ScenarioContext, binary string) {
 	})
 	ctx.Then(`^the frozen Codex identity is unchanged$`, m.theFrozenCodexIdentityIsUnchanged)
 	ctx.Then(`^the execution log duration_ms is under (\d+)$`, m.theExecutionLogDurationUnder)
+	ctx.Then(`^the execution log duration_ms is 0$`, func() error { return m.theExecutionLogDurationIs(0) })
+	ctx.Then(`^the vector query executed the ready index$`, m.theVectorQueryExecutedTheReadyIndex)
 	ctx.Then(`^one vector resident process exists$`, m.oneVectorResidentProcessExists)
 	ctx.Then(`^the readable MCP response contains "([^"]*)"$`, m.theReadableMCPResponseContains)
 	ctx.Then(`^no row has been returned$`, m.jsonHasZeroRows)

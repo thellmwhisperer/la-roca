@@ -71,10 +71,12 @@ Feature: Frozen federation installed binary
     When I run "roca ingest --json" a second time
     Then the frozen Codex identity is unchanged
 
+  @provisioned
   Scenario: 232991 vector query
     Given a frozen synthetic federation lab
     When I vector-query "harbor lantern"
     Then the command exits with code 0
+    And the vector query executed the ready index
 
   Scenario Outline: uso-de-la-roca correction
     Given a frozen synthetic federation lab
@@ -96,10 +98,12 @@ Feature: Frozen federation installed binary
     When I exec the SQL "SELECT content FROM plugin_roca_ops.memories WHERE content LIKE '%harbor lantern%'"
     Then the command exits with code 0
 
+  @provisioned
   Scenario: 238277 vector query
     Given a frozen synthetic federation lab
     When I vector-query "harbor lantern"
     Then the command exits with code 0
+    And the vector query executed the ready index
 
   Scenario: 244386 exec layers
     Given a frozen synthetic federation lab
@@ -116,25 +120,31 @@ Feature: Frozen federation installed binary
     When I run "roca handoff latest --project harbor"
     Then the command exits with code 0
 
+  @provisioned
   Scenario: 5740 vector query
     Given a frozen synthetic federation lab
     When I vector-query "harbor lantern"
     Then the command exits with code 0
+    And the vector query executed the ready index
 
   Scenario: 5950 exec limit
     Given a frozen synthetic federation lab
     When I exec the SQL "SELECT content FROM plugin_roca_ops.memories LIMIT 1"
     Then the command exits with code 0
 
+  @provisioned
   Scenario: 4657 vector query
     Given a frozen synthetic federation lab
     When I vector-query "harbor lantern"
     Then the command exits with code 0
+    And the vector query executed the ready index
 
+  @provisioned
   Scenario: 125372 vector query first person
     Given a frozen synthetic federation lab
     When I vector-query "I inspected the harbor lantern"
     Then the command exits with code 0
+    And the vector query executed the ready index
 
   Scenario: 126485 exec discovery
     Given a frozen synthetic federation lab
@@ -166,11 +176,11 @@ Feature: Frozen federation installed binary
     When I run "roca handoff latest --project harbor"
     Then the command exits with code 0
 
-  Scenario: real-usage hooks under 250ms
+  Scenario: real-usage hooks 0ms
     Given a frozen synthetic federation lab
     When I run the claude authorship hook
     Then the command exits with code 0
-    And the execution log duration_ms is under 250
+    And the execution log duration_ms is 0
 
   Scenario: real-usage exec exact ids
     Given a frozen synthetic federation lab
@@ -179,10 +189,12 @@ Feature: Frozen federation installed binary
     And the output contains "1152921504606846980"
     And the execution log duration_ms is under 5000
 
+  @provisioned
   Scenario: real-usage vector query
     Given a frozen synthetic federation lab
     When I vector-query "harbor lantern"
     Then the command exits with code 0
+    And the vector query executed the ready index
     And the execution log duration_ms is under 2000
 
   Scenario: real-usage query no silent degrade
@@ -208,6 +220,7 @@ Feature: Frozen federation installed binary
     Then the response is a tool error
     And the refusal names the agent, surface, origin and why it was refused
 
+  @provisioned
   Scenario: real-usage update+init smoke
     When I run the e2e-smoke operator path
     Then the command exits with code 0

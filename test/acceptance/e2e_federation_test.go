@@ -45,7 +45,6 @@ func TestFrozenFederationBytesArePinned(t *testing.T) {
 }
 
 func TestFrozenFederationInstalledBinary(t *testing.T) {
-	requireFrozenFederationPrerequisites(t)
 	guardLiveHub(t)
 	if err := verifyFrozenDigest(mustAcceptanceRoot(t)); err != nil {
 		t.Fatal(err)
@@ -60,28 +59,16 @@ func TestFrozenFederationInstalledBinary(t *testing.T) {
 	t.Run("issue-319-json-ids", func(t *testing.T) { caseIssue319(t, seeded) })
 	t.Run("issue-324-codex-identity", func(t *testing.T) { caseIssue324(t) })
 	t.Run("uso-de-la-roca", func(t *testing.T) {
-		for _, c := range usoCases {
+		for _, c := range hermeticUsoCases {
 			t.Run(c.id, func(t *testing.T) { runUsage(t, seeded, c) })
 		}
 	})
 	t.Run("real-usage-hooks-fast", func(t *testing.T) { caseHooksNeverBlock(t, seeded) })
 	t.Run("real-usage-exec-exact-ids", func(t *testing.T) { caseExecExactIDs(t, seeded) })
-	t.Run("real-usage-vector-query", func(t *testing.T) { caseVectorQueryBudget(t, seeded) })
 	t.Run("real-usage-query-no-silent-degrade", func(t *testing.T) { caseQueryNoSilentDegrade(t, seeded) })
 	t.Run("real-usage-handoff-one-per-project", func(t *testing.T) { caseHandoffOnePerProject(t, seeded) })
 	t.Run("real-usage-mcp-handoff-refused", func(t *testing.T) { caseMCPHandoffRefused(t, seeded) })
-	t.Run("real-usage-e2e-smoke", TestPublishedReleaseUpdateInitSmoke)
 	t.Run("real-usage-mcp-health", func(t *testing.T) { caseMCPHealth(t, seeded) })
-}
-
-func requireFrozenFederationPrerequisites(t *testing.T) {
-	t.Helper()
-	if strings.TrimSpace(os.Getenv("ROCA_E2E_VECTOR_MODEL")) == "" {
-		t.Skip("set ROCA_E2E_VECTOR_MODEL to run the ready-index federation acceptance")
-	}
-	if strings.TrimSpace(os.Getenv("ROCA_PUBLISHED_BIN")) == "" {
-		t.Skip("set ROCA_PUBLISHED_BIN to run the published-release federation acceptance")
-	}
 }
 
 type federationLab struct {
@@ -136,7 +123,7 @@ func newFederationLab(t *testing.T, snapshot string) *federationLab {
 func installFrozenVectorModel(home string) error {
 	source := strings.TrimSpace(os.Getenv("ROCA_E2E_VECTOR_MODEL"))
 	if source == "" {
-		return fmt.Errorf("ROCA_E2E_VECTOR_MODEL is required for the ready-index acceptance path")
+		return nil
 	}
 	info, err := os.Stat(source)
 	if err != nil || !info.Mode().IsRegular() {
@@ -479,8 +466,8 @@ func caseHooksNeverBlock(t *testing.T, lab *federationLab) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ms >= 250 {
-		t.Fatalf("hooks run duration_ms=%d, want under 250", ms)
+	if ms != 0 {
+		t.Fatalf("hooks run duration_ms=%d, want 0", ms)
 	}
 }
 
@@ -513,20 +500,8 @@ func caseVectorQueryBudget(t *testing.T, lab *federationLab) {
 	if time.Since(start) >= 2*time.Second {
 		t.Fatalf("vector query took %s, want under 2s", time.Since(start))
 	}
-	var answer struct {
-		VectorExecuted bool     `json:"vector_executed"`
-		Notices        []string `json:"notices"`
-	}
-	if err := json.Unmarshal([]byte(got.stdout), &answer); err != nil {
-		t.Fatalf("vector query is not JSON: %v\n%s", err, got.stdout)
-	}
-	if !answer.VectorExecuted {
-		t.Fatalf("vector query did not execute the ready index: notices=%v\n%s", answer.Notices, got.stdout)
-	}
-	for _, notice := range answer.Notices {
-		if strings.Contains(strings.ToLower(notice), "fts-only") || strings.Contains(strings.ToLower(notice), "unavailable") {
-			t.Fatalf("vector query degraded despite the ready index: %s", notice)
-		}
+	if err := requireVectorExecuted(got.stdout); err != nil {
+		t.Fatal(err)
 	}
 	ms, err := lastExecutionDuration(lab.m.home, "vector")
 	if err != nil {
@@ -608,23 +583,18 @@ type usageCase struct {
 	code     int
 }
 
-var usoCases = []usageCase{
-	{id: "232991", args: []string{"vector", "query", "harbor lantern", "20", "--databases", "corpus,ops"}},
+var hermeticUsoCases = []usageCase{
 	{id: "233400", args: []string{"exec", "SELECT content FROM plugin_roca_ops.memories WHERE content LIKE '%harbor lantern%'"}},
 	{id: "233508", args: []string{"query", "harbor lantern", "--json"}, contains: []string{"engines"}},
 	{id: "10387", args: []string{"exec", "SELECT COUNT(*) AS memories FROM plugin_roca_ops.memories"}},
-	{id: "238277", args: []string{"vector", "query", "harbor lantern", "20", "--databases", "corpus,ops"}},
 	{id: "244386", args: []string{"exec", "SELECT layer, COUNT(*) AS n FROM plugin_roca_ops.memories GROUP BY layer"}},
 	{id: "259288", args: []string{"handoff", "latest", "--project", "harbor"}, contains: []string{"harbor"}},
 	{id: "93762", args: []string{"query", "harbor lantern", "--json"}},
 	{id: "19944", args: []string{"handoff", "latest", "--project", "harbor"}},
 	{id: "7734", args: []string{"doctor"}},
-	{id: "5740", args: []string{"vector", "query", "harbor lantern", "20", "--databases", "corpus,ops"}},
 	{id: "5950", args: []string{"exec", "SELECT content FROM plugin_roca_ops.memories LIMIT 1"}},
 	{id: "4269", args: []string{"version"}, contains: []string{"roca"}},
-	{id: "4657", args: []string{"vector", "query", "harbor lantern", "20", "--databases", "corpus,ops"}},
 	{id: "44508", args: []string{"query", "harbor lantern"}},
-	{id: "125372", args: []string{"vector", "query", "I inspected the harbor lantern", "20", "--databases", "corpus,ops"}},
 	{id: "126485", args: []string{"exec", "SELECT content FROM plugin_roca_ops.memories WHERE layer='discovery'"}},
 	{id: "127663", args: []string{"doctor"}},
 	{id: "296656", args: []string{"doctor"}},
@@ -632,6 +602,42 @@ var usoCases = []usageCase{
 	{id: "1658381", args: []string{"doctor"}},
 	{id: "1708690", args: []string{"pill", "show", federationPill}, contains: []string{"vectors first"}},
 	{id: "1733215", args: []string{"handoff", "latest", "--project", "harbor"}},
+}
+
+var vectorUsoCases = []usageCase{
+	{id: "232991", args: []string{"vector", "query", "harbor lantern", "20", "--databases", "corpus,ops", "--json"}},
+	{id: "238277", args: []string{"vector", "query", "harbor lantern", "20", "--databases", "corpus,ops", "--json"}},
+	{id: "5740", args: []string{"vector", "query", "harbor lantern", "20", "--databases", "corpus,ops", "--json"}},
+	{id: "4657", args: []string{"vector", "query", "harbor lantern", "20", "--databases", "corpus,ops", "--json"}},
+	{id: "125372", args: []string{"vector", "query", "I inspected the harbor lantern", "20", "--databases", "corpus,ops", "--json"}},
+}
+
+func requireVectorExecuted(stdout string) error {
+	var answer struct {
+		VectorExecuted bool     `json:"vector_executed"`
+		Notices        []string `json:"notices"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &answer); err != nil {
+		return fmt.Errorf("vector query is not JSON: %w\n%s", err, stdout)
+	}
+	if !answer.VectorExecuted {
+		return fmt.Errorf("vector query did not execute the ready index: notices=%v\n%s", answer.Notices, stdout)
+	}
+	for _, notice := range answer.Notices {
+		lower := strings.ToLower(notice)
+		if strings.Contains(lower, "fts-only") || strings.Contains(lower, "unavailable") {
+			return fmt.Errorf("vector query degraded despite the ready index: %s", notice)
+		}
+	}
+	return nil
+}
+
+func runVectorUsage(t *testing.T, lab *federationLab, c usageCase) {
+	t.Helper()
+	got := lab.cliAllow(t, c.code, c.args...)
+	if err := requireVectorExecuted(got.stdout); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func runUsage(t *testing.T, lab *federationLab, c usageCase) {
@@ -883,10 +889,48 @@ func (m *world) prepareFrozenSyntheticFederationLab(snapshot string) error {
 	if err := lab.installPrefix(); err != nil {
 		return err
 	}
+	if err := installFrozenVectorModel(m.home); err != nil {
+		return err
+	}
 	if err := prepareFrozenVectorState(m.home); err != nil {
 		return err
 	}
 	return os.MkdirAll(filepath.Join(m.home, "tmp"), 0o700)
+}
+
+func (m *world) theVectorQueryExecutedTheReadyIndex() error {
+	return requireVectorExecuted(m.last.stdout)
+}
+
+func (m *world) theExecutionLogDurationIs(want int) error {
+	ms, err := lookupExecutionDuration(m)
+	if err != nil {
+		return err
+	}
+	if ms != int64(want) {
+		return fmt.Errorf("duration_ms=%d, want %d", ms, want)
+	}
+	return nil
+}
+
+func lookupExecutionDuration(m *world) (int64, error) {
+	command := strings.TrimPrefix(m.last.command, "roca ")
+	ms, err := lastExecutionDuration(m.home, command)
+	if err == nil {
+		return ms, nil
+	}
+	switch {
+	case strings.HasPrefix(command, "exec"):
+		return lastExecutionDuration(m.home, "exec")
+	case strings.HasPrefix(command, "vector"):
+		return lastExecutionDuration(m.home, "vector")
+	case strings.HasPrefix(command, "query"):
+		return lastExecutionDuration(m.home, "query")
+	case strings.HasPrefix(command, "hooks run"):
+		return lastExecutionDuration(m.home, "hooks run")
+	default:
+		return 0, err
+	}
 }
 
 func (m *world) iExecSQL(statement string) error {
@@ -914,7 +958,7 @@ func (m *world) iExecSQLJSON(statement string) error {
 }
 
 func (m *world) iVectorQuery(phrase string) error {
-	args := []string{"vector", "query", phrase, "20", "--databases", "corpus,ops"}
+	args := []string{"vector", "query", phrase, "20", "--databases", "corpus,ops", "--json"}
 	if _, err := m.runWith("roca vector query", args); err != nil {
 		return err
 	}
@@ -936,19 +980,7 @@ func (m *world) iRunClaudeAuthorshipHook() error {
 }
 
 func (m *world) theExecutionLogDurationUnder(limit int) error {
-	command := strings.TrimPrefix(m.last.command, "roca ")
-	ms, err := lastExecutionDuration(m.home, command)
-	if err != nil {
-		if strings.HasPrefix(command, "exec") {
-			ms, err = lastExecutionDuration(m.home, "exec")
-		} else if strings.HasPrefix(command, "vector") {
-			ms, err = lastExecutionDuration(m.home, "vector")
-		} else if strings.HasPrefix(command, "query") {
-			ms, err = lastExecutionDuration(m.home, "query")
-		} else if strings.HasPrefix(command, "hooks run") {
-			ms, err = lastExecutionDuration(m.home, "hooks run")
-		}
-	}
+	ms, err := lookupExecutionDuration(m)
 	if err != nil {
 		return err
 	}
@@ -1002,7 +1034,7 @@ func (m *world) oneVectorResidentProcessExists() error {
 
 func (m *world) iRunTheE2ESmokeOperatorPath() error {
 	cmd := exec.Command("go", "test", "-tags=acceptance", "./test/acceptance",
-		"-run", "^TestRealBinaryDisposableHomeSmoke$", "-count=1")
+		"-run", "^TestPublishedReleaseUpdateInitSmoke$", "-count=1")
 	root, err := acceptanceRoot()
 	if err != nil {
 		return err
@@ -1010,10 +1042,16 @@ func (m *world) iRunTheE2ESmokeOperatorPath() error {
 	cmd.Dir = root
 	cmd.Env = append(os.Environ(), "ROCA_BIN="+m.binary)
 	out, err := cmd.CombinedOutput()
-	m.last = run{command: "make e2e-smoke", stdout: string(out)}
+	text := string(out)
+	m.last = run{command: "make e2e-smoke", stdout: text}
+	if strings.Contains(text, "set ROCA_PUBLISHED_BIN") {
+		m.last.code = 1
+		m.last.stderr = text
+		return fmt.Errorf("published upgrade was skipped")
+	}
 	if err != nil {
 		m.last.code = 1
-		m.last.stderr = string(out)
+		m.last.stderr = text
 		return nil
 	}
 	return nil
