@@ -246,7 +246,7 @@ func renderDoctorRemoteSources(env *cliEnv, remotes []service.RemoteSourceDoctor
 		if remote.NewestAgeHours != nil {
 			detail = fmt.Sprintf("newest file %dh ago, %s", *remote.NewestAgeHours, detail)
 		}
-		env.print("  %s · %s · %s", remote.Machine, state, detail)
+		env.print("  %s · %s · %s · %s", remote.Machine, remote.Root, state, detail)
 	}
 }
 

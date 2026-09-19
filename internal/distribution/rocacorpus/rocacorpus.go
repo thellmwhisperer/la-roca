@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
+	"strings"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/bundledplugin"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/plugininstall"
@@ -17,7 +19,7 @@ const (
 	// BundledSource is what the installer records for this package, and it is
 	// what discovery reads to know the corpus attach alias is the kernel's own.
 	BundledSource = plugin.BundledSource
-	SchemaVersion = 6
+	SchemaVersion = 7
 	IndexVersion  = 3
 )
 
@@ -158,6 +160,9 @@ func prepareIngestProvenance(path string) error {
 	if err := ensureMachineColumns(context.Background(), tx); err != nil {
 		return err
 	}
+	if err := backfillMachine(context.Background(), tx); err != nil {
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit bundled %s provenance migration: %w", Name, err)
 	}
@@ -194,6 +199,28 @@ func prepareIngestProvenance(path string) error {
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit bundled %s provenance backfill: %w", Name, err)
+	}
+	return nil
+}
+
+func backfillMachine(ctx context.Context, tx *sql.Tx) error {
+	machine, err := os.Hostname()
+	if err != nil || strings.TrimSpace(machine) == "" {
+		machine = "local"
+	} else {
+		machine = strings.TrimSpace(machine)
+	}
+	for _, table := range []string{"sessions", "exchanges", "thinking_blocks", "tool_uses"} {
+		present, err := tableExists(tx, table)
+		if err != nil {
+			return err
+		}
+		if !present {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, "UPDATE "+table+" SET machine = ? WHERE machine IS NULL", machine); err != nil {
+			return fmt.Errorf("backfill %s.machine: %w", table, err)
+		}
 	}
 	return nil
 }

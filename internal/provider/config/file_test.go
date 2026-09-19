@@ -894,4 +894,17 @@ root = "/nope"
 	if len(file.Warnings) < 2 {
 		t.Fatalf("warnings = %v, want the empty table and the unknown key", file.Warnings)
 	}
+
+	single := write(t, `
+[sources.remote]
+machine = "mini"
+root = "/mirrors/mini"
+`)
+	file, err = LoadFile(single)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(file.RemoteSources) != 0 || len(file.Warnings) == 0 {
+		t.Fatalf("single remote table = %+v, warnings = %v", file.RemoteSources, file.Warnings)
+	}
 }

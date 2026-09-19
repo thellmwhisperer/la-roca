@@ -17,11 +17,7 @@ func QualifySessionID(machine, id string) string {
 	if machine == "" || id == "" {
 		return id
 	}
-	prefix := machine + "/"
-	if strings.HasPrefix(id, prefix) {
-		return id
-	}
-	return prefix + id
+	return machine + "/" + id
 }
 
 // NewestModTime is the mtime of the newest regular file under root.
