@@ -213,37 +213,19 @@ func preflightHashGuards(ctx context.Context, db *sql.DB) error {
 		}
 		return fmt.Errorf("preflight hash guards: %w", err)
 	}
-	installed, err := exactdedup.GuardsInstalled(ctx, tx)
-	if err != nil {
-		if rollbackErr := tx.Rollback(); rollbackErr != nil {
-			return fmt.Errorf("preflight hash guards: %v; rollback preflight: %w", err, rollbackErr)
-		}
-		return fmt.Errorf("preflight hash guards: %w", err)
-	}
-	if !installed {
-		if rollbackErr := tx.Rollback(); rollbackErr != nil {
-			return fmt.Errorf("preflight hash guards: exact duplicates remain; rollback preflight: %w", rollbackErr)
-		}
-		return fmt.Errorf("preflight hash guards: exact duplicates remain; run the exact dedup dry-run and apply first")
-	}
 	if err := tx.Rollback(); err != nil {
 		return fmt.Errorf("rollback hash-guard preflight: %w", err)
 	}
 	return nil
 }
 
-func installHashGuards(ctx context.Context, db *sql.DB, allowSessionDuplicates bool) error {
+func installHashGuards(ctx context.Context, db *sql.DB) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin hash-guard installation: %w", err)
 	}
 	defer tx.Rollback()
-	if allowSessionDuplicates {
-		err = exactdedup.EnsureCorpusUpdateGuards(ctx, tx)
-	} else {
-		err = exactdedup.EnsureGuards(ctx, tx)
-	}
-	if err != nil {
+	if err := exactdedup.EnsureCorpusUpdateGuards(ctx, tx); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {

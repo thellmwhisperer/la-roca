@@ -334,8 +334,8 @@ func (s *Service) EnsureSchema(ctx context.Context) (search.Report, error) {
 }
 
 // readableWithoutAdoption is the read-only door for a migratable schema whose
-// only repairs are missing nullable columns. Vector query and doctor --read-only
-// must still answer; they must not write those columns in.
+// only repairs are missing machine columns on the four harvest tables. Vector
+// query and doctor --read-only must still answer; they must not write those columns in.
 func readableWithoutAdoption(report store.Report) bool {
 	if report.Verdict != store.VerdictMigratable {
 		return false
