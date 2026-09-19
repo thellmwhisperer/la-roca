@@ -4,6 +4,9 @@ First-time path: [install and initialize search](lifecycle.md#install).
 
 `.github/workflows/release-please.yml` maintains one release pull request from
 the Conventional Commits merged into `main`; it does not build artefacts.
+The branch layout that feeds this channel — `integration` as the default
+branch, `main` as the protected release lane, the pinned-SHA e2e round, and
+the hotfix path — is owned by the [release train](release-train.md).
 Release pull request #249 predates this auto-merge policy and retains its
 existing merge policy. For release pull requests with a number above #249, the
 workflow asks GitHub to auto-merge with a merge commit once the required checks
