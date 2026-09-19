@@ -151,15 +151,19 @@ harnesses did with the hook, and for the two defects only a live session found.
 See [D8/D9 source generation evidence](docs/d8-d9-evidence.md) for unchanged-pass
 source reads and stored-count status latency in the isolated lab.
 
-`make e2e-smoke` isolates the real-binary operator path in a disposable `HOME`
-and covers init, ingest, query, plugin install, and plugin update. It is also
-part of `make check` and must never mutate an operator's live La Roca home.
+`make e2e-smoke` runs two disposable-home paths: the branch binary's init,
+ingest, query, plugin install, and plugin update path; and an installed
+published release updating to the branch artefact before initializing a clean
+home. It uses `roca` from `PATH` as the published release by default; set
+`ROCA_PUBLISHED_BIN` to select another executable. The branch-only path is also
+part of `make check`. Neither path may mutate an operator's live La Roca home.
 
-`make e2e-federation` copies the committed archive
-`testdata/e2e-federation/frozen.tar.gz` into a disposable home, installs the
-branch binary into that prefix, and runs the Aceptacion commands. It does not
-generate the fixture at test start. The runbook is
-[frozen federation e2e](docs/e2e-federation.md). The command list is
+`make e2e-federation` extracts the committed archive
+`testdata/e2e-federation/frozen.tar.gz` into disposable homes, installs the
+branch binary into those prefixes, and runs the Aceptacion commands. It also
+has external prerequisites for the update smoke and ready-index path; the
+[runbook](docs/e2e-federation.md) owns those requirements and their overrides.
+It does not generate the fixture at test start. The command list is
 [Aceptacion](docs/e2e-federation-aceptacion.md). It is part of
 `make accept` and never selects a live hub.
 

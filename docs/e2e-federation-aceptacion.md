@@ -9,6 +9,9 @@ Live hub: never selected.
 command: roca ingest --json
 exit: 0
 stdout contains: "errors": 0
+command: roca exec SELECT session_id, exchange_number FROM plugin_roca_corpus.exchanges WHERE session_id = '019aba72-aa57-7d93-a12c-b6e65c0dca6b' ORDER BY exchange_number --json
+exit: 0
+stdout contains: 019aba72-aa57-7d93-a12c-b6e65c0dca6b
 
 ## 325
 command: roca store --layer pill --content Temporary pill for issue 320 acceptance --metadata {"pill_slug":"tmp-x"} --origin agent --agent codex
@@ -31,6 +34,9 @@ stdout contains: 0
 command: roca exec SELECT content FROM plugin_roca_ops.memories WHERE project='budgets' --max-chars 900
 exit: 0
 stdout digit run: >= 200
+command: roca exec SELECT content FROM plugin_roca_ops.memories WHERE project='budgets' --max-chars 900 --json
+exit: 0
+JSON content length: 800-900 runes
 
 ## 315
 command: roca mcp serve
@@ -59,9 +65,15 @@ exit: 0
 stdout matches: "id"\s*:\s*"
 
 ## 324
+command: roca ingest --json
+exit: 0
 command: roca exec SELECT session_id FROM plugin_roca_corpus.sessions WHERE session_id LIKE '019aba72-aa57-7d93-a12c-b6e65c0dca6%' ORDER BY session_id --json
 exit: 0
 stdout contains: 019aba72-aa57-7d93-a12c-b6e65c0dca6b
+frozen identity counts: 2 Codex sessions, 1 exact source session, 0 split siblings, 8 exchanges, 48 tools, 48 orphan tools, 1 failed tool, 1 control session
+command: roca ingest --json
+exit: 0
+expect: frozen identity counts unchanged
 
 ## 232991
 command: roca vector query harbor lantern 20 --databases corpus,ops
@@ -172,16 +184,21 @@ duration_ms: < 5000
 stdout contains: 1152921504606846980
 
 ## real-usage-vector
-command: roca vector query harbor lantern 20 --databases corpus,ops
+command: roca vector query warm harbor index 1 --databases corpus,ops --json
+exit: 0
+command: roca vector query harbor lantern 20 --databases corpus,ops --json
 exit: 0
 duration_ms: < 2000
+JSON vector_executed: true
+notices do not contain: fts-only
+notices do not contain: unavailable
 
 ## real-usage-query
 command: roca query harbor lantern --json
 exit: 0
 duration_ms: < 3000
 stdout contains: engines
-stdout does not contain: search hybrid
+if stdout contains search hybrid: stdout contains vector
 
 ## real-usage-handoff
 command: roca handoff latest --project harbor
@@ -201,6 +218,8 @@ output contains: handoff refused
 ## real-usage-e2e-smoke
 command: make e2e-smoke
 exit: 0
+expect: published release updates to the branch artefact
+expect: updated executable initializes a clean home
 
 ## real-usage-mcp-health
 command: roca mcp serve

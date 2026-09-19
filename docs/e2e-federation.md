@@ -6,12 +6,12 @@ do not satisfy it. The fixture is the content-addressed archive
 `testdata/e2e-federation/frozen.sha256`). The live operator home is never
 selected.
 
-The suite copies that archive into a disposable HOME. It does not run `init`,
+The suite extracts that archive into a disposable HOME. It does not run `init`,
 `ingest`, or `store` to build the lab. Those verbs appear only as the command
 under test.
 
-The executable contract is [Aceptacion](e2e-federation-aceptacion.md). The same
-commands are the Gherkin scenarios in
+The executable contract is [Aceptacion](e2e-federation-aceptacion.md). Its
+Gherkin companion is
 `features/distribution/e2e-federation.feature`, run by
 `TestJourneyAcceptanceSuite`.
 
@@ -23,14 +23,25 @@ From the repository root:
 make e2e-federation
 ```
 
+The target requires an executable published release and the local embedding
+model used by the ready-index case. By default it selects `roca` from `PATH`
+and the pinned model under `~/.roca/models/`. Override either selection when
+needed:
+
+```sh
+make e2e-federation \
+  ROCA_PUBLISHED_BIN=<published-roca> \
+  ROCA_E2E_VECTOR_MODEL=<embedding-model.gguf>
+```
+
 That builds this tree's binary, copies it into `.local/bin` under a disposable
 HOME, extracts the frozen snapshots, and runs
 `TestFrozenFederationInstalledBinary`.
 
 `make check` includes the Go cases through `make accept` and the Gherkin cases
-through `TestJourneyAcceptanceSuite`. `make e2e-smoke` remains the shorter
-operator-path smoke and is the Aceptacion command for update+init on a clean
-home.
+through `TestJourneyAcceptanceSuite`. `make e2e-smoke` runs both the shorter
+branch operator path and the published-release update followed by branch init
+on a clean home.
 
 ## Coverage
 
@@ -50,9 +61,10 @@ Plus one command case per uso-de-la-roca correction source (23 exchange ids),
 expressed as the binary command the agent should have run.
 
 Plus the eight real-usage paths from operator execution logs: hooks under 250 ms,
-exec of an exact frozen id under 5 s, vector query under 2 s, query under 3 s
-without a silent hybrid claim, one current handoff per project, MCP handoff
-store refusal as contract, `make e2e-smoke`, and MCP `roca_health`.
+exec of an exact frozen id under 5 s, a ready-index vector query under 2 s
+without degradation, query under 3 s without a silent hybrid claim, one current
+handoff per project, MCP handoff store refusal as contract, the
+published-release update and clean init smoke, and MCP `roca_health`.
 
 ## Fixture rule
 
