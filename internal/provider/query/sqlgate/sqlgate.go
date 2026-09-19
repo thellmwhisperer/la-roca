@@ -449,6 +449,40 @@ func IsRowCount(stmt string) bool {
 	return ok && strings.EqualFold(call.Name.Name, "count") && call.Star.IsValid()
 }
 
+func HasResultWildcard(stmt string) bool {
+	statements, err := rqlite.NewParser(strings.NewReader(stmt)).ParseStatements()
+	if err != nil {
+		return false
+	}
+	finder := resultWildcardFinder{}
+	for _, statement := range statements {
+		if _, err := rqlite.Walk(&finder, statement); err != nil {
+			return false
+		}
+	}
+	return finder.found
+}
+
+type resultWildcardFinder struct {
+	found bool
+}
+
+func (f *resultWildcardFinder) Visit(node rqlite.Node) (rqlite.Visitor, rqlite.Node, error) {
+	if column, ok := node.(*rqlite.ResultColumn); ok {
+		if column.Star.IsValid() {
+			f.found = true
+		}
+		if reference, ok := column.Expr.(*rqlite.QualifiedRef); ok && reference.Star.IsValid() {
+			f.found = true
+		}
+	}
+	return f, node, nil
+}
+
+func (f *resultWildcardFinder) VisitEnd(node rqlite.Node) (rqlite.Node, error) {
+	return node, nil
+}
+
 // withoutSemicolon leaves the statement ready for a LIMIT to be appended behind
 // it without breaking it.
 func withoutSemicolon(stmt string) string {

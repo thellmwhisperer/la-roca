@@ -13,6 +13,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/jsonid"
 
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
+	"github.com/thellmwhisperer/la-roca/internal/provider/query/sqlgate"
 )
 
 // ExecRequest is a SELECT the caller wants to run as it is. It is the natural
@@ -90,6 +91,15 @@ func (s *Service) prepareExec(ctx context.Context, statement string, cursor bool
 		return PluginRoute{}, "", logfile.Typed(fmt.Errorf(
 			"the SELECT references more than SQLite's %d attached databases; split the query (omitted: %s)",
 			plugin.MaxAttached, strings.Join(route.OmittedSources(), ", ")), DegradedInvalidSQL)
+	}
+	if sqlgate.HasResultWildcard(statement) {
+		for _, database := range route.Databases {
+			if database.PhysicalColumnsAhead && len(plugin.Referenced(statement, []plugin.Descriptor{database.Descriptor})) > 0 {
+				return PluginRoute{}, "", logfile.Typed(fmt.Errorf(
+					"wildcard SELECTs are unavailable for plugin %s while its physical schema is ahead of the semantic layer",
+					database.Source()), DegradedInvalidSQL)
+			}
+		}
 	}
 	gate, closeGate, err := s.GateFor(route.IncludeCore, route.Databases)
 	if err != nil {

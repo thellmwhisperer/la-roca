@@ -91,7 +91,8 @@ type Table struct {
 
 type Database struct {
 	Descriptor
-	Tables []Table
+	Tables               []Table
+	PhysicalColumnsAhead bool
 }
 
 func (d Database) ReadOnlyURI() string {
@@ -569,6 +570,7 @@ func validate(ctx context.Context, descriptor Descriptor) (Database, error) {
 	for _, table := range descriptor.Semantic.Tables {
 		declared[table.Name] = table
 	}
+	physicalColumnsAhead := false
 	for name, inspected := range actual {
 		if sqlgate.IsHiddenTable(name) || shadows[strings.ToLower(name)] {
 			continue
@@ -581,6 +583,7 @@ func validate(ctx context.Context, descriptor Descriptor) (Database, error) {
 			return Database{}, fmt.Errorf("semantic layer columns for %s are %v but the database has %v",
 				name, table.Columns, inspected.Columns)
 		}
+		physicalColumnsAhead = physicalColumnsAhead || hasExtraPhysicalColumns(table.Columns, inspected.Columns)
 	}
 	for name := range declared {
 		if sqlgate.IsHiddenTable(name) || shadows[strings.ToLower(name)] {
@@ -626,7 +629,8 @@ func validate(ctx context.Context, descriptor Descriptor) (Database, error) {
 	for index := range descriptor.VectorTables {
 		descriptor.VectorTables[index] = cloneVectorTable(descriptor.VectorTables[index])
 	}
-	return Database{Descriptor: descriptor, Tables: tables}, nil
+	return Database{Descriptor: descriptor, Tables: tables,
+		PhysicalColumnsAhead: physicalColumnsAhead}, nil
 }
 
 // physicalColumnsCover reports whether the live table has every declared
@@ -643,6 +647,15 @@ func physicalColumnsCover(declared, actual []string) bool {
 		}
 	}
 	return true
+}
+
+func hasExtraPhysicalColumns(declared, actual []string) bool {
+	for _, name := range actual {
+		if !slices.Contains(declared, name) {
+			return true
+		}
+	}
+	return false
 }
 
 // databaseURI resolves the path first because a plugin root reached through a
