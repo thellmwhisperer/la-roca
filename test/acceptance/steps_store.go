@@ -575,9 +575,9 @@ func (m *world) storedMemoryHas(layer, origin, project string) error {
 	if err != nil {
 		return err
 	}
-	id, ok := document["id"].(string)
+	id, ok := document["id"].(float64)
 	if !ok {
-		return fmt.Errorf("the store named no string memory id: %v", document)
+		return fmt.Errorf("the store named no numeric memory id: %v", document)
 	}
 	db, err := m.openDB()
 	if err != nil {
