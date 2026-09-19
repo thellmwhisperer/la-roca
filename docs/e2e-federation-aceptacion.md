@@ -59,10 +59,10 @@ exit: 0
 stdout contains: harbor
 stdout contains: dock
 
-## 319
-command: roca exec SELECT id FROM plugin_roca_ops.memories LIMIT 1 --json
+## 427
+command: roca exec SELECT id FROM plugin_roca_ops.memories WHERE id = '1152921504606846980' --json
 exit: 0
-stdout matches: "id"\s*:\s*"
+rows[0].id: JS-safe integer of at most 12 digits
 
 ## 324
 command: roca ingest --json
@@ -193,9 +193,10 @@ exit: 0
 duration_ms: 0
 
 ## real-usage-exec
-command: roca exec SELECT id FROM plugin_roca_ops.memories WHERE id = '1152921504606846980' --json
+command: roca exec SELECT id, legacy_id FROM plugin_roca_ops.memories WHERE id = '1152921504606846980' --json
 exit: 0
 duration_ms: < 5000
+rows[0].id: JS-safe integer of at most 12 digits
 stdout contains: 1152921504606846980
 
 ## real-usage-vector
@@ -219,7 +220,7 @@ if stdout contains search hybrid: stdout contains vector
 command: roca handoff latest --project harbor
 exit: 0
 stdout contains: handoffs[1]
-stdout contains: 1152921504606846977
+stdout contains: harbor
 stdout does not contain: handoffs[2]
 
 ## real-usage-mcp-handoff
@@ -229,6 +230,18 @@ client: glm-5.2 (codex/slopslint-detector-a1)
 layer: handoff
 exit: tool error
 output contains: handoff refused
+
+## 427 MCP historical id
+command: roca mcp serve
+tool: roca_exec
+SQL: SELECT id, legacy_id FROM plugin_roca_ops.memories WHERE id = '1152921504606846980'
+exit: 0
+output contains: 1152921504606846980
+tool: roca_store
+supersedes: 1152921504606846980
+exit: 0
+metadata id: JS-safe integer of at most 12 digits
+expect: replacement supersedes exactly the migrated row
 
 ## real-usage-e2e-smoke
 command: make e2e-smoke

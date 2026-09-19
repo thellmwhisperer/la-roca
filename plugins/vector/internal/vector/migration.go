@@ -160,7 +160,7 @@ func (f Federation) seedLegacySidecar(ctx context.Context, legacy *sql.DB,
 		return 0, err
 	}
 
-	reader := DeclaredCorpus{Core: f.Core, Database: database}
+	reader := DeclaredCorpus{Core: f.Core, Database: database, PluginRoot: f.PluginRoot}
 	seeds := make([]legacySeed, 0, legacySeedBatchSize)
 	seeded := 0
 	flush := func() error {

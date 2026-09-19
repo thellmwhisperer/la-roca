@@ -482,7 +482,7 @@ func (f Federation) searchTarget(ctx context.Context, result *FederatedQuery, ta
 			return fmt.Errorf("open vector sidecar %s: %w", target.database.owner(), err)
 		}
 		index := f.index(target.database,
-			DeclaredCorpus{Core: f.Core, Database: target.database}, target.path)
+			DeclaredCorpus{Core: f.Core, Database: target.database, PluginRoot: f.PluginRoot}, target.path)
 		index.Model = model
 		hits, queryErr := index.queryVector(ctx, store, embedding, k)
 		closeErr := store.Close()
@@ -713,7 +713,7 @@ func (f Federation) Ingest(ctx context.Context, sourceKind string) (FederationDe
 	}
 	jobs := []*ingestJob{}
 	for _, database := range f.databases {
-		reader := DeclaredCorpus{Core: f.Core, Database: database}
+		reader := DeclaredCorpus{Core: f.Core, Database: database, PluginRoot: f.PluginRoot}
 		if sourceKind != "" && !reader.hasTable(sourceKind) {
 			continue
 		}
@@ -1071,8 +1071,9 @@ func (f Federation) index(database vectorDatabase, reader DeclaredCorpus, sideca
 }
 
 type DeclaredCorpus struct {
-	Core     CoreCLI
-	Database vectorDatabase
+	Core       CoreCLI
+	Database   vectorDatabase
+	PluginRoot string
 }
 
 func (d DeclaredCorpus) CountChunks(ctx context.Context, sourceKind string) (int64, error) {
@@ -1246,9 +1247,26 @@ func (d DeclaredCorpus) ResolveSource(ctx context.Context, kind string, where lo
 	if where.SourceID == "" {
 		return "", nil
 	}
-	statement := fmt.Sprintf(`SELECT %s FROM %s.%s WHERE CAST(%s AS TEXT)=%s`,
+	idPredicate := fmt.Sprintf("CAST(%s AS TEXT)=%s", quoteIdentifier(table.IDColumn), sqlLiteral(where.SourceID))
+	if d.Database.Plugin == "roca-ops" && table.Name == "memories" && table.IDColumn == "id" {
+		hasLegacy, err := d.hasColumn(ctx, table, "legacy_id")
+		if err != nil {
+			return "", err
+		}
+		if hasLegacy {
+			idPredicate = "(" + idPredicate + " OR CAST(\"legacy_id\" AS TEXT)=" + sqlLiteral(where.SourceID) + ")"
+		}
+		canonicalIDs, err := d.opsCanonicalMap([]string{where.SourceID})
+		if err != nil {
+			return "", err
+		}
+		for _, canonical := range canonicalIDs {
+			idPredicate += " OR CAST(" + quoteIdentifier(table.IDColumn) + " AS TEXT)=" + sqlLiteral(canonical)
+		}
+	}
+	statement := fmt.Sprintf(`SELECT %s FROM %s.%s WHERE %s`,
 		strings.TrimPrefix(declaredColumnSelect("", table.TextColumns), ", "), quoteIdentifier(d.Database.Alias),
-		quoteIdentifier(table.Name), quoteIdentifier(table.IDColumn), sqlLiteral(where.SourceID))
+		quoteIdentifier(table.Name), idPredicate)
 	rows, err := d.Core.query(ctx, statement)
 	if err != nil {
 		return "", err
@@ -1289,9 +1307,20 @@ func (d DeclaredCorpus) ResolveSources(ctx context.Context,
 		seen[key] = true
 		idsByTable[lookup.kind] = append(idsByTable[lookup.kind], lookup.where.SourceID)
 	}
+	canonicalOf := map[string]string{}
 	branches := make([]string, 0)
 	for _, table := range d.Database.Tables {
 		ids := idsByTable[table.Name]
+		if d.Database.Plugin == "roca-ops" && table.Name == "memories" {
+			canonicalIDs, err := d.opsCanonicalMap(ids)
+			if err != nil {
+				return nil, err
+			}
+			for requested, canonical := range canonicalIDs {
+				canonicalOf[requested] = canonical
+				ids = append(ids, canonical)
+			}
+		}
 		if len(ids) == 0 {
 			continue
 		}
@@ -1304,12 +1333,15 @@ func (d DeclaredCorpus) ResolveSources(ctx context.Context,
 			literals[index] = sqlTypedLiteral(id, affinity)
 		}
 		inList := strings.Join(literals, ",")
-		for _, column := range table.TextColumns {
-			branches = append(branches, fmt.Sprintf(
-				`SELECT %s AS source_kind,CAST(%s AS TEXT) AS source_id,%s AS column_name,CAST(%s AS TEXT) AS column_text FROM %s.%s WHERE %s IN (%s)`,
-				sqlLiteral(table.Name), quoteIdentifier(table.IDColumn), sqlLiteral(column),
-				quoteIdentifier(column), quoteIdentifier(d.Database.Alias), quoteIdentifier(table.Name),
-				quoteIdentifier(table.IDColumn), inList))
+		branches = append(branches, d.sourceLookupBranches(table, inList, quoteIdentifier(table.IDColumn))...)
+		if d.Database.Plugin == "roca-ops" && table.Name == "memories" && table.IDColumn == "id" {
+			hasLegacy, err := d.hasColumn(ctx, table, "legacy_id")
+			if err != nil {
+				return nil, err
+			}
+			if hasLegacy {
+				branches = append(branches, d.sourceLookupBranches(table, inList, `"legacy_id"`)...)
+			}
 		}
 	}
 	if len(branches) == 0 {
@@ -1345,19 +1377,100 @@ func (d DeclaredCorpus) ResolveSources(ctx context.Context,
 			continue
 		}
 		text := expanded[0].rowText
-		candidate := sourceRow{kind: kind, sourceID: id, text: text, rowText: text,
-			fingerprintVersion: table.embeddingContractFingerprint()}
 		for _, lookup := range lookups {
-			if lookup.kind != kind || lookup.where.SourceID != id {
+			if lookup.kind != kind {
 				continue
 			}
+			if lookup.where.SourceID != id && canonicalOf[lookup.where.SourceID] != id {
+				continue
+			}
+			candidate := sourceRow{kind: kind, sourceID: lookup.where.SourceID, text: text, rowText: text,
+				fingerprintVersion: table.embeddingContractFingerprint()}
 			if lookup.where.Identity == "" || candidate.identity() == lookup.where.Identity {
-				resolved[key] = text
+				resolved[sourceLookupKey(kind, lookup.where.SourceID)] = text
 				break
 			}
 		}
 	}
 	return resolved, nil
+}
+
+func (d DeclaredCorpus) sourceLookupBranches(table vectorTable, inList, idColumn string) []string {
+	branches := make([]string, 0, len(table.TextColumns))
+	for _, column := range table.TextColumns {
+		branches = append(branches, fmt.Sprintf(
+			`SELECT %s AS source_kind,CAST(%s AS TEXT) AS source_id,%s AS column_name,CAST(%s AS TEXT) AS column_text FROM %s.%s WHERE %s IN (%s)`,
+			sqlLiteral(table.Name), idColumn, sqlLiteral(column),
+			quoteIdentifier(column), quoteIdentifier(d.Database.Alias), quoteIdentifier(table.Name),
+			idColumn, inList))
+	}
+	return branches
+}
+
+func (d DeclaredCorpus) hasColumn(_ context.Context, table vectorTable, column string) (bool, error) {
+	return table.availableColumns()[column], nil
+}
+
+func (d DeclaredCorpus) opsDatabaseFile() string {
+	if filepath.IsAbs(d.Database.Path) {
+		return d.Database.Path
+	}
+	if d.PluginRoot == "" || d.Database.Plugin == "" || d.Database.Path == "" {
+		return d.Database.Path
+	}
+	return filepath.Join(d.PluginRoot, d.Database.Plugin, d.Database.Path)
+}
+
+func (d DeclaredCorpus) opsCanonicalMap(ids []string) (map[string]string, error) {
+	out := map[string]string{}
+	path := d.opsDatabaseFile()
+	if path == "" || len(ids) == 0 {
+		return out, nil
+	}
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return out, nil
+		}
+		return nil, fmt.Errorf("inspect roca-ops database: %w", err)
+	}
+	conn, err := openSQLiteBusy(path, true, 100)
+	if err != nil {
+		return nil, fmt.Errorf("open roca-ops remaps read-only: %w", err)
+	}
+	defer conn.Close()
+	var present bool
+	if err := conn.QueryRow(`SELECT EXISTS(
+		SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'memory_id_remaps')`).Scan(&present); err != nil {
+		return nil, fmt.Errorf("inspect roca-ops remaps: %w", err)
+	}
+	if !present {
+		return out, nil
+	}
+	placeholders := strings.Repeat("?,", len(ids))
+	placeholders = placeholders[:len(placeholders)-1]
+	args := make([]any, len(ids))
+	for index, id := range ids {
+		args[index] = id
+	}
+	rows, err := conn.Query(`SELECT CAST(old_id AS TEXT), CAST(canonical_id AS TEXT) FROM memory_id_remaps WHERE old_id IN (`+placeholders+`)`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("read roca-ops remaps: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var oldID, canonical string
+		if err := rows.Scan(&oldID, &canonical); err != nil {
+			return nil, fmt.Errorf("scan roca-ops remap: %w", err)
+		}
+		if canonical == "" {
+			continue
+		}
+		out[oldID] = canonical
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read roca-ops remaps: %w", err)
+	}
+	return out, nil
 }
 
 func (d DeclaredCorpus) idAffinity(ctx context.Context, table vectorTable) (string, error) {
@@ -1868,7 +1981,7 @@ func (f Federation) CorpusIndex() (Index, error) {
 			}
 			copy := f
 			copy.Model = model
-			return copy.index(database, DeclaredCorpus{Core: f.Core, Database: database}, path), nil
+			return copy.index(database, DeclaredCorpus{Core: f.Core, Database: database, PluginRoot: f.PluginRoot}, path), nil
 		}
 	}
 	return Index{}, fmt.Errorf("the vector registry has no corpus declaration")
@@ -1944,7 +2057,7 @@ func (f Federation) HistoryProgress(ctx context.Context) (Progress, error) {
 	defer cancel()
 	result := Progress{Databases: []DatabaseProgress{}}
 	for _, database := range f.databases {
-		reader := DeclaredCorpus{Core: f.Core, Database: database}
+		reader := DeclaredCorpus{Core: f.Core, Database: database, PluginRoot: f.PluginRoot}
 		total, err := reader.CountSources(ctx, "")
 		if err != nil {
 			return Progress{}, err

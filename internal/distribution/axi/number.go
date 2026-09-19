@@ -2,9 +2,7 @@ package axi
 
 import "strconv"
 
-// Number formats an integer for human output. Memory identifiers in machine
-// envelopes are decimal strings so JavaScript keeps every digit; counts and
-// durations stay JSON numbers. Only renderers call this helper.
+// Number formats an integer for human output. Only human renderers call it.
 func Number(value int64) string {
 	digits := strconv.FormatInt(value, 10)
 	sign := ""

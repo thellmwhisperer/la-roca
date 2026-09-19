@@ -136,11 +136,7 @@ func TestEnsureInstallsTheBundledResidentDataOnlyPluginAndPreservesItsDatabase(t
 }
 
 func TestEnsureDoesNotTouchTheDatabaseWhenTheInstalledVersionMatches(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "plugins")
-	bin := filepath.Join(t.TempDir(), "bin")
-	if _, err := rocaops.Ensure(root, bin, "v-test"); err != nil {
-		t.Fatal(err)
-	}
+	root, bin := installOpsFixture(t)
 	writer, err := sql.Open("sqlite", filepath.Join(root, rocaops.Name, rocaops.DatabaseFilename))
 	if err != nil {
 		t.Fatal(err)
@@ -177,4 +173,107 @@ func TestEnsureDoesNotTouchTheDatabaseWhenTheInstalledVersionMatches(t *testing.
 	if string(got) != string(sentinel) {
 		t.Fatalf("same-version ensure changed the custody database: %q", got)
 	}
+}
+
+func TestFreshOpsSchemaDoesNotSeedMemoryIds(t *testing.T) {
+	root, _ := installOpsFixture(t)
+	db, err := sql.Open("sqlite", filepath.Join(root, rocaops.Name, rocaops.DatabaseFilename))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var seq sql.NullInt64
+	if err := db.QueryRow(`SELECT seq FROM sqlite_sequence WHERE name = 'memories'`).Scan(&seq); err != nil && err != sql.ErrNoRows {
+		t.Fatal(err)
+	}
+	if seq.Valid && seq.Int64 != 0 {
+		t.Fatalf("fresh sqlite_sequence = %+v, want unset or 0", seq)
+	}
+	result, err := db.Exec(`INSERT INTO memories (layer, content, origin) VALUES ('discovery', 'fresh schema id', 'agent')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id < 1 || id > 1<<53-1 {
+		t.Fatalf("unspecified insert id = %d, want a short id", id)
+	}
+}
+
+func TestCompactionRemapsMemoryAliasesAndPreservesOrphanSupersedes(t *testing.T) {
+	root, _ := installOpsFixture(t)
+	database := filepath.Join(root, rocaops.Name, rocaops.DatabaseFilename)
+	db, err := sql.Open("sqlite", database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	const (
+		canonicalID    = int64(1152921504606853900)
+		duplicateID    = int64(1152921504606853901)
+		orphanTargetID = int64(1152921504606853902)
+		orphanID       = int64(1152921504606853903)
+	)
+	for _, row := range []struct {
+		id, supersedes int64
+		createdAt      string
+	}{
+		{canonicalID, 0, "2026-01-01 00:00:00"},
+		{duplicateID, 0, "2026-01-01 00:00:01"},
+		{orphanTargetID, 0, "2026-01-01 00:00:02"},
+		{orphanID, orphanTargetID, "2026-01-01 00:00:03"},
+	} {
+		if _, err := db.Exec(`INSERT INTO memories
+			(id, layer, content, origin, supersedes, created_at)
+			VALUES (?, 'discovery', ?, 'agent', NULLIF(?, 0), ?)`,
+			row.id, "synthetic", row.supersedes, row.createdAt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec(`DELETE FROM memories WHERE id = ?`, duplicateID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DELETE FROM memories WHERE id = ?`, orphanTargetID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE memory_id_remaps (
+		old_id INTEGER PRIMARY KEY, canonical_id INTEGER NOT NULL REFERENCES memories(id))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO memory_id_remaps(old_id, canonical_id) VALUES (?, ?)`, duplicateID, canonicalID); err != nil {
+		t.Fatal(err)
+	}
+	if err := rocaops.ApplySchema(database); err != nil {
+		t.Fatal(err)
+	}
+	var compactID int64
+	if err := db.QueryRow(`SELECT id FROM memories WHERE legacy_id = ?`, canonicalID).Scan(&compactID); err != nil {
+		t.Fatal(err)
+	}
+	var aliasTarget int64
+	if err := db.QueryRow(`SELECT canonical_id FROM memory_id_remaps WHERE old_id = ?`, duplicateID).Scan(&aliasTarget); err != nil {
+		t.Fatal(err)
+	}
+	if aliasTarget != compactID {
+		t.Fatalf("memory alias target = %d, want %d", aliasTarget, compactID)
+	}
+	var supersedes sql.NullInt64
+	if err := db.QueryRow(`SELECT supersedes FROM memories WHERE legacy_id = ?`, orphanID).Scan(&supersedes); err != nil {
+		t.Fatal(err)
+	}
+	if !supersedes.Valid || supersedes.Int64 != orphanTargetID {
+		t.Fatalf("orphan supersedes = %+v, want preserved %d", supersedes, orphanTargetID)
+	}
+}
+
+func installOpsFixture(t *testing.T) (string, string) {
+	t.Helper()
+	root := filepath.Join(t.TempDir(), "plugins")
+	bin := filepath.Join(t.TempDir(), "bin")
+	if _, err := rocaops.Ensure(root, bin, "v-test"); err != nil {
+		t.Fatal(err)
+	}
+	return root, bin
 }

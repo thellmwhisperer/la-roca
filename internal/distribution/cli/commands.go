@@ -25,7 +25,6 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocavector"
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
-	"github.com/thellmwhisperer/la-roca/internal/jsonid"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 	"github.com/thellmwhisperer/la-roca/internal/securefile"
@@ -1467,10 +1466,10 @@ func gatherCross(ctx context.Context, build Build, sets []crossResult) (service.
 				if present[column] {
 					value = source[column]
 				}
-				if text, ok := value.(string); ok && !jsonid.IdentityName(column) {
+				if text, ok := value.(string); ok {
 					value = service.Truncate(text, service.DefaultMaxChars, "")
 				}
-				row[column] = jsonid.Cell(column, value)
+				row[column] = value
 			}
 			row["origin"] = set.origin
 			resultRows = append(resultRows, row)

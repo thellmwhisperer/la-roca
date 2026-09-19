@@ -11,7 +11,6 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/thellmwhisperer/la-roca/internal/jsonid"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 	"modernc.org/sqlite"
 )
@@ -19,7 +18,7 @@ import (
 func TestCrossConcatenationEnvelopeAndValues(t *testing.T) {
 	sets := []crossResult{
 		{origin: "local", result: service.ExecResult{Columns: []string{"id", "value"}, Rows: []map[string]any{
-			{"id": jsonid.Decimal("1152921504606853875"), "value": int64(7)},
+			{"id": int64(1152921504606853875), "value": int64(7)},
 			{"id": nil, "value": "7"},
 		}}},
 		{origin: "empty", result: service.ExecResult{Columns: []string{"missing"}}},
@@ -36,7 +35,7 @@ func TestCrossConcatenationEnvelopeAndValues(t *testing.T) {
 		SQL:     `SELECT "origin","id","value",NULL AS "missing",NULL AS "flag" FROM "r_local" UNION ALL SELECT "origin",NULL AS "id",NULL AS "value","missing",NULL AS "flag" FROM "r_empty" UNION ALL SELECT "origin",NULL AS "id","value",NULL AS "missing","flag" FROM "r_remote"`,
 		Columns: []string{"origin", "id", "value", "missing", "flag"},
 		Rows: []map[string]any{
-			{"origin": "local", "id": jsonid.Decimal("1152921504606853875"), "value": int64(7), "missing": nil, "flag": nil},
+			{"origin": "local", "id": int64(1152921504606853875), "value": int64(7), "missing": nil, "flag": nil},
 			{"origin": "local", "id": nil, "value": "7", "missing": nil, "flag": nil},
 			{"origin": "remote", "id": nil, "value": 2.5, "missing": nil, "flag": true},
 			{"origin": "remote", "id": nil, "value": nil, "missing": nil, "flag": false},

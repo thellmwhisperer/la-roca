@@ -367,6 +367,7 @@ func sessionHome(t *testing.T) string {
 }
 
 type opsMemory struct {
+	id                                 int64
 	layer, content, project, createdAt string
 	supersedes                         int64
 	metadata                           map[string]any
@@ -390,6 +391,16 @@ func insertOpsMemory(t *testing.T, home string, seed opsMemory) int64 {
 	var supersedesArg any
 	if seed.supersedes != 0 {
 		supersedesArg = seed.supersedes
+	}
+	if seed.id != 0 {
+		_, err = db.Exec(
+			`INSERT INTO memories (id, layer, content, metadata, origin, project, status, supersedes, created_at)
+			 VALUES (?, ?, ?, ?, 'agent', ?, 'active', ?, ?)`,
+			seed.id, seed.layer, seed.content, string(encoded), projectArg, supersedesArg, seed.createdAt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return seed.id
 	}
 	result, err := db.Exec(
 		`INSERT INTO memories (layer, content, metadata, origin, project, status, supersedes, created_at)

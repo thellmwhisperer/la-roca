@@ -48,3 +48,8 @@ Feature: Writing one memory
     When I store a memory in layer "project" superseding memory 999999 with content "points at a ghost"
     Then the command exits with a code other than 0
     And the output names the refused write
+
+  Scenario: Deleting a memory does not recycle its id
+    Given a fresh Roca database
+    When I store a disposable memory then delete it and store another
+    Then the new memory id is greater than the deleted id

@@ -414,22 +414,20 @@ func TestRemoteCrossScatterGathersOnlyInMemory(t *testing.T) {
 	}
 }
 
-// The remote cross JSON envelope must preserve decimal ID strings through its
-// concatenation, without embedding JSON quote characters in the IDs.
 func TestRemoteCrossPreservesExactJSONIDs(t *testing.T) {
 	fixture := fixtureInstallation(t)
 	addRemote(t, fixture.home, "studio", "dev@example.test")
 	const id = "1152921504606853875"
 	runner := &scriptedSSHRunner{replies: []sshReply{
 		remoteVersionReply("v-test"),
-		{stdout: `{"sql":"SELECT ` + id + ` AS id","columns":["id"],"rows":[{"id":"` + id + `"}],"row_count":1,"latency_ms":1,"version":"v-test","source_sha":"remote-sha"}`},
+		{stdout: `{"sql":"SELECT ` + id + ` AS id","columns":["id"],"rows":[{"id":` + id + `}],"row_count":1,"latency_ms":1,"version":"v-test","source_sha":"remote-sha"}`},
 	}}
 	output := runRemoteJSON(t, &cliEnv{sshRunner: runner}, "remote", "cross",
 		"SELECT "+id+" AS id", "--on", "studio", "--json")
 	var result struct {
 		Rows []struct {
-			Origin string `json:"origin"`
-			ID     string `json:"id"`
+			Origin string      `json:"origin"`
+			ID     json.Number `json:"id"`
 		} `json:"rows"`
 	}
 	if err := json.Unmarshal([]byte(output), &result); err != nil {
@@ -439,7 +437,7 @@ func TestRemoteCrossPreservesExactJSONIDs(t *testing.T) {
 		t.Fatalf("cross rows = %v, want local and remote rows", result.Rows)
 	}
 	for index, origin := range []string{"local", "studio"} {
-		if row := result.Rows[index]; row.Origin != origin || row.ID != id {
+		if row := result.Rows[index]; row.Origin != origin || row.ID.String() != id {
 			t.Errorf("cross row = %+v, want origin %s and exact ID %s", row, origin, id)
 		}
 	}

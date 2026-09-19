@@ -11,27 +11,25 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
-func TestStoreMetadataAndSupersedesKeepOpsIdsAsStrings(t *testing.T) {
+func TestStoreMetadataUsesNumericOpsIDsAndAcceptsStringSupersedes(t *testing.T) {
 	svc := seededOpsService(t)
 	session := connectAs(t, svc, "claude-code", "2.1.0")
 
 	created := callTool(t, session, "roca_store", map[string]any{
 		"layer": "discovery", "content": "ops identifier through the plug",
 	})
-	id, ok := created.Meta["id"].(string)
-	if !ok || id == "" {
-		t.Fatalf("MCP store metadata id = %#v, want a decimal string", created.Meta["id"])
+	numeric, ok := mcpJSONInt(created.Meta["id"])
+	if !ok || numeric < 1 || numeric > 1<<53-1 {
+		t.Fatalf("MCP store metadata id = %#v, want a sqlite integer below 2^53", created.Meta["id"])
 	}
-	if _, err := strconv.ParseInt(id, 10, 64); err != nil {
-		t.Fatalf("MCP store id %q is not an integer: %v", id, err)
-	}
+	id := strconv.FormatInt(numeric, 10)
 
 	execed := callTool(t, session, "roca_exec", map[string]any{
 		"sql": "SELECT id FROM plugin_roca_ops.memories LIMIT 1",
 	})
 	text := renderedText(execed)
-	if !strings.Contains(text, `"`+id+`"`) {
-		t.Fatalf("MCP exec TOON did not quote the ops id:\n%s", text)
+	if !strings.Contains(text, id) {
+		t.Fatalf("MCP exec TOON lost the ops id:\n%s", text)
 	}
 
 	replaced := callTool(t, session, "roca_store", map[string]any{
@@ -115,4 +113,17 @@ func schemaAllowsString(typ any) bool {
 		}
 	}
 	return false
+}
+
+func mcpJSONInt(value any) (int64, bool) {
+	switch v := value.(type) {
+	case float64:
+		return int64(v), true
+	case int64:
+		return v, true
+	case int:
+		return int64(v), true
+	default:
+		return 0, false
+	}
 }

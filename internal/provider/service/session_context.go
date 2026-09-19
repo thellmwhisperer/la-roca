@@ -11,8 +11,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	"github.com/thellmwhisperer/la-roca/internal/jsonid"
 )
 
 // ResolveSessionProject returns an explicit project or derives it from the
@@ -34,7 +32,7 @@ func ResolveSessionProject(project string) (string, error) {
 
 // MemoryRecord is one operational memory returned with its full content.
 type MemoryRecord struct {
-	ID        int64  `json:"id,string"`
+	ID        int64  `json:"id"`
 	Layer     string `json:"layer"`
 	Slug      string `json:"slug,omitempty"`
 	Project   string `json:"project,omitempty"`
@@ -47,7 +45,7 @@ type MemoryRecord struct {
 type PillList struct {
 	Project   string         `json:"project"`
 	Pills     []MemoryRecord `json:"pills"`
-	Unslugged jsonid.Ints    `json:"unslugged,omitempty"`
+	Unslugged []int64        `json:"unslugged,omitempty"`
 }
 
 // PillDeleteResult reports the one destructive operation La Roca exposes:

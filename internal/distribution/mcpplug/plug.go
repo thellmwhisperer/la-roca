@@ -15,7 +15,6 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/playground"
 	"io"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -477,7 +476,7 @@ func rendered[T any](res T, err error, paint func(T) string) (*mcp.CallToolResul
 		metadata["row_count"] = search.RowCount
 	}
 	if stored, ok := any(res).(service.StoreResult); ok {
-		metadata["id"] = strconv.FormatInt(stored.ID, 10)
+		metadata["id"] = stored.ID
 		metadata["layer"] = stored.Layer
 		metadata["skipped_duplicate"] = stored.Skipped
 		if stored.Skipped {
