@@ -375,14 +375,7 @@ func codexIdentitySnapshot(t *testing.T, lab *federationLab) codexIdentityCounts
 }
 
 func (m *world) theFrozenCodexIdentityHas(sessions, exactSourceSession, splitSiblings, exchanges, tools, orphanTools, failedTools, controlSessions int) error {
-	run, err := m.runWith("roca exec --json", []string{"exec", codexIdentitySQL, "--json"})
-	if err != nil {
-		return err
-	}
-	if run.code != 0 {
-		return fmt.Errorf("Codex identity query exited %d: %s", run.code, run.stderr)
-	}
-	got, err := decodeCodexIdentityCounts(run.stdout)
+	got, err := m.frozenCodexIdentity()
 	if err != nil {
 		return err
 	}
@@ -398,14 +391,7 @@ func (m *world) theFrozenCodexIdentityIsUnchanged() error {
 	if m.codexIdentityBefore == nil {
 		return fmt.Errorf("Codex identity has not been captured")
 	}
-	run, err := m.runWith("roca exec --json", []string{"exec", codexIdentitySQL, "--json"})
-	if err != nil {
-		return err
-	}
-	if run.code != 0 {
-		return fmt.Errorf("Codex identity query exited %d: %s", run.code, run.stderr)
-	}
-	got, err := decodeCodexIdentityCounts(run.stdout)
+	got, err := m.frozenCodexIdentity()
 	if err != nil {
 		return err
 	}
@@ -413,6 +399,21 @@ func (m *world) theFrozenCodexIdentityIsUnchanged() error {
 		return fmt.Errorf("repeat ingest changed Codex identity: before=%+v after=%+v", *m.codexIdentityBefore, got)
 	}
 	return nil
+}
+
+func (m *world) frozenCodexIdentity() (codexIdentityCounts, error) {
+	run, err := m.runWith("roca exec --json", []string{"exec", codexIdentitySQL, "--json"})
+	if err != nil {
+		return codexIdentityCounts{}, err
+	}
+	if run.code != 0 {
+		return codexIdentityCounts{}, fmt.Errorf("Codex identity query exited %d: %s", run.code, run.stderr)
+	}
+	got, err := decodeCodexIdentityCounts(run.stdout)
+	if err != nil {
+		return codexIdentityCounts{}, err
+	}
+	return got, nil
 }
 
 func decodeCodexIdentityCounts(stdout string) (codexIdentityCounts, error) {

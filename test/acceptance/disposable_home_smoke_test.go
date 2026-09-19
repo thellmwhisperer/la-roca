@@ -22,14 +22,7 @@ func TestRealBinaryDisposableHomeSmoke(t *testing.T) {
 	if err != nil {
 		t.Fatalf("I cannot find the binary: %v", err)
 	}
-	home, err := acceptanceTempDir("roca-e2e-smoke-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.RemoveAll(home) })
-	if err := os.MkdirAll(filepath.Join(home, "tmp"), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	home := disposableSmokeHome(t, "roca-e2e-smoke-")
 
 	operatorHome, err := os.UserHomeDir()
 	if err != nil {
@@ -144,14 +137,7 @@ func TestPublishedReleaseUpdateInitSmoke(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	home, err := acceptanceTempDir("roca-published-update-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.RemoveAll(home) })
-	if err := os.MkdirAll(filepath.Join(home, "tmp"), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	home := disposableSmokeHome(t, "roca-published-update-")
 	m := &world{binary: binary, home: home, releaseStamped: published}
 	t.Cleanup(m.closeTheChannel)
 	channel := m.theChannel()
@@ -171,6 +157,19 @@ func TestPublishedReleaseUpdateInitSmoke(t *testing.T) {
 	if err := json.Unmarshal([]byte(initialized.stdout), &result); err != nil || result["database"] != "created" {
 		t.Fatalf("init did not create the clean home: %v\n%s", err, initialized.stdout)
 	}
+}
+
+func disposableSmokeHome(t *testing.T, prefix string) string {
+	t.Helper()
+	home, err := acceptanceTempDir(prefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(home) })
+	if err := os.MkdirAll(filepath.Join(home, "tmp"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return home
 }
 
 func enableExperimentalPlugins(home string) error {
