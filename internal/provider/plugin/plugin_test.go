@@ -42,11 +42,15 @@ func TestFixturePluginsDiscoverValidateAndDeclareCustody(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if _, err := db.Exec(`ALTER TABLE receipts ADD COLUMN machine TEXT`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := plugin.Validate(context.Background(), byName["well-formed"]); err != nil {
-		t.Fatalf("dedup maintenance tables invalidated the semantic layer: %v", err)
+		t.Fatalf("maintenance tables or extra physical columns skipped the plugin: %v", err)
 	}
 	if _, err := plugin.Validate(context.Background(), byName["lying"]); err == nil ||
 		!strings.Contains(err.Error(), "outstanding_cents") {

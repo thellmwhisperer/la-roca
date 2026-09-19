@@ -163,6 +163,9 @@ upgrades the committed homes of older releases through the current binary.
 when a change owes the gauntlet a new frozen home.
 The [1.87 schema-adoption acceptance](docs/schema-adoption-187-aceptacion.md)
 reproduces its read-only and corpus-placement regressions in an isolated home.
+The [ops schema-ahead acceptance](docs/schema-ahead-1881-aceptacion.md)
+reproduces place, doctor, and vector query when a bundled ops ledger is
+already newer than this binary.
 
 `make split-oracle` replays the core DATA SPLIT compatibility cases on their own,
 the executable definition of zero behavior change for core CLI and MCP users that

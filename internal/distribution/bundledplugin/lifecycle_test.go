@@ -36,7 +36,7 @@ func TestEnsureAllPreflightsEveryBundleBeforeUpdatingAny(t *testing.T) {
 	}
 }
 
-func TestEnsureAllPreflightsInstalledSchemasBeforeUpdatingAny(t *testing.T) {
+func TestEnsureAllLeavesANewerInstalledSchemaInPlace(t *testing.T) {
 	root, bin := filepath.Join(t.TempDir(), "plugins"), filepath.Join(t.TempDir(), "bin")
 	alpha, beta := dataSpec("alpha"), dataSpec("beta")
 	for _, spec := range []bundledplugin.Spec{alpha, beta} {
@@ -57,7 +57,20 @@ func TestEnsureAllPreflightsInstalledSchemasBeforeUpdatingAny(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	assertEnsureAllRejected(t, root, bin, "schema preflight", "newer than supported", alpha, beta)
+	results, err := bundledplugin.EnsureAll(root, bin, "v2", alpha, beta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("placed %d bundles after an ahead schema, want 2", len(results))
+	}
+	var schemaVersion int
+	if err := db.QueryRow("SELECT schema_version FROM plugin_schema").Scan(&schemaVersion); err != nil {
+		t.Fatal(err)
+	}
+	if schemaVersion != 2 {
+		t.Fatalf("ahead schema identity was rewound to %d", schemaVersion)
+	}
 }
 
 func TestEnsureAllRejectsAReadOnlyDatabaseBeforeUpdatingAny(t *testing.T) {
