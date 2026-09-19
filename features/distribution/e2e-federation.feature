@@ -54,7 +54,7 @@ Feature: Frozen federation installed binary
     And the output contains "harbor"
     And the output contains "dock"
 
-  Scenario: 319 json ids
+  Scenario: 427 short numeric ids and legacy lookup
     Given a frozen synthetic federation lab
     When I exec the SQL "SELECT id FROM plugin_roca_ops.memories WHERE id = '1152921504606846980'" as json
     Then the command exits with code 0

@@ -59,10 +59,10 @@ exit: 0
 stdout contains: harbor
 stdout contains: dock
 
-## 319
-command: roca exec SELECT id FROM plugin_roca_ops.memories LIMIT 1 --json
+## 427
+command: roca exec SELECT id FROM plugin_roca_ops.memories WHERE id = '1152921504606846980' --json
 exit: 0
-stdout matches: "id"\s*:\s*"
+rows[0].id: JS-safe integer of at most 12 digits
 
 ## 324
 command: roca ingest --json
