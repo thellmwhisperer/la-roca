@@ -3,13 +3,17 @@
 package acceptance
 
 import (
+	"database/sql"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	_ "modernc.org/sqlite"
 )
 
-const issue432RunawaySQL = `WITH RECURSIVE costly(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM costly WHERE n < 100000000) SELECT sum(n), (SELECT count(*) FROM plugin_roca_corpus.exchanges) AS exchanges FROM costly`
+const issue432RunawaySQL = `WITH RECURSIVE costly(n) AS (SELECT min(id) FROM main.memories UNION ALL SELECT n + 1 FROM costly CROSS JOIN main.memories WHERE n < 100000000) SELECT sum(n), (SELECT count(*) FROM plugin_roca_corpus.exchanges) AS exchanges FROM costly`
 
 func TestIssue432ExecTimeLimitOnInstalledBinary(t *testing.T) {
 	binary, err := rocaBinary()
@@ -17,6 +21,7 @@ func TestIssue432ExecTimeLimitOnInstalledBinary(t *testing.T) {
 		t.Fatalf("I cannot find the binary: %v", err)
 	}
 	home, world := initializedDistributionHome(t, "roca-exec-timeout-", binary)
+	seedMainWAL(t, home)
 
 	started := time.Now()
 	run := world.runAt(home, binary, "exec", issue432RunawaySQL)
@@ -36,7 +41,8 @@ func TestIssue432ExecTimeLimitOnInstalledBinary(t *testing.T) {
 	go func() {
 		done <- world.runAt(home, binary, "exec", issue432RunawaySQL)
 	}()
-	time.Sleep(50 * time.Millisecond)
+	waitForExecReader(t, home, done)
+	seedPendingAdoption(t, home)
 	doctor := world.runAt(home, binary, "doctor")
 	doctorOut := doctor.stdout + doctor.stderr
 	if doctor.code != 0 {
@@ -71,6 +77,89 @@ func TestIssue432ExecTimeLimitOnInstalledBinary(t *testing.T) {
 			t.Fatalf("roca exec still running after the bound: %s", line)
 		}
 	}
+}
+
+func waitForExecReader(t *testing.T, home string, done <-chan distributionRun) {
+	t.Helper()
+	paths := []string{filepath.Join(home, ".roca", "roca.db")}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		select {
+		case run := <-done:
+			t.Fatalf("exec finished before holding a database read lock: %d\n%s%s", run.code, run.stdout, run.stderr)
+		default:
+		}
+		for _, path := range paths {
+			blocked, err := sqliteReaderActive(path)
+			if err != nil {
+				t.Fatalf("probe %s: %v", path, err)
+			}
+			if blocked {
+				return
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("exec never established a database read lock")
+}
+
+func seedMainWAL(t *testing.T, home string) {
+	t.Helper()
+	path := filepath.Join(home, ".roca", "roca.db")
+	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`INSERT INTO memories(layer, content, origin)
+		VALUES ('discovery', 'exec timeout lock probe', 'agent')`); err != nil {
+		t.Fatalf("seed WAL: %v", err)
+	}
+}
+
+func seedPendingAdoption(t *testing.T, home string) {
+	t.Helper()
+	path := filepath.Join(home, ".roca", "roca.db")
+	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(0)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec("DROP INDEX idx_memories_layer"); err != nil {
+		t.Fatalf("seed pending adoption: %v", err)
+	}
+}
+
+func sqliteReaderActive(path string) (bool, error) {
+	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(0)")
+	if err != nil {
+		return false, err
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	if _, err := db.Exec(`UPDATE memories SET metadata = COALESCE(metadata, '')
+		WHERE id = (SELECT min(id) FROM memories)`); err != nil {
+		if sqliteBusy(err) {
+			return true, nil
+		}
+		return false, err
+	}
+	var busy, logFrames, checkpointed int
+	if err := db.QueryRow("PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &logFrames, &checkpointed); err != nil {
+		if sqliteBusy(err) {
+			return true, nil
+		}
+		return false, err
+	}
+	return busy != 0, nil
+}
+
+func sqliteBusy(err error) bool {
+	if err == nil {
+		return false
+	}
+	upper := strings.ToUpper(err.Error())
+	return strings.Contains(upper, "BUSY") || strings.Contains(upper, "LOCKED")
 }
 
 func etimeOlderThan(etime string, limit time.Duration) bool {
