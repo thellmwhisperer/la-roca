@@ -226,12 +226,16 @@ func renderIngestRootScans(env *cliEnv, result service.IngestResult) {
 		if machine == "" {
 			machine = "local"
 		}
-		env.print("  %s · %s seen · %s pending · %s skipped · %s excluded",
+		line := fmt.Sprintf("  %s · %s seen · %s pending · %s skipped · %s excluded",
 			machine,
 			axi.Quantity(int64(scan.FilesSeen), "file"),
 			axi.Number(int64(scan.FilesRead)),
 			axi.Number(int64(scan.FilesSkipped)),
 			axi.Number(int64(scan.FilesExcluded)))
+		if scan.FilesErrored > 0 {
+			line += fmt.Sprintf(" · %s errors", axi.Number(int64(scan.FilesErrored)))
+		}
+		env.print("%s", line)
 	}
 }
 

@@ -175,8 +175,9 @@ func remoteSourceDoctor(roots ingest.Roots) []RemoteSourceDoctor {
 		if info, err := os.Stat(remote.Home); err == nil && info.IsDir() {
 			entry.Present = true
 		}
-		entry.Stale = ingest.MirrorStale(remote.Home, hours, now)
-		if newest, found := ingest.NewestModTime(remote.Home); found {
+		newest, found := ingest.NewestModTime(remote.Home)
+		entry.Stale = !found || now.Sub(newest) > time.Duration(hours)*time.Hour
+		if found {
 			age := int(now.Sub(newest).Hours())
 			entry.NewestAgeHours = &age
 		}

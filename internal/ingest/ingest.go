@@ -224,6 +224,7 @@ type RootScan struct {
 	FilesRead     int    `json:"files_read"`
 	FilesSkipped  int    `json:"files_skipped"`
 	FilesExcluded int    `json:"files_excluded"`
+	FilesErrored  int    `json:"files_errored,omitempty"`
 }
 
 type harvestCursorState struct {
@@ -233,6 +234,7 @@ type harvestCursorState struct {
 	ExchangeCursors      map[string]int `json:"exchange_cursors,omitempty"`
 	LastExchangeComplete bool           `json:"last_exchange_complete"`
 	ParserVersion        string         `json:"parser_version"`
+	Machine              string         `json:"machine,omitempty"`
 }
 
 type harvestCursorSeed struct {
@@ -379,14 +381,16 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 			}
 			result.fingerprintFailure(target, err)
 			if os.IsNotExist(err) {
+				scan.FilesSkipped++
 				result.Coverage.skip(target.Path, "disappeared after scan")
 			} else {
+				scan.FilesErrored++
 				result.Coverage.skip(target.Path, "fingerprint failed")
 			}
 			finishTarget()
 			continue
 		}
-		if incrementality.Unchanged(state, target.Path, fingerprint) {
+		if targetUnchanged(state, target, fingerprint) {
 			result.addMessageCoverage(source, stateMessageCoverage(state[target.Path]))
 			result.FilesSkipped++
 			scan.FilesSkipped++
@@ -946,7 +950,8 @@ func cursorContent(target Target, previous incrementality.FileState,
 	var cursor harvestCursorState
 	if json.Unmarshal(previous.Metadata, &cursor) != nil || cursor.ByteOffset <= 0 ||
 		cursor.ByteOffset >= int64(len(content)) || cursor.PrefixDigest == "" ||
-		!cursor.LastExchangeComplete || cursor.ParserVersion != readingVersion(target.Kind) {
+		!cursor.LastExchangeComplete || cursor.ParserVersion != readingVersion(target.Kind) ||
+		cursor.Machine != target.Machine {
 		return content, harvestCursorSeed{}
 	}
 	if target.Kind == parsers.KindCodexHistory && len(cursor.ExchangeCursors) == 0 {
@@ -1259,7 +1264,7 @@ func recordHarvestCursor(target Target, seed harvestCursorSeed, full []byte, rec
 	result.harvestCursors[target.Path] = harvestCursorState{
 		ByteOffset: int64(len(full)), PrefixDigest: digestBytes(full), ExchangeCursor: exchangeCursor,
 		ExchangeCursors: exchangeCursors, LastExchangeComplete: records.Deferred == 0,
-		ParserVersion: readingVersion(target.Kind),
+		ParserVersion: readingVersion(target.Kind), Machine: target.Machine,
 	}
 }
 

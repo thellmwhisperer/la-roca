@@ -229,26 +229,8 @@ func materializeCurrent(ctx context.Context, destination *sql.DB, sources []prep
 			}
 		}
 	}
-	if err := backfillNullMachines(ctx, tx); err != nil {
-		return err
-	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit current corpus materialization: %w", err)
-	}
-	return nil
-}
-
-func backfillNullMachines(ctx context.Context, tx *sql.Tx) error {
-	machine, err := os.Hostname()
-	if err != nil || strings.TrimSpace(machine) == "" {
-		machine = "local"
-	} else {
-		machine = strings.TrimSpace(machine)
-	}
-	for _, table := range []string{"sessions", "exchanges", "thinking_blocks", "tool_uses"} {
-		if _, err := tx.ExecContext(ctx, "UPDATE "+table+" SET machine = ? WHERE machine IS NULL", machine); err != nil {
-			return fmt.Errorf("backfill %s.machine after materialization: %w", table, err)
-		}
 	}
 	return nil
 }
@@ -256,37 +238,46 @@ func backfillNullMachines(ctx context.Context, tx *sql.Tx) error {
 func materializeRecord(ctx context.Context, tx *sql.Tx, record archiveRecord) error {
 	var query string
 	args := record.currentValues
+	machine, err := os.Hostname()
+	if err != nil || strings.TrimSpace(machine) == "" {
+		machine = "local"
+	} else {
+		machine = strings.TrimSpace(machine)
+	}
 	switch record.destinationTable {
 	case "session_versions":
 		query = `INSERT INTO sessions
 			(session_id, source_agent, source_surface, project, started_at, ended_at,
-			 duration_minutes, title, metadata)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(session_id) DO NOTHING`
+			 duration_minutes, title, metadata, machine)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(session_id) DO NOTHING`
+		args = append(slices.Clone(args), machine)
 	case "exchange_versions":
 		query = `INSERT OR IGNORE INTO exchanges
 			(session_id, exchange_number, is_after_compaction, human_text, agent_text,
 			 human_timestamp, agent_timestamp, response_latency_ms, model, provider,
-			 tokens_in, tokens_out, tokens_reasoning, cost_usd)
-			SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (
+			 tokens_in, tokens_out, tokens_reasoning, cost_usd, machine)
+			SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (
 			 SELECT 1 FROM exchanges WHERE session_id IS ? AND exchange_number IS ?)`
-		args = append(slices.Clone(args), args[0], args[1])
+		args = append(slices.Clone(args), machine, args[0], args[1])
 	case "tool_use_versions":
 		query = `INSERT INTO tool_uses
 			(session_id, exchange_number, tool_name, tool_params_summary, had_error,
-			 error_message, initiative_type)
-			SELECT ?, ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (
+			 error_message, initiative_type, machine)
+			SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (
 			 SELECT 1 FROM tool_uses WHERE session_id IS ? AND exchange_number IS ?
 			   AND tool_name IS ? AND tool_params_summary IS ? AND had_error IS ?
 			   AND error_message IS ? AND initiative_type IS ?)`
-		args = append(slices.Clone(args), args...)
+		whereArgs := slices.Clone(args)
+		args = append(slices.Clone(args), machine)
+		args = append(args, whereArgs...)
 	case "thinking_block_versions":
 		query = `INSERT OR IGNORE INTO thinking_blocks
 			(session_id, exchange_number, position_in_session, depth, caution_ratio,
-			 word_count, is_after_compaction, full_text)
-			SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (
+			 word_count, is_after_compaction, full_text, machine)
+			SELECT ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (
 			 SELECT 1 FROM thinking_blocks WHERE session_id IS ? AND exchange_number IS ?
 			   AND position_in_session IS ?)`
-		args = append(slices.Clone(args), args[0], args[1], args[2])
+		args = append(slices.Clone(args), machine, args[0], args[1], args[2])
 	case "ingest_file_state_versions":
 		query = `INSERT INTO ingest_file_state
 			(path, source_kind, source_agent, project, fingerprint, last_synced_at,

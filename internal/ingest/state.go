@@ -53,6 +53,7 @@ func incrementalityTarget(target Target) incrementality.Target {
 		Kind:          string(target.Kind),
 		SourceAgent:   target.SourceAgent,
 		Project:       target.Project,
+		Machine:       target.Machine,
 		ParserVersion: readingVersion(target.Kind),
 		IncludeSQLiteWAL: target.Kind == parsers.KindOpenCodeDB ||
 			target.Kind == parsers.KindZCodeDB || target.Kind == parsers.KindHermesDB ||
@@ -75,6 +76,20 @@ func readingVersion(kind parsers.Kind) string {
 
 func targetFingerprint(target Target) (string, error) {
 	return incrementality.TargetFingerprint(incrementalityTarget(target))
+}
+
+func targetUnchanged(state map[string]incrementality.FileState, target Target,
+	fingerprint string) bool {
+	if incrementality.Unchanged(state, target.Path, fingerprint) {
+		return true
+	}
+	if target.Machine == "" {
+		return false
+	}
+	legacy := target
+	legacy.Machine = ""
+	legacyFingerprint, err := targetFingerprint(legacy)
+	return err == nil && incrementality.Unchanged(state, target.Path, legacyFingerprint)
 }
 
 func stateMessageCoverage(state incrementality.FileState) *parsers.MessageCoverage {
