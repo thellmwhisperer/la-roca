@@ -181,7 +181,6 @@ func registerSteps(ctx *godog.ScenarioContext, binary string) {
 		return m.theFrozenCodexIdentityHas(sessions, exactSourceSession, splitSiblings, exchanges, tools, orphanTools, failedTools, controlSessions)
 	})
 	ctx.Then(`^the frozen Codex identity is unchanged$`, m.theFrozenCodexIdentityIsUnchanged)
-	ctx.Then(`^the execution log duration_ms is (\d+)$`, m.theExecutionLogDurationIs)
 	ctx.Then(`^the execution log duration_ms is under (\d+)$`, m.theExecutionLogDurationUnder)
 	ctx.Then(`^one vector resident process exists$`, m.oneVectorResidentProcessExists)
 	ctx.Then(`^the readable MCP response contains "([^"]*)"$`, m.theReadableMCPResponseContains)

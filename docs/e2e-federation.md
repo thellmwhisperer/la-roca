@@ -49,7 +49,7 @@ those pull request and issue bodies:
 Plus one command case per uso-de-la-roca correction source (23 exchange ids),
 expressed as the binary command the agent should have run.
 
-Plus the eight real-usage paths from operator execution logs: hooks at 0 ms,
+Plus the eight real-usage paths from operator execution logs: hooks under 250 ms,
 exec of an exact frozen id under 5 s, vector query under 2 s, query under 3 s
 without a silent hybrid claim, one current handoff per project, MCP handoff
 store refusal as contract, `make e2e-smoke`, and MCP `roca_health`.

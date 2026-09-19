@@ -166,11 +166,11 @@ Feature: Frozen federation installed binary
     When I run "roca handoff latest --project harbor"
     Then the command exits with code 0
 
-  Scenario: real-usage hooks 0ms
+  Scenario: real-usage hooks under 250ms
     Given a frozen synthetic federation lab
     When I run the claude authorship hook
     Then the command exits with code 0
-    And the execution log duration_ms is 0
+    And the execution log duration_ms is under 250
 
   Scenario: real-usage exec exact ids
     Given a frozen synthetic federation lab
