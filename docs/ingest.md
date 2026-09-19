@@ -2,7 +2,8 @@
 
 First-time path: [install and initialize search](lifecycle.md#install).
 
-`roca ingest` incrementally reads supported local artefacts:
+`roca ingest` incrementally reads supported artefacts from the local HOME and
+any configured remote source roots:
 
 | Runtime | Artefacts |
 |---|---|
@@ -35,16 +36,16 @@ roca ingest /path/to/extracted-export
 ```
 
 The path belongs only to that invocation. A later `roca ingest` with no path,
-including the nightly run, reads only live Claude, Codex, Qwen Code, GLM, Cursor,
-Pi, OpenCode, ZCode, Hermes, Grok Build, Cowork, and the pre-federation store. It
-fingerprints each source file by path and content, so an explicit rerun of the
-same export is a zero delta and a newer export contributes only message
-identities that have not already landed. A live session file that grows
-appends the new exchanges. It does not rewrite rows that already landed. A
-genuine rewrite of an existing exchange records one digest-only lineage row,
-never a second copy of the text. `roca compact` rewrites an older corpus
-database onto that one-row law, empties archive bookkeeping that duplicated
-current rows, and VACUUMs.
+including the nightly run, reads live Claude, Codex, Qwen Code, GLM, Cursor,
+Pi, OpenCode, ZCode, Hermes, Grok Build, Cowork, and the pre-federation store
+from the local HOME and every configured remote source root. It fingerprints
+each source file by path and content, so an explicit rerun of the same export
+is a zero delta and a newer export contributes only message identities that
+have not already landed. A live session file that grows appends the new
+exchanges. It does not rewrite rows that already landed. A genuine rewrite of
+an existing exchange records one digest-only lineage row, never a second copy
+of the text. `roca compact` rewrites an older corpus database onto that one-row
+law, empties archive bookkeeping that duplicated current rows, and VACUUMs.
 
 The directory decides which vendor's parser reads it: `memories.json`, or a
 `conversations.json` of `chat_messages` records, is a Claude export, and
@@ -82,9 +83,10 @@ The root is a HOME-shaped tree (`.claude/`, `.codex/`, `.pi/`, and the rest).
 How the tree arrives (rsync, a shared disk) is the operator's job; ingest only
 reads it. Every session, exchange, thinking block, and tool call from that
 root is stamped `machine = "mini"`. The local HOME uses this machine's
-hostname. The same project path on two machines stays distinguishable, and
-removing the `[[sources.remote]]` entry stops reading that root without
-deleting rows already written.
+hostname; on upgrade, existing corpus rows without a machine label receive that
+hostname too. The same project path on two machines stays distinguishable, and
+removing the `[[sources.remote]]` entry stops reading that root without deleting
+rows already written.
 
 ## Import an Anthropic data export
 
