@@ -3,10 +3,10 @@
 package acceptance
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func TestServeRaisesAndReapsPluginCompanions(t *testing.T) {
@@ -29,7 +31,7 @@ func TestServeRaisesAndReapsPluginCompanions(t *testing.T) {
 			t.Fatal(err)
 		}
 		installLabCompanion(t, m, writeCompanionPackage(t, m.home, watch, out, filepath.Join(m.home, "lock")))
-		serve, held := startServe(t, m)
+		serve := startServe(t, m)
 		if err := os.WriteFile(filepath.Join(watch, "note.md"), []byte("harbor lantern\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -40,7 +42,7 @@ func TestServeRaisesAndReapsPluginCompanions(t *testing.T) {
 		if err := m.mustRun("roca health"); err != nil {
 			t.Fatalf("health during companion: %v\n%s", err, m.last.stderr)
 		}
-		second, secondHeld := startServe(t, m)
+		second := startServe(t, m)
 		waitUntil(t, func() bool {
 			_, err := os.Stat(filepath.Join(m.home, "standby"))
 			return err == nil
@@ -48,10 +50,8 @@ func TestServeRaisesAndReapsPluginCompanions(t *testing.T) {
 		if countDistinctFiles(t, filepath.Join(m.home, "holder"), filepath.Join(m.home, "standby")) != 2 {
 			t.Fatal("plugin single-flight did not leave one holder and one standby")
 		}
-		_ = held.Close()
-		_ = serve.Wait()
-		_ = secondHeld.Close()
-		_ = second.Wait()
+		_ = serve.Close()
+		_ = second.Close()
 		waitUntil(t, func() bool {
 			_, err := os.Stat(filepath.Join(m.home, "dead"))
 			return err == nil
@@ -64,12 +64,11 @@ func TestServeRaisesAndReapsPluginCompanions(t *testing.T) {
 		if err := os.Remove(filepath.Join(m.home, ".roca", "plugins", "mirror", "roca-mirror")); err != nil {
 			t.Fatal(err)
 		}
-		serve, held := startServe(t, m)
+		serve := startServe(t, m)
 		if err := m.mustRun("roca health"); err != nil {
 			t.Fatalf("health with missing companion: %v\n%s", err, m.last.stderr)
 		}
-		_ = held.Close()
-		if err := serve.Wait(); err != nil {
+		if err := serve.Close(); err != nil {
 			t.Fatalf("serve with missing companion: %v", err)
 		}
 	})
@@ -78,6 +77,12 @@ func TestServeRaisesAndReapsPluginCompanions(t *testing.T) {
 func companionLab(t *testing.T) *world {
 	t.Helper()
 	m := aWorldIn(t, strings.ReplaceAll(t.Name(), "/", "-"))
+	socket, cleanup, err := acceptanceResident()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(cleanup)
+	m.residentSocket = socket
 	if err := m.runInit(); err != nil {
 		t.Fatalf("init: %v", err)
 	}
@@ -107,21 +112,20 @@ func countDistinctFiles(t *testing.T, paths ...string) int {
 	return len(seen)
 }
 
-func startServe(t *testing.T, m *world) (*exec.Cmd, io.WriteCloser) {
+func startServe(t *testing.T, m *world) *mcp.ClientSession {
 	t.Helper()
 	serve := exec.Command(m.binaryPath(), "mcp", "serve")
 	serve.Env = m.environment()
-	held, err := serve.StdinPipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	serve.Stdout = os.Stdout
 	serve.Stderr = os.Stderr
-	if err := serve.Start(); err != nil {
-		t.Fatalf("roca mcp serve: %v", err)
+	client := mcp.NewClient(&mcp.Implementation{Name: "companion-acceptance", Version: "1"}, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	session, err := client.Connect(ctx, &mcp.CommandTransport{Command: serve}, nil)
+	if err != nil {
+		t.Fatalf("open companion MCP session: %v", err)
 	}
-	t.Cleanup(func() { held.Close(); serve.Process.Kill(); serve.Wait() })
-	return serve, held
+	t.Cleanup(func() { _ = session.Close() })
+	return session
 }
 
 func writeCompanionPackage(t *testing.T, home, watch, out, lock string) string {

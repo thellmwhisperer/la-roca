@@ -192,6 +192,12 @@ func (w *oracleWorld) record() ([]byte, error) {
 		return nil, err
 	}
 	runner := &oracleRunner{binary: w.binary, home: home, normalizer: compatibility.Normalizer{Home: home}}
+	socket, cleanup, err := acceptanceResident()
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+	runner.socket = socket
 	if err := runner.writeConfig(providerDeadEndpoint); err != nil {
 		return nil, err
 	}
@@ -268,6 +274,7 @@ func oracleCountSQL(content string) string {
 type oracleRunner struct {
 	binary     string
 	home       string
+	socket     string
 	normalizer compatibility.Normalizer
 }
 
@@ -275,6 +282,7 @@ func (r *oracleRunner) dbPath() string { return filepath.Join(r.home, ".roca", "
 
 func (r *oracleRunner) environment(readOnly bool) []string {
 	env := []string{
+		"ROCA_RESIDENT_SOCKET=" + r.socket,
 		"HOME=" + r.home,
 		"PATH=" + filepath.Join(r.home, "bin"),
 		"TMPDIR=" + filepath.Join(r.home, "tmp"),

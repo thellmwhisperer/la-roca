@@ -621,16 +621,8 @@ func ServeConnection(ctx context.Context, svc *service.Service, build Build, con
 	return serveSession(ctx, svc, func(resident *residentVector) error {
 		server := newServer(svc, build, resident)
 		if readOnly {
-			server.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
-				return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
-					tool, _ := toolCall(req)
-					if method == "tools/call" && tool == storeTool.Name {
-						result := &mcp.CallToolResult{}
-						result.SetError(errors.New("La Roca is in read-only mode: this operation writes"))
-						return result, nil
-					}
-					return next(ctx, method, req)
-				}
+			mcp.AddTool(server, storeTool, func(context.Context, *mcp.CallToolRequest, storeArgs) (*mcp.CallToolResult, any, error) {
+				return nil, nil, errors.New("La Roca is in read-only mode: this operation writes (operation: store)")
 			})
 		}
 		return server.Run(ctx, &mcp.IOTransport{Reader: conn, Writer: conn})
