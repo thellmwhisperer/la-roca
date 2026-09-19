@@ -126,26 +126,37 @@ func collectOpsIDLiterals(statement string) []string {
 	return ids
 }
 
-func opsRemapCanonicalIDs(databases []plugin.Database, ids []string) map[string]string {
+func opsRemapCanonicalIDs(databases []plugin.Database, ids []string) (map[string]string, error) {
 	out := make(map[string]string)
 	if len(ids) == 0 {
-		return out
+		return out, nil
 	}
-	var path string
+	var opsDatabase plugin.Database
 	for _, database := range databases {
 		if database.Schema == "plugin_roca_ops" {
-			path = database.Database
+			opsDatabase = database
 			break
 		}
 	}
-	if path == "" {
-		return out
+	if opsDatabase.Database == "" {
+		return out, nil
 	}
-	conn, err := sql.Open("sqlite", path)
+	conn, err := sql.Open("sqlite", opsDatabase.ReadOnlyURI())
 	if err != nil {
-		return out
+		return nil, fmt.Errorf("open roca-ops remaps read-only: %w", err)
 	}
 	defer conn.Close()
+	if err := conn.Ping(); err != nil {
+		return nil, fmt.Errorf("open roca-ops remaps read-only: %w", err)
+	}
+	var present bool
+	if err := conn.QueryRow(`SELECT EXISTS(
+		SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'memory_id_remaps')`).Scan(&present); err != nil {
+		return nil, fmt.Errorf("inspect roca-ops remaps: %w", err)
+	}
+	if !present {
+		return out, nil
+	}
 	placeholders := strings.Repeat("?,", len(ids))
 	placeholders = placeholders[:len(placeholders)-1]
 	args := make([]any, len(ids))
@@ -154,17 +165,23 @@ func opsRemapCanonicalIDs(databases []plugin.Database, ids []string) map[string]
 	}
 	rows, err := conn.Query(`SELECT CAST(old_id AS TEXT), CAST(canonical_id AS TEXT) FROM memory_id_remaps WHERE old_id IN (`+placeholders+`)`, args...)
 	if err != nil {
-		return out
+		return nil, fmt.Errorf("read roca-ops remaps: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var oldID, canonical string
-		if err := rows.Scan(&oldID, &canonical); err != nil || canonical == "" {
+		if err := rows.Scan(&oldID, &canonical); err != nil {
+			return nil, fmt.Errorf("scan roca-ops remap: %w", err)
+		}
+		if canonical == "" {
 			continue
 		}
 		out[oldID] = canonical
 	}
-	return out
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read roca-ops remaps: %w", err)
+	}
+	return out, nil
 }
 
 func opsIDPredicate(column, legacy, digits string, remaps map[string]string) string {
@@ -470,7 +487,10 @@ func (s *Service) prepareExec(ctx context.Context, statement string, cursor bool
 	}
 	route := s.pluginsForSQL(ctx, statement)
 	if opsRouteHasLegacyID(route.Databases) {
-		remaps := opsRemapCanonicalIDs(route.Databases, collectOpsIDLiterals(statement))
+		remaps, err := opsRemapCanonicalIDs(route.Databases, collectOpsIDLiterals(statement))
+		if err != nil {
+			return PluginRoute{}, "", err
+		}
 		statement = expandOpsLegacyIDs(statement, remaps)
 	}
 	ok := false

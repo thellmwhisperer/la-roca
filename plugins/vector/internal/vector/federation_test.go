@@ -634,7 +634,8 @@ func TestResolveSourcesUsesOpsLegacyID(t *testing.T) {
 	declared := DeclaredCorpus{
 		Core: CoreCLI{Executable: "roca", readRequest: readerFixture(runner)},
 		Database: vectorDatabase{Plugin: "roca-ops", Database: "ops", Alias: "plugin_roca_ops",
-			Tables: []vectorTable{{Name: "memories", IDColumn: "id", TextColumns: []string{"content"}}}},
+			Tables: []vectorTable{{Name: "memories", IDColumn: "id", TextColumns: []string{"content"},
+				Columns: []string{"id", "legacy_id", "content"}}}},
 	}
 	row := sourceRow{kind: "memories", sourceID: "1152921504606853945", text: "legacy operational body"}
 	resolved, err := declared.ResolveSources(context.Background(), []sourceLookup{{

@@ -1256,7 +1256,11 @@ func (d DeclaredCorpus) ResolveSource(ctx context.Context, kind string, where lo
 		if hasLegacy {
 			idPredicate = "(" + idPredicate + " OR CAST(\"legacy_id\" AS TEXT)=" + sqlLiteral(where.SourceID) + ")"
 		}
-		for _, canonical := range d.opsCanonicalMap([]string{where.SourceID}) {
+		canonicalIDs, err := d.opsCanonicalMap([]string{where.SourceID})
+		if err != nil {
+			return "", err
+		}
+		for _, canonical := range canonicalIDs {
 			idPredicate += " OR CAST(" + quoteIdentifier(table.IDColumn) + " AS TEXT)=" + sqlLiteral(canonical)
 		}
 	}
@@ -1308,7 +1312,11 @@ func (d DeclaredCorpus) ResolveSources(ctx context.Context,
 	for _, table := range d.Database.Tables {
 		ids := idsByTable[table.Name]
 		if d.Database.Plugin == "roca-ops" && table.Name == "memories" {
-			for requested, canonical := range d.opsCanonicalMap(ids) {
+			canonicalIDs, err := d.opsCanonicalMap(ids)
+			if err != nil {
+				return nil, err
+			}
+			for requested, canonical := range canonicalIDs {
 				canonicalOf[requested] = canonical
 				ids = append(ids, canonical)
 			}
@@ -1400,13 +1408,7 @@ func (d DeclaredCorpus) sourceLookupBranches(table vectorTable, inList, idColumn
 }
 
 func (d DeclaredCorpus) hasColumn(_ context.Context, table vectorTable, column string) (bool, error) {
-	if table.availableColumns()[column] {
-		return true, nil
-	}
-	if d.Database.Plugin == "roca-ops" && table.Name == "memories" && column == "legacy_id" {
-		return true, nil
-	}
-	return false, nil
+	return table.availableColumns()[column], nil
 }
 
 func (d DeclaredCorpus) opsDatabaseFile() string {
@@ -1419,20 +1421,31 @@ func (d DeclaredCorpus) opsDatabaseFile() string {
 	return filepath.Join(d.PluginRoot, d.Database.Plugin, d.Database.Path)
 }
 
-func (d DeclaredCorpus) opsCanonicalMap(ids []string) map[string]string {
+func (d DeclaredCorpus) opsCanonicalMap(ids []string) (map[string]string, error) {
 	out := map[string]string{}
 	path := d.opsDatabaseFile()
 	if path == "" || len(ids) == 0 {
-		return out
+		return out, nil
 	}
 	if _, err := os.Stat(path); err != nil {
-		return out
+		if os.IsNotExist(err) {
+			return out, nil
+		}
+		return nil, fmt.Errorf("inspect roca-ops database: %w", err)
 	}
-	conn, err := sql.Open("sqlite", path)
+	conn, err := openSQLiteBusy(path, true, 100)
 	if err != nil {
-		return out
+		return nil, fmt.Errorf("open roca-ops remaps read-only: %w", err)
 	}
 	defer conn.Close()
+	var present bool
+	if err := conn.QueryRow(`SELECT EXISTS(
+		SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'memory_id_remaps')`).Scan(&present); err != nil {
+		return nil, fmt.Errorf("inspect roca-ops remaps: %w", err)
+	}
+	if !present {
+		return out, nil
+	}
 	placeholders := strings.Repeat("?,", len(ids))
 	placeholders = placeholders[:len(placeholders)-1]
 	args := make([]any, len(ids))
@@ -1441,17 +1454,23 @@ func (d DeclaredCorpus) opsCanonicalMap(ids []string) map[string]string {
 	}
 	rows, err := conn.Query(`SELECT CAST(old_id AS TEXT), CAST(canonical_id AS TEXT) FROM memory_id_remaps WHERE CAST(old_id AS TEXT) IN (`+placeholders+`)`, args...)
 	if err != nil {
-		return out
+		return nil, fmt.Errorf("read roca-ops remaps: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var oldID, canonical string
-		if err := rows.Scan(&oldID, &canonical); err != nil || canonical == "" {
+		if err := rows.Scan(&oldID, &canonical); err != nil {
+			return nil, fmt.Errorf("scan roca-ops remap: %w", err)
+		}
+		if canonical == "" {
 			continue
 		}
 		out[oldID] = canonical
 	}
-	return out
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read roca-ops remaps: %w", err)
+	}
+	return out, nil
 }
 
 func (d DeclaredCorpus) idAffinity(ctx context.Context, table vectorTable) (string, error) {
