@@ -193,7 +193,16 @@ roca update
 
 Update resolves the selected release, verifies its checksum, runs the staged
 binary's version check, and swaps it into place by rename. The swapped binary
-then refreshes every shipped plugin payload exactly as installation does. Data
+then refreshes every shipped plugin payload exactly as installation does.
+A binary whose bundled plugin schema is newer than the version recorded for
+that plugin in the database's `plugin_schema` refuses that migration unless
+`ROCA_ALLOW_HOME_MIGRATE=1`. This compares schema versions, even when the build
+version is unchanged; it does not track which executable installed the home.
+Fresh databases and databases without a recorded plugin identity still allow
+initial adoption. The explicit
+`_install-bundled-plugins` command authorizes schema upgrades for both the
+installer and `roca update`, including updates from older releases. Validate
+branch and test builds only against fixtures or isolated homes. Data
 plugins keep the databases and adjacent vector sidecars they already own;
 `roca-vector` is replaced from the same core release while its manifest-owned
 worker `state/` directory is preserved byte for byte. An unowned or externally
