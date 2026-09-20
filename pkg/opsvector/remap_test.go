@@ -175,17 +175,20 @@ func TestHasStaleLegacyIDsHonorsCancellation(t *testing.T) {
 	}
 }
 
-func TestHasStaleLegacyIDsAcrossLargeRepairedIndex(t *testing.T) {
+func TestLegacyIDsAcrossLargeRepairedIndex(t *testing.T) {
 	ops := filepath.Join(t.TempDir(), "roca-ops.db")
 	writeDB(t, ops, `CREATE TABLE memories(id INTEGER PRIMARY KEY, legacy_id INTEGER);
 		WITH RECURSIVE ids(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM ids WHERE n<16000)
 		INSERT INTO memories SELECT n, 1152921504606846976+n FROM ids;`)
-	writeDB(t, SidecarPath(ops), `CREATE TABLE chunks(id INTEGER PRIMARY KEY, source_kind TEXT, source_id TEXT);
+	writeDB(t, SidecarPath(ops), `CREATE TABLE chunks(id INTEGER PRIMARY KEY, source_kind TEXT, source_id TEXT, locator TEXT NOT NULL DEFAULT '{}');
 		CREATE INDEX chunk_sources ON chunks(source_kind, source_id);
 		WITH RECURSIVE ids(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM ids WHERE n<16000)
-		INSERT INTO chunks SELECT n, 'memories', 'memories/' || n FROM ids;`)
+		INSERT INTO chunks(id, source_kind, source_id) SELECT n, 'memories', 'memories/' || n FROM ids;`)
 	if stale, err := HasStaleLegacyIDs(t.Context(), ops); err != nil || stale {
 		t.Fatalf("repaired index: stale=%v err=%v", stale, err)
+	}
+	if n, err := RemapLegacyIDs(ops); err != nil || n != 0 {
+		t.Fatalf("repaired index: remapped=%d err=%v", n, err)
 	}
 	db := openTest(t, SidecarPath(ops))
 	if _, err := db.Exec(`UPDATE chunks SET source_id = 'memories/1152921504606862976' WHERE id = 16000`); err != nil {
@@ -193,5 +196,11 @@ func TestHasStaleLegacyIDsAcrossLargeRepairedIndex(t *testing.T) {
 	}
 	if stale, err := HasStaleLegacyIDs(t.Context(), ops); err != nil || !stale {
 		t.Fatalf("last legacy chunk: stale=%v err=%v", stale, err)
+	}
+	if n, err := RemapLegacyIDs(ops); err != nil || n != 1 {
+		t.Fatalf("last legacy chunk: remapped=%d err=%v", n, err)
+	}
+	if stale, err := HasStaleLegacyIDs(t.Context(), ops); err != nil || stale {
+		t.Fatalf("after repair: stale=%v err=%v", stale, err)
 	}
 }
