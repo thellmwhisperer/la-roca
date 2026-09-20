@@ -481,7 +481,7 @@ func TestApplySchemaBackfillsMachineOnUpgrade(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	db = reapplySchemaAndReopen(t, path)
+	db := reapplySchemaAndReopen(t, path)
 	defer db.Close()
 	machine, err := os.Hostname()
 	if err != nil || strings.TrimSpace(machine) == "" {
@@ -607,9 +607,7 @@ func dumpHarvestFTSIndex(t *testing.T, db *sql.DB) string {
 }
 
 func TestApplySchemaCollapsesThinkingCopiesThatOnlyDifferByPosition(t *testing.T) {
-	t.Setenv(bundledplugin.EnvAllowHomeMigrate, "1")
-	db, path := openCorpusDB(t)
-	statements := []string{
+	path := prepareCorpusUpgrade(t,
 		`INSERT INTO sessions(session_id, source_agent) VALUES ('open-session', 'claude')`,
 		`INSERT INTO exchanges(session_id, exchange_number, human_text, agent_text)
 		   VALUES ('open-session', 1, 'first', 'answer')`,
@@ -620,22 +618,9 @@ func TestApplySchemaCollapsesThinkingCopiesThatOnlyDifferByPosition(t *testing.T
 		   VALUES ('open-session', 1, 0.5, 3, 'keep this thought')`,
 		`INSERT INTO thinking_blocks(session_id, exchange_number, position_in_session, word_count, full_text)
 		   VALUES ('open-session', 1, 0.5, 2, 'a different thought')`,
-	}
-	for _, statement := range statements {
-		if _, err := db.Exec(statement); err != nil {
-			db.Close()
-			t.Fatal(err)
-		}
-	}
-	if _, err := db.Exec(`UPDATE plugin_schema SET schema_version = ?`, rocacorpus.SchemaVersion-1); err != nil {
-		db.Close()
-		t.Fatal(err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
+	)
 
-	db = reapplySchemaAndReopen(t, path)
+	db := reapplySchemaAndReopen(t, path)
 	defer db.Close()
 	var copies int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM thinking_blocks
@@ -679,6 +664,26 @@ func TestApplySchemaCollapsesThinkingCopiesThatOnlyDifferByPosition(t *testing.T
 	if !indexExists(t, db, "idx_thinking_blocks_identity") {
 		t.Fatal("thinking identity index missing after collapse")
 	}
+}
+
+func prepareCorpusUpgrade(t *testing.T, statements ...string) string {
+	t.Helper()
+	t.Setenv(bundledplugin.EnvAllowHomeMigrate, "1")
+	db, path := openCorpusDB(t)
+	for _, statement := range statements {
+		if _, err := db.Exec(statement); err != nil {
+			db.Close()
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec(`UPDATE plugin_schema SET schema_version = ?`, rocacorpus.SchemaVersion-1); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 // openCorpusDB applies the corpus schema to a fresh database and opens it,
