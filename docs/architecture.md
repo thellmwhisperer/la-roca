@@ -104,11 +104,12 @@ writer in `internal/ingest/`, either from ingest itself or through the public
 `pkg/corpuswriter` facade, and federation directs them to the `roca-corpus`
 database. Memory store calls—including CLI, MCP, core, and plugin-origin
 calls—cannot cross that boundary, and explicit SQL is always read-only. The
-owner-gated exact-dedup maintenance command and `roca compact` are the
-offline maintenance exceptions: exact-dedup may remap and remove certified
-duplicate custody rows in the federated `roca-corpus` and `roca-ops` databases,
-but it cannot modify the pre-federation `roca.db`, create source observations,
-or collapse divergent payloads. `roca compact` rewrites an existing
+owner-gated [dedup maintenance command](operations.md#exact-duplicate-maintenance)
+and `roca compact` are the offline maintenance exceptions; the linked contract
+owns dedup's custody limits and thinking-identity exception. Corpus schema
+adoption also applies the [thinking identity contract](ingest.md#per-exchange-provenance).
+These maintenance paths do not create source observations.
+`roca compact` rewrites an existing
 `roca-corpus` database onto the one-row storage law and VACUUMs; it refuses any
 database the `roca-corpus` plugin does not own.
 
