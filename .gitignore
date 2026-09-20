@@ -15,3 +15,5 @@
 
 # macOS
 .DS_Store
+
+# pr-gate validation throwaway (issue #457), never merged.
