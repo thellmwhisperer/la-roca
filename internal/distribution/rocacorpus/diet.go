@@ -39,6 +39,9 @@ type migrationSeal struct {
 // Compact rewrites an existing corpus database to the one-row storage law and
 // VACUUMs. Current harvest rows are counted before and after; they must match.
 func Compact(ctx context.Context, path string) (CompactReport, error) {
+	if err := bundledplugin.CheckSchemaAdvance(path, Name, SchemaVersion); err != nil {
+		return CompactReport{}, err
+	}
 	beforeBytes, err := databaseSize(path)
 	if err != nil {
 		return CompactReport{}, fmt.Errorf("measure corpus database: %w", err)
