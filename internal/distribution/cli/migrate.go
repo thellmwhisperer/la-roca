@@ -26,6 +26,8 @@ func migrateCommand(env *cliEnv) *cobra.Command {
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if status, _ := cmd.Flags().GetBool("status"); status {
+				env.skipExecutionLog = true
+				env.skipReconciliation = true
 				// A status read never writes, so it is exactly the answer a
 				// read-only invocation can give (issue #455).
 				return migrateStatus(env, cmd)

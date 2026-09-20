@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 )
 
@@ -133,5 +136,67 @@ func TestMigrateStatusReportsAnAbsentLedger(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), rocaops.Name+": absent") {
 		t.Fatalf("absent ledger status = %q", out.String())
+	}
+}
+
+func TestMigrateStatusSkipsPostCommandWritesWhileCustodyLocked(t *testing.T) {
+	for _, mode := range []string{"text", "json"} {
+		t.Run(mode, func(t *testing.T) {
+			home := t.TempDir()
+			isolateRuntimeDirs(t, home)
+			corePath := filepath.Join(home, "roca.db")
+			seedLayoutMemory(t, corePath, "locked custody marker")
+			migratedCLIEnv(t, corePath)
+			marker := filepath.Join(home, "capabilities-called")
+			t.Setenv("ROCA_TEST_CAPABILITY_MARKER", marker)
+			installPlaygroundFixture(t, home, `case "$1" in
+capabilities) printf called > "$ROCA_TEST_CAPABILITY_MARKER"; printf '[]\n' ;;
+esac`)
+			release, err := logfile.New(filepath.Dir(corePath)).Lock()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				if release != nil {
+					if err := release(); err != nil {
+						t.Error(err)
+					}
+				}
+			}()
+			var out, errOut bytes.Buffer
+			args := []string{"--db-path", corePath, "migrate", "--status"}
+			if mode == "json" {
+				args = append(args, "--json")
+			}
+			var code int
+			var runErr error
+			done := make(chan struct{})
+			go func() {
+				code, runErr = execute(Build{Version: "v-test"}, &out, &errOut, args)
+				close(done)
+			}()
+			select {
+			case <-done:
+			case <-time.After(3 * time.Second):
+				if err := release(); err != nil {
+					t.Error(err)
+				}
+				release = nil
+				<-done
+				t.Fatal("migrate --status waited for the custody lock")
+			}
+			if runErr != nil || code != ExitOK {
+				t.Fatalf("status: code=%d err=%v stderr=%s", code, runErr, errOut.String())
+			}
+			if !strings.Contains(out.String(), "data2-memory-custody") {
+				t.Fatalf("missing custody ledger: %s", out.String())
+			}
+			if mode == "json" && !json.Valid(out.Bytes()) {
+				t.Fatalf("invalid JSON status: %s", out.String())
+			}
+			if _, err := os.Stat(marker); !os.IsNotExist(err) {
+				t.Fatalf("status invoked capability reconciliation: %v", err)
+			}
+		})
 	}
 }
