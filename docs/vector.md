@@ -43,10 +43,10 @@ partial, and changed sources have unknown candidate counts until a full pass. Ei
 unknown (`null`), never an estimate or invented zero. Sidecar size and last
 write include its SQLite WAL and shared-memory files when present.
 
-Lock status is `live` when held, `stale` when the file exists but is unheld,
-or `absent`. A lock that cannot be inspected renders as `unknown` and is
-omitted from JSON. Ingest and compact can acquire a stale lock without manual
-file deletion. On Unix, a newly created index lock takes the UID of its state
+Lock status (`index_lock` in JSON) is `held` when another process holds the
+flock, `unheld` when the file exists but is free, or `absent`. A lock that
+cannot be inspected is `error`. Ingest and compact reuse the existing flock
+file; they do not delete a free lock. On Unix, a newly created index lock takes the UID of its state
 directory through the open file descriptor; an existing lock is opened without
 being re-owned. An ownership error is separate from lock status and is repaired
 with the exact command from
@@ -93,13 +93,15 @@ run; a scheduled current database follows the
 Status never uses historical telemetry, waits for the model, or waits
 indefinitely for count work. Default output is bounded AXI; `--json` is the
 complete envelope; `help[]` names the next command. Registry or command errors
-return a non-zero exit status; unreadable facts for an individual database
-remain in the successful envelope as unknown.
+return a non-zero exit status; inspection failures for an individual database
+remain in the successful envelope, using the field-specific states described
+above.
 
 The help recommends `roca vector install` only when a database is missing or
-has zero embedded chunks. A stale index lock instead says that the next ingest
-or compact takes it and that there is nothing to do; an existing partial index
-is not treated as absent work.
+has zero embedded chunks. An unheld index lock is the reusable flock file and
+needs no operator action; a held lock names the sidecar still being written.
+An inspection error is reported as `error`, not as a leftover lock. An existing
+partial index is not treated as absent work.
 
 ```sh
 roca vector status
@@ -349,9 +351,9 @@ index locks until the 30-minute stall. A non-zero ingest always names the
 failure: silent exits print `plugin vector exited with code N without writing a
 reason`, and a pass that already wrote progress still ends with
 `plugin vector exited with code N` so the execution log is never a bare
-`command exited with code 1`. When the pass ends, leftover `.index.lock` files
-that nobody holds are removed so status does not report `stale` after a
-finished or failed night. A later morning check should read
+`command exited with code 1`. When the pass ends, a leftover `.index.lock`
+file stays on disk; status reports it as `unheld` when nobody holds it. A later
+morning check should read
 `~/.roca/logs/executions-*.jsonl` and `plugin_roca_cron.journeys`, not only
 the ride's own exit code.
 

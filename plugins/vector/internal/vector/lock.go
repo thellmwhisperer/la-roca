@@ -2,7 +2,6 @@ package vector
 
 import (
 	"context"
-	"errors"
 	"os"
 )
 
@@ -50,39 +49,6 @@ func tryLockIndex(path string) (func() error, bool, error) {
 		return nil, false, err
 	}
 	return tryLockExisting(path)
-}
-
-// ClearUnheldIndexLocks removes leftover sidecar lock files after an ingest
-// that still owns the worker claim. A file another process holds is left
-// alone. Status still reports a crash leftover as stale until the next ingest.
-func ClearUnheldIndexLocks(sidecarPaths []string) error {
-	var cleanupErr error
-	for _, sidecar := range sidecarPaths {
-		if sidecar == "" {
-			continue
-		}
-		path := sidecar + ".index.lock"
-		held, err := os.Stat(path)
-		if err != nil {
-			continue
-		}
-		release, busy, err := tryLockExisting(path)
-		if err != nil || busy {
-			continue
-		}
-		current, err := os.Stat(path)
-		if err != nil || !os.SameFile(held, current) {
-			cleanupErr = errors.Join(cleanupErr, release())
-			continue
-		}
-		removeErr := os.Remove(path)
-		releaseErr := release()
-		if removeErr != nil && !os.IsNotExist(removeErr) {
-			cleanupErr = errors.Join(cleanupErr, removeErr)
-		}
-		cleanupErr = errors.Join(cleanupErr, releaseErr)
-	}
-	return cleanupErr
 }
 
 func ensureLockFile(path string) error {

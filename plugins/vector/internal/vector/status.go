@@ -24,9 +24,10 @@ const (
 	StateInvalid  = "invalid"
 	StateUnknown  = "unknown"
 
-	IndexLockLive   = "live"
-	IndexLockStale  = "stale"
+	IndexLockHeld   = "held"
+	IndexLockUnheld = "unheld"
 	IndexLockAbsent = "absent"
+	IndexLockError  = "error"
 
 	statusBusyTimeoutMS  = 2000
 	statusCountTimeout   = 5 * time.Second
@@ -157,7 +158,6 @@ func inspectDatabaseStatus(ctx context.Context, pluginRoot string, database vect
 	}
 	if !facts.Exists {
 		row.State = StateEmpty
-		row.IndexLock = IndexLockAbsent
 		return row
 	}
 	store, err := openSQLiteBusy(sidecarPath, true, statusBusyTimeoutMS)
@@ -550,20 +550,21 @@ func compactRecommended(chunks, pages *int64) bool {
 
 func inspectIndexLock(sidecarPath string) string {
 	path := sidecarPath + ".index.lock"
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return IndexLockAbsent
-	} else if err != nil {
-		return ""
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return IndexLockAbsent
+		}
+		return IndexLockError
 	}
 	release, busy, err := tryLockExisting(path)
 	if err != nil {
-		return ""
+		return IndexLockError
 	}
 	if busy {
-		return IndexLockLive
+		return IndexLockHeld
 	}
 	_ = release()
-	return IndexLockStale
+	return IndexLockUnheld
 }
 
 func openSQLiteBusy(path string, readOnly bool, busyMS int) (*sql.DB, error) {
