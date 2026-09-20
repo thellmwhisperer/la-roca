@@ -43,14 +43,7 @@ func TestCompactMemoryIDsRestoresMemoryFTSBehavior(t *testing.T) {
 
 func TestCompactMemoryIDsRemapsVectorSidecar(t *testing.T) {
 	path := filepath.Join(t.TempDir(), DatabaseFilename)
-	db, err := bundledplugin.OpenDatabase(path, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(schema); err != nil {
-		db.Close()
-		t.Fatal(err)
-	}
+	db := newCompactMemoryDatabase(t, path)
 	legacy := int64(jsSafeInteger + 7)
 	if _, err := db.Exec(`INSERT INTO memories (id, layer, content, origin)
 		VALUES (?, 'discovery', 'handoff del CoS', 'agent')`, legacy); err != nil {
@@ -122,14 +115,7 @@ func TestCompactMemoryIDsClearsLegacySequenceWhenMemoriesAreEmpty(t *testing.T) 
 func compactMemoryFixture(t *testing.T, content string, empty bool) *sql.DB {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), DatabaseFilename)
-	db, err := bundledplugin.OpenDatabase(path, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(schema); err != nil {
-		db.Close()
-		t.Fatal(err)
-	}
+	db := newCompactMemoryDatabase(t, path)
 	if _, err := db.Exec(`INSERT INTO memories (id, layer, content, origin)
 		VALUES (?, 'discovery', ?, 'agent')`, int64(jsSafeInteger+1), content); err != nil {
 		db.Close()
@@ -148,11 +134,24 @@ func compactMemoryFixture(t *testing.T, content string, empty bool) *sql.DB {
 	if err := compactMemoryIDs(path); err != nil {
 		t.Fatal(err)
 	}
-	db, err = bundledplugin.OpenDatabase(path, false)
+	db, err := bundledplugin.OpenDatabase(path, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
+	return db
+}
+
+func newCompactMemoryDatabase(t *testing.T, path string) *sql.DB {
+	t.Helper()
+	db, err := bundledplugin.OpenDatabase(path, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(schema); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
 	return db
 }
 
