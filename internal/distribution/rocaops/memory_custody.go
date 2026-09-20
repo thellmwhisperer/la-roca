@@ -505,14 +505,11 @@ func memorySnapshotPath(directory, source string, state migrationledger.Snapshot
 		fmt.Sprintf(".%s-schema%d-index%d.snapshot.db", name, state.SchemaVersion, state.IndexVersion))
 }
 
-// ensureMemorySnapshot publishes the frozen copy the migration reads from
-// without re-VACUUMing when an interrupted run already left a faithful one
-// (issue #455's resume cost). An existing snapshot is kept only when it passes
-// integrity_check and a fresh read of the live source still digests to the same
-// identities: a stale copy would silently drop everything ingested since it was
-// frozen, so drift re-freezes rather than skipping. The returned rows are the
-// snapshot identities either way, and reused reports whether the existing file
-// was kept.
+// ensureMemorySnapshot reuses the current generation's frozen copy when it
+// passes integrity_check, without comparing it to the live source. A resume
+// imports and verifies that frozen population even if the source has changed.
+// Missing or damaged snapshots are re-frozen; reused reports whether the
+// existing file was kept.
 func ensureMemorySnapshot(ctx context.Context, source memorySource, snapshot string,
 	options MemoryCustodyOptions) ([]memoryRow, bool, error) {
 	refreeze := func(why string) ([]memoryRow, bool, error) {
@@ -541,18 +538,10 @@ func ensureMemorySnapshot(ctx context.Context, source memorySource, snapshot str
 	}
 	existing, err := readMemoryRows(ctx, source.name, snapshot)
 	if err != nil {
-		return refreeze(fmt.Sprintf("the existing %s memory snapshot is unreadable; re-freezing", source.name))
-	}
-	live, err := readMemoryRows(ctx, source.name, source.path)
-	if err != nil {
-		return nil, false, fmt.Errorf("read the live %s memories to prove its snapshot current: %w", source.name, err)
-	}
-	if !sameMemoryIdentities(existing, live) {
-		return refreeze(fmt.Sprintf("the live %s memories moved since the snapshot was frozen; re-freezing",
-			source.name))
+		return nil, false, err
 	}
 	if err := options.progress(MemoryCustodyProgress{Stage: StageSnapshot, Source: source.name,
-		Detail: fmt.Sprintf("reusing the existing %s memory snapshot: it passes integrity_check and matches the live source",
+		Detail: fmt.Sprintf("reusing the existing %s memory snapshot: it passes integrity_check",
 			source.name)}); err != nil {
 		return nil, false, err
 	}
@@ -576,25 +565,6 @@ func snapshotIntegrity(ctx context.Context, source, path string) error {
 		return fmt.Errorf("integrity_check = %q", integrity)
 	}
 	return nil
-}
-
-// sameMemoryIdentities reports whether two reads of one memory source hold the
-// same population: identical id sets whose canonical digests agree. A digest
-// covers every carried column, so matching digests mean matching content.
-func sameMemoryIdentities(left, right []memoryRow) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	digests := make(map[int64]string, len(left))
-	for _, row := range left {
-		digests[row.id] = row.digest
-	}
-	for _, row := range right {
-		if digest, found := digests[row.id]; !found || digest != row.digest {
-			return false
-		}
-	}
-	return true
 }
 
 // snapshotMemories freezes one source onto its registered generation path by way
