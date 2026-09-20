@@ -173,9 +173,17 @@ func serveFakeResidentSession(in io.Reader, out io.Writer) {
 // -- 2 HELPER · Process observation and cleanup --
 func ResidentPS(t *testing.T, hint string) string {
 	t.Helper()
-	output, err := exec.Command("ps", "-ax", "-o", "pid=,args=").Output()
+	output, err := ResidentPSHint(hint)
 	if err != nil {
 		t.Fatalf("ps: %v", err)
+	}
+	return output
+}
+
+func ResidentPSHint(hint string) (string, error) {
+	output, err := exec.Command("ps", "-ax", "-o", "pid=,args=").Output()
+	if err != nil {
+		return "", err
 	}
 	var lines []string
 	for _, line := range strings.Split(string(output), "\n") {
@@ -183,7 +191,7 @@ func ResidentPS(t *testing.T, hint string) string {
 			lines = append(lines, strings.TrimSpace(line))
 		}
 	}
-	return strings.Join(lines, "\n")
+	return strings.Join(lines, "\n"), nil
 }
 
 func CountResidentLines(psOutput string) int {

@@ -1,0 +1,67 @@
+{
+  "schema": 1,
+  "artifacts": [
+    {
+      "kind": "prompt",
+      "path": "/synthetic/e2e-federation/.roca/prompt.md",
+      "installed_version": "f4eef74",
+      "available_version": "f4eef74",
+      "system_sha256": "09887fcc72d7fc6616c53b02690350d86dad74cf095591d419fda11364aaca9e",
+      "format": "zoned-v1"
+    },
+    {
+      "kind": "skill",
+      "runtime": "claude",
+      "path": "/synthetic/e2e-federation/.claude/skills/roca-operations/SKILL.md",
+      "installed_version": "f4eef74",
+      "available_version": "f4eef74",
+      "system_sha256": "a46e0e33dd04d37baa0e96cf356f70163dfa5de4866a563b5f797159a14a4138",
+      "format": "zoned-v1"
+    },
+    {
+      "kind": "skill",
+      "runtime": "claude",
+      "path": "/synthetic/e2e-federation/.claude/skills/roca-vector/SKILL.md",
+      "installed_version": "f4eef74",
+      "available_version": "f4eef74",
+      "system_sha256": "c73d01eef12bdb8b6d4484540ba6b1bba23c1c9555009dde12fe54bd3d9dd4d0",
+      "format": "zoned-v1"
+    },
+    {
+      "kind": "skill",
+      "runtime": "claude",
+      "path": "/synthetic/e2e-federation/.claude/skills/roca/SKILL.md",
+      "installed_version": "f4eef74",
+      "available_version": "f4eef74",
+      "system_sha256": "8030611e17f8ced07fb9f36759160ca9233d9955f742ef8d8ac167c48836f8af",
+      "format": "zoned-v1"
+    },
+    {
+      "kind": "skill",
+      "runtime": "codex",
+      "path": "/synthetic/e2e-federation/.codex/skills/roca-operations/SKILL.md",
+      "installed_version": "f4eef74",
+      "available_version": "f4eef74",
+      "system_sha256": "a46e0e33dd04d37baa0e96cf356f70163dfa5de4866a563b5f797159a14a4138",
+      "format": "zoned-v1"
+    },
+    {
+      "kind": "skill",
+      "runtime": "codex",
+      "path": "/synthetic/e2e-federation/.codex/skills/roca-vector/SKILL.md",
+      "installed_version": "f4eef74",
+      "available_version": "f4eef74",
+      "system_sha256": "c73d01eef12bdb8b6d4484540ba6b1bba23c1c9555009dde12fe54bd3d9dd4d0",
+      "format": "zoned-v1"
+    },
+    {
+      "kind": "skill",
+      "runtime": "codex",
+      "path": "/synthetic/e2e-federation/.codex/skills/roca/SKILL.md",
+      "installed_version": "f4eef74",
+      "available_version": "f4eef74",
+      "system_sha256": "8030611e17f8ced07fb9f36759160ca9233d9955f742ef8d8ac167c48836f8af",
+      "format": "zoned-v1"
+    }
+  ]
+}

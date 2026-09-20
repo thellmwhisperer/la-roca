@@ -653,6 +653,83 @@ func TestApplySchemaCollapsesThinkingCopiesThatOnlyDifferByPosition(t *testing.T
 	}
 }
 
+func TestExactDedupReconcilesThinkingIdentityBeforeSessionRemap(t *testing.T) {
+	for _, exchange := range []string{"1", "NULL"} {
+		t.Run(exchange, func(t *testing.T) {
+			path := prepareCorpusUpgrade(t,
+				`DROP INDEX idx_sessions_exact_payload`,
+				`CREATE INDEX idx_sessions_exact_payload ON sessions(source_agent, title)`,
+				`DROP INDEX idx_thinking_blocks_identity`,
+				`INSERT INTO sessions(session_id, source_agent, title) VALUES
+				 ('a', 'claude', 'same'), ('b', 'claude', 'same'), ('c', 'claude', 'same')`,
+				fmt.Sprintf(`INSERT INTO thinking_blocks(id, session_id, exchange_number, position_in_session, full_text) VALUES
+				 (1, 'a', %[1]s, 1.0, 'shared thought'),
+				 (2, 'b', %[1]s, 0.5, 'shared thought'),
+				 (3, 'c', %[1]s, 0.25, 'shared thought'),
+				 (4, 'b', %[1]s, 0.75, 'distinct thought')`, exchange),
+			)
+			db := reapplySchemaAndReopen(t, path)
+			defer db.Close()
+			assertCountQuery(t, db, `SELECT COUNT(*) FROM thinking_blocks`, 4)
+
+			ctx := context.Background()
+			before, err := exactdedup.Inspect(ctx, path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, table := range before.Tables {
+				if table.Table == "thinking_blocks" && (table.Losers != 2 || table.After != 2) {
+					t.Fatalf("thinking remap preview = %+v", table)
+				}
+			}
+			backup := filepath.Join(t.TempDir(), "before.db")
+			if _, err := exactdedup.Backup(ctx, path, backup); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := exactdedup.Apply(ctx, path, before.ManifestSHA256, "thinking-remap", backup); err != nil {
+				t.Fatal(err)
+			}
+			assertCountQuery(t, db, `SELECT COUNT(*) FROM sessions`, 1)
+			assertCountQuery(t, db, `SELECT COUNT(*) FROM thinking_blocks`, 2)
+			assertCountQuery(t, db, `SELECT COUNT(*) FROM thinking_blocks
+				WHERE id = 3 AND session_id = 'a' AND position_in_session = 0.25 AND full_text = 'shared thought'`, 1)
+			assertCountQuery(t, db, `SELECT COUNT(*) FROM thinking_blocks
+				WHERE id = 4 AND session_id = 'a' AND full_text = 'distinct thought'`, 1)
+			assertCountQuery(t, db, `SELECT COUNT(*) FROM thinking_block_id_remaps
+				WHERE old_id IN (1, 2) AND canonical_id = 3`, 2)
+			assertCountQuery(t, db, `SELECT COUNT(*) FROM thinking_fts WHERE thinking_fts MATCH 'thought'`, 2)
+			if _, err := db.Exec(fmt.Sprintf(`INSERT INTO thinking_blocks
+				(session_id, exchange_number, position_in_session, full_text)
+				VALUES ('a', %s, 0.125, 'shared thought')`, exchange)); err == nil {
+				t.Fatal("thinking identity guard accepted a duplicate after session remapping")
+			}
+			if _, err := exactdedup.Apply(ctx, path, before.ManifestSHA256, "stale-remap", backup); err == nil {
+				t.Fatal("apply accepted a stale manifest after session remapping")
+			}
+			if _, err := db.Exec(fmt.Sprintf(`DROP INDEX idx_sessions_exact_payload;
+				INSERT INTO sessions(session_id, source_agent, project, started_at, ended_at,
+				 duration_minutes, title, metadata, source_surface, machine)
+				SELECT 'd', source_agent, project, started_at, ended_at,
+				 duration_minutes, title, metadata, source_surface, machine FROM sessions WHERE session_id = 'a';
+				INSERT INTO thinking_blocks(id, session_id, exchange_number, position_in_session, full_text)
+				VALUES (5, 'd', %s, 0.125, 'shared thought')`, exchange)); err != nil {
+				t.Fatal(err)
+			}
+			nextBackup := filepath.Join(t.TempDir(), "next.db")
+			next, err := exactdedup.Backup(ctx, path, nextBackup)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := exactdedup.Apply(ctx, path, next.ManifestSHA256, "next-remap", nextBackup); err != nil {
+				t.Fatal(err)
+			}
+			assertCountQuery(t, db, `SELECT COUNT(*) FROM thinking_block_id_remaps
+				WHERE old_id IN (1, 2, 3) AND canonical_id = 5`, 3)
+			assertCountQuery(t, db, `SELECT COUNT(*) FROM thinking_blocks WHERE id = 5 AND session_id = 'a'`, 1)
+		})
+	}
+}
+
 func prepareCorpusUpgrade(t *testing.T, statements ...string) string {
 	return prepareCorpusUpgradeBeforeBump(t, nil, statements...)
 }

@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "name": "roca-corpus",
+  "source": "bundled:roca",
+  "version": "f4eef74",
+  "checksum": "13bb866ff8fdd0aa327691e3aba65e7274ed952e6e2848ad72ebdd0f56cc1486",
+  "kind": "data",
+  "risk": "data-only",
+  "custody": true,
+  "database": "roca-corpus.db",
+  "files": {
+    "plugin.json": "8c2ef4796cba3b0ca3bcc3d7e72e01864999be6c02ecdb6116b781c6ac52a21f",
+    "roca-corpus.db": "0a487a6ce02ada94b7a2349f0e4d12242fde80e8da08e0ae050def4914c0703a"
+  }
+}

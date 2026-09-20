@@ -1,0 +1,2 @@
+8c2ef4796cba3b0ca3bcc3d7e72e01864999be6c02ecdb6116b781c6ac52a21f  plugin.json
+0a487a6ce02ada94b7a2349f0e4d12242fde80e8da08e0ae050def4914c0703a  roca-corpus.db
