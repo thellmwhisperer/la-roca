@@ -534,16 +534,32 @@ cleanup.
 
 [`roca migrate`](../internal/distribution/cli/migrate.go) resumes DATA-2 memory custody, DATA-3 corpus custody and DATA-4
 legacy custody, then reports `migration: verified` (`{"verified":true}` with
-`--json`). It prepares the bundled destinations and creates frozen snapshots
-when memory custody is unfinished. Once memory custody verifies, subsequent
-stages reuse those snapshots and committed batch receipts; a missing verified
-snapshot is an error rather than a reason to copy the live source again.
-An interrupted run can be invoked again. When all destination ledgers are
+`--json`). It prepares the bundled destinations and resumes from committed
+batch receipts. An interrupted run can be invoked again; the
+[ops snapshot contract](plugins.md#the-bundled-roca-ops-plugin) defines when
+frozen sources are reused or replaced. When all destination ledgers are
 verified, another run returns without opening frozen snapshots, hashing,
 checking integrity or materializing rows. Backups remain in place.
 Read-only mode refuses migration.
 
-Run it before selecting `cutover` in `[layout].serving`.
+While work remains, stage lines identify DATA-2 snapshot preparation, memory
+import, FTS rebuild and verification, followed by DATA-3 corpus and DATA-4
+legacy custody when needed. Each committed DATA-2 import batch prints
+`stage=data2-import source=... batch=N/T rows=R`. The batch number and total
+cover the pending work for that source in this invocation; `rows` is the batch
+size. Snapshot lines explain reuse or replacement. Text mode writes progress
+to stdout; `--json` writes progress to stderr and leaves stdout as the single
+final verification object.
+
+`roca migrate --status` reads the bundled ops, corpus and cron custody ledgers
+without migrating, creating missing databases or taking the migration lock.
+It works in read-only mode and alongside a running migration. It reports plugin
+schema/index versions and each named migration's state, destination table,
+membership count and committed batch count. `roca migrate --status --json`
+returns these under `ledgers`, with `present: false` for an absent ledger;
+status reports recorded progress rather than performing verification.
+
+Run `roca migrate` before selecting `cutover` in `[layout].serving`.
 `shadow-equal` has finished its validation purpose and is retired: an existing
 marker returns a serving-choice error. Choose `legacy-serving` to retain legacy
 reads, or run `roca migrate` and select `cutover` to read the verified plugins.
