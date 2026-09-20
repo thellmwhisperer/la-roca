@@ -253,10 +253,12 @@ fail_gate() {
 }
 
 best_effort() { # best_effort <note> <command...>
-  local note=$1
+  local note=$1 out
   shift
-  if ! "$@" >/dev/null 2>&1; then
-    summary "warning: $note (continuing; the verdict stands)"
+  printf 'risk-gate: %s\n' "$note"
+  if ! out=$("$@" 2>&1); then
+    printf 'risk-gate: warning: %s failed: %s\n' "$note" "$(printf '%s' "$out" | head -2)"
+    summary "warning: $note failed: $(printf '%s' "$out" | head -2) (continuing; the verdict stands)"
   fi
 }
 
