@@ -63,7 +63,7 @@ var baseSpecs = []tableSpec{
 		identity: []string{"session_id", "exchange_number"}},
 	{name: "thinking_blocks", id: "id", remaps: "thinking_block_id_remaps", fts: "thinking_fts",
 		payload:  []string{"session_id", "exchange_number", "position_in_session", "depth", "caution_ratio", "word_count", "is_after_compaction", "full_text"},
-		identity: []string{"session_id", "exchange_number", "position_in_session"}},
+		identity: []string{"session_id", "exchange_number", "full_text"}},
 }
 
 func Inspect(ctx context.Context, path string) (DatabaseReport, error) {

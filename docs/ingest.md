@@ -374,14 +374,15 @@ payload) is the same overlap: it does not abort the source. Child-table counts
 report only exchanges, thinking blocks, and tool uses actually inserted; an
 overlapping child row that does not land is therefore absent from its inserted
 count rather than reported by a separate overlap counter. Duplicate source
-exchange numbers and thinking positions are disambiguated deterministically so
-each distinct source row can land. `source_surface` is `Legacy store`, while
-`source_agent` stays what the source stored. A tool row whose source exchange
-number is NULL lands as a session-level tool use because its ownership is
-unknown. A row whose present coordinate is unreadable, or names no exchange in
-that session, is discarded when the file is read. That count is source
-projection, not write-time overlap, and it is unchanged when the session itself
-is later skipped as already present.
+exchange numbers are disambiguated deterministically so each distinct exchange
+can land. Thinking rows with the same session, exchange, and exact text are one
+block even when their source positions differ. `source_surface` is `Legacy
+store`, while `source_agent` stays what the source stored. A tool row whose
+source exchange number is NULL lands as a session-level tool use because its
+ownership is unknown. A row whose present coordinate is unreadable, or names no
+exchange in that session, is discarded when the file is read. That count is
+source projection, not write-time overlap, and it is unchanged when the session
+itself is later skipped as already present.
 
 Memories land in ops and keep the layer, status, `created_at`, source
 coordinates, and supersession relationship the source recorded: a handoff stays
@@ -601,11 +602,16 @@ price the turn, Hermes measures a whole session rather than a turn, the Claude
 web export and cloud Codex companion state none of it, and the ChatGPT
 conversation files name their model and provider without stating usage.
 
-Thinking text stays in `thinking_blocks`, keyed to its session and exchange; it
-is not duplicated onto `exchanges`. Codex reasoning now lands there on the
-exchange that produced it, alongside the other sources' thinking blocks. When a
-historical match has no exchange number, the schema has no key for replayed
-thinking blocks, so they are left out and each one is reported as a discard.
+Thinking text stays in `thinking_blocks`; its identity is the session, exchange,
+and exact text, and it is not duplicated onto `exchanges`.
+`position_in_session` remains the exchange's normalized place in the session,
+but is not identity: incremental ingest refreshes it from the distinct exchange
+numbers when an open session grows instead of inserting another row. Corpus
+schema adoption collapses older copies with that identity and keeps the newest
+stored position. Codex reasoning lands there on the exchange that produced it,
+alongside the other sources' thinking blocks. When a historical match has no
+exchange number, the schema has no key for replayed thinking blocks, so they are
+left out and each one is reported as a discard.
 
 The fingerprint of every versioned source includes its parser revision. When a
 release teaches a parser to read more of a source, the next plain `roca ingest`

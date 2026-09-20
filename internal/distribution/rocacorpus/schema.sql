@@ -93,6 +93,15 @@ CREATE INDEX IF NOT EXISTS idx_memories_provenance ON memories(provenance);
 CREATE INDEX IF NOT EXISTS idx_exchanges_session ON exchanges(session_id);
 CREATE INDEX IF NOT EXISTS idx_tool_uses_session ON tool_uses(session_id);
 CREATE INDEX IF NOT EXISTS idx_thinking_session ON thinking_blocks(session_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_thinking_blocks_identity
+  ON thinking_blocks(
+    session_id,
+    IFNULL(exchange_number, -1),
+    roca_payload_hash(
+      typeof(full_text),
+      CASE WHEN typeof(full_text) = 'text' THEN CAST(full_text AS BLOB) ELSE full_text END
+    )
+  );
 CREATE INDEX IF NOT EXISTS idx_exchanges_identity
   ON exchanges(session_id, exchange_number);
 CREATE INDEX IF NOT EXISTS idx_ingest_state_project ON ingest_file_state(project);

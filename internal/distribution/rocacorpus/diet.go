@@ -554,6 +554,7 @@ var storageLawPrefix = []string{
 	`DROP TABLE IF EXISTS thinking_block_versions_fts`,
 	`DROP INDEX IF EXISTS idx_exchanges_exact_payload`,
 	`DROP INDEX IF EXISTS idx_thinking_blocks_exact_payload`,
+	`DROP INDEX IF EXISTS idx_thinking_blocks_identity`,
 	`DROP INDEX IF EXISTS idx_sessions_exact_payload`,
 	`DROP INDEX IF EXISTS idx_memories_exact_payload`,
 	`DROP INDEX IF EXISTS custody_memberships_digest`,

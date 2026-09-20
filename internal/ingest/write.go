@@ -400,6 +400,11 @@ func (w *writer) sessionWithPolicy(ctx context.Context, session parsers.Session,
 		counts.ThinkingBlocks += thinking
 		counts.ToolUses += tools
 	}
+	if session.Incremental {
+		if err := w.refreshThinkingPositions(ctx, session.ID); err != nil {
+			return counts, err
+		}
+	}
 
 	// A compact summary hangs off the session and off no exchange, so it is the
 	// one thinking block with a natural key of its own.
@@ -1570,6 +1575,22 @@ func (w *writer) insertThinking(ctx context.Context, sessionID string, number, p
 	block parsers.Thinking) (bool, error) {
 	depth, compacted := nullIfEmpty(block.Depth), boolToInt(block.IsAfterCompaction)
 	caution := nullFloat(block.CautionRatio)
+	updated, err := w.tx.ExecContext(ctx, `
+		UPDATE thinking_blocks
+		SET position_in_session = ?
+		WHERE session_id IS ? AND exchange_number IS ? AND full_text IS ?
+		  AND position_in_session IS NOT ?`,
+		position, sessionID, number, block.Text, position)
+	if err != nil {
+		return false, err
+	}
+	changed, err := updated.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if changed != 0 {
+		return false, nil
+	}
 	result, err := w.tx.ExecContext(ctx, `
 		INSERT INTO thinking_blocks
 		  (session_id, exchange_number, position_in_session, depth, caution_ratio,
@@ -1577,12 +1598,10 @@ func (w *writer) insertThinking(ctx context.Context, sessionID string, number, p
 		SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
 		WHERE NOT EXISTS (
 		  SELECT 1 FROM thinking_blocks
-		  WHERE session_id IS ? AND exchange_number IS ? AND position_in_session IS ?
-		    AND depth IS ? AND caution_ratio IS ? AND word_count IS ?
-		    AND is_after_compaction IS ? AND full_text IS ?
+		  WHERE session_id IS ? AND exchange_number IS ? AND full_text IS ?
 		)`, sessionID, number, position, depth, caution, block.WordCount, compacted, block.Text,
 		nullIfEmpty(w.machine),
-		sessionID, number, position, depth, caution, block.WordCount, compacted, block.Text)
+		sessionID, number, block.Text)
 	if err != nil {
 		if isExactPayloadConflict(err) || isUniqueConstraint(err) {
 			return false, nil
@@ -1591,6 +1610,21 @@ func (w *writer) insertThinking(ctx context.Context, sessionID string, number, p
 	}
 	affected, err := result.RowsAffected()
 	return affected != 0, err
+}
+
+func (w *writer) refreshThinkingPositions(ctx context.Context, sessionID string) error {
+	_, err := w.tx.ExecContext(ctx, `
+		UPDATE thinking_blocks
+		SET position_in_session = CAST(exchange_number AS REAL) /
+			(SELECT COUNT(DISTINCT exchange_number) FROM exchanges
+			 WHERE session_id = ? AND exchange_number IS NOT NULL)
+		WHERE session_id = ? AND exchange_number IS NOT NULL
+		  AND position_in_session IS NOT (
+			CAST(exchange_number AS REAL) /
+			(SELECT COUNT(DISTINCT exchange_number) FROM exchanges
+			 WHERE session_id = ? AND exchange_number IS NOT NULL)
+		  )`, sessionID, sessionID, sessionID)
+	return err
 }
 
 // sessionThinking writes a block that hangs off the session rather than an exchange.
