@@ -7,7 +7,7 @@ name: pr-gate
 # passes. The referee script is read from the base branch, so the PR under
 # judgement cannot soften its own gate.
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, edited, synchronize, labeled, unlabeled, ready_for_review]
 
 permissions:
@@ -31,20 +31,11 @@ jobs:
           # the PR could have edited.
           ref: ${{ github.base_ref }}
 
-      # Bootstrap only: before this workflow lands on the base branch there is
-      # no referee there to run, so the first gate PR borrows its own copy.
-      # After landing, the base copy always exists and wins.
-      - name: Borrow the referee from the PR until the gate is on the base
-        run: |
-          if [ ! -f scripts/pr-gate.sh ]; then
-            git fetch --depth=1 origin "${{ github.event.pull_request.head.sha }}"
-            git checkout FETCH_HEAD -- scripts/pr-gate.sh
-          fi
-
       - name: Judge the declared risk
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_GATE_ACTION: ${{ github.event.action }}
           # Fork heads (or deleted head repositories) get the verdict without
           # the metadata writes: the workflow token is read-only there.
           PR_GATE_FORK: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
