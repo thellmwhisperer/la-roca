@@ -705,3 +705,23 @@ func copyTree(dst, src string) error {
 		return closeErr
 	})
 }
+
+func (m *world) iRunInstalledRocaVersionThroughPATH() error {
+	return m.record("roca version through PATH", exec.Command("sh", "-c",
+		`PATH="$1" exec roca version`, "sh", filepath.Dir(m.installed)))
+}
+
+func (m *world) iStoreDiscoverySupersedingHistoricalID(id string) error {
+	return m.callTool("roca_store", map[string]any{
+		"layer": "discovery", "project": "la-roca-e2e",
+		"content": "MCP historical id replacement", "supersedes": id,
+	})
+}
+
+func (m *world) theMCPStoredIDIsJSSafe() error {
+	id, err := jsonInteger(m.plug.last.Meta["id"])
+	if err != nil || id < 1 || id >= 1<<53 || len(strconv.FormatInt(id, 10)) > 12 {
+		return fmt.Errorf("MCP stored id = %#v, want a positive JS-safe integer of at most 12 digits: %v", m.plug.last.Meta["id"], err)
+	}
+	return nil
+}

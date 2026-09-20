@@ -71,6 +71,21 @@ Feature: Frozen federation installed binary
     When I exec the SQL "SELECT id FROM plugin_roca_ops.memories WHERE id = '1152921504606846980'" as json
     Then the command exits with code 0
     And the JSON output field "rows[0].id" is a JS-safe integer of at most 12 digits
+    When I call the exec tool with the SQL "SELECT id, legacy_id FROM plugin_roca_ops.memories WHERE id = '1152921504606846980'"
+    Then the response is not an error
+    And the readable MCP response contains "1152921504606846980"
+    When I store a discovery over MCP superseding historical id "1152921504606846980"
+    Then the response is not an error
+    And the MCP stored id is a JS-safe integer of at most 12 digits
+    When I exec the SQL "SELECT COUNT(*) AS n FROM plugin_roca_ops.memories replacement JOIN plugin_roca_ops.memories original ON replacement.supersedes = original.id WHERE replacement.content = 'MCP historical id replacement' AND original.legacy_id = 1152921504606846980" as json
+    Then the command exits with code 0
+    And the JSON output has "rows[0].n" equal to "1"
+
+  Scenario: 4269 installed command on PATH
+    Given a frozen synthetic federation lab
+    When I run the installed roca version through PATH
+    Then the command exits with code 0
+    And the output contains "roca"
 
   Scenario: 324 exact Codex session id
     Given a frozen pr324 federation lab

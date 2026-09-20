@@ -162,6 +162,7 @@ func registerSteps(ctx *godog.ScenarioContext, binary string) {
 	ctx.Given(`^a frozen pr324 federation lab$`, m.aFrozenPR324FederationLab)
 
 	ctx.When(`^I run "([^"]*)"$`, m.iRun)
+	ctx.When(`^I run the installed roca version through PATH$`, m.iRunInstalledRocaVersionThroughPATH)
 	ctx.When(`^I exec the SQL "([^"]*)"$`, m.iExecSQL)
 	ctx.When(`^I exec the SQL "([^"]*)" with max-chars (\d+)$`, m.iExecSQLMaxChars)
 	ctx.When(`^I exec the SQL "([^"]*)" with max-chars (\d+) as json$`, m.iExecSQLMaxCharsJSON)
@@ -172,6 +173,8 @@ func registerSteps(ctx *godog.ScenarioContext, binary string) {
 	ctx.When(`^I run the claude authorship hook$`, m.iRunClaudeAuthorshipHook)
 	ctx.When(`^I start three mcp serve processes$`, m.iStartThreeMCPServeProcesses)
 	ctx.When(`^I call the health tool over stdio$`, m.iCallHealthOverStdio)
+	ctx.When(`^I store a discovery over MCP superseding historical id "([^"]*)"$`, m.iStoreDiscoverySupersedingHistoricalID)
+	ctx.Then(`^the MCP stored id is a JS-safe integer of at most 12 digits$`, m.theMCPStoredIDIsJSSafe)
 	ctx.When(`^I run the e2e-smoke operator path$`, m.iRunTheE2ESmokeOperatorPath)
 	ctx.When(`^I run "([^"]*)" a second time$`, m.iRun)
 	ctx.When(`^I run "roca exec" with the SQL it returned, in JSON format$`, m.iRunTheSQLItReturned)
