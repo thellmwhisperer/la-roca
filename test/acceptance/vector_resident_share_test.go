@@ -120,28 +120,70 @@ type residentEvidence struct {
 	transcript string
 }
 
+func countSharedResidents(binary string) (int, string, error) {
+	if runtime.GOOS == "windows" {
+		return 1, "windows skip", nil
+	}
+	root, err := acceptanceRoot()
+	if err != nil {
+		return 0, "", err
+	}
+	scratch, err := acceptanceTempDir("roca-e2e-315-")
+	if err != nil {
+		return 0, "", err
+	}
+	defer os.RemoveAll(scratch)
+	fake := filepath.Join(scratch, "roca-vector")
+	build := exec.Command("go", "build", "-o", fake, "./testdata/fake-vector-resident")
+	build.Dir = filepath.Join(root, "test", "acceptance")
+	if output, err := build.CombinedOutput(); err != nil {
+		return 0, "", fmt.Errorf("build fake vector resident: %w\n%s", err, output)
+	}
+	home := filepath.Join(scratch, "home")
+	if err := os.MkdirAll(filepath.Join(home, "tmp"), 0o700); err != nil {
+		return 0, "", err
+	}
+	evidence, cleanup, err := startThreeSharedServes(&world{binary: binary, home: home}, binary, fake, time.Second)
+	if err != nil {
+		return 0, "", err
+	}
+	defer cleanup()
+	return evidence.count, evidence.ps, nil
+}
+
 func threeServeResidentPS(t *testing.T, binary, fake string, idle time.Duration) residentEvidence {
 	t.Helper()
 	m := aWorldIn(t, "vector-share")
 	m.binary = binary
-	if err := m.runInit(); err != nil {
-		t.Fatalf("init: %v\n%s", err, m.last.stderr)
-	}
-	if m.last.code != 0 {
-		t.Fatalf("init: code %d\n%s", m.last.code, m.last.stderr)
-	}
-	if err := enableVectorFeature(m.home); err != nil {
-		t.Fatal(err)
-	}
-	socketDir, err := os.MkdirTemp("/tmp", "rv-acc-")
+	evidence, cleanup, err := startThreeSharedServes(m, binary, fake, idle)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
+	t.Cleanup(cleanup)
+	return evidence
+}
+
+func startThreeSharedServes(m *world, binary, fake string, idle time.Duration) (residentEvidence, func(), error) {
+	if err := m.runInit(); err != nil {
+		return residentEvidence{}, func() {}, fmt.Errorf("init: %w\n%s", err, m.last.stderr)
+	}
+	if m.last.code != 0 {
+		return residentEvidence{}, func() {}, fmt.Errorf("init: code %d\n%s", m.last.code, m.last.stderr)
+	}
+	if err := enableVectorFeature(m.home); err != nil {
+		return residentEvidence{}, func() {}, err
+	}
+	socketDir, err := os.MkdirTemp("/tmp", "rv-acc-")
+	if err != nil {
+		return residentEvidence{}, func() {}, err
+	}
 	socket := filepath.Join(socketDir, "resident.sock")
-	// Both residents need short socket paths, independent of t.TempDir's name.
 	databaseSocket := filepath.Join(socketDir, "db", "resident.sock")
-	t.Cleanup(func() {
+	if err := os.MkdirAll(filepath.Dir(databaseSocket), 0o700); err != nil {
+		_ = os.RemoveAll(socketDir)
+		return residentEvidence{}, func() {}, err
+	}
+	cleanupResident := func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 		raw, err := resident.Call(ctx, resident.Options{Socket: databaseSocket}, "status", nil)
@@ -156,7 +198,8 @@ func threeServeResidentPS(t *testing.T, binary, fake string, idle time.Duration)
 		testfixture.KillResidents(socket)
 		_ = os.Remove(socket)
 		_ = os.Remove(socket + ".lock")
-	})
+		_ = os.RemoveAll(socketDir)
+	}
 	env := append(m.environment(),
 		"ROCA_RESIDENT_SOCKET="+databaseSocket,
 		"ROCA_VECTOR_RESIDENT_BINARY="+fake,
@@ -165,6 +208,14 @@ func threeServeResidentPS(t *testing.T, binary, fake string, idle time.Duration)
 	)
 	sessions := make([]*mcp.ClientSession, 3)
 	serverPIDs := make([]int, 3)
+	cleanup := func() {
+		for _, session := range sessions {
+			if session != nil {
+				_ = session.Close()
+			}
+		}
+		cleanupResident()
+	}
 	for i := 0; i < 3; i++ {
 		command := exec.Command(binary, "mcp", "serve")
 		command.Env = env
@@ -172,20 +223,34 @@ func threeServeResidentPS(t *testing.T, binary, fake string, idle time.Duration)
 		client := mcp.NewClient(&mcp.Implementation{Name: "acceptance", Version: "1"}, nil)
 		session, err := client.Connect(context.Background(), &mcp.CommandTransport{Command: command}, nil)
 		if err != nil {
-			t.Fatalf("mcp serve %d: %v", i, err)
+			cleanup()
+			return residentEvidence{}, func() {}, fmt.Errorf("mcp serve %d: %w", i, err)
 		}
-		t.Cleanup(func() { _ = session.Close() })
 		sessions[i] = session
 		serverPIDs[i] = command.Process.Pid
 	}
 	time.Sleep(300 * time.Millisecond)
 	hint := m.home
-	psOutput := testfixture.ResidentPS(t, hint)
+	psOutput, err := testfixture.ResidentPSHint(hint)
+	if err != nil {
+		cleanup()
+		return residentEvidence{}, func() {}, err
+	}
 	if testfixture.CountResidentLines(psOutput) == 0 {
-		psOutput = testfixture.ResidentPS(t, socket)
+		psOutput, err = testfixture.ResidentPSHint(socket)
+		if err != nil {
+			cleanup()
+			return residentEvidence{}, func() {}, err
+		}
 		hint = socket
 	}
-	return residentEvidence{ps: psOutput, count: testfixture.CountResidentLines(psOutput), hint: hint, sessions: sessions, serverPIDs: serverPIDs}
+	return residentEvidence{
+		ps:         psOutput,
+		count:      testfixture.CountResidentLines(psOutput),
+		hint:       hint,
+		sessions:   sessions,
+		serverPIDs: serverPIDs,
+	}, cleanup, nil
 }
 
 func publishedRoca(t *testing.T) string {

@@ -1,20 +1,21 @@
 # Frozen federation end-to-end suite
 
 The suite runs **commands** against an **installed** `roca` binary. Unit tests
-do not satisfy it. The fixture is the content-addressed archive
-`testdata/e2e-federation/frozen.tar.gz` (digest in
+do not satisfy it. The fixture is the frozen sanitised home set
+`testdata/e2e-federation/frozen` (per-database digest in
 `testdata/e2e-federation/frozen.sha256`). The live operator home is never
 selected.
 
-The suite extracts that archive into a disposable HOME. It does not run `init`,
+The suite copies that fixture into a disposable HOME. It does not run `init`,
 `ingest`, or `store` to build the lab. Those verbs appear only as the command
 under test.
 
 The executable contract is [Aceptacion](e2e-federation-aceptacion.md). Its
 Gherkin companion is
 `features/distribution/e2e-federation.feature`. Hermetic scenarios run in
-`TestJourneyAcceptanceSuite`. Ready-index and published-upgrade scenarios are
-tagged `@provisioned` and run only by `TestFrozenFederationProvisionedJourney`.
+`TestJourneyAcceptanceSuite`. `make e2e-federation` runs that feature only,
+through `TestE2EFederationJourney`, including `@provisioned` ready-index and
+published-upgrade scenarios.
 
 ## Run
 
@@ -38,16 +39,16 @@ make e2e-federation \
   ROCA_E2E_VECTOR_MODEL=<embedding-model.gguf>
 ```
 
-That builds this tree's binary, copies it into `.local/bin` under a disposable
-HOME, extracts the frozen snapshots, and runs the hermetic
-`TestFrozenFederationInstalledBinary` plus the provisioned tests. Missing
-`ROCA_PUBLISHED_BIN` or `ROCA_E2E_VECTOR_MODEL` is a failure, never a skip.
+That builds this tree's binary, installs the candidate into
+`.tmp/e2e-federation-installed`, copies that installed binary into `.local/bin`
+under a disposable HOME, copies the frozen snapshots, and runs the Gherkin
+feature only. Missing `ROCA_PUBLISHED_BIN` or `ROCA_E2E_VECTOR_MODEL` is a
+failure, never a skip.
 
-`make check` includes the hermetic Go cases through `make accept` and the
-non-provisioned Gherkin cases through `TestJourneyAcceptanceSuite`. Those
-paths do not claim a ready vector index or a published upgrade. `make e2e-smoke`
-runs both the shorter branch operator path and the published-release update
-followed by branch init on a clean home.
+`make check` includes the non-provisioned Gherkin cases through
+`TestJourneyAcceptanceSuite`. Those paths do not claim a ready vector index or
+a published upgrade. `make e2e-smoke` runs both the shorter branch operator
+path and the published-release update followed by branch init on a clean home.
 
 Use `e2e-smoke` in place of `e2e-federation` in the command above for the
 shorter suite, or `e2e` to run both suites. The combined target uses the same
@@ -65,6 +66,7 @@ those pull request and issue bodies:
 - issue 315: three `roca mcp serve` processes share one vector resident
 - issue 317: unqualified `FROM memories` is refused with qualified candidates
 - issue 318: `roca handoff latest --limit 1` and `--all-projects`
+- issue 319: ops memory ids are short JSON numbers
 - issue 427: ops memory ids are short JSON numbers and legacy ids still resolve
 - issue 324: Codex source thread keeps its exact session id
 
@@ -79,7 +81,7 @@ published-release update and clean init smoke, and MCP `roca_health`.
 
 ## Fixture rule
 
-The bytes in `testdata/e2e-federation/frozen.tar.gz` are the lab. Rebuild them
+The databases under `testdata/e2e-federation/frozen` are the lab. Rebuild them
 with `scripts/freeze-e2e-federation.sh` only when the seeded rows are meant to
 change, then update `frozen.sha256` and the pinned ids in Aceptacion. Do not
 copy a live hub database into the tree.

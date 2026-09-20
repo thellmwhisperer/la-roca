@@ -164,6 +164,7 @@ func registerSteps(ctx *godog.ScenarioContext, binary string) {
 	ctx.When(`^I run "([^"]*)"$`, m.iRun)
 	ctx.When(`^I exec the SQL "([^"]*)"$`, m.iExecSQL)
 	ctx.When(`^I exec the SQL "([^"]*)" with max-chars (\d+)$`, m.iExecSQLMaxChars)
+	ctx.When(`^I exec the SQL "([^"]*)" with max-chars (\d+) as json$`, m.iExecSQLMaxCharsJSON)
 	ctx.When(`^I exec the SQL "([^"]*)" as json$`, m.iExecSQLJSON)
 	ctx.When(`^I store a pill with slug ([^ ]+) and content (.+)$`, m.iStorePill)
 	ctx.When(`^I vector-query "([^"]*)"$`, m.iVectorQuery)
@@ -191,6 +192,7 @@ func registerSteps(ctx *godog.ScenarioContext, binary string) {
 	ctx.Then(`^the output contains a digit run of at least (\d+) characters$`, m.outputDigitRunAtLeast)
 	ctx.Then(`^the JSON output field "([^"]*)" is the string "([^"]*)"$`, m.jsonFieldIsString)
 	ctx.Then(`^the JSON output field "([^"]*)" is a JS-safe integer of at most 12 digits$`, m.jsonFieldIsJSSafeInteger)
+	ctx.Then(`^the JSON output field "([^"]*)" has between (\d+) and (\d+) runes$`, m.jsonFieldRuneCountBetween)
 	ctx.Then(`^the frozen Codex identity has (\d+) sessions, (\d+) exact source session, (\d+) split siblings, (\d+) exchanges, (\d+) tools, (\d+) orphan tools, (\d+) failed tool, and (\d+) control session$`, func(sessions, exactSourceSession, splitSiblings, exchanges, tools, orphanTools, failedTools, controlSessions int) error {
 		return m.theFrozenCodexIdentityHas(sessions, exactSourceSession, splitSiblings, exchanges, tools, orphanTools, failedTools, controlSessions)
 	})

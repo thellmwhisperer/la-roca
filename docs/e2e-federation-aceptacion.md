@@ -1,8 +1,8 @@
 # Aceptacion
 
-Fixture: testdata/e2e-federation/frozen.tar.gz extracted into a disposable HOME.
+Fixture: testdata/e2e-federation/frozen copied into a disposable HOME.
 Digest: testdata/e2e-federation/frozen.sha256
-Binary: that HOME's .local/bin/roca.
+Binary: the installed candidate, then that HOME's .local/bin/roca.
 Live hub: never selected.
 
 ## 321
@@ -58,6 +58,11 @@ command: roca handoff latest --all-projects
 exit: 0
 stdout contains: harbor
 stdout contains: dock
+
+## 319
+command: roca exec SELECT id FROM plugin_roca_ops.memories WHERE id = '1152921504606846980' --json
+exit: 0
+rows[0].id: JS-safe integer of at most 12 digits
 
 ## 427
 command: roca exec SELECT id FROM plugin_roca_ops.memories WHERE id = '1152921504606846980' --json

@@ -4,41 +4,47 @@ package acceptance
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/cucumber/godog"
 )
 
-func TestFrozenFederationProvisioned(t *testing.T) {
+func TestE2EFederationJourney(t *testing.T) {
 	requireFrozenFederationPrerequisites(t)
+	requireInstalledCandidate(t)
 	guardLiveHub(t)
-	if err := verifyFrozenDigest(mustAcceptanceRoot(t)); err != nil {
+	root := mustAcceptanceRoot(t)
+	if err := verifyFrozenDigest(root); err != nil {
 		t.Fatal(err)
 	}
-	seeded := newFederationLab(t, "main")
-	t.Run("uso-de-la-roca-vector", func(t *testing.T) {
-		for _, c := range vectorUsoCases {
-			t.Run(c.id, func(t *testing.T) { runVectorUsage(t, seeded, c) })
-		}
-	})
-	t.Run("real-usage-vector-query", func(t *testing.T) { caseVectorQueryBudget(t, seeded) })
-	t.Run("real-usage-e2e-smoke", TestPublishedReleaseUpdateInitSmoke)
-}
-
-func TestFrozenFederationProvisionedJourney(t *testing.T) {
-	requireFrozenFederationPrerequisites(t)
-	features, err := loadCatalogFeatures("../../features")
+	raw, err := os.ReadFile(filepath.Join(root, "features", "distribution", "e2e-federation.feature"))
 	if err != nil {
-		t.Fatalf("prepare the features: %v", err)
+		t.Fatalf("prepare the federation feature: %v", err)
 	}
 	binary, err := rocaBinary()
 	if err != nil {
 		t.Fatalf("I cannot find the binary: %v", err)
 	}
-	runGodogTagged(t, features, "@provisioned", func(ctx *godog.ScenarioContext) {
+	runGodogTagged(t, []godog.Feature{{
+		Name:     "distribution/e2e-federation.feature",
+		Contents: raw,
+	}}, "@e2e-federation", func(ctx *godog.ScenarioContext) {
 		registerSteps(ctx, binary)
 	})
+}
+
+func requireInstalledCandidate(t *testing.T) {
+	t.Helper()
+	binary, err := rocaBinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	built := filepath.Join(mustAcceptanceRoot(t), "bin", "roca")
+	if filepath.Clean(binary) == filepath.Clean(built) {
+		t.Fatal("e2e-federation must run the installed candidate binary, not the just-built worktree binary")
+	}
 }
 
 func requireFrozenFederationPrerequisites(t *testing.T) {
