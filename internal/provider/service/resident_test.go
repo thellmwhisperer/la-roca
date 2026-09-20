@@ -12,6 +12,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
+	"github.com/thellmwhisperer/la-roca/internal/provider/query"
 )
 
 func TestResidentInitializationHonorsItsContext(t *testing.T) {
@@ -217,6 +218,17 @@ func TestKeywordSearchReadsExchangesFromTheResidentCorpus(t *testing.T) {
 		!strings.Contains(strings.ToLower(result.Hits[0].Snippet), "perennial corpus") {
 		t.Fatalf("corpus hit omitted the seeded text: %+v", result.Hits[0])
 	}
+	_, rows, _, _, warnings, err := svc.SearchByTerm(t.Context(),
+		query.Plan{Template: query.TemplateSearchByTerm, Term: "cobalt+atlas", Limit: 10},
+		"", 0, true, PluginRoute{Databases: svc.resident})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warnings) != 0 || len(rows) != 1 || rows[0]["database"] != "plugin:roca-corpus" ||
+		rows[0]["source"] != "human" || rows[0]["text"] != "where is the cobalt atlas" {
+		t.Fatalf("playground rescue rows = %+v, warnings = %v", rows, warnings)
+	}
+
 }
 
 // Read-only can never install the package it would be demanding, so an

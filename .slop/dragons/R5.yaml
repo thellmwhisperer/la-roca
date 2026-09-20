@@ -1,15 +1,15 @@
 schema: 1
 id: R5
-status: removed
+status: accepted
 category: adjacent_feature
-title: "S1 retained playground boundary residue"
+title: "S1 residual exports pending playground move"
 created_at: 2026-09-09
 incident:
   intent: "Correct what the cleanup wave added, dismantle nothing else."
-  what_was_built: "internal/provider/query/prompt.go still owns prompt/schema helpers after the answering implementation moved to the optional playground executable. Core retains CLI and MCP adapters and plugin installation metadata."
-  justifying_sentence: "Accepted for the separate S1 boundary completion requested by issue #385. The existing S1 removal forbids stay enforced. Do not move answering-model inference back into core or broaden this reader correction into a provider redesign."
-  source: "https://github.com/thellmwhisperer/la-roca/issues/450, residue R5; issue #385"
-  cost: "The retained prompt file is about 500 lines; byte and timing costs of the remaining boundary are not measured."
+  what_was_built: "Playground still imports SQLSystemPromptWithInventory, SQLUserPrompt, IsRefusal, DetectMissingReferent, SubstringLikeRejection, RenderSQLFTSAny and TemplateSearchByTerm, and calls the embedded core Service.SearchByTerm. Their implementations and required helpers remain in core."
+  justifying_sentence: "Accepted pending the playground move. Preserve verified external consumers in this PR; remove only dead orphans. No playground repository changes or answering-model inference in core. R5 cannot be retired until those consumers and implementations move together."
+  source: "https://github.com/thellmwhisperer/la-roca/issues/450; playground imports verified at https://github.com/thellmwhisperer/roca-playground/tree/9c755011879186441c814ba58c1e02d9052f1861/internal/service"
+  cost: "Compatibility retains implementations in five source files: query/prompt.go, query/refusal.go, query/referent.go, query/fts.go and service/lexical.go. Runtime bytes and timing are not measured."
 rule: "Schema types, descriptions and the SQL gate stay in core. Prompt builders, refusal and referent detection, and the lexical rescue belong to the optional playground plugin. Product retrieval uses Service.Search."
 forbid:
   paths:
@@ -17,6 +17,8 @@ forbid:
     - "internal/provider/query/referent.go"
     - "internal/provider/service/lexical.go"
   symbols:
+    - "SQLSystemPromptWithInventory"
+    - "RenderSQLFTSAny"
     - "SQLSystemPrompt"
     - "SQLUserPrompt"
     - "IsRefusal"

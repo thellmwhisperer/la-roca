@@ -1,7 +1,7 @@
-// Package query supplies schema types, catalog descriptions, input checks, and
-// lexical utilities shared by core search and the optional playground plugin.
-// Prompt builders, refusal detection, and model rescue belong to that plugin;
-// core hybrid search performs no answering-model inference.
+// Package query supplies schema prompts, input checks, and lexical utilities
+// shared by core search and the optional playground plugin. Provider execution,
+// SQL repair, and interpretation belong to that plugin; core hybrid search
+// performs no answering-model inference.
 package query
 
 import (
