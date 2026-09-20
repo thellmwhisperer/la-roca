@@ -81,12 +81,15 @@ root = "~/.roca-sources/mini"
 
 The root is a HOME-shaped tree (`.claude/`, `.codex/`, `.pi/`, and the rest).
 How the tree arrives (rsync, a shared disk) is the operator's job; ingest only
-reads it. Every session, exchange, thinking block, and tool call from that
-root is stamped `machine = "mini"`. The local HOME uses this machine's
-hostname; on upgrade, existing corpus rows without a machine label receive that
-hostname too. The same project path on two machines stays distinguishable, and
-removing the `[[sources.remote]]` entry stops reading that root without deleting
-rows already written.
+reads it. Remote roots contribute conversations only: memories, memtrace,
+legacy stores, and other operational files stay on the machine that owns them.
+Every session, exchange, thinking block, and tool call from that root is
+stamped `machine = "mini"`. The local HOME uses this machine's hostname; on
+upgrade, existing corpus rows without a machine label receive that hostname
+without rewriting the lexical index, and local fingerprints and harvest
+cursors gain the machine tag without being re-parsed. The same project path on
+two machines stays distinguishable, and removing the `[[sources.remote]]` entry
+stops reading that root without deleting rows already written.
 
 ## Import an Anthropic data export
 

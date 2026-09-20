@@ -3,6 +3,7 @@ package rocacorpus_test
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -449,9 +450,9 @@ func TestApplySchemaBackfillsMachineOnUpgrade(t *testing.T) {
 	t.Setenv(bundledplugin.EnvAllowHomeMigrate, "1")
 	db, path := openCorpusDB(t)
 	statements := []string{
-		`INSERT INTO sessions(session_id, source_agent) VALUES ('historical', 'claude')`,
-		`INSERT INTO exchanges(session_id, exchange_number) VALUES ('historical', 1)`,
-		`INSERT INTO thinking_blocks(session_id, exchange_number, position_in_session) VALUES ('historical', 1, 1)`,
+		`INSERT INTO sessions(session_id, source_agent, title, project) VALUES ('historical', 'claude', 'fixture title', 'demo')`,
+		`INSERT INTO exchanges(session_id, exchange_number, human_text, agent_text) VALUES ('historical', 1, 'question', 'answer')`,
+		`INSERT INTO thinking_blocks(session_id, exchange_number, position_in_session, full_text) VALUES ('historical', 1, 1, 'thought')`,
 		`INSERT INTO tool_uses(session_id, exchange_number, tool_name) VALUES ('historical', 1, 'Read')`,
 	}
 	for _, statement := range statements {
@@ -460,6 +461,8 @@ func TestApplySchemaBackfillsMachineOnUpgrade(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	beforeFTS := dumpHarvestFTS(t, db)
+	beforeData := harvestFTSDataSizes(t, db)
 	if _, err := db.Exec(`UPDATE plugin_schema SET schema_version = ?`, rocacorpus.SchemaVersion-1); err != nil {
 		db.Close()
 		t.Fatal(err)
@@ -485,6 +488,47 @@ func TestApplySchemaBackfillsMachineOnUpgrade(t *testing.T) {
 			t.Fatalf("%s.machine = %q, want %q", table, got, machine)
 		}
 	}
+	if beforeFTS != dumpHarvestFTS(t, db) {
+		t.Fatalf("FTS content changed during machine backfill\nbefore:\n%s\nafter:\n%s",
+			beforeFTS, dumpHarvestFTS(t, db))
+	}
+	if beforeData != harvestFTSDataSizes(t, db) {
+		t.Fatalf("FTS shadow data grew during machine backfill: before=%q after=%q",
+			beforeData, harvestFTSDataSizes(t, db))
+	}
+}
+
+func dumpHarvestFTS(t *testing.T, db *sql.DB) string {
+	t.Helper()
+	var sessions, exchanges, thinking string
+	if err := db.QueryRow(`SELECT group_concat(rowid || ':' || coalesce(title,'') || ':' || coalesce(project,''), '|')
+		FROM (SELECT rowid, title, project FROM sessions_fts ORDER BY rowid)`).Scan(&sessions); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT group_concat(rowid || ':' || coalesce(human_text,'') || ':' || coalesce(agent_text,''), '|')
+		FROM (SELECT rowid, human_text, agent_text FROM exchanges_fts ORDER BY rowid)`).Scan(&exchanges); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT group_concat(rowid || ':' || coalesce(full_text,''), '|')
+		FROM (SELECT rowid, full_text FROM thinking_fts ORDER BY rowid)`).Scan(&thinking); err != nil {
+		t.Fatal(err)
+	}
+	return sessions + "\n" + exchanges + "\n" + thinking
+}
+
+func harvestFTSDataSizes(t *testing.T, db *sql.DB) string {
+	t.Helper()
+	var sessions, exchanges, thinking int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sessions_fts_data`).Scan(&sessions); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM exchanges_fts_data`).Scan(&exchanges); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM thinking_fts_data`).Scan(&thinking); err != nil {
+		t.Fatal(err)
+	}
+	return fmt.Sprintf("sessions=%d exchanges=%d thinking=%d", sessions, exchanges, thinking)
 }
 
 // openCorpusDB applies the corpus schema to a fresh database and opens it,
