@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "name": "roca-cron",
+  "source": "bundled:roca",
+  "version": "f4eef74",
+  "checksum": "2f55434cb6df6ba7b554115e59bdf299d2edb1e413b973bffbf6ac2a2a12c990",
+  "kind": "data",
+  "risk": "data-only",
+  "custody": true,
+  "database": "roca-cron.db",
+  "files": {
+    "plugin.json": "6bdec8a2bdb81acd630a00aa11d618a87b7c63051cd9a6e0f90b395f2fd27f47",
+    "roca-cron.db": "ad86f00744e237bbb286513ca1e7ece0563058680f2dc44b9aea6f44a97a70a3",
+    "semantic.yaml": "ede832dd7471a02f2de5f5762a0bfd3557e9bb619264163ec8f7f335fc3de98b"
+  }
+}
