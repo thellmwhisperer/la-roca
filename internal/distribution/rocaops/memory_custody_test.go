@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/migrationledger"
 	_ "modernc.org/sqlite"
@@ -557,6 +558,210 @@ func snapshotCount(t *testing.T, directory string) int {
 		t.Fatal(err)
 	}
 	return len(entries)
+}
+
+// interruptCustodyRun leaves a migration in the batch-in-progress state the
+// resume tests need: stopAfter committed batches, then a synthetic refusal.
+func interruptCustodyRun(t *testing.T, fixture custodyFixture,
+	options *MemoryCustodyOptions, stopAfter int) {
+	t.Helper()
+	interrupted := errors.New("synthetic stop after a committed batch")
+	committed := 0
+	options.AfterBatch = func(MemoryBatch) error {
+		committed++
+		if committed < stopAfter {
+			return nil
+		}
+		return interrupted
+	}
+	stopped, err := MigrateMemoryCustody(t.Context(), *options)
+	if !errors.Is(err, interrupted) {
+		t.Fatalf("interrupted migration = %v", err)
+	}
+	if stopped.State != migrationledger.StateBatchInProgress || len(stopped.Snapshots) != 3 {
+		t.Fatalf("interrupted report = %+v", stopped)
+	}
+}
+
+// TestDATA2ResumesWithoutRefreezingAMatchingSnapshot pins issue #455's resume
+// fix both ways: a resume reuses valid snapshots that still match their live
+// sources without re-VACUUMing them (and says so on the progress stream),
+// while a source that moved under an interrupted run falls back to re-freezing
+// so drift detection keeps working.
+func TestDATA2ResumesWithoutRefreezingAMatchingSnapshot(t *testing.T) {
+	reused := newInterruptedCustodyRun(t)
+	moved := newInterruptedCustodyRun(t)
+
+	var snapshotSteps []string
+	reused.options.AfterBatch = nil
+	reused.options.Progress = func(step MemoryCustodyProgress) error {
+		if step.Stage == StageSnapshot {
+			snapshotSteps = append(snapshotSteps, step.Source+": "+step.Detail)
+		}
+		return nil
+	}
+	report, err := MigrateMemoryCustody(t.Context(), reused.options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.State != migrationledger.StateVerified || report.Memberships != 8 ||
+		report.FTSRecords != report.PhysicalRecords {
+		t.Fatalf("resumed report = %+v", report)
+	}
+	after := snapshotModTimesBySource(t, reused.fixture.snapshots)
+	reuseLines := 0
+	for _, step := range snapshotSteps {
+		if strings.Contains(step, "reusing the existing") {
+			reuseLines++
+		}
+	}
+	t.Run("a faithful snapshot is reused, not re-vacuumed", func(t *testing.T) {
+		if reuseLines != 3 {
+			t.Fatalf("snapshot progress = %v; want a reuse line per source", snapshotSteps)
+		}
+		for source, modTime := range reused.modTimes {
+			if !after[source].Equal(modTime) {
+				t.Fatalf("the %s snapshot was rewritten during a resume that should have reused it", source)
+			}
+		}
+	})
+	t.Run("a moved source falls back to re-freezing", func(t *testing.T) {
+		driftCore(t, moved.fixture.core)
+		var refroze bool
+		moved.options.AfterBatch = nil
+		moved.options.Progress = func(step MemoryCustodyProgress) error {
+			if step.Stage == StageSnapshot && strings.Contains(step.Detail,
+				"moved since the snapshot was frozen") {
+				refroze = true
+			}
+			return nil
+		}
+		movedReport, err := MigrateMemoryCustody(t.Context(), moved.options)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !refroze || movedReport.State != migrationledger.StateVerified || len(movedReport.Drift) != 2 {
+			t.Fatalf("moved-source resume = %+v refroze=%t", movedReport, refroze)
+		}
+	})
+}
+
+// interruptedCustodyRun is one migration stopped mid-import, with the snapshot
+// file identities the resume assertions compare against.
+type interruptedCustodyRun struct {
+	fixture  custodyFixture
+	options  MemoryCustodyOptions
+	modTimes map[string]time.Time
+}
+
+func newInterruptedCustodyRun(t *testing.T) interruptedCustodyRun {
+	t.Helper()
+	run := interruptedCustodyRun{fixture: smallCustodyFixture(t)}
+	run.options = MemoryCustodyOptions{
+		CorePath: run.fixture.core, CorpusPath: run.fixture.corpus, OpsPath: run.fixture.ops,
+		SnapshotDir: run.fixture.snapshots, BatchSize: 2,
+	}
+	interruptCustodyRun(t, run.fixture, &run.options, 2)
+	run.modTimes = snapshotModTimesBySource(t, run.fixture.snapshots)
+	return run
+}
+
+// TestDATA2CustodyQueriesSeekTheDestinationIndex pins issue #455's acceptance:
+// the EXPLAIN QUERY PLAN of the verify orphans query and of aliasDestination
+// seeks custody_memberships on (migration, destination_key) and never scans
+// the membership table inside the correlated subquery.
+func TestDATA2CustodyQueriesSeekTheDestinationIndex(t *testing.T) {
+	fixture := smallCustodyFixture(t)
+	if _, err := MigrateMemoryCustody(t.Context(), MemoryCustodyOptions{
+		CorePath: fixture.core, CorpusPath: fixture.corpus, OpsPath: fixture.ops,
+		SnapshotDir: fixture.snapshots,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	db := openCustodyDB(t, fixture.ops)
+	defer db.Close()
+	var digest string
+	if err := db.QueryRow(`SELECT canonical_digest FROM memory_records LIMIT 1`).Scan(&digest); err != nil {
+		t.Fatal(err)
+	}
+	plans := func(query string, args ...any) []string {
+		t.Helper()
+		rows, err := db.Query("EXPLAIN QUERY PLAN "+query, args...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		var details []string
+		for rows.Next() {
+			var selectID, order, from, detail string
+			if err := rows.Scan(&selectID, &order, &from, &detail); err != nil {
+				t.Fatal(err)
+			}
+			details = append(details, detail)
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		return details
+	}
+	probes := []struct {
+		name    string
+		query   string
+		args    []any
+		scanned []string
+	}{
+		{
+			name: "verify orphans", query: memoryOrphansQuery,
+			args: []any{memoryCustodyMigration}, scanned: []string{"memberships"},
+		},
+		{
+			name: "alias destination", query: memoryAliasQuery,
+			args:    []any{memoryCustodyMigration, digest, coreMemorySource, memoryCustodyMigration, coreMemorySource},
+			scanned: []string{"represented", "same_source"},
+		},
+	}
+	for _, probe := range probes {
+		t.Run(probe.name, func(t *testing.T) {
+			details := plans(probe.query, probe.args...)
+			for _, scanned := range probe.scanned {
+				for _, detail := range details {
+					if strings.HasPrefix(detail, "SCAN "+scanned) {
+						t.Fatalf("custody_memberships was scanned: %v", details)
+					}
+				}
+				found := false
+				for _, detail := range details {
+					if strings.Contains(detail, "custody_memberships_migration_destination") &&
+						strings.Contains(detail, "destination_key=?") {
+						found = true
+					}
+				}
+				if !found {
+					t.Fatalf("%s never sought the destination index: %v", scanned, details)
+				}
+			}
+		})
+	}
+}
+
+func snapshotModTimesBySource(t *testing.T, directory string) map[string]time.Time {
+	t.Helper()
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bySource := make(map[string]time.Time)
+	for _, entry := range entries {
+		if !strings.HasSuffix(entry.Name(), ".snapshot.db") {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			t.Fatal(err)
+		}
+		bySource[strings.TrimSuffix(entry.Name(), ".snapshot.db")] = info.ModTime()
+	}
+	return bySource
 }
 
 func TestDATA2VerifiedCustodyRejectsMissingSnapshot(t *testing.T) {
