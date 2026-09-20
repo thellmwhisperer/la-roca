@@ -1,0 +1,6 @@
+[features]
+vector_consent = true
+plugins = true
+roca_ops = true
+cron = true
+vector = true
