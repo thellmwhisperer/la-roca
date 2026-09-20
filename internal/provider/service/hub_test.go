@@ -228,6 +228,41 @@ func TestCutoverHubLoadsTheDurableCustomLayerRegistry(t *testing.T) {
 	}
 }
 
+func TestCutoverOpenProbesTheCompatibilityRouteWithoutScanningRecords(t *testing.T) {
+	fixture := newHubFixture(t)
+	seedHubCoreMemory(t, fixture.plugins, 21, "Synthetic probe marker")
+	svc := openHubService(t, fixture, LayoutCutover, nil)
+	plan := hubExplainDetails(t, svc, federationRouteProbe)
+	if strings.Contains(plan, "scan") && strings.Contains(plan, "memory_records") {
+		t.Fatalf("probe plan scanned memory_records:\n%s", plan)
+	}
+	result := executeHubSQL(t, svc, `SELECT id FROM memories LIMIT 1`)
+	if result.RowCount != 1 || fmt.Sprint(result.Rows[0]["id"]) != "21" {
+		t.Fatalf("valid view after probe = %+v", result)
+	}
+}
+
+func hubExplainDetails(t *testing.T, svc *Service, statement string) string {
+	t.Helper()
+	eqp, err := svc.hub.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+statement)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eqp.Close()
+	var buf strings.Builder
+	for eqp.Next() {
+		slot := make([]any, 4)
+		if err := eqp.Scan(&slot[0], &slot[1], &slot[2], &slot[3]); err != nil {
+			t.Fatal(err)
+		}
+		buf.WriteString(strings.ToLower(fmt.Sprint(slot[3], "\n")))
+	}
+	if err := eqp.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.String()
+}
+
 func TestCutoverReopenFailureRollsBackTheMarker(t *testing.T) {
 	fixture := newHubFixture(t)
 	seedHubCoreMemory(t, fixture.plugins, 15, "Synthetic reopen marker")
