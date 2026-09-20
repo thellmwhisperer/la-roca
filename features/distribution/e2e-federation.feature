@@ -106,13 +106,22 @@ Feature: Frozen federation installed binary
 
     Examples:
       | command |
-      | roca query harbor lantern --json |
       | roca exec SELECT COUNT(*) AS memories FROM plugin_roca_ops.memories |
-      | roca handoff latest --project harbor |
       | roca doctor |
       | roca version |
       | roca query harbor lantern |
-      | roca pill show uso-de-la-roca |
+
+  Scenario Outline: uso-de-la-roca correction output <contract>
+    Given a frozen synthetic federation lab
+    When I run "<command>"
+    Then the command exits with code 0
+    And the output contains "<expected>"
+
+    Examples:
+      | contract | command                             | expected      |
+      | 233508   | roca query harbor lantern --json    | engines       |
+      | 259288   | roca handoff latest --project harbor | harbor        |
+      | 1708690  | roca pill show uso-de-la-roca        | vectors first |
 
   Scenario: 233400 exec harbor lantern
     Given a frozen synthetic federation lab
@@ -210,6 +219,7 @@ Feature: Frozen federation installed binary
     And the JSON output field "rows[0].id" is a JS-safe integer of at most 12 digits
     And the output contains "1152921504606846980"
     And the execution log duration_ms is under 5000
+    And the command finished within 5 seconds
 
   @provisioned
   Scenario: real-usage vector query
@@ -218,6 +228,7 @@ Feature: Frozen federation installed binary
     Then the command exits with code 0
     And the vector query executed the ready index
     And the execution log duration_ms is under 2000
+    And the command finished within 2 seconds
 
   Scenario: real-usage query no silent degrade
     Given a frozen synthetic federation lab
@@ -226,6 +237,7 @@ Feature: Frozen federation installed binary
     And the output contains "engines"
     And the output does not contain "search hybrid"
     And the execution log duration_ms is under 3000
+    And the command finished within 3 seconds
 
   Scenario: real-usage handoff one per project
     Given a frozen synthetic federation lab
