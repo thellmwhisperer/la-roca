@@ -85,6 +85,11 @@ func TestEnsureRefusesANewerSchemaAgainstAHomeItDidNotInstall(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	t.Setenv(bundledplugin.EnvAllowHomeMigrate, "")
+	if _, err := bundledplugin.Ensure(root, bin, "v1", dataSpecAt("alpha", 2)); err == nil {
+		t.Fatal("same-version binary bypassed schema guard")
+	}
+
 	for _, fixture := range []struct {
 		name    string
 		allow   string

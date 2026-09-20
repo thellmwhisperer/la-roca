@@ -2,6 +2,7 @@
 package opsvector
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -28,18 +29,18 @@ func SidecarPath(databasePath string) string {
 
 // HasStaleLegacyIDs reports sidecar chunks that still name a compacted
 // memories.legacy_id instead of the current id.
-func HasStaleLegacyIDs(opsPath string) (bool, error) {
-	n, err := remap(opsPath, true)
+func HasStaleLegacyIDs(ctx context.Context, opsPath string) (bool, error) {
+	n, err := remap(ctx, opsPath, true)
 	return n > 0, err
 }
 
 // RemapLegacyIDs rewrites sidecar source_id, raw_source_id, and locator
 // identity from memories.legacy_id onto the current id. Embeddings stay.
 func RemapLegacyIDs(opsPath string) (int, error) {
-	return remap(opsPath, false)
+	return remap(context.Background(), opsPath, false)
 }
 
-func remap(opsPath string, detectOnly bool) (int, error) {
+func remap(ctx context.Context, opsPath string, detectOnly bool) (int, error) {
 	if strings.TrimSpace(opsPath) == "" {
 		return 0, nil
 	}
@@ -60,20 +61,36 @@ func remap(opsPath string, detectOnly bool) (int, error) {
 		}
 		return 0, fmt.Errorf("inspect ops vector sidecar: %w", err)
 	}
-	source, err := openSQLite(absolute, true)
+	source, err := openSQLite(ctx, absolute, true)
 	if err != nil {
 		return 0, fmt.Errorf("open ops database: %w", err)
 	}
 	defer source.Close()
 	var legacyColumn int
-	if err := source.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('memories') WHERE name='legacy_id'`).
+	if err := source.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('memories') WHERE name='legacy_id'`).
 		Scan(&legacyColumn); err != nil {
 		return 0, fmt.Errorf("inspect memories.legacy_id: %w", err)
 	}
 	if legacyColumn == 0 {
 		return 0, nil
 	}
-	rows, err := source.Query(`SELECT CAST(id AS TEXT), CAST(legacy_id AS TEXT) FROM memories
+	store, err := openSQLite(ctx, sidecar, detectOnly)
+	if err != nil {
+		return 0, fmt.Errorf("open ops vector sidecar: %w", err)
+	}
+	defer store.Close()
+	var chunks int
+	if err := store.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='chunks'`).
+		Scan(&chunks); err != nil {
+		return 0, fmt.Errorf("inspect sidecar chunks: %w", err)
+	}
+	if chunks == 0 {
+		return 0, nil
+	}
+	if detectOnly {
+		return hasStaleChunks(ctx, store, absolute)
+	}
+	rows, err := source.QueryContext(ctx, `SELECT CAST(id AS TEXT), CAST(legacy_id AS TEXT) FROM memories
 		WHERE legacy_id IS NOT NULL AND CAST(id AS TEXT) <> CAST(legacy_id AS TEXT)`)
 	if err != nil {
 		return 0, fmt.Errorf("read compacted memory ids: %w", err)
@@ -100,34 +117,29 @@ func remap(opsPath string, detectOnly bool) (int, error) {
 		return 0, nil
 	}
 
-	store, err := openSQLite(sidecar, detectOnly)
-	if err != nil {
-		return 0, fmt.Errorf("open ops vector sidecar: %w", err)
-	}
-	defer store.Close()
-	var chunks int
-	if err := store.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='chunks'`).
-		Scan(&chunks); err != nil {
-		return 0, fmt.Errorf("inspect sidecar chunks: %w", err)
-	}
-	if chunks == 0 {
-		return 0, nil
-	}
-	if detectOnly {
-		return countStaleChunks(store, mappings)
-	}
 	return applyMappings(store, mappings)
 }
 
-func countStaleChunks(store *sql.DB, mappings []mapping) (int, error) {
-	stale := 0
-	for _, item := range mappings {
-		var n int
-		if err := store.QueryRow(`SELECT COUNT(*) FROM chunks WHERE source_kind=? AND source_id IN (?,?)`,
-			memoriesKind, item.oldStable, item.oldRaw).Scan(&n); err != nil {
-			return 0, fmt.Errorf("count stale sidecar chunks: %w", err)
-		}
-		stale += n
+func hasStaleChunks(ctx context.Context, store *sql.DB, opsPath string) (int, error) {
+	conn, err := store.Conn(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer conn.Close()
+	source := url.URL{Scheme: "file", Path: filepath.ToSlash(opsPath), RawQuery: "mode=ro"}
+	if _, err := conn.ExecContext(ctx, `ATTACH DATABASE ? AS ops`, source.String()); err != nil {
+		return 0, fmt.Errorf("attach ops identities: %w", err)
+	}
+	defer conn.ExecContext(context.Background(), `DETACH DATABASE ops`)
+	var stale int
+	err = conn.QueryRowContext(ctx, `SELECT EXISTS (
+		SELECT 1 FROM ops.memories m
+		WHERE m.legacy_id IS NOT NULL AND m.id <> m.legacy_id
+		AND EXISTS (SELECT 1 FROM chunks c WHERE c.source_kind = 'memories'
+			AND c.source_id IN (CAST(m.legacy_id AS TEXT), 'memories/' || m.legacy_id))
+	)`).Scan(&stale)
+	if err != nil {
+		return 0, fmt.Errorf("inspect stale sidecar chunks: %w", err)
 	}
 	return stale, nil
 }
@@ -164,19 +176,7 @@ func remapOne(tx *sql.Tx, item mapping, hasSources bool) (int, error) {
 		return 0, fmt.Errorf("inspect remapped sidecar chunks: %w", err)
 	}
 	if present > 0 {
-		result, err := tx.Exec(`DELETE FROM chunks WHERE source_kind=? AND source_id IN (?,?)`,
-			memoriesKind, item.oldStable, item.oldRaw)
-		if err != nil {
-			return 0, fmt.Errorf("drop stale sidecar chunks: %w", err)
-		}
-		n, _ := result.RowsAffected()
-		if hasSources {
-			if _, err := tx.Exec(`DELETE FROM sources WHERE source_kind=? AND (source_id IN (?,?) OR raw_source_id IN (?,?))`,
-				memoriesKind, item.oldStable, item.oldRaw, item.oldRaw, item.oldStable); err != nil {
-				return 0, fmt.Errorf("drop stale sidecar sources: %w", err)
-			}
-		}
-		return int(n), nil
+		return 0, nil
 	}
 	result, err := tx.Exec(`UPDATE chunks SET source_id=?
 		WHERE source_kind=? AND source_id IN (?,?)`,
@@ -256,7 +256,7 @@ func rewriteLocator(raw string, item mapping) (string, bool, error) {
 	return string(encoded), true, nil
 }
 
-func openSQLite(path string, readOnly bool) (*sql.DB, error) {
+func openSQLite(ctx context.Context, path string, readOnly bool) (*sql.DB, error) {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
@@ -269,7 +269,7 @@ func openSQLite(path string, readOnly bool) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := db.Ping(); err != nil {
+	if err := db.PingContext(ctx); err != nil {
 		db.Close()
 		return nil, err
 	}

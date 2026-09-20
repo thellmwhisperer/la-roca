@@ -1,8 +1,10 @@
 package opsvector
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"testing"
 
@@ -40,7 +42,7 @@ func TestRemapLegacyIDsRewritesSidecarSourceAndLocator(t *testing.T) {
 			'{"source_id":"`+legacyID+`","identity":"old"}');
 		INSERT INTO sources VALUES('memories','memories/`+legacyID+`','`+legacyID+`','src',1);`)
 
-	stale, err := HasStaleLegacyIDs(ops)
+	stale, err := HasStaleLegacyIDs(t.Context(), ops)
 	if err != nil || !stale {
 		t.Fatalf("stale before remap = %v, %v", stale, err)
 	}
@@ -51,7 +53,7 @@ func TestRemapLegacyIDsRewritesSidecarSourceAndLocator(t *testing.T) {
 	if changed != 1 {
 		t.Fatalf("remapped chunks = %d, want 1", changed)
 	}
-	stale, err = HasStaleLegacyIDs(ops)
+	stale, err = HasStaleLegacyIDs(t.Context(), ops)
 	if err != nil || stale {
 		t.Fatalf("stale after remap = %v, %v", stale, err)
 	}
@@ -85,7 +87,7 @@ func TestRemapLegacyIDsRewritesSidecarSourceAndLocator(t *testing.T) {
 	}
 }
 
-func TestRemapLegacyIDsDropsOldChunksWhenNewIdAlreadyExists(t *testing.T) {
+func TestRemapLegacyIDsPreservesDuplicatesForVectorCleanup(t *testing.T) {
 	ops := filepath.Join(t.TempDir(), "roca-ops.db")
 	writeDB(t, ops, `
 		CREATE TABLE memories(id INTEGER PRIMARY KEY, legacy_id INTEGER, content TEXT);
@@ -110,8 +112,8 @@ func TestRemapLegacyIDsDropsOldChunksWhenNewIdAlreadyExists(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if changed != 1 {
-		t.Fatalf("dropped stale chunks = %d, want 1", changed)
+	if changed != 0 {
+		t.Fatalf("remapped duplicate chunks = %d, want 0", changed)
 	}
 	db := openTest(t, sidecar)
 	defer db.Close()
@@ -119,8 +121,8 @@ func TestRemapLegacyIDsDropsOldChunksWhenNewIdAlreadyExists(t *testing.T) {
 	if err := db.QueryRow(`SELECT COUNT(*) FROM chunks`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
-	if n != 1 {
-		t.Fatalf("chunks after drop = %d, want 1", n)
+	if n != 2 {
+		t.Fatalf("chunks before vector cleanup = %d, want 2", n)
 	}
 }
 
@@ -160,4 +162,36 @@ func openTest(t *testing.T, path string) *sql.DB {
 	}
 	t.Cleanup(func() { db.Close() })
 	return db
+}
+
+func TestHasStaleLegacyIDsHonorsCancellation(t *testing.T) {
+	ops := filepath.Join(t.TempDir(), "roca-ops.db")
+	writeDB(t, ops, `CREATE TABLE memories(id INTEGER PRIMARY KEY, legacy_id INTEGER)`)
+	writeDB(t, SidecarPath(ops), `CREATE TABLE chunks(id INTEGER PRIMARY KEY, source_kind TEXT, source_id TEXT)`)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := HasStaleLegacyIDs(ctx, ops); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled status = %v", err)
+	}
+}
+
+func TestHasStaleLegacyIDsAcrossLargeRepairedIndex(t *testing.T) {
+	ops := filepath.Join(t.TempDir(), "roca-ops.db")
+	writeDB(t, ops, `CREATE TABLE memories(id INTEGER PRIMARY KEY, legacy_id INTEGER);
+		WITH RECURSIVE ids(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM ids WHERE n<16000)
+		INSERT INTO memories SELECT n, 1152921504606846976+n FROM ids;`)
+	writeDB(t, SidecarPath(ops), `CREATE TABLE chunks(id INTEGER PRIMARY KEY, source_kind TEXT, source_id TEXT);
+		CREATE INDEX chunk_sources ON chunks(source_kind, source_id);
+		WITH RECURSIVE ids(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM ids WHERE n<16000)
+		INSERT INTO chunks SELECT n, 'memories', 'memories/' || n FROM ids;`)
+	if stale, err := HasStaleLegacyIDs(t.Context(), ops); err != nil || stale {
+		t.Fatalf("repaired index: stale=%v err=%v", stale, err)
+	}
+	db := openTest(t, SidecarPath(ops))
+	if _, err := db.Exec(`UPDATE chunks SET source_id = 'memories/1152921504606862976' WHERE id = 16000`); err != nil {
+		t.Fatal(err)
+	}
+	if stale, err := HasStaleLegacyIDs(t.Context(), ops); err != nil || !stale {
+		t.Fatalf("last legacy chunk: stale=%v err=%v", stale, err)
+	}
 }

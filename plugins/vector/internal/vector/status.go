@@ -179,7 +179,7 @@ func inspectDatabaseStatus(ctx context.Context, pluginRoot string, database vect
 	row.State = classifySidecar(facts.Exists, true, workerActive, row.EmbeddedChunks, snapshot.Contract,
 		database.contractFingerprint(), snapshot.Fingerprint, snapshot.SourceMarker, marker)
 	if database.Plugin == "roca-ops" && row.State != StateEmpty && row.State != StateUnknown {
-		stale, staleErr := opsvector.HasStaleLegacyIDs(sourcePath)
+		stale, staleErr := opsvector.HasStaleLegacyIDs(ctx, sourcePath)
 		if staleErr == nil && stale {
 			row.State = StateInvalid
 		}

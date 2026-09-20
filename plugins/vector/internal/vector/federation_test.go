@@ -95,6 +95,14 @@ func TestFederationBuildsOwnedSidecarsAndGarbageCollectsByDelta(t *testing.T) {
 }
 
 func TestOpsLegacyIDSidecarDeltaKeepsEmbeddingsAndQueryHits(t *testing.T) {
+	for _, duplicate := range []bool{false, true} {
+		t.Run(fmt.Sprintf("duplicate=%t", duplicate), func(t *testing.T) {
+			testOpsLegacyIDSidecarDelta(t, duplicate)
+		})
+	}
+}
+
+func testOpsLegacyIDSidecarDelta(t *testing.T, duplicate bool) {
 	const legacyID = "1152921504606853945"
 	root := t.TempDir()
 	opsDir := filepath.Join(root, "roca-ops")
@@ -132,6 +140,25 @@ func TestOpsLegacyIDSidecarDeltaKeepsEmbeddingsAndQueryHits(t *testing.T) {
 	mutateSourceDatabase(t, opsPath, `UPDATE memories SET id = -id`)
 	mutateSourceDatabase(t, opsPath, `UPDATE memories SET id = 1, legacy_id = -id`)
 
+	if duplicate {
+		db, err := openSQLite(SidecarPath(opsPath), false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer db.Close()
+		for _, statement := range []string{
+			`INSERT INTO chunks(id, source_kind, source_id, text_column, chunk_index, fingerprint, source_fingerprint, locator)
+			 SELECT 2, source_kind, 'memories/1', text_column, chunk_index, fingerprint, source_fingerprint,
+			 json_set(locator, '$.source_id', '1', '$.identity', '` + fingerprint("memories\x001") + `') FROM chunks WHERE id = 1`,
+			`INSERT INTO embeddings(rowid, embedding) SELECT 2, embedding FROM embeddings WHERE rowid = 1`,
+			`INSERT INTO ann_embeddings(rowid, embedding) SELECT 2, vec_quantize_binary(embedding) FROM embeddings WHERE rowid = 1`,
+		} {
+			if _, err := db.Exec(statement); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
 	report, err := ReportVectorization(context.Background(), StatusRequest{PluginRoot: root})
 	if err != nil {
 		t.Fatal(err)
@@ -150,6 +177,22 @@ func TestOpsLegacyIDSidecarDeltaKeepsEmbeddingsAndQueryHits(t *testing.T) {
 	}
 	if delta.Chunks != first.Chunks {
 		t.Fatalf("chunk count %d -> %d after legacy remap", first.Chunks, delta.Chunks)
+	}
+
+	db, err := openSQLite(SidecarPath(opsPath), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, table := range []string{"chunks", "embeddings", "ann_embeddings"} {
+		var count int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&count); err != nil || count != first.Chunks {
+			t.Fatalf("%s after delta: count=%d err=%v", table, count, err)
+		}
+	}
+	report, err = ReportVectorization(context.Background(), StatusRequest{PluginRoot: root})
+	if err != nil || len(report.Databases) != 1 || report.Databases[0].State != StateComplete {
+		t.Fatalf("status after delta: %+v err=%v", report, err)
 	}
 
 	query, err := federation.Query(context.Background(), "handoff del CoS", 5, "ops")

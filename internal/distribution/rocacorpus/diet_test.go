@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thellmwhisperer/la-roca/internal/distribution/bundledplugin"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
 	"github.com/thellmwhisperer/la-roca/internal/store/exactdedup"
 	_ "modernc.org/sqlite"
@@ -445,6 +446,7 @@ func tableHasColumn(t *testing.T, db *sql.DB, table, column string) bool {
 }
 
 func TestApplySchemaBackfillsMachineOnUpgrade(t *testing.T) {
+	t.Setenv(bundledplugin.EnvAllowHomeMigrate, "1")
 	db, path := openCorpusDB(t)
 	statements := []string{
 		`INSERT INTO sessions(session_id, source_agent) VALUES ('historical', 'claude')`,
