@@ -411,6 +411,14 @@ catalog: declaring one is allowed and omitting it is allowed, and either way it
 never reaches the SQL model. No plugin table may declare a column named
 `database`; that name is reserved for row provenance.
 
+A real table or view the database carries that the semantic layer does not
+declare is an orphan, the same law the core store applies: it is named in a
+warning, never served, and never deleted. A leftover from an interrupted
+migration does not take the plugin or its verb down. What still refuses the
+plugin is drift on the declared side — a declared table missing from the
+database, or a declared column list that no longer matches — because an
+answer built on that declaration would be built on a lie.
+
 ### Vector fragments
 
 The optional `vector` fragment is opt-in at column granularity. Each entry
