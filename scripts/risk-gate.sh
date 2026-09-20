@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# risk-gate - judge a PR's declared no-mistakes Risk Assessment (#457).
+# risk-gate - judge a PR's declared Risk Assessment (issue #457).
 #
 # Reads the PR body's "Risk Assessment" section and rules:
 #   High   -> fail, label risk:high, convert to draft, request owner review.
@@ -318,7 +318,7 @@ gate() {
   drop_high_label() {
     has_label "$RISK_LABEL" || return 0
     [[ $fork == true ]] && return 0
-    best_effort "could not remove $RISK_LABEL" \
+    best_effort "removing $RISK_LABEL" \
       gh pr edit "$n" -R "$repo" --remove-label "$RISK_LABEL"
   }
 
@@ -343,10 +343,12 @@ gate() {
       fi
       if [[ $fork != true ]]; then
         if ! has_label "$RISK_LABEL"; then
-          best_effort "could not create $RISK_LABEL" \
-            gh label create "$RISK_LABEL" -R "$repo" --color D93F0B \
-              --description "PR body declares High risk"
-          best_effort "could not add $RISK_LABEL" \
+          if ! gh label list -R "$repo" --json name --jq '.[].name' 2>/dev/null | grep -Fxq "$RISK_LABEL"; then
+            best_effort "creating label $RISK_LABEL" \
+              gh label create "$RISK_LABEL" -R "$repo" --color D93F0B \
+                --description "PR body declares High risk"
+          fi
+          best_effort "labelling $RISK_LABEL" \
             gh pr edit "$n" -R "$repo" --add-label "$RISK_LABEL"
         fi
         if [[ $is_draft != true ]]; then
