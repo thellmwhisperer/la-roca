@@ -467,10 +467,16 @@ table, the exact and ambiguous groups observed at rest, then the certified
 apply set after session IDs are canonicalized. This makes session-induced child
 duplicates visible instead of hiding them inside a changed aggregate. Row
 counts before and after and same-identity groups whose payloads differ travel
-beside those two views. Divergent groups are evidence for a future key decision
-and are never deleted. The four governed tables are
+beside those two views. Divergent groups are preserved except for the adopted
+thinking-block identity described below. The four governed tables are
 `memories`, `sessions`, `exchanges`, and `thinking_blocks`; session winners are
 resolved first so child payloads are compared using canonical session IDs.
+
+When the corpus has its unique thinking identity index, dedup uses the
+[thinking identity contract](ingest.md#per-exchange-provenance) after resolving
+session aliases. It keeps the highest-ID thinking row even when non-identity
+fields differ, and redirects existing thinking aliases to that survivor.
+Without that index, thinking rows still require an exact-payload match.
 
 An apply is deliberately not inferred from a dry run and is restricted to the
 two federated custody databases. First freeze writes,
@@ -592,7 +598,7 @@ on `main` (owner decision 2026-09-20). pr-gate reads the `Risk Assessment`
 section in the PR body: High fails, labels `risk:high` and needs the owner's
 `risk:accepted` to pass. Editing the PR body or synchronizing a new head removes
 that acceptance before judging the current revision. Medium passes only with an
-Aceptación or Acceptance section in the PR body or a comment, containing a
+Aceptación or Acceptance section in the PR body, containing a
 fenced block with a `$ roca` command followed by output; editing the body reruns
 the check. Low passes. A missing or unparseable risk section
 declares High. Degraded enforcement: the PR is not converted to draft; the

@@ -42,19 +42,22 @@ make e2e-federation \
 
 The federation target requires `ROCA_BIN` to select an already installed
 candidate explicitly. It copies that executable into `.local/bin` under a
-disposable HOME, copies the frozen snapshots, and runs the Gherkin feature
-only. Missing `ROCA_BIN`, `ROCA_PUBLISHED_BIN`, or `ROCA_E2E_VECTOR_MODEL` is a
-failure, never a skip.
+disposable HOME, copies the frozen snapshots, and installs the candidate's
+bundled plugins there before running the Gherkin feature. This setup may adopt
+the copied database schemas; it never rebuilds the seeded lab. An absent or
+invalid candidate, published executable, or embedding model is a failure,
+never a skip.
 
 `make check` includes the non-provisioned Gherkin cases through
 `TestJourneyAcceptanceSuite`. Those paths do not claim a ready vector index or
 a published upgrade. `make e2e-smoke` runs both the shorter branch operator
 path and the published-release update followed by branch init on a clean home.
 
-Use `e2e-smoke` in place of `e2e-federation` in the command above for the
-shorter suite, or `e2e` to run both suites. The combined target uses the same
-installed candidate and model prerequisites; the [release train](release-train.md) owns
-when to run it and how to pin the candidate.
+Use `e2e-smoke` in place of `e2e-federation` for the shorter suite; it builds
+and tests `BIN` from this checkout rather than selecting `ROCA_BIN`. Use `e2e`
+to run both suites, supplying the federation prerequisites above as well. The
+[release train](release-train.md) owns when to run the combined target and how
+to pin the candidate.
 
 ## Coverage
 
