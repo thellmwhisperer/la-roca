@@ -97,7 +97,16 @@ func Inspect(ctx context.Context, db *DB) (Report, error) {
 // its boundary and always behind a verified backup. An incompatible or foreign
 // one is not touched: the diagnosis is returned naming the difference.
 func Adopt(ctx context.Context, db *DB, backupDir string) (Adoption, error) {
-	report, err := Inspect(ctx, db)
+	return adoptWithInspect(ctx, db, backupDir, Inspect)
+}
+
+func adoptWithInspect(
+	ctx context.Context,
+	db *DB,
+	backupDir string,
+	inspect func(context.Context, *DB) (Report, error),
+) (Adoption, error) {
+	report, err := inspect(ctx, db)
 	if err != nil {
 		return Adoption{}, err
 	}
@@ -106,29 +115,28 @@ func Adopt(ctx context.Context, db *DB, backupDir string) (Adoption, error) {
 	switch report.Verdict {
 	case VerdictForeign, VerdictIncompatible:
 		return adoption, fmt.Errorf("the database %q is not adopted: %s", db.path, report.Reason)
-	case VerdictMigratable:
-		if !report.Fresh {
-			backupPath, err := Backup(ctx, db, backupDir)
-			if err != nil {
-				return adoption, fmt.Errorf("backup before the repair: %w", err)
-			}
-			adoption.BackupPath = backupPath
+	}
+
+	if err := applyMigratable(ctx, db, backupDir, &adoption, report); err != nil {
+		return adoption, err
+	}
+
+	after, err := inspect(ctx, db)
+	if err != nil {
+		return adoption, err
+	}
+	// Another connection can drop a repairable index between the two
+	// Inspects. The first pass then skipped repair, and the confirmation
+	// would otherwise fail as "still not up to date after repairing"
+	// without having repaired anything. Finish the remaining safe gap.
+	if after.Verdict == VerdictMigratable {
+		if err := applyMigratable(ctx, db, backupDir, &adoption, after); err != nil {
+			return adoption, err
 		}
-		repairs, err := repair(ctx, db, report)
-		adoption.Repairs = repairs
+		after, err = inspect(ctx, db)
 		if err != nil {
 			return adoption, err
 		}
-		if err := db.Write(ctx, func(tx *sql.Tx) error {
-			return ingestprovenance.Backfill(ctx, tx)
-		}); err != nil {
-			return adoption, fmt.Errorf("backfill ingest provenance: %w", err)
-		}
-	}
-
-	after, err := Inspect(ctx, db)
-	if err != nil {
-		return adoption, err
 	}
 	adoption.Report = after
 	if after.Verdict != VerdictCurrent {
@@ -137,6 +145,30 @@ func Adopt(ctx context.Context, db *DB, backupDir string) (Adoption, error) {
 	}
 	adoption.Adopted = true
 	return adoption, nil
+}
+
+func applyMigratable(ctx context.Context, db *DB, backupDir string, adoption *Adoption, report Report) error {
+	if report.Verdict != VerdictMigratable {
+		return nil
+	}
+	if !report.Fresh && adoption.BackupPath == "" {
+		backupPath, err := Backup(ctx, db, backupDir)
+		if err != nil {
+			return fmt.Errorf("backup before the repair: %w", err)
+		}
+		adoption.BackupPath = backupPath
+	}
+	repairs, err := repair(ctx, db, report)
+	adoption.Repairs = append(adoption.Repairs, repairs...)
+	if err != nil {
+		return err
+	}
+	if err := db.Write(ctx, func(tx *sql.Tx) error {
+		return ingestprovenance.Backfill(ctx, tx)
+	}); err != nil {
+		return fmt.Errorf("backfill ingest provenance: %w", err)
+	}
+	return nil
 }
 
 // repair creates what is missing, in the order SQLite accepts it. It never drops
