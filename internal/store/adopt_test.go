@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/store"
 )
@@ -99,6 +100,39 @@ func TestOrphanTablesAreReportedAndDoNotBlock(t *testing.T) {
 	var score string
 	if err := db.SQL().QueryRow("SELECT note FROM garden_notes").Scan(&score); err != nil {
 		t.Fatalf("the orphan disappeared after adopting: %v", err)
+	}
+}
+
+func TestAdoptRepairsAnIndexDroppedByAnotherConnection(t *testing.T) {
+	db := openFresh(t)
+	ctx := context.Background()
+	if err := store.ApplySchema(ctx, db); err != nil {
+		t.Fatalf("ApplySchema: %v", err)
+	}
+	seedIdentity(t, db)
+
+	other, err := store.Open(db.Path())
+	if err != nil {
+		t.Fatalf("open the second connection: %v", err)
+	}
+	defer other.Close()
+
+	dropped := make(chan error, 1)
+	go func() {
+		time.Sleep(time.Millisecond)
+		_, err := other.SQL().ExecContext(ctx, `DROP INDEX IF EXISTS idx_memories_layer`)
+		dropped <- err
+	}()
+
+	adoption, err := store.Adopt(ctx, db, t.TempDir())
+	if dropErr := <-dropped; dropErr != nil {
+		t.Fatalf("drop the index: %v", dropErr)
+	}
+	if err != nil {
+		t.Fatalf("Adopt: %v", err)
+	}
+	if !adoption.Adopted {
+		t.Fatal("Adopted = false, want true")
 	}
 }
 
