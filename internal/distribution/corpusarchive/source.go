@@ -320,8 +320,8 @@ func materializeRecord(ctx context.Context, tx *sql.Tx, record archiveRecord) er
 				word_count, is_after_compaction, full_text, machine)
 			SELECT ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (
 			 SELECT 1 FROM thinking_blocks WHERE session_id IS ? AND exchange_number IS ?
-			   AND position_in_session IS ?)`
-		args = append(slices.Clone(args), args[0], args[1], args[2])
+			   AND full_text IS ?)`
+		args = append(slices.Clone(args), args[0], args[1], args[7])
 	case "ingest_file_state_versions":
 		query = `INSERT INTO ingest_file_state
 			(path, source_kind, source_agent, project, fingerprint, last_synced_at,
