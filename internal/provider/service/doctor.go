@@ -133,6 +133,10 @@ func (s *Service) Doctor(ctx context.Context) (DoctorReport, error) {
 		report.LayerRepairs = append(report.LayerRepairs,
 			"roca layers add "+shellQuoted(name)+" --db-path "+shellQuoted(report.DBPath))
 	}
+	// Orphan tables and every other resident warning the open already survived
+	// belong in the report: doctor is where an operator learns what their
+	// database carries without it costing them the service.
+	report.Warnings = append(report.Warnings, s.residentWarnings...)
 
 	if s.opts.ProviderProbe != nil {
 		if err := s.opts.ProviderProbe(ctx, &report); err != nil {

@@ -116,6 +116,12 @@ func validatePluginRouteLimit(ctx context.Context, candidates []plugin.Descripto
 				candidate.Name, err))
 			continue
 		}
+		if len(database.Orphans) > 0 {
+			route.Warnings = append(route.Warnings, fmt.Sprintf(
+				"plugin %s database carries %s, which its semantic layer does not declare; "+
+					"the table stays in place untouched and no answer reads it",
+				candidate.Name, strings.Join(database.Orphans, ", ")))
+		}
 		route.Databases = append(route.Databases, database)
 	}
 	if len(route.Omitted) > 0 {

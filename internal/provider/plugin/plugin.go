@@ -92,6 +92,12 @@ type Table struct {
 type Database struct {
 	Descriptor
 	Tables []Table
+	// Orphans are the real tables and views the database carries that its
+	// semantic layer does not declare. They are reported and never served: an
+	// existing plugin database may carry leftovers of an interrupted migration
+	// or a withdrawn feature, and they are still its data. The same law the
+	// core store applies (internal/store/adopt.go) — never delete — holds here.
+	Orphans []string
 }
 
 func (d Database) ReadOnlyURI() string {
@@ -569,19 +575,22 @@ func validate(ctx context.Context, descriptor Descriptor) (Database, error) {
 	for _, table := range descriptor.Semantic.Tables {
 		declared[table.Name] = table
 	}
+	var orphans []string
 	for name, inspected := range actual {
 		if sqlgate.IsHiddenTable(name) || shadows[strings.ToLower(name)] {
 			continue
 		}
 		table, ok := declared[name]
 		if !ok {
-			return Database{}, fmt.Errorf("semantic layer omits database table %s", name)
+			orphans = append(orphans, name)
+			continue
 		}
 		if !slices.Equal(inspected.Columns, table.Columns) {
 			return Database{}, fmt.Errorf("semantic layer columns for %s are %v but the database has %v",
 				name, table.Columns, inspected.Columns)
 		}
 	}
+	slices.Sort(orphans)
 	for name := range declared {
 		if sqlgate.IsHiddenTable(name) || shadows[strings.ToLower(name)] {
 			continue
@@ -626,7 +635,7 @@ func validate(ctx context.Context, descriptor Descriptor) (Database, error) {
 	for index := range descriptor.VectorTables {
 		descriptor.VectorTables[index] = cloneVectorTable(descriptor.VectorTables[index])
 	}
-	return Database{Descriptor: descriptor, Tables: tables}, nil
+	return Database{Descriptor: descriptor, Tables: tables, Orphans: orphans}, nil
 }
 
 // databaseURI resolves the path first because a plugin root reached through a

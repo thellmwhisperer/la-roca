@@ -37,6 +37,7 @@ jobs:
         id: release
         with:
           token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          target-branch: main
 
       - name: Enable auto-merge for release PR
         if: ${{ steps.release.outputs.pr }}

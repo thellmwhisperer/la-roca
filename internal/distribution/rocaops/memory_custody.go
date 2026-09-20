@@ -22,6 +22,34 @@ import (
 
 const defaultMemoryBatchSize = 250
 
+// memoryOrphansQuery counts physical records no committed identity represents.
+// destination_key compares as text against CAST(records.id AS TEXT) — exactly
+// the form its writers produce — so the correlated NOT EXISTS seeks the
+// custody_memberships(migration, destination_key) index. Wrapping the column
+// in CAST instead defeated every index and swept every membership of the
+// migration once per record: the quadratic verify behind issue #455.
+const memoryOrphansQuery = `SELECT COUNT(*) FROM memory_records AS records
+WHERE NOT EXISTS (SELECT 1 FROM custody_memberships AS memberships
+	WHERE memberships.migration = ?
+	  AND memberships.destination_key = CAST(records.id AS TEXT))`
+
+// memoryAliasQuery finds a physical record an exact digest from another source
+// already aliases. The same text-for-text destination_key comparison keeps
+// both its membership probes on the destination index (issue #455).
+const memoryAliasQuery = `SELECT records.id
+FROM memory_records AS records
+JOIN custody_memberships AS represented
+  ON represented.migration = ?
+ AND represented.destination_key = CAST(records.id AS TEXT)
+WHERE records.canonical_digest = ?
+  AND represented.source_database <> ?
+  AND NOT EXISTS (
+    SELECT 1 FROM custody_memberships AS same_source
+    WHERE same_source.migration = ?
+      AND same_source.destination_key = CAST(records.id AS TEXT)
+      AND same_source.source_database = ?)
+ORDER BY records.id`
+
 const (
 	coreMemorySource   = "core"
 	corpusMemorySource = "plugin:roca-corpus"
@@ -48,6 +76,11 @@ type MemoryCustodyOptions struct {
 	LockPath    string
 	BatchSize   int
 	AfterBatch  func(MemoryBatch) error
+	// Progress, when set, observes every stage of a custody run: which
+	// snapshot is being frozen or reused, when the import, FTS rebuild, and
+	// verify stages begin. It is how a driver prints the stage lines an
+	// operator needs to tell "working" from "stuck" (issue #455).
+	Progress func(MemoryCustodyProgress) error
 }
 
 type MemoryBatch struct {
@@ -55,6 +88,46 @@ type MemoryBatch struct {
 	SourceDatabase string
 	RowCount       int
 	HighWaterMark  string
+	// Batch counts from one within the committing source's import stage,
+	// and Batches is how many that stage planned, so a driver can print
+	// batch/total progress.
+	Batch   int
+	Batches int
+}
+
+// MemoryCustodyStage names one phase of a DATA-2 custody run.
+type MemoryCustodyStage string
+
+const (
+	StageSnapshot   MemoryCustodyStage = "snapshot"
+	StageImport     MemoryCustodyStage = "import"
+	StageFTSRebuild MemoryCustodyStage = "fts-rebuild"
+	StageVerify     MemoryCustodyStage = "verify"
+)
+
+// MemoryCustodyProgress is one observable step of a custody run. Source names
+// the database the step concerns and is empty for migration-wide stages; Detail
+// carries the human-readable why (for example, why a snapshot was reused
+// rather than re-frozen); Batch and Batches are zero except on import stages.
+type MemoryCustodyProgress struct {
+	Stage   MemoryCustodyStage
+	Source  string
+	Detail  string
+	Batch   int
+	Batches int
+	Rows    int
+}
+
+// progress reports one observable step, dropping the callback's refusal into
+// the same failure path as any other stage so a cancelled context stops the run.
+func (options MemoryCustodyOptions) progress(step MemoryCustodyProgress) error {
+	if options.Progress == nil {
+		return nil
+	}
+	if err := options.Progress(step); err != nil {
+		return fmt.Errorf("memory custody progress observer: %w", err)
+	}
+	return nil
 }
 
 const (
@@ -233,12 +306,9 @@ func MigrateMemoryCustody(ctx context.Context, options MemoryCustodyOptions) (Me
 		snapshot := memorySnapshotPath(options.SnapshotDir, source.name, plugin)
 		snapshots = append(snapshots, snapshot)
 		snapshotPaths[source.name] = snapshot
-		if snapshotErr := snapshotMemories(ctx, source, snapshot); snapshotErr != nil {
+		rows, _, snapshotErr := ensureMemorySnapshot(ctx, source, snapshot, options)
+		if snapshotErr != nil {
 			return custodyFailure(ctx, ops, snapshots, drift, snapshotErr)
-		}
-		rows, readErr := readMemoryRows(ctx, source.name, snapshot)
-		if readErr != nil {
-			return custodyFailure(ctx, ops, snapshots, drift, readErr)
 		}
 		rowsBySource[source.name] = rows
 	}
@@ -251,6 +321,15 @@ func MigrateMemoryCustody(ctx context.Context, options MemoryCustodyOptions) (Me
 		}
 		pending, sourceDrift := pendingMemories(source.name, rows, history)
 		drift = append(drift, sourceDrift...)
+		batches := (len(pending) + batchSize - 1) / batchSize
+		if batches > 0 {
+			if progressErr := options.progress(MemoryCustodyProgress{Stage: StageImport,
+				Source: source.name,
+				Detail: fmt.Sprintf("importing %d pending memories in %d batches", len(pending), batches)}); progressErr != nil {
+				return custodyFailure(ctx, ops, snapshots, drift, progressErr)
+			}
+		}
+		ordinal := 0
 		for first := 0; first < len(pending); first += batchSize {
 			last := min(first+batchSize, len(pending))
 			group := pending[first:last]
@@ -265,7 +344,7 @@ func MigrateMemoryCustody(ctx context.Context, options MemoryCustodyOptions) (Me
 				}
 				return custodyFailure(ctx, ops, snapshots, drift, beginErr)
 			}
-			commit, importErr := importMemoryBatch(ctx, ops, batch, source.name, group)
+			commit, importErr := importMemoryBatch(ctx, batch, source.name, group)
 			if importErr != nil {
 				_ = batch.Rollback()
 				return custodyFailure(ctx, ops, snapshots, drift, importErr)
@@ -273,9 +352,11 @@ func MigrateMemoryCustody(ctx context.Context, options MemoryCustodyOptions) (Me
 			if commitErr := batch.Commit(ctx, commit); commitErr != nil {
 				return custodyFailure(ctx, ops, snapshots, drift, commitErr)
 			}
+			ordinal++
 			if options.AfterBatch != nil {
 				progress := MemoryBatch{ID: batchID, SourceDatabase: source.name,
-					RowCount: len(group), HighWaterMark: commit.HighWaterMark}
+					RowCount: len(group), HighWaterMark: commit.HighWaterMark,
+					Batch: ordinal, Batches: batches}
 				if callbackErr := options.AfterBatch(progress); callbackErr != nil {
 					return custodyFailure(ctx, ops, snapshots, drift, callbackErr)
 				}
@@ -283,9 +364,17 @@ func MigrateMemoryCustody(ctx context.Context, options MemoryCustodyOptions) (Me
 		}
 	}
 
+	if err := options.progress(MemoryCustodyProgress{Stage: StageFTSRebuild,
+		Detail: "rebuilding the ops memory FTS index"}); err != nil {
+		return custodyFailure(ctx, ops, snapshots, drift, err)
+	}
 	if _, err := ops.ExecContext(ctx,
 		"INSERT INTO memory_records_fts(memory_records_fts) VALUES ('rebuild')"); err != nil {
 		return custodyFailure(ctx, ops, snapshots, drift, fmt.Errorf("rebuild ops memory FTS: %w", err))
+	}
+	if err := options.progress(MemoryCustodyProgress{Stage: StageVerify,
+		Detail: "verifying ops memory custody"}); err != nil {
+		return custodyFailure(ctx, ops, snapshots, drift, err)
 	}
 	report, digest, err := verifyMemoryCustody(ctx, ops, rowsBySource)
 	if err != nil {
@@ -416,6 +505,68 @@ func memorySnapshotPath(directory, source string, state migrationledger.Snapshot
 		fmt.Sprintf(".%s-schema%d-index%d.snapshot.db", name, state.SchemaVersion, state.IndexVersion))
 }
 
+// ensureMemorySnapshot reuses the current generation's frozen copy when it
+// passes integrity_check, without comparing it to the live source. A resume
+// imports and verifies that frozen population even if the source has changed.
+// Missing or damaged snapshots are re-frozen; reused reports whether the
+// existing file was kept.
+func ensureMemorySnapshot(ctx context.Context, source memorySource, snapshot string,
+	options MemoryCustodyOptions) ([]memoryRow, bool, error) {
+	refreeze := func(why string) ([]memoryRow, bool, error) {
+		if err := options.progress(MemoryCustodyProgress{Stage: StageSnapshot,
+			Source: source.name, Detail: why}); err != nil {
+			return nil, false, err
+		}
+		if err := snapshotMemories(ctx, source, snapshot); err != nil {
+			return nil, false, err
+		}
+		rows, err := readMemoryRows(ctx, source.name, snapshot)
+		if err != nil {
+			return nil, false, err
+		}
+		return rows, false, nil
+	}
+	if _, statErr := os.Stat(snapshot); statErr != nil {
+		if !errors.Is(statErr, os.ErrNotExist) {
+			return nil, false, fmt.Errorf("inspect the existing %s memory snapshot: %w", source.name, statErr)
+		}
+		return refreeze(fmt.Sprintf("freezing the first %s memory snapshot", source.name))
+	}
+	if integrityErr := snapshotIntegrity(ctx, source.name, snapshot); integrityErr != nil {
+		return refreeze(fmt.Sprintf("the existing %s memory snapshot failed integrity_check (%s); re-freezing",
+			source.name, integrityErr))
+	}
+	existing, err := readMemoryRows(ctx, source.name, snapshot)
+	if err != nil {
+		return nil, false, err
+	}
+	if err := options.progress(MemoryCustodyProgress{Stage: StageSnapshot, Source: source.name,
+		Detail: fmt.Sprintf("reusing the existing %s memory snapshot: it passes integrity_check",
+			source.name)}); err != nil {
+		return nil, false, err
+	}
+	return existing, true, nil
+}
+
+// snapshotIntegrity runs the SQLite integrity check over a published snapshot,
+// so a resume never builds on a copy that disk damage touched after it was
+// verified at birth.
+func snapshotIntegrity(ctx context.Context, source, path string) error {
+	db, err := bundledplugin.OpenDatabase(path, true)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	var integrity string
+	if err := db.QueryRowContext(ctx, "PRAGMA integrity_check").Scan(&integrity); err != nil {
+		return fmt.Errorf("run integrity_check: %w", err)
+	}
+	if integrity != "ok" {
+		return fmt.Errorf("integrity_check = %q", integrity)
+	}
+	return nil
+}
+
 // snapshotMemories freezes one source onto its registered generation path by way
 // of a sibling partial copy: the replacement is written and verified first, then
 // renamed into place. A failed copy therefore leaves the previously verified
@@ -523,13 +674,12 @@ func memoryColumns(ctx context.Context, db *sql.DB) (map[string]bool, error) {
 	return bundledplugin.TableColumns(ctx, db, "memories")
 }
 
-func importMemoryBatch(ctx context.Context, ops *sql.DB, batch *migrationledger.Batch,
+func importMemoryBatch(ctx context.Context, batch *migrationledger.Batch,
 	source string, rows []pendingMemory) (migrationledger.BatchCommit, error) {
 	digest := sha256.New()
-	reserved := make(map[int64]struct{})
 	for _, pending := range rows {
 		row := pending.row
-		destination, found, err := aliasDestination(ctx, ops, source, row.digest, reserved)
+		destination, found, err := aliasDestination(ctx, batch, source, row.digest)
 		if err != nil {
 			return migrationledger.BatchCommit{}, err
 		}
@@ -553,7 +703,6 @@ func importMemoryBatch(ctx context.Context, ops *sql.DB, batch *migrationledger.
 				return migrationledger.BatchCommit{}, fmt.Errorf("read ops memory destination: %w", err)
 			}
 		}
-		reserved[destination] = struct{}{}
 		sourceKey := pending.sourceKey
 		if _, err := batch.ExecContext(ctx, `INSERT INTO memory_provenance
 			(source_database, source_key, provenance) VALUES (?, ?, ?)`, source, sourceKey,
@@ -581,34 +730,27 @@ func importMemoryBatch(ctx context.Context, ops *sql.DB, batch *migrationledger.
 // physical record can represent at most one identity from each source. A second
 // byte-equal core row therefore remains physical even when the first one aliases
 // a corpus row, preserving the historical duplicate population.
-func aliasDestination(ctx context.Context, ops *sql.DB, source, digest string,
-	reserved map[int64]struct{}) (int64, bool, error) {
-	rows, err := ops.QueryContext(ctx, `SELECT records.id
-		FROM memory_records AS records
-		JOIN custody_memberships AS represented
-		  ON represented.migration = ?
-		 AND CAST(represented.destination_key AS INTEGER) = records.id
-		WHERE records.canonical_digest = ?
-		  AND represented.source_database <> ?
-		  AND NOT EXISTS (
-		    SELECT 1 FROM custody_memberships AS same_source
-		    WHERE same_source.migration = ?
-		      AND CAST(same_source.destination_key AS INTEGER) = records.id
-		      AND same_source.source_database = ?)
-		ORDER BY records.id`, memoryCustodyMigration, digest, source,
-		memoryCustodyMigration, source)
+func aliasDestination(ctx context.Context, batch *migrationledger.Batch,
+	source, digest string) (int64, bool, error) {
+	// destination_key is written as strconv.FormatInt, so text equality against
+	// CAST(records.id AS TEXT) is exactly the integer equality the CAST form
+	// expressed while keeping the predicate sargable for the
+	// custody_memberships(migration, destination_key) index (issue #455).
+	// Use the writer transaction: a separate connection blocks when dirty pages
+	// spill in DELETE journal mode. The query also sees this batch's memberships,
+	// so its same-source predicate excludes destinations already used in the batch.
+	rows, err := batch.QueryContext(ctx, memoryAliasQuery, memoryCustodyMigration,
+		digest, source, memoryCustodyMigration, source)
 	if err != nil {
 		return 0, false, fmt.Errorf("look for an exact cross-source memory: %w", err)
 	}
 	defer rows.Close()
-	for rows.Next() {
+	if rows.Next() {
 		var destination int64
 		if err := rows.Scan(&destination); err != nil {
 			return 0, false, fmt.Errorf("read an exact cross-source memory: %w", err)
 		}
-		if _, used := reserved[destination]; !used {
-			return destination, true, nil
-		}
+		return destination, true, nil
 	}
 	if err := rows.Err(); err != nil {
 		return 0, false, fmt.Errorf("look for an exact cross-source memory: %w", err)
@@ -726,10 +868,7 @@ func verifyMemoryCustody(ctx context.Context, ops *sql.DB,
 				GROUP BY canonical_digest, source_database)
 			GROUP BY canonical_digest)`, args: []any{memoryCustodyMigration}, into: &expectedPhysical},
 		{query: "SELECT COUNT(*) FROM memory_records_fts_docsize", into: &fts},
-		{query: `SELECT COUNT(*) FROM memory_records AS records
-			WHERE NOT EXISTS (SELECT 1 FROM custody_memberships AS memberships
-				WHERE memberships.migration = ?
-				  AND CAST(memberships.destination_key AS INTEGER) = records.id)`,
+		{query: memoryOrphansQuery,
 			args: []any{memoryCustodyMigration}, into: &orphans},
 		{query: `SELECT COUNT(*) FROM memory_records AS records
 			LEFT JOIN memory_records_fts_docsize AS indexed ON indexed.id = records.id

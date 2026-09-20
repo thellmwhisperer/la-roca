@@ -2,6 +2,7 @@ package datasplit
 
 import (
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -252,4 +253,63 @@ func newMigrationFixture(t *testing.T) HubOptions {
 	}
 	seedHubSources(t, options)
 	return options
+}
+
+// TestMigrateReportsStageProgress pins issue #455's progress contract: a
+// migration reports every stage it runs, and the DATA-2 import stage carries
+// per-batch position against the planned total.
+func TestMigrateReportsStageProgress(t *testing.T) {
+	options := newMigrationFixture(t)
+	var steps []HubProgress
+	options.Progress = func(step HubProgress) error {
+		steps = append(steps, step)
+		return nil
+	}
+	if _, err := Migrate(t.Context(), options); err != nil {
+		t.Fatal(err)
+	}
+	seen := make(map[string]int)
+	var batched []HubProgress
+	for _, step := range steps {
+		seen[step.Stage]++
+		if step.Stage == StageMemoryImport && step.Batch > 0 {
+			batched = append(batched, step)
+		}
+	}
+	for _, stage := range []string{StageMemorySnapshot, StageMemoryImport,
+		StageMemoryFTSRebuild, StageMemoryVerify, StageCorpusMerge, StageLegacyImport} {
+		if seen[stage] == 0 {
+			t.Fatalf("stage %s was never reported; steps = %+v", stage, steps)
+		}
+	}
+	if len(batched) == 0 {
+		t.Fatalf("no import batch progress was reported; steps = %+v", steps)
+	}
+	for _, step := range batched {
+		if step.Batches < step.Batch || step.Rows <= 0 {
+			t.Fatalf("batch progress out of range: %+v", step)
+		}
+	}
+}
+
+// TestMigrateProgressObserverCanStopTheRun keeps the progress callback a real
+// control seam: a refusal from the observer aborts the migration instead of
+// being swallowed.
+func TestMigrateProgressObserverCanStopTheRun(t *testing.T) {
+	options := newMigrationFixture(t)
+	stopped := errors.New("observer stop")
+	attempt := 0
+	options.Progress = func(step HubProgress) error {
+		if step.Stage == StageMemoryVerify {
+			attempt++
+			return stopped
+		}
+		return nil
+	}
+	if _, err := Migrate(t.Context(), options); !errors.Is(err, stopped) {
+		t.Fatalf("observer refusal = %v, want %v", err, stopped)
+	}
+	if attempt != 1 {
+		t.Fatalf("verify stage observed %d times, want 1", attempt)
+	}
 }

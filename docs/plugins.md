@@ -411,6 +411,14 @@ catalog: declaring one is allowed and omitting it is allowed, and either way it
 never reaches the SQL model. No plugin table may declare a column named
 `database`; that name is reserved for row provenance.
 
+A real table or view the database carries that the semantic layer does not
+declare is an orphan, the same law the core store applies: it is named in a
+warning, never served, and never deleted. A leftover from an interrupted
+migration does not take the plugin or its verb down. What still refuses the
+plugin is drift on the declared side — a declared table missing from the
+database, or a declared column list that no longer matches — because an
+answer built on that declaration would be built on a lie.
+
 ### Vector fragments
 
 The optional `vector` fragment is opt-in at column granularity. Each entry
@@ -836,11 +844,17 @@ migration generation for every caller. Reruns retain the same frozen source
 snapshots for later custody stages, including when memory custody was empty;
 they do not import memories added after verification. If a verified snapshot
 is missing, the importer reports an error rather than recreating it from the
-live source. Each source's frozen copy is named once per migration generation
-and published by renaming a validated sibling copy over it, so retries before
-verification replace their own snapshot instead of
-accumulating a full database per attempt, a failed replacement leaves the
-previously verified copy intact, and no reader sees a half-written database.
+live source. Before verification, a resume reuses each existing snapshot for
+the current schema/index generation without another `VACUUM INTO` when it
+passes `integrity_check` and its memory IDs and canonical digests still match
+the live source. A missing, corrupt or unreadable snapshot, or changed live
+memories, requires a fresh copy; failure to read the live memories stops the
+run. Reuse skips copying, not the integrity and live-memory checks, remaining
+imports, FTS rebuild or final verification. Each source's frozen copy is named
+once per migration generation and a replacement is published by renaming a
+validated sibling copy over it. Retries do not accumulate a full database per
+attempt, a failed replacement leaves the previous copy intact, and no reader
+sees a half-written database.
 
 A plugin database hosts as many custody migrations as it needs. `plugin_schema`
 keeps the plugin's schema and index versions and nothing else that is current:

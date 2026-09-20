@@ -14,6 +14,86 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// Issue #461: a real table a plugin database carries but its semantic layer
+// does not declare — the signature an interrupted migrate leaves behind — is
+// orphan state, not a broken plugin. The plugin keeps serving, the table is
+// named, and nothing deletes it. Declared-table drift stays fatal.
+func TestAnUndeclaredTableIsAnOrphanThePluginServesWithout(t *testing.T) {
+	root := installedFixtures(t, "well-formed")
+	found, warnings := plugin.Discover(root)
+	if len(warnings) != 0 || len(found) != 1 {
+		t.Fatalf("discovery = %d plugins, warnings %v", len(found), warnings)
+	}
+	db, err := sql.Open("sqlite", found[0].Database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE layers (
+		name TEXT PRIMARY KEY, description TEXT NOT NULL, added_by TEXT DEFAULT 'kernel')`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO layers (name, description) VALUES ('knowledge', '#461 fixture')`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	database, err := plugin.Validate(context.Background(), found[0])
+	if err != nil {
+		t.Fatalf("an undeclared table invalidated the plugin: %v", err)
+	}
+	if slices.Equal(database.Orphans, []string{"layers"}) {
+		for _, table := range database.Tables {
+			if table.Name == "layers" {
+				t.Fatal("the orphan table leaked into the served semantic layer")
+			}
+		}
+		return
+	}
+	t.Fatalf("orphans = %v, want [layers]", database.Orphans)
+}
+
+func TestDeclaredTableDriftStaysFatalAroundOrphanTolerance(t *testing.T) {
+	root := installedFixtures(t, "well-formed")
+	found, _ := plugin.Discover(root)
+	db, err := sql.Open("sqlite", found[0].Database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	declared := found[0].Semantic.Tables[0]
+	if _, err := db.Exec("DROP TABLE " + declared.Name); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE undeclared_leftover (fixture TEXT)`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := plugin.Validate(context.Background(), found[0]); err == nil ||
+		!strings.Contains(err.Error(), "missing database table") {
+		t.Fatalf("a missing declared table passed with %v", err)
+	}
+
+	db, err = sql.Open("sqlite", found[0].Database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	columns := strings.Join(declared.Columns, ", ") + ", extra_column TEXT"
+	if _, err := db.Exec("CREATE TABLE " + declared.Name + " (" + columns + ")"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := plugin.Validate(context.Background(), found[0]); err == nil ||
+		!strings.Contains(err.Error(), "columns for "+declared.Name) {
+		t.Fatalf("declared column drift passed with %v", err)
+	}
+}
+
 func TestFixturePluginsDiscoverValidateAndDeclareCustody(t *testing.T) {
 	root := installedFixtures(t, "well-formed", "lying", "custodial")
 	found, warnings := plugin.Discover(root)
