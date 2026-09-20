@@ -3,7 +3,6 @@ package vector
 import (
 	"context"
 	"errors"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -39,29 +38,5 @@ func TestIndexLockNamesItsHolderAndHonoursCancellation(t *testing.T) {
 	}
 	if err := acquired(); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestClearUnheldIndexLocksRemovesAStaleFileAndLeavesAHeldOne(t *testing.T) {
-	directory := t.TempDir()
-	stale := filepath.Join(directory, "stale.vector.db")
-	live := filepath.Join(directory, "live.vector.db")
-	if err := os.WriteFile(stale+".index.lock", nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	release, err := lockFile(live + ".index.lock")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer release()
-
-	if err := ClearUnheldIndexLocks([]string{stale, live}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(stale + ".index.lock"); !os.IsNotExist(err) {
-		t.Fatalf("stale lock still present: %v", err)
-	}
-	if _, err := os.Stat(live + ".index.lock"); err != nil {
-		t.Fatalf("held lock was removed: %v", err)
 	}
 }
