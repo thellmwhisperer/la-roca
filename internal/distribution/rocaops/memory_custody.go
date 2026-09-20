@@ -344,7 +344,7 @@ func MigrateMemoryCustody(ctx context.Context, options MemoryCustodyOptions) (Me
 				}
 				return custodyFailure(ctx, ops, snapshots, drift, beginErr)
 			}
-			commit, importErr := importMemoryBatch(ctx, ops, batch, source.name, group)
+			commit, importErr := importMemoryBatch(ctx, batch, source.name, group)
 			if importErr != nil {
 				_ = batch.Rollback()
 				return custodyFailure(ctx, ops, snapshots, drift, importErr)
@@ -704,13 +704,12 @@ func memoryColumns(ctx context.Context, db *sql.DB) (map[string]bool, error) {
 	return bundledplugin.TableColumns(ctx, db, "memories")
 }
 
-func importMemoryBatch(ctx context.Context, ops *sql.DB, batch *migrationledger.Batch,
+func importMemoryBatch(ctx context.Context, batch *migrationledger.Batch,
 	source string, rows []pendingMemory) (migrationledger.BatchCommit, error) {
 	digest := sha256.New()
-	reserved := make(map[int64]struct{})
 	for _, pending := range rows {
 		row := pending.row
-		destination, found, err := aliasDestination(ctx, ops, source, row.digest, reserved)
+		destination, found, err := aliasDestination(ctx, batch, source, row.digest)
 		if err != nil {
 			return migrationledger.BatchCommit{}, err
 		}
@@ -734,7 +733,6 @@ func importMemoryBatch(ctx context.Context, ops *sql.DB, batch *migrationledger.
 				return migrationledger.BatchCommit{}, fmt.Errorf("read ops memory destination: %w", err)
 			}
 		}
-		reserved[destination] = struct{}{}
 		sourceKey := pending.sourceKey
 		if _, err := batch.ExecContext(ctx, `INSERT INTO memory_provenance
 			(source_database, source_key, provenance) VALUES (?, ?, ?)`, source, sourceKey,
@@ -762,26 +760,27 @@ func importMemoryBatch(ctx context.Context, ops *sql.DB, batch *migrationledger.
 // physical record can represent at most one identity from each source. A second
 // byte-equal core row therefore remains physical even when the first one aliases
 // a corpus row, preserving the historical duplicate population.
-func aliasDestination(ctx context.Context, ops *sql.DB, source, digest string,
-	reserved map[int64]struct{}) (int64, bool, error) {
+func aliasDestination(ctx context.Context, batch *migrationledger.Batch,
+	source, digest string) (int64, bool, error) {
 	// destination_key is written as strconv.FormatInt, so text equality against
 	// CAST(records.id AS TEXT) is exactly the integer equality the CAST form
 	// expressed while keeping the predicate sargable for the
 	// custody_memberships(migration, destination_key) index (issue #455).
-	rows, err := ops.QueryContext(ctx, memoryAliasQuery, memoryCustodyMigration,
+	// Use the writer transaction: a separate connection blocks when dirty pages
+	// spill in DELETE journal mode. The query also sees this batch's memberships,
+	// so its same-source predicate excludes destinations already used in the batch.
+	rows, err := batch.QueryContext(ctx, memoryAliasQuery, memoryCustodyMigration,
 		digest, source, memoryCustodyMigration, source)
 	if err != nil {
 		return 0, false, fmt.Errorf("look for an exact cross-source memory: %w", err)
 	}
 	defer rows.Close()
-	for rows.Next() {
+	if rows.Next() {
 		var destination int64
 		if err := rows.Scan(&destination); err != nil {
 			return 0, false, fmt.Errorf("read an exact cross-source memory: %w", err)
 		}
-		if _, used := reserved[destination]; !used {
-			return destination, true, nil
-		}
+		return destination, true, nil
 	}
 	if err := rows.Err(); err != nil {
 		return 0, false, fmt.Errorf("look for an exact cross-source memory: %w", err)

@@ -205,6 +205,45 @@ func TestDATA2ResumesAfterACommittedBatchWithoutHalfRows(t *testing.T) {
 	}
 }
 
+func TestDATA2ImportsAfterBatchSpillsInDeleteJournalMode(t *testing.T) {
+	fixture := newCustodyFixture(t)
+	insertFixtureMemories(t, fixture.core, false, nil)
+	insertFixtureMemories(t, fixture.corpus, true, nil)
+	insertOpsMemories(t, fixture.ops, 0)
+	db := openCustodyDB(t, fixture.ops)
+	defer db.Close()
+	var journalMode string
+	if err := db.QueryRow("PRAGMA journal_mode").Scan(&journalMode); err != nil {
+		t.Fatal(err)
+	}
+	if journalMode != "delete" {
+		t.Fatalf("default journal mode = %q, want delete", journalMode)
+	}
+	// Exceed SQLite's default page cache within one batch so it must spill
+	// dirty pages and take an exclusive lock before the next alias lookup.
+	const count = 250
+	if _, err := db.Exec(`WITH RECURSIVE n(i) AS (
+		SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i < ?)
+		INSERT INTO memories (layer, content, metadata, origin, status, created_at)
+		SELECT 'project', ? || i, '{}', 'agent', 'active', '2026-01-01' FROM n`,
+		count, strings.Repeat("custody payload ", 2048)); err != nil {
+		t.Fatal(err)
+	}
+	report, err := MigrateMemoryCustody(t.Context(), MemoryCustodyOptions{
+		CorePath: fixture.core, CorpusPath: fixture.corpus, OpsPath: fixture.ops,
+		SnapshotDir: fixture.snapshots,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.State != migrationledger.StateVerified || report.Memberships != count ||
+		report.PhysicalRecords != count || report.FTSRecords != count {
+		t.Fatalf("cache-spilling migration = %+v", report)
+	}
+	assertCustodyCount(t, db, "SELECT COUNT(*) FROM memory_records", count)
+	assertCustodyCount(t, db, "SELECT COUNT(*) FROM custody_memberships", count)
+}
+
 func TestDATA2VerifiesAVirginHomeWithNothingToCarry(t *testing.T) {
 	fixture := newCustodyFixture(t)
 	insertFixtureMemories(t, fixture.core, false, nil)
