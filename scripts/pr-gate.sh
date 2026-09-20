@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# risk-gate - judge a PR's declared Risk Assessment (issue #457).
+# pr-gate - judge a PR's declared Risk Assessment (issue #457).
 #
 # Reads the PR body's "Risk Assessment" section and rules:
-#   High   -> fail, label risk:high, convert to draft, request owner review.
-#             The owner's risk:accepted label lets a High PR pass.
+#   High   -> fail, label risk:high, request owner review. Degraded
+#             enforcement (owner decision 2026-09-20): the PR is not
+#             converted to draft; the failing check blocks the merge. The
+#             owner's risk:accepted label lets a High PR pass.
 #   Medium -> pass only with a pasted Aceptación/Acceptance section holding a
 #             fenced block with at least one `$ roca` command line and one
 #             output line; otherwise fail with the paste message.
@@ -238,15 +240,15 @@ summary() {
 }
 
 pass_gate() {
-  printf 'risk-gate: PASS - %s\n' "$*"
-  summary "### risk-gate: PASS"
+  printf 'pr-gate: PASS - %s\n' "$*"
+  summary "### pr-gate: PASS"
   summary "$*"
   exit 0
 }
 
 fail_gate() {
-  printf 'risk-gate: FAIL - %s\n' "$*"
-  summary "### risk-gate: FAIL"
+  printf 'pr-gate: FAIL - %s\n' "$*"
+  summary "### pr-gate: FAIL"
   summary "$*"
   printf '::error::%s\n' "$*"
   exit 1
@@ -255,9 +257,9 @@ fail_gate() {
 best_effort() { # best_effort <note> <command...>
   local note=$1 out
   shift
-  printf 'risk-gate: %s\n' "$note"
+  printf 'pr-gate: %s\n' "$note"
   if ! out=$("$@" 2>&1); then
-    printf 'risk-gate: warning: %s failed: %s\n' "$note" "$(printf '%s' "$out" | head -2)"
+    printf 'pr-gate: warning: %s failed: %s\n' "$note" "$(printf '%s' "$out" | head -2)"
     summary "warning: $note failed: $(printf '%s' "$out" | head -2) (continuing; the verdict stands)"
   fi
 }
@@ -265,11 +267,10 @@ best_effort() { # best_effort <note> <command...>
 gate() {
   local repo=${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}
   local n=${1:-${PR_NUMBER:?PR_NUMBER required}}
-  local fork=${RISK_GATE_FORK:-false}
+  local fork=${PR_GATE_FORK:-false}
 
-  local body is_draft author labels owner comments
+  local body author labels owner comments
   body=$(gh pr view "$n" -R "$repo" --json body --jq '.body // ""')
-  is_draft=$(gh pr view "$n" -R "$repo" --json isDraft --jq '.isDraft')
   author=$(gh pr view "$n" -R "$repo" --json author --jq '.author.login')
   labels=$(gh pr view "$n" -R "$repo" --json labels --jq '.labels[].name' || true)
   owner=$(gh api "repos/$repo" --jq '.owner.login')
@@ -278,24 +279,14 @@ gate() {
   has_label() {
     printf '%s\n' "$labels" | grep -Fxq "$1"
   }
-  # A GITHUB_TOKEN may never change draft state (actions/toolkit#1165); the
-  # conversion needs the RISK_GATE_TOKEN secret. The failing check still
-  # blocks the merge without it.
-  to_draft() {
-    if [[ -n ${RISK_GATE_DRAFT_TOKEN:-} ]]; then
-      best_effort "convert the PR to draft" \
-        env GH_TOKEN="$RISK_GATE_DRAFT_TOKEN" gh pr ready "$n" -R "$repo" --undo
-    else
-      printf 'risk-gate: note: draft conversion is disabled until the repository secret RISK_GATE_TOKEN (a token with pull_requests write) exists\n'
-      summary "note: the PR is not converted to draft because the repository secret RISK_GATE_TOKEN (a token with pull_requests write) does not exist; the failing risk-gate check still blocks the merge"
-    fi
-  }
+  # Degraded enforcement (owner decision 2026-09-20): the gate never touches
+  # draft state; a GITHUB_TOKEN could not anyway (actions/toolkit#1165).
   # The repository owner is a user or an organization; ask the first resolved
-  # owner candidate who is not the PR author. vars.RISK_GATE_REVIEWER, when
+  # owner candidate who is not the PR author. vars.PR_GATE_REVIEWER, when
   # set, names the reviewer explicitly.
   request_owner_review() {
     local candidates c
-    candidates=${RISK_GATE_REVIEWER:-}
+    candidates=${PR_GATE_REVIEWER:-}
     if [[ -z $candidates ]]; then
       if [[ $(gh api "repos/$repo" --jq '.owner.type') == Organization ]]; then
         candidates=$(gh api "orgs/$owner/members?role=admin" --jq '.[].login' 2>/dev/null || true)
@@ -312,7 +303,7 @@ gate() {
         return 0
       fi
     done <<<"$candidates"
-    printf 'risk-gate: note: the only owner candidate is the PR author; review request skipped\n'
+    printf 'pr-gate: note: the only owner candidate is the PR author; review request skipped\n'
     summary "note: review request skipped - the resolved owner candidate list ($candidates) is the PR author"
   }
   drop_high_label() {
@@ -350,9 +341,6 @@ gate() {
           fi
           best_effort "labelling $RISK_LABEL" \
             gh pr edit "$n" -R "$repo" --add-label "$RISK_LABEL"
-        fi
-        if [[ $is_draft != true ]]; then
-          to_draft
         fi
         request_owner_review
       fi
