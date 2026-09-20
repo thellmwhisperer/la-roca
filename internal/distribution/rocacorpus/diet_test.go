@@ -457,29 +457,16 @@ func tableHasColumn(t *testing.T, db *sql.DB, table, column string) bool {
 }
 
 func TestApplySchemaBackfillsMachineOnUpgrade(t *testing.T) {
-	t.Setenv(bundledplugin.EnvAllowHomeMigrate, "1")
-	db, path := openCorpusDB(t)
-	statements := []string{
+	var beforeFTS string
+	path := prepareCorpusUpgradeBeforeBump(t, func(db *sql.DB) {
+		installHistoricalHarvestTriggers(t, db)
+		beforeFTS = dumpHarvestFTSIndex(t, db)
+	},
 		`INSERT INTO sessions(session_id, source_agent, title, project) VALUES ('historical', 'claude', 'fixture title', 'demo')`,
 		`INSERT INTO exchanges(session_id, exchange_number, human_text, agent_text) VALUES ('historical', 1, 'question', 'answer')`,
 		`INSERT INTO thinking_blocks(session_id, exchange_number, position_in_session, full_text) VALUES ('historical', 1, 1, 'thought')`,
 		`INSERT INTO tool_uses(session_id, exchange_number, tool_name) VALUES ('historical', 1, 'Read')`,
-	}
-	for _, statement := range statements {
-		if _, err := db.Exec(statement); err != nil {
-			db.Close()
-			t.Fatal(err)
-		}
-	}
-	installHistoricalHarvestTriggers(t, db)
-	beforeFTS := dumpHarvestFTSIndex(t, db)
-	if _, err := db.Exec(`UPDATE plugin_schema SET schema_version = ?`, rocacorpus.SchemaVersion-1); err != nil {
-		db.Close()
-		t.Fatal(err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
+	)
 
 	db := reapplySchemaAndReopen(t, path)
 	defer db.Close()
@@ -667,6 +654,10 @@ func TestApplySchemaCollapsesThinkingCopiesThatOnlyDifferByPosition(t *testing.T
 }
 
 func prepareCorpusUpgrade(t *testing.T, statements ...string) string {
+	return prepareCorpusUpgradeBeforeBump(t, nil, statements...)
+}
+
+func prepareCorpusUpgradeBeforeBump(t *testing.T, beforeBump func(*sql.DB), statements ...string) string {
 	t.Helper()
 	t.Setenv(bundledplugin.EnvAllowHomeMigrate, "1")
 	db, path := openCorpusDB(t)
@@ -675,6 +666,9 @@ func prepareCorpusUpgrade(t *testing.T, statements ...string) string {
 			db.Close()
 			t.Fatal(err)
 		}
+	}
+	if beforeBump != nil {
+		beforeBump(db)
 	}
 	if _, err := db.Exec(`UPDATE plugin_schema SET schema_version = ?`, rocacorpus.SchemaVersion-1); err != nil {
 		db.Close()
