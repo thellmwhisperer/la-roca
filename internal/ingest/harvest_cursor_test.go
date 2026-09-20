@@ -1001,6 +1001,54 @@ func assertLineageHasNoContent(t *testing.T, db *store.DB) {
 	}
 }
 
+func TestFailedMachineLessIngestRetriesBeforePromotion(t *testing.T) {
+	original := parseKind
+	parses := 0
+	fail := true
+	parseKind = func(kind parsers.Kind, content []byte, meta parsers.FileMeta) (parsers.Records, error) {
+		parses++
+		if fail {
+			return parsers.Records{}, fmt.Errorf("fixture parse failure")
+		}
+		return original(kind, content, meta)
+	}
+	t.Cleanup(func() { parseKind = original })
+
+	home := t.TempDir()
+	workspace := filepath.Join(home, "w")
+	cwd := filepath.Join(workspace, "demo")
+	roots := ResolveRoots(Environment{GOOS: "darwin", Home: home, Hostname: "hub"},
+		Settings{WorkspaceRoots: []string{workspace}})
+	writeClaudeSession(t, roots, cwd, cwdFixtureSessionID)
+	db, first := runIngest(t, roots)
+	if first.Errors == 0 || parses == 0 {
+		t.Fatalf("first ingest did not fail: parses=%d result=%+v", parses, first)
+	}
+	path := filepath.Join(roots.ClaudeProjects, encodeRoot(cwd), cwdFixtureSessionID+".jsonl")
+	if _, err := db.SQL().Exec(`UPDATE ingest_file_state
+		SET fingerprint = replace(fingerprint, ?, ''), metadata = json_remove(metadata, '$.machine')
+		WHERE path = ?`, ":machine:"+roots.Machine, path); err != nil {
+		t.Fatal(err)
+	}
+	var lastError string
+	if err := db.SQL().QueryRow(`SELECT last_error FROM ingest_file_state WHERE path = ?`, path).Scan(&lastError); err != nil {
+		t.Fatal(err)
+	}
+	if lastError == "" || countRows(t, db.SQL(), "exchanges") != 0 {
+		t.Fatal("fixture must retain a failed fingerprint without exchanges")
+	}
+	fail, parses = false, 0
+	second := runIngestOn(t, db, roots)
+	if second.Errors != 0 || parses == 0 || countRows(t, db.SQL(), "exchanges") == 0 {
+		t.Fatalf("failed ingest was not retried: parses=%d result=%+v", parses, second)
+	}
+	parses = 0
+	third := runIngestOn(t, db, roots)
+	if third.Errors != 0 || parses != 0 || third.FilesRead != 0 {
+		t.Fatalf("successful retry was not retained: parses=%d result=%+v", parses, third)
+	}
+}
+
 func TestMachineLessCursorPromotedWithoutReparsing(t *testing.T) {
 	var parses int
 	original := parseKind

@@ -158,17 +158,9 @@ func prepareIngestProvenance(path string) error {
 	if err := backfillMachine(context.Background(), tx); err != nil {
 		return err
 	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit bundled %s provenance migration: %w", Name, err)
-	}
-	if _, err := db.Exec(schema); err != nil {
+	if _, err := tx.Exec(schema); err != nil {
 		return fmt.Errorf("prepare bundled %s schema: %w", Name, err)
 	}
-	tx, err = db.BeginTx(context.Background(), nil)
-	if err != nil {
-		return fmt.Errorf("begin bundled %s provenance backfill: %w", Name, err)
-	}
-	defer tx.Rollback()
 	if altered {
 		if _, err := tx.Exec(`INSERT INTO sessions_fts(sessions_fts) VALUES ('rebuild')`); err != nil {
 			return fmt.Errorf("rebuild the derived session index: %w", err)
@@ -223,44 +215,10 @@ func backfillMachine(ctx context.Context, tx *sql.Tx) error {
 	return nil
 }
 
-var indexedUpdateTriggerSQL = []string{
-	`CREATE TRIGGER IF NOT EXISTS sessions_au AFTER UPDATE OF title, project ON sessions BEGIN
-  INSERT INTO sessions_fts(sessions_fts, rowid, title, project)
-    VALUES ('delete', old.rowid, old.title, old.project);
-  INSERT INTO sessions_fts(rowid, title, project) VALUES (new.rowid, new.title, new.project);
-END`,
-	`CREATE TRIGGER IF NOT EXISTS exchanges_au AFTER UPDATE OF human_text, agent_text ON exchanges BEGIN
-  INSERT INTO exchanges_fts(exchanges_fts, rowid, human_text, agent_text)
-    VALUES ('delete', old.id, old.human_text, old.agent_text);
-  INSERT INTO exchanges_fts(rowid, human_text, agent_text)
-    VALUES (new.id, new.human_text, new.agent_text);
-END`,
-	`CREATE TRIGGER IF NOT EXISTS thinking_au AFTER UPDATE OF full_text ON thinking_blocks BEGIN
-  INSERT INTO thinking_fts(thinking_fts, rowid, full_text) VALUES ('delete', old.id, old.full_text);
-  INSERT INTO thinking_fts(rowid, full_text) VALUES (new.id, new.full_text);
-END`,
-}
-
 func dropIndexedUpdateTriggers(tx *sql.Tx) error {
 	for _, name := range []string{"sessions_au", "exchanges_au", "thinking_au"} {
 		if _, err := tx.Exec("DROP TRIGGER IF EXISTS " + name); err != nil {
 			return fmt.Errorf("drop %s: %w", name, err)
-		}
-	}
-	return nil
-}
-
-func installIndexedUpdateTriggers(tx *sql.Tx) error {
-	for i, table := range []string{"sessions", "exchanges", "thinking_blocks"} {
-		present, err := tableExists(tx, table)
-		if err != nil {
-			return err
-		}
-		if !present {
-			continue
-		}
-		if _, err := tx.Exec(indexedUpdateTriggerSQL[i]); err != nil {
-			return fmt.Errorf("install %s update trigger: %w", table, err)
 		}
 	}
 	return nil
@@ -280,8 +238,8 @@ func refreshIndexedUpdateTriggers(path string) error {
 	if err := dropIndexedUpdateTriggers(tx); err != nil {
 		return err
 	}
-	if err := installIndexedUpdateTriggers(tx); err != nil {
-		return err
+	if _, err := tx.Exec(schema); err != nil {
+		return fmt.Errorf("refresh %s update triggers: %w", Name, err)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit %s trigger refresh: %w", Name, err)

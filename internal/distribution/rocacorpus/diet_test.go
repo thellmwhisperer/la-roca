@@ -461,8 +461,8 @@ func TestApplySchemaBackfillsMachineOnUpgrade(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	beforeFTS := dumpHarvestFTS(t, db)
-	beforeData := harvestFTSDataSizes(t, db)
+	installHistoricalHarvestTriggers(t, db)
+	beforeFTS := dumpHarvestFTSIndex(t, db)
 	if _, err := db.Exec(`UPDATE plugin_schema SET schema_version = ?`, rocacorpus.SchemaVersion-1); err != nil {
 		db.Close()
 		t.Fatal(err)
@@ -488,47 +488,112 @@ func TestApplySchemaBackfillsMachineOnUpgrade(t *testing.T) {
 			t.Fatalf("%s.machine = %q, want %q", table, got, machine)
 		}
 	}
-	if beforeFTS != dumpHarvestFTS(t, db) {
-		t.Fatalf("FTS content changed during machine backfill\nbefore:\n%s\nafter:\n%s",
-			beforeFTS, dumpHarvestFTS(t, db))
+	if afterFTS := dumpHarvestFTSIndex(t, db); beforeFTS != afterFTS {
+		t.Fatalf("FTS index bytes changed during machine backfill\nbefore:\n%s\nafter:\n%s", beforeFTS, afterFTS)
 	}
-	if beforeData != harvestFTSDataSizes(t, db) {
-		t.Fatalf("FTS shadow data grew during machine backfill: before=%q after=%q",
-			beforeData, harvestFTSDataSizes(t, db))
+	for _, table := range []string{"sessions", "exchanges", "thinking_blocks"} {
+		if _, err := db.Exec("UPDATE " + table + " SET machine = 'remote'"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if afterFTS := dumpHarvestFTSIndex(t, db); beforeFTS != afterFTS {
+		t.Fatal("machine-only updates changed the FTS index bytes after upgrade")
+	}
+	for _, test := range []struct{ table, column, index, old string }{
+		{"sessions", "title", "sessions_fts", "fixture"},
+		{"exchanges", "human_text", "exchanges_fts", "question"},
+		{"thinking_blocks", "full_text", "thinking_fts", "thought"},
+	} {
+		if _, err := db.Exec("UPDATE " + test.table + " SET " + test.column + " = 'replacement'"); err != nil {
+			t.Fatal(err)
+		}
+		assertCountQuery(t, db, "SELECT COUNT(*) FROM "+test.index+" WHERE "+test.index+" MATCH 'replacement'", 1)
+		assertCountQuery(t, db, "SELECT COUNT(*) FROM "+test.index+" WHERE "+test.index+" MATCH '"+test.old+"'", 0)
 	}
 }
 
-func dumpHarvestFTS(t *testing.T, db *sql.DB) string {
-	t.Helper()
-	var sessions, exchanges, thinking string
-	if err := db.QueryRow(`SELECT group_concat(rowid || ':' || coalesce(title,'') || ':' || coalesce(project,''), '|')
-		FROM (SELECT rowid, title, project FROM sessions_fts ORDER BY rowid)`).Scan(&sessions); err != nil {
+func TestApplySchemaProvenanceFailureRollsBackMachineAndTriggers(t *testing.T) {
+	t.Setenv(bundledplugin.EnvAllowHomeMigrate, "1")
+	db, path := openCorpusDB(t)
+	defer db.Close()
+	if _, err := db.Exec(`INSERT INTO sessions(session_id, source_agent, title)
+		VALUES ('historical', 'claude', 'original');
+		CREATE TRIGGER reject_provenance BEFORE UPDATE OF source_surface ON sessions
+		BEGIN SELECT RAISE(ABORT, 'fixture provenance failure'); END;`); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.QueryRow(`SELECT group_concat(rowid || ':' || coalesce(human_text,'') || ':' || coalesce(agent_text,''), '|')
-		FROM (SELECT rowid, human_text, agent_text FROM exchanges_fts ORDER BY rowid)`).Scan(&exchanges); err != nil {
+	installHistoricalHarvestTriggers(t, db)
+	if _, err := db.Exec(`UPDATE plugin_schema SET schema_version = ?`, rocacorpus.SchemaVersion-1); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.QueryRow(`SELECT group_concat(rowid || ':' || coalesce(full_text,''), '|')
-		FROM (SELECT rowid, full_text FROM thinking_fts ORDER BY rowid)`).Scan(&thinking); err != nil {
+	beforeFTS := dumpHarvestFTSIndex(t, db)
+	if err := rocacorpus.ApplySchema(path); err == nil || !strings.Contains(err.Error(), "fixture provenance failure") {
+		t.Fatalf("migration error = %v, want fixture provenance failure", err)
+	}
+	assertCountQuery(t, db, "SELECT COUNT(*) FROM sessions WHERE machine IS NULL", 1)
+	if beforeFTS != dumpHarvestFTSIndex(t, db) {
+		t.Fatal("failed migration changed the FTS index bytes")
+	}
+	if _, err := db.Exec(`UPDATE sessions SET title = 'replacement'`); err != nil {
 		t.Fatal(err)
 	}
-	return sessions + "\n" + exchanges + "\n" + thinking
+	assertCountQuery(t, db, "SELECT COUNT(*) FROM sessions_fts WHERE sessions_fts MATCH 'replacement'", 1)
+	assertCountQuery(t, db, "SELECT COUNT(*) FROM sessions_fts WHERE sessions_fts MATCH 'original'", 0)
 }
 
-func harvestFTSDataSizes(t *testing.T, db *sql.DB) string {
+func installHistoricalHarvestTriggers(t *testing.T, db *sql.DB) {
 	t.Helper()
-	var sessions, exchanges, thinking int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM sessions_fts_data`).Scan(&sessions); err != nil {
+	if _, err := db.Exec(`
+		DROP TRIGGER sessions_au;
+		CREATE TRIGGER sessions_au AFTER UPDATE ON sessions BEGIN
+		  INSERT INTO sessions_fts(sessions_fts, rowid, title, project) VALUES ('delete', old.rowid, old.title, old.project);
+		  INSERT INTO sessions_fts(rowid, title, project) VALUES (new.rowid, new.title, new.project);
+		END;
+		DROP TRIGGER exchanges_au;
+		CREATE TRIGGER exchanges_au AFTER UPDATE ON exchanges BEGIN
+		  INSERT INTO exchanges_fts(exchanges_fts, rowid, human_text, agent_text) VALUES ('delete', old.id, old.human_text, old.agent_text);
+		  INSERT INTO exchanges_fts(rowid, human_text, agent_text) VALUES (new.id, new.human_text, new.agent_text);
+		END;
+		DROP TRIGGER thinking_au;
+		CREATE TRIGGER thinking_au AFTER UPDATE ON thinking_blocks BEGIN
+		  INSERT INTO thinking_fts(thinking_fts, rowid, full_text) VALUES ('delete', old.id, old.full_text);
+		  INSERT INTO thinking_fts(rowid, full_text) VALUES (new.id, new.full_text);
+		END;`); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.QueryRow(`SELECT COUNT(*) FROM exchanges_fts_data`).Scan(&exchanges); err != nil {
-		t.Fatal(err)
+}
+
+func dumpHarvestFTSIndex(t *testing.T, db *sql.DB) string {
+	t.Helper()
+	var dump strings.Builder
+	for _, index := range []string{"sessions_fts", "exchanges_fts", "thinking_fts"} {
+		for _, shadow := range []struct{ suffix, columns, order string }{
+			{"data", "quote(id) || ':' || quote(block)", "id"},
+			{"idx", "quote(segid) || ':' || quote(term) || ':' || quote(pgno)", "segid, term"},
+			{"docsize", "quote(id) || ':' || quote(sz)", "id"},
+			{"config", "quote(k) || ':' || quote(v)", "k"},
+		} {
+			table := index + "_" + shadow.suffix
+			rows, err := db.Query("SELECT " + shadow.columns + " FROM " + table + " ORDER BY " + shadow.order)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for rows.Next() {
+				var row string
+				if err := rows.Scan(&row); err != nil {
+					rows.Close()
+					t.Fatal(err)
+				}
+				fmt.Fprintf(&dump, "%s:%s\n", table, row)
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				t.Fatal(err)
+			}
+			rows.Close()
+		}
 	}
-	if err := db.QueryRow(`SELECT COUNT(*) FROM thinking_fts_data`).Scan(&thinking); err != nil {
-		t.Fatal(err)
-	}
-	return fmt.Sprintf("sessions=%d exchanges=%d thinking=%d", sessions, exchanges, thinking)
+	return dump.String()
 }
 
 // openCorpusDB applies the corpus schema to a fresh database and opens it,

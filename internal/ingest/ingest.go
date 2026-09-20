@@ -381,7 +381,8 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 			finishTarget()
 			continue
 		}
-		if incrementality.IsMachinePromotion(state[target.Path].Fingerprint, fingerprint, target.Machine) {
+		if state[target.Path].LastError == "" &&
+			incrementality.IsMachinePromotion(state[target.Path].Fingerprint, fingerprint, target.Machine) {
 			if !opts.DryRun {
 				if err := promoteMachineWatermark(ctx, db, target, state[target.Path], fingerprint); err != nil {
 					return result, err
