@@ -20,6 +20,7 @@ import (
 	"github.com/thellmwhisperer/la-roca-vector/internal/engine"
 	"github.com/thellmwhisperer/la-roca-vector/internal/telemetry"
 	"github.com/thellmwhisperer/la-roca/pkg/incrementality"
+	"github.com/thellmwhisperer/la-roca/pkg/opsvector"
 )
 
 const (
@@ -724,7 +725,18 @@ func (f Federation) Ingest(ctx context.Context, sourceKind string) (FederationDe
 			return FederationDelta{}, err
 		}
 		contract := database.contractFingerprint()
-		if sourceKind == "" && !f.Reembed && !f.Verify {
+		staleOpsIDs := false
+		if database.Plugin == "roca-ops" {
+			if _, err := opsvector.RemapLegacyIDs(databasePath); err != nil {
+				return FederationDelta{}, fmt.Errorf("remap ops vector sidecar: %w", err)
+			}
+			var err error
+			staleOpsIDs, err = opsvector.HasStaleLegacyIDs(ctx, databasePath)
+			if err != nil {
+				return FederationDelta{}, err
+			}
+		}
+		if sourceKind == "" && !f.Reembed && !f.Verify && !staleOpsIDs {
 			marker, markerErr := sourceFileMarker(databasePath)
 			if markerErr == nil {
 				delta, unchangedErr := unchangedSidecar(sidecar, database.owner(), f.Model, contract, sourceMarkerMetaKey, marker)
@@ -748,7 +760,7 @@ func (f Federation) Ingest(ctx context.Context, sourceKind string) (FederationDe
 			}
 			continue
 		}
-		if sourceKind == "" && !f.Reembed {
+		if sourceKind == "" && !f.Reembed && !staleOpsIDs {
 			delta, unchangedErr := unchangedSidecar(sidecar, database.owner(), f.Model, contract, "source_fingerprint", fingerprint)
 			if unchangedErr == nil {
 				if err := sealSidecar(sidecar, database.owner(), f.Model, f.BuildVersion, contract, fingerprint, marker, delta); err != nil {
