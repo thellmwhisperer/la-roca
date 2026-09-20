@@ -80,8 +80,7 @@ codex-identity-test: build ## Paired Codex session identity regression on a decl
 	@test -n "$(ROCA_CODEX_PUBLISHED_BIN)" || (echo 'Set ROCA_CODEX_PUBLISHED_BIN to the v1.84.8 executable'; exit 1)
 	ROCA_BIN=$(abspath $(BIN)) go test -tags=acceptance ./test/acceptance -run '^TestCodexIdentityPublished$$' -v -count=1
 
-.PHONY: accept accept-index split-oracle e2e-smoke e2e-federation
-ROCA_PUBLISHED_BIN ?= $(shell command -v roca 2>/dev/null)
+.PHONY: accept accept-index split-oracle e2e-smoke e2e-federation e2e
 ROCA_E2E_VECTOR_MODEL ?= $(HOME)/.roca/models/nomic-embed-text-v2-moe/a5db3381f2e514d3490a3a31fe70eb1a65e95016c85c6c2c23223b810806594f.gguf
 # Pin the suite to the artefact this recipe's `build` just wrote. An inherited
 # ROCA_BIN, including a stub, cannot select a different binary.
@@ -96,6 +95,10 @@ e2e-federation: build ## Installed binary against the frozen synthetic federatio
 	@test -x "$(ROCA_PUBLISHED_BIN)" || { echo "set ROCA_PUBLISHED_BIN to an installed published release" >&2; exit 1; }
 	@test -f "$(ROCA_E2E_VECTOR_MODEL)" || { echo "set ROCA_E2E_VECTOR_MODEL to the pinned embedding model" >&2; exit 1; }
 	ROCA_BIN=$(BIN) ROCA_PLAYGROUND_INTEGRATION= ROCA_PLAYGROUND_FEATURES= ROCA_PUBLISHED_BIN="$(ROCA_PUBLISHED_BIN)" ROCA_E2E_VECTOR_MODEL="$(ROCA_E2E_VECTOR_MODEL)" go test -tags=acceptance,e2e_federation ./test/acceptance -run '^(TestFrozenFederationInstalledBinary|TestFrozenFederationProvisioned|TestFrozenFederationProvisionedJourney)$$' -count=1 -v
+
+# The release-train round: one command that must pass at the pinned candidate
+# SHA before the release merge. docs/release-train.md owns the cadence.
+e2e: e2e-smoke e2e-federation ## The release-train e2e round over the real binary
 
 split-oracle: build ## Record and replay the DATA SPLIT compatibility goldens
 	ROCA_BIN=$(BIN) ROCA_PLAYGROUND_INTEGRATION= ROCA_PLAYGROUND_FEATURES= ROCA_PUBLISHED_BIN= go test -tags=acceptance ./test/acceptance -run '^TestDataSplitCompatibilityOracle$$' -count=1

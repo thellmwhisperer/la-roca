@@ -70,7 +70,8 @@ func TestReleasePleaseReplicatesTheTrustedMainControlPlane(t *testing.T) {
 		t.Fatalf("token validation step = %#v", validation)
 	}
 	if action.Uses != "googleapis/release-please-action@8b8fd2cc23b2e18957157a9d923d75aa0c6f6ad5" ||
-		action.ID != "release" || action.With["token"] != "${{ secrets.RELEASE_PLEASE_TOKEN }}" {
+		action.ID != "release" || action.With["token"] != "${{ secrets.RELEASE_PLEASE_TOKEN }}" ||
+		action.With["target-branch"] != "main" {
 		t.Fatalf("release-please action step = %#v", action)
 	}
 	if automerge.Name != "Enable auto-merge for release PR" ||

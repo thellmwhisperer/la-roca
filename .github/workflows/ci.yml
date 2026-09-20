@@ -3,7 +3,9 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [main]
+    # The release-train tip carries the CI status the pinned-SHA e2e round
+    # pins; main stays the release lane. docs/release-train.md owns the roles.
+    branches: [main, integration]
 
 permissions:
   contents: read

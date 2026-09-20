@@ -32,13 +32,15 @@ Reading order, from operator to contributor:
 10. [Architecture](architecture.md): the database-neutral kernel, current domain
     map, query path, and internal import rule.
 11. [Releases](releases.md): how versions are cut and artefacts are built.
-12. [Project memory](project-memory.md): contributor-agent notes that travel
+12. [Release train](release-train.md): the `integration` → `main` cadence, the
+    pinned-SHA e2e round, and the hotfix path.
+13. [Project memory](project-memory.md): contributor-agent notes that travel
     with the code (build, test, release, architecture, and sharp edges).
-13. [Frozen federation e2e](e2e-federation.md): installed-binary commands
+14. [Frozen federation e2e](e2e-federation.md): installed-binary commands
     against a synthetic copy of the bundled federation, never a live hub.
-14. [Federation e2e Aceptacion](e2e-federation-aceptacion.md): the exact
+15. [Federation e2e Aceptacion](e2e-federation-aceptacion.md): the exact
     commands and expected results for that suite.
-15. [Schema adoption Aceptacion](schema-adoption-187-aceptacion.md): doctor,
+16. [Schema adoption Aceptacion](schema-adoption-187-aceptacion.md): doctor,
     vector query, and bundled plugin place after the 1.87 machine-column
     adoption, on an isolated lab prefix.
 

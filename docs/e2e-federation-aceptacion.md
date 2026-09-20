@@ -244,7 +244,7 @@ metadata id: JS-safe integer of at most 12 digits
 expect: replacement supersedes exactly the migrated row
 
 ## real-usage-e2e-smoke
-command: make e2e-smoke
+command: make e2e-smoke ROCA_PUBLISHED_BIN=<published-roca>
 exit: 0
 expect: published release updates to the branch artefact
 expect: updated executable initializes a clean home
