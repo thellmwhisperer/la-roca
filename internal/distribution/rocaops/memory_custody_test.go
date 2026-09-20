@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/migrationledger"
 	_ "modernc.org/sqlite"
@@ -120,27 +120,8 @@ func TestDATA2MovesEveryMemoryIdentityIntoVerifiedOpsShadowCustody(t *testing.T)
 }
 
 func TestDATA2ResumesAfterACommittedBatchWithoutHalfRows(t *testing.T) {
-	fixture := smallCustodyFixture(t)
-	interrupted := errors.New("synthetic stop after a committed batch")
-	committed := 0
-	options := MemoryCustodyOptions{
-		CorePath: fixture.core, CorpusPath: fixture.corpus, OpsPath: fixture.ops,
-		SnapshotDir: fixture.snapshots, BatchSize: 2,
-		AfterBatch: func(MemoryBatch) error {
-			committed++
-			if committed < 2 {
-				return nil
-			}
-			return interrupted
-		},
-	}
-	stopped, err := MigrateMemoryCustody(t.Context(), options)
-	if !errors.Is(err, interrupted) {
-		t.Fatalf("interrupted migration = %v", err)
-	}
-	if stopped.State != migrationledger.StateBatchInProgress || len(stopped.Snapshots) != 3 {
-		t.Fatalf("interrupted report = %+v", stopped)
-	}
+	run := newInterruptedCustodyRun(t)
+	fixture, options := run.fixture, run.options
 	db := openCustodyDB(t, fixture.ops)
 	assertCustodyCount(t, db, "SELECT COUNT(*) FROM migration_batches", 2)
 	assertCustodyCount(t, db, "SELECT COUNT(*) FROM custody_memberships", 3)
@@ -164,26 +145,20 @@ func TestDATA2ResumesAfterACommittedBatchWithoutHalfRows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.State != migrationledger.StateVerified || report.Memberships != 10 ||
-		report.PhysicalRecords != 8 || report.FTSRecords != 8 ||
+	if report.State != migrationledger.StateVerified || report.Memberships != 8 ||
+		report.PhysicalRecords != 6 || report.FTSRecords != 6 ||
 		snapshotCount(t, fixture.snapshots) != beforeSnapshots {
 		t.Fatalf("resumed report = %+v; snapshots before=%d after=%d", report,
 			beforeSnapshots, snapshotCount(t, fixture.snapshots))
 	}
-	want := []MemoryDrift{
-		{SourceDatabase: coreMemorySource, SourceKey: "10#2", Kind: MemoryDriftMutated},
-		{SourceDatabase: coreMemorySource, SourceKey: "11", Kind: MemoryDriftDeleted},
+	if len(report.Drift) != 0 {
+		t.Fatalf("resume must verify the frozen population without live-source drift: %+v", report.Drift)
 	}
-	got := make([]MemoryDrift, 0, len(report.Drift))
-	for _, event := range report.Drift {
-		got = append(got, MemoryDrift{SourceDatabase: event.SourceDatabase,
-			SourceKey: event.SourceKey, Kind: event.Kind})
-	}
-	slices.SortFunc(got, func(left, right MemoryDrift) int {
-		return strings.Compare(left.SourceKey, right.SourceKey)
-	})
-	if !slices.Equal(got, want) {
-		t.Fatalf("drift = %+v, want %+v", got, want)
+	after := snapshotModTimesBySource(t, fixture.snapshots)
+	for source, modTime := range run.modTimes {
+		if !after[source].Equal(modTime) {
+			t.Fatalf("the %s snapshot was rewritten after the live source changed", source)
+		}
 	}
 
 	resumed := openCustodyDB(t, fixture.ops)
@@ -192,16 +167,49 @@ func TestDATA2ResumesAfterACommittedBatchWithoutHalfRows(t *testing.T) {
 		name, query string
 		want        int
 	}{
-		{"the mutated row keeps both versions under one legacy id",
-			"SELECT COUNT(*) FROM memory_compatibility WHERE source_database = 'core' AND id = 10", 2},
+		{"the mutated row keeps only its frozen version",
+			"SELECT COUNT(*) FROM memory_compatibility WHERE source_database = 'core' AND id = 10", 1},
 		{"the deleted row keeps the membership its batch recorded",
 			"SELECT COUNT(*) FROM memory_compatibility WHERE source_database = 'core' AND id = 11", 1},
-		{"the rewritten payload is searchable in the shadow index",
-			`SELECT COUNT(*) FROM memory_records_fts WHERE memory_records_fts MATCH 'rewritten'`, 1},
+		{"the rewritten payload is absent from the frozen population",
+			`SELECT COUNT(*) FROM memory_records_fts WHERE memory_records_fts MATCH 'rewritten'`, 0},
 	}
 	for _, probe := range probes {
 		t.Run(probe.name, func(t *testing.T) { assertCustodyCount(t, resumed, probe.query, probe.want) })
 	}
+}
+
+func TestDATA2ImportsAfterBatchSpillsInDeleteJournalMode(t *testing.T) {
+	fixture := newCustodyFixture(t)
+	insertFixtureMemories(t, fixture.core, false, nil)
+	insertFixtureMemories(t, fixture.corpus, true, nil)
+	insertOpsMemories(t, fixture.ops, 0)
+	db := openCustodyDB(t, fixture.ops)
+	defer db.Close()
+	var journalMode string
+	if err := db.QueryRow("PRAGMA journal_mode").Scan(&journalMode); err != nil {
+		t.Fatal(err)
+	}
+	if journalMode != "delete" {
+		t.Fatalf("default journal mode = %q, want delete", journalMode)
+	}
+	// Exceed SQLite's default page cache within one batch so it must spill
+	// dirty pages and take an exclusive lock before the next alias lookup.
+	const count = 250
+	if _, err := db.Exec(`WITH RECURSIVE n(i) AS (
+		SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i < ?)
+		INSERT INTO memories (layer, content, metadata, origin, status, created_at)
+		SELECT 'project', ? || i, '{}', 'agent', 'active', '2026-01-01' FROM n`,
+		count, strings.Repeat("custody payload ", 2048)); err != nil {
+		t.Fatal(err)
+	}
+	report := carryCustody(t, fixture)
+	if report.State != migrationledger.StateVerified || report.Memberships != count ||
+		report.PhysicalRecords != count || report.FTSRecords != count {
+		t.Fatalf("cache-spilling migration = %+v", report)
+	}
+	assertCustodyCount(t, db, "SELECT COUNT(*) FROM memory_records", count)
+	assertCustodyCount(t, db, "SELECT COUNT(*) FROM custody_memberships", count)
 }
 
 func TestDATA2VerifiesAVirginHomeWithNothingToCarry(t *testing.T) {
@@ -345,8 +353,8 @@ func TestDATA2KeepsTheVerifiedSnapshotWhenAReplacementFails(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	options.CorePath = filepath.Join(fixture.snapshots, "missing-core.db")
-	if _, err := MigrateMemoryCustody(t.Context(), options); err == nil {
+	source := memorySource{name: coreMemorySource, path: filepath.Join(fixture.snapshots, "missing-core.db")}
+	if err := snapshotMemories(t.Context(), source, frozen); err == nil {
 		t.Fatal("expected the failed replacement to be reported")
 	}
 	after, err := os.ReadFile(frozen)
@@ -557,6 +565,186 @@ func snapshotCount(t *testing.T, directory string) int {
 		t.Fatal(err)
 	}
 	return len(entries)
+}
+
+// interruptCustodyRun leaves a migration in the batch-in-progress state the
+// resume tests need: stopAfter committed batches, then a synthetic refusal.
+func interruptCustodyRun(t *testing.T, options *MemoryCustodyOptions, stopAfter int) {
+	t.Helper()
+	interrupted := errors.New("synthetic stop after a committed batch")
+	committed := 0
+	options.AfterBatch = func(MemoryBatch) error {
+		committed++
+		if committed < stopAfter {
+			return nil
+		}
+		return interrupted
+	}
+	stopped, err := MigrateMemoryCustody(t.Context(), *options)
+	if !errors.Is(err, interrupted) {
+		t.Fatalf("interrupted migration = %v", err)
+	}
+	if stopped.State != migrationledger.StateBatchInProgress || len(stopped.Snapshots) != 3 {
+		t.Fatalf("interrupted report = %+v", stopped)
+	}
+}
+
+// TestDATA2ResumesWithoutRefreezingAMatchingSnapshot verifies that a resume
+// reuses valid snapshots without re-VACUUMing them and reports their reuse.
+func TestDATA2ResumesWithoutRefreezingAMatchingSnapshot(t *testing.T) {
+	reused := newInterruptedCustodyRun(t)
+
+	var snapshotSteps []string
+	reused.options.AfterBatch = nil
+	reused.options.Progress = func(step MemoryCustodyProgress) error {
+		if step.Stage == StageSnapshot {
+			snapshotSteps = append(snapshotSteps, step.Source+": "+step.Detail)
+		}
+		return nil
+	}
+	report, err := MigrateMemoryCustody(t.Context(), reused.options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.State != migrationledger.StateVerified || report.Memberships != 8 ||
+		report.FTSRecords != report.PhysicalRecords {
+		t.Fatalf("resumed report = %+v", report)
+	}
+	after := snapshotModTimesBySource(t, reused.fixture.snapshots)
+	reuseLines := 0
+	for _, step := range snapshotSteps {
+		if strings.Contains(step, "reusing the existing") {
+			reuseLines++
+		}
+	}
+	t.Run("a faithful snapshot is reused, not re-vacuumed", func(t *testing.T) {
+		if reuseLines != 3 {
+			t.Fatalf("snapshot progress = %v; want a reuse line per source", snapshotSteps)
+		}
+		for source, modTime := range reused.modTimes {
+			if !after[source].Equal(modTime) {
+				t.Fatalf("the %s snapshot was rewritten during a resume that should have reused it", source)
+			}
+		}
+	})
+}
+
+// interruptedCustodyRun is one migration stopped mid-import, with the snapshot
+// file identities the resume assertions compare against.
+type interruptedCustodyRun struct {
+	fixture  custodyFixture
+	options  MemoryCustodyOptions
+	modTimes map[string]time.Time
+}
+
+func newInterruptedCustodyRun(t *testing.T) interruptedCustodyRun {
+	t.Helper()
+	run := interruptedCustodyRun{fixture: smallCustodyFixture(t)}
+	run.options = MemoryCustodyOptions{
+		CorePath: run.fixture.core, CorpusPath: run.fixture.corpus, OpsPath: run.fixture.ops,
+		SnapshotDir: run.fixture.snapshots, BatchSize: 2,
+	}
+	interruptCustodyRun(t, &run.options, 2)
+	run.modTimes = snapshotModTimesBySource(t, run.fixture.snapshots)
+	return run
+}
+
+// TestDATA2CustodyQueriesSeekTheDestinationIndex pins issue #455's acceptance:
+// the EXPLAIN QUERY PLAN of the verify orphans query and of aliasDestination
+// seeks custody_memberships on (migration, destination_key) and never scans
+// the membership table inside the correlated subquery.
+func TestDATA2CustodyQueriesSeekTheDestinationIndex(t *testing.T) {
+	fixture := smallCustodyFixture(t)
+	if _, err := MigrateMemoryCustody(t.Context(), MemoryCustodyOptions{
+		CorePath: fixture.core, CorpusPath: fixture.corpus, OpsPath: fixture.ops,
+		SnapshotDir: fixture.snapshots,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	db := openCustodyDB(t, fixture.ops)
+	defer db.Close()
+	var digest string
+	if err := db.QueryRow(`SELECT canonical_digest FROM memory_records LIMIT 1`).Scan(&digest); err != nil {
+		t.Fatal(err)
+	}
+	plans := func(query string, args ...any) []string {
+		t.Helper()
+		rows, err := db.Query("EXPLAIN QUERY PLAN "+query, args...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		var details []string
+		for rows.Next() {
+			var selectID, order, from, detail string
+			if err := rows.Scan(&selectID, &order, &from, &detail); err != nil {
+				t.Fatal(err)
+			}
+			details = append(details, detail)
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		return details
+	}
+	probes := []struct {
+		name    string
+		query   string
+		args    []any
+		scanned []string
+	}{
+		{
+			name: "verify orphans", query: memoryOrphansQuery,
+			args: []any{memoryCustodyMigration}, scanned: []string{"memberships"},
+		},
+		{
+			name: "alias destination", query: memoryAliasQuery,
+			args:    []any{memoryCustodyMigration, digest, coreMemorySource, memoryCustodyMigration, coreMemorySource},
+			scanned: []string{"represented", "same_source"},
+		},
+	}
+	for _, probe := range probes {
+		t.Run(probe.name, func(t *testing.T) {
+			details := plans(probe.query, probe.args...)
+			for _, scanned := range probe.scanned {
+				for _, detail := range details {
+					if strings.HasPrefix(detail, "SCAN "+scanned) {
+						t.Fatalf("custody_memberships was scanned: %v", details)
+					}
+				}
+				found := false
+				for _, detail := range details {
+					if strings.Contains(detail, "custody_memberships_migration_destination") &&
+						strings.Contains(detail, "destination_key=?") {
+						found = true
+					}
+				}
+				if !found {
+					t.Fatalf("%s never sought the destination index: %v", scanned, details)
+				}
+			}
+		})
+	}
+}
+
+func snapshotModTimesBySource(t *testing.T, directory string) map[string]time.Time {
+	t.Helper()
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bySource := make(map[string]time.Time)
+	for _, entry := range entries {
+		if !strings.HasSuffix(entry.Name(), ".snapshot.db") {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			t.Fatal(err)
+		}
+		bySource[strings.TrimSuffix(entry.Name(), ".snapshot.db")] = info.ModTime()
+	}
+	return bySource
 }
 
 func TestDATA2VerifiedCustodyRejectsMissingSnapshot(t *testing.T) {

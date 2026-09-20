@@ -20,6 +20,33 @@ type HubOptions struct {
 	CronDatabase   string
 	SnapshotDir    string
 	LockPath       string
+	// Progress, when set, observes every migration stage so a driver can
+	// print what an operator needs to tell "working" from "stuck"
+	// (issue #455). Batch counts from one within the stage it belongs to.
+	Progress func(HubProgress) error
+}
+
+// Hub stage names, stable for operators and tests.
+const (
+	StageMemorySnapshot   = "data2-snapshot"
+	StageMemoryImport     = "data2-import"
+	StageMemoryFTSRebuild = "data2-fts-rebuild"
+	StageMemoryVerify     = "data2-verify"
+	StageCorpusMerge      = "data3-corpus"
+	StageLegacyImport     = "data4-legacy"
+)
+
+// HubProgress is one observable step of a DATA SPLIT migration. Source names
+// the database the step concerns; Batch and Batches are zero except on the
+// DATA-2 import stage, where they count committed batches against the planned
+// total.
+type HubProgress struct {
+	Stage   string
+	Source  string
+	Detail  string
+	Batch   int
+	Batches int
+	Rows    int
 }
 
 type HubReport struct {
@@ -50,10 +77,27 @@ func Migrate(ctx context.Context, options HubOptions) (HubReport, error) {
 		return HubReport{Ready: true}, nil
 	}
 	report := HubReport{}
-	report.Memory, err = rocaops.MigrateMemoryCustody(ctx, rocaops.MemoryCustodyOptions{
+	memoryOptions := rocaops.MemoryCustodyOptions{
 		CorePath: options.CoreDatabase, CorpusPath: options.CorpusDatabase,
 		OpsPath: options.OpsDatabase, SnapshotDir: options.SnapshotDir, LockPath: options.LockPath,
-	})
+	}
+	if options.Progress != nil {
+		memoryOptions.Progress = func(step rocaops.MemoryCustodyProgress) error {
+			return options.Progress(HubProgress{Stage: memoryStage(step.Stage), Source: step.Source,
+				Detail: step.Detail, Batch: step.Batch, Batches: step.Batches,
+				Rows: step.Rows})
+		}
+		memoryOptions.AfterBatch = func(batch rocaops.MemoryBatch) error {
+			return options.Progress(HubProgress{Stage: StageMemoryImport,
+				Source: batch.SourceDatabase, Batch: batch.Batch,
+				Batches: batch.Batches, Rows: batch.RowCount})
+		}
+		if err := options.Progress(HubProgress{Stage: StageMemorySnapshot,
+			Detail: "freezing and importing memory custody from the three sources"}); err != nil {
+			return report, fmt.Errorf("prepare DATA-2 memory custody: %w", err)
+		}
+	}
+	report.Memory, err = rocaops.MigrateMemoryCustody(ctx, memoryOptions)
 	if err != nil {
 		return report, fmt.Errorf("prepare DATA-2 memory custody: %w", err)
 	}
@@ -76,6 +120,10 @@ func Migrate(ctx context.Context, options HubOptions) (HubReport, error) {
 			SnapshotDigest: corpusDigest, ExistingCorpus: true},
 	}
 	if !eligibility.corpus {
+		if err := options.progressStage(StageCorpusMerge,
+			"merging the frozen core and corpus snapshots into corpus custody"); err != nil {
+			return report, fmt.Errorf("prepare DATA-3 corpus custody: %w", err)
+		}
 		report.Corpus, err = corpusarchive.Merge(ctx, options.CorpusDatabase, []corpusarchive.Source{
 			corpusSources[0], corpusSources[1],
 		}, corpusarchive.Options{})
@@ -85,6 +133,10 @@ func Migrate(ctx context.Context, options HubOptions) (HubReport, error) {
 	}
 
 	if !eligibility.legacy {
+		if err := options.progressStage(StageLegacyImport,
+			"importing legacy orphans beside corpus custody"); err != nil {
+			return report, fmt.Errorf("prepare DATA-4 legacy custody: %w", err)
+		}
 		report.Legacy, err = ImportLegacyOrphans(ctx, LegacyOptions{
 			SourceClone: coreSnapshot, CronDatabase: options.CronDatabase,
 			OpsDatabase: options.OpsDatabase, CorpusDatabase: options.CorpusDatabase,
@@ -103,6 +155,34 @@ func Migrate(ctx context.Context, options HubOptions) (HubReport, error) {
 		return report, fmt.Errorf("DATA SPLIT destinations did not reach cutover eligibility")
 	}
 	return report, nil
+}
+
+// memoryStage names the DATA-2 stage a custody progress step belongs to.
+func memoryStage(stage rocaops.MemoryCustodyStage) string {
+	switch stage {
+	case rocaops.StageSnapshot:
+		return StageMemorySnapshot
+	case rocaops.StageImport:
+		return StageMemoryImport
+	case rocaops.StageFTSRebuild:
+		return StageMemoryFTSRebuild
+	case rocaops.StageVerify:
+		return StageMemoryVerify
+	default:
+		return StageMemorySnapshot
+	}
+}
+
+// progressStage reports one hub-wide stage, tolerating the absence of an
+// observer, and wraps a refusal the way every other stage failure reports.
+func (options HubOptions) progressStage(stage, detail string) error {
+	if options.Progress == nil {
+		return nil
+	}
+	if err := options.Progress(HubProgress{Stage: stage, Detail: detail}); err != nil {
+		return fmt.Errorf("progress observer: %w", err)
+	}
+	return nil
 }
 
 func HubCutoverEligible(ctx context.Context, options HubOptions,

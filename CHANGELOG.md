@@ -4,6 +4,8 @@
 
 ### Bug Fixes
 
+* **migrate:** remove quadratic custody lookups and avoid repeating unchanged snapshots after interruption ([#455](https://github.com/thellmwhisperer/la-roca/issues/455)); add stage/batch progress and read-only ledger status. See [migration operations](docs/operations.md#explicit-data-split-migration) for output and resume behavior.
+
 * **vector:** reuse the embedding resident across `mcp serve` sessions ([#315](https://github.com/thellmwhisperer/la-roca/issues/315)); see the [MCP lifecycle](docs/mcp.md#1-roca-mcp-serve-the-mcp-over-stdio) for sharing scope and shutdown behavior.
 
 ### Features
