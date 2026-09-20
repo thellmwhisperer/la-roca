@@ -86,7 +86,7 @@ fixtures.
 - `internal/provider/plugin/` is the manifest engine: declarations, discovery,
   schema truth checks, semantic and vector projection, verb and capability
   registration, and the in-memory hub.
-- `internal/provider/query/` owns prompt construction and the SQL read gate;
+- `internal/provider/query/` owns schema types, catalog descriptions and the SQL read gate; prompt builders live in the optional playground plugin;
   `internal/provider/service/` orchestrates the compatibility product surface.
 - `internal/distribution/plugininstall/` verifies packages and preserves every
   manifest-declared database across updates.
