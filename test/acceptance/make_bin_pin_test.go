@@ -82,3 +82,38 @@ func TestMakeBinPinProbe(t *testing.T) {
 		t.Fatalf("selected binary output %q, want BUILT", got)
 	}
 }
+
+func TestMakeE2ERequiresExplicitPublishedBinary(t *testing.T) {
+	root, err := acceptanceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	temp, err := acceptanceTempDir("make-published-pin-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(temp) })
+	for _, name := range []string{"roca", "go"} {
+		if err := os.WriteFile(filepath.Join(temp, name), []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	environment := []string{}
+	for _, entry := range os.Environ() {
+		if !strings.HasPrefix(entry, "ROCA_PUBLISHED_BIN=") && !strings.HasPrefix(entry, "PATH=") {
+			environment = append(environment, entry)
+		}
+	}
+	environment = append(environment, "PATH="+temp+string(os.PathListSeparator)+os.Getenv("PATH"))
+	for _, target := range []string{"e2e-smoke", "e2e-federation"} {
+		t.Run(target, func(t *testing.T) {
+			cmd := exec.Command("make", "--no-print-directory", "-o", "build", target,
+				"ROCA_E2E_VECTOR_MODEL="+filepath.Join(temp, "roca"))
+			cmd.Dir, cmd.Env = root, environment
+			out, err := cmd.CombinedOutput()
+			if err == nil || !strings.Contains(string(out), "set ROCA_PUBLISHED_BIN") {
+				t.Fatalf("make %s must require an explicit published binary: %v\n%s", target, err, out)
+			}
+		})
+	}
+}

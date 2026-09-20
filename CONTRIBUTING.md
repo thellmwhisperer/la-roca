@@ -56,8 +56,6 @@ on an isolated declared corpus. The delivery gate runs it when that variable is 
 make build
 make check
 make accept-index
-make e2e-smoke
-make e2e-federation
 make upgrade-gauntlet
 make split-oracle
 make playground-test
@@ -153,8 +151,8 @@ source reads and stored-count status latency in the isolated lab.
 
 `make e2e-smoke` runs the branch operator path and the published-release update
 path in disposable homes. `make e2e-federation` runs the frozen installed-binary
-suite. Their prerequisites, isolation rules, coverage, and overrides are owned
-by the [frozen federation runbook](docs/e2e-federation.md); the exact commands
+suite. Use the commands, prerequisites, isolation rules, and overrides in
+the [frozen federation runbook](docs/e2e-federation.md#run); the exact commands
 and assertions are owned by [Aceptacion](docs/e2e-federation-aceptacion.md).
 
 `make upgrade-gauntlet` is the second gate every pull request has to pass: it

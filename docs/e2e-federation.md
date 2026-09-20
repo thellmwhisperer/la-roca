@@ -21,13 +21,16 @@ tagged `@provisioned` and run only by `TestFrozenFederationProvisionedJourney`.
 From the repository root:
 
 ```sh
-make e2e-federation
+make e2e-federation ROCA_PUBLISHED_BIN=<published-roca>
 ```
 
-The target requires an executable published release and the local embedding
-model used by the ready-index case. By default it selects `roca` from `PATH`
-and the pinned model under `~/.roca/models/`. Override either selection when
-needed:
+Both `e2e-smoke` and `e2e-federation` require an executable published release;
+the federation target also requires the local embedding model used by the
+ready-index case. Set `ROCA_PUBLISHED_BIN` explicitly to
+the local release executable; neither target selects it from `PATH`.
+A `roca` command on `PATH` may be an SSH wrapper
+that escapes the disposable HOME. The model defaults to the pinned file under
+`~/.roca/models/`; override it when needed:
 
 ```sh
 make e2e-federation \
@@ -45,6 +48,11 @@ non-provisioned Gherkin cases through `TestJourneyAcceptanceSuite`. Those
 paths do not claim a ready vector index or a published upgrade. `make e2e-smoke`
 runs both the shorter branch operator path and the published-release update
 followed by branch init on a clean home.
+
+Use `e2e-smoke` in place of `e2e-federation` in the command above for the
+shorter suite, or `e2e` to run both suites. The combined target uses the same
+binary and model prerequisites; the [release train](release-train.md) owns
+when to run it and how to pin the candidate.
 
 ## Coverage
 
