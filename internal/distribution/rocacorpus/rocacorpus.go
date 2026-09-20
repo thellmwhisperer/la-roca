@@ -35,6 +35,9 @@ func ApplySchema(path string) error {
 }
 
 func applySchema(ctx context.Context, path string) error {
+	if err := bundledplugin.CheckSchemaAdvance(path, Name, SchemaVersion); err != nil {
+		return err
+	}
 	if err := prepareIngestProvenance(path); err != nil {
 		return err
 	}

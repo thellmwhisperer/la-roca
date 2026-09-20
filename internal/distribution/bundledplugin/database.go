@@ -109,6 +109,9 @@ func TableColumns(ctx context.Context, querier interface {
 // prepares its plugin-local DATA SPLIT ledger. Every declaration it executes is
 // idempotent; each plugin owns any explicit historical-data deletion.
 func ApplySchema(path, pluginName, declaration string, schemaVersion, indexVersion int) error {
+	if err := CheckSchemaAdvance(path, pluginName, schemaVersion); err != nil {
+		return err
+	}
 	db, err := OpenDatabase(path, false)
 	if err != nil {
 		return fmt.Errorf("open bundled %s database: %w", pluginName, err)

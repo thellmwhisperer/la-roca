@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/thellmwhisperer/la-roca/internal/distribution/migrationledger"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/plugininstall"
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 )
@@ -32,7 +33,16 @@ type Spec struct {
 	ApplySchema      func(string) error
 	Payload          func() ([]byte, error)
 	MigrationGuard   func(string) (func() error, error)
+	// SchemaVersion is the schema this binary would apply. A newer value
+	// than the installed database refuses to migrate unless the operator
+	// sets EnvAllowHomeMigrate: a branch or test build must not advance a
+	// home it did not install.
+	SchemaVersion int
 }
+
+// EnvAllowHomeMigrate lets an official update, or an explicit test, apply a
+// newer bundled plugin schema to a home this binary did not originally install.
+const EnvAllowHomeMigrate = "ROCA_ALLOW_HOME_MIGRATE"
 
 func Ensure(root, binDir, version string, spec Spec) (plugininstall.Result, error) {
 	bundle, err := prepare(root, binDir, version, spec, false)
@@ -152,6 +162,7 @@ func prepare(root, binDir, version string, spec Spec, validateUnchanged bool) (p
 	}
 	var installed plugininstall.Manifest
 	installedFound := false
+	advanceSchema := false
 	if manifest, err := plugininstall.ReadManifest(installedTarget); err == nil {
 		validName := manifest.Name == spec.Name ||
 			migration.needed() && manifest.Name == spec.LegacyName
@@ -163,8 +174,14 @@ func prepare(root, binDir, version string, spec Spec, validateUnchanged bool) (p
 		if verifyErr != nil {
 			return failBeforeMaterialize(fmt.Errorf("verify bundled %s plugin: %w", spec.Name, verifyErr))
 		}
+		if spec.DatabaseFilename != "" {
+			advanceSchema, err = schemaAdvanceRequired(filepath.Join(installedTarget, spec.DatabaseFilename), spec.Name, spec.SchemaVersion)
+			if err != nil {
+				return failBeforeMaterialize(err)
+			}
+		}
 		installed, installedFound = verified, true
-		if manifest.Version == version && spec.Executable == "" && !validateUnchanged && !migration.needed() {
+		if manifest.Version == version && !advanceSchema && spec.Executable == "" && !validateUnchanged && !migration.needed() {
 			return preparedBundle{action: bundleUnchanged, target: target, spec: spec,
 				manifest: verified, manager: manager, cleanup: func() { _ = releaseMigration() }}, nil
 		}
@@ -184,6 +201,7 @@ func prepare(root, binDir, version string, spec Spec, validateUnchanged bool) (p
 		_ = releaseMigration()
 		return preparedBundle{}, err
 	}
+
 	cleanupPrepared := func() {
 		cleanup()
 		_ = releaseMigration()
@@ -194,9 +212,9 @@ func prepare(root, binDir, version string, spec Spec, validateUnchanged bool) (p
 	case !installedFound:
 		bundle.action = bundleInstall
 		err = manager.PreflightInstall(candidate)
-	case installed.Version == version && spec.Executable == "" && !migration.needed():
+	case installed.Version == version && !advanceSchema && spec.Executable == "" && !migration.needed():
 		bundle.action = bundleUnchanged
-	case installed.Version == version && !migration.needed():
+	case installed.Version == version && !advanceSchema && !migration.needed():
 		bundle.action = bundleRepairExecutable
 		err = manager.PreflightExecutableRepair(candidate)
 	case spec.Executable != "":
@@ -250,6 +268,49 @@ func (bundle preparedBundle) applyPrepared() (plugininstall.Result, error) {
 		return bundle.manager.RepairExecutable(bundle.candidate)
 	default:
 		return plugininstall.Result{}, fmt.Errorf("unsupported bundled plugin action")
+	}
+}
+
+func CheckSchemaAdvance(path, pluginName string, schemaVersion int) error {
+	_, err := schemaAdvanceRequired(path, pluginName, schemaVersion)
+	return err
+}
+
+func schemaAdvanceRequired(path, pluginName string, schemaVersion int) (bool, error) {
+	if schemaVersion < 1 {
+		return false, nil
+	}
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("inspect bundled %s schema identity: %w", pluginName, err)
+	}
+	db, err := OpenDatabase(path, true)
+	if err != nil {
+		return false, fmt.Errorf("open bundled %s schema identity: %w", pluginName, err)
+	}
+	defer db.Close()
+	snapshot, err := migrationledger.Inspect(context.Background(), db)
+	if err != nil {
+		return false, fmt.Errorf("read bundled %s schema identity: %w", pluginName, err)
+	}
+	if snapshot.Plugin == "" || schemaVersion <= snapshot.SchemaVersion {
+		return false, nil
+	}
+	if allowHomeMigrate() {
+		return true, nil
+	}
+	return false, fmt.Errorf("refusing to migrate %s from schema %d to %d: this binary did not install this home (set %s=1 to override)",
+		pluginName, snapshot.SchemaVersion, schemaVersion, EnvAllowHomeMigrate)
+}
+
+func allowHomeMigrate() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(EnvAllowHomeMigrate))) {
+	case "1", "true", "yes":
+		return true
+	default:
+		return false
 	}
 }
 

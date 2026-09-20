@@ -873,7 +873,8 @@ DATA-1 database adopts this in place on the next `Prepare` — the rows it
 already held stay under an unclaimed empty name, so they can never stand in for
 a migration that has not run. A plugin schema or index bump reopens every named
 migration, because the destination those migrations fill may have moved under
-them.
+them. [Update lifecycle](lifecycle.md#update) owns the bundled schema-upgrade
+guard and explicit authorization paths.
 
 ## Scheduled rides
 

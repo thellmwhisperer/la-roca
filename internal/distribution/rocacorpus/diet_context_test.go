@@ -50,6 +50,7 @@ func TestVacuumHonorsCancellation(t *testing.T) {
 }
 
 func TestApplySchemaKeepsPriorGuardWhenExactDuplicatesRemain(t *testing.T) {
+	t.Setenv(bundledplugin.EnvAllowHomeMigrate, "1")
 	for _, tc := range sessionClonePlaceCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			db, path := openSchemaDB(t)
@@ -70,6 +71,7 @@ func TestApplySchemaKeepsPriorGuardWhenExactDuplicatesRemain(t *testing.T) {
 }
 
 func TestEnsureAllPlacesCorpusWhenExactSessionDuplicatesRemain(t *testing.T) {
+	t.Setenv(bundledplugin.EnvAllowHomeMigrate, "1")
 	for _, tc := range sessionClonePlaceCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()

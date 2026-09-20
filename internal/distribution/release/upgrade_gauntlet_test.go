@@ -55,7 +55,7 @@ func TestUpgradeGauntletOwnsReleasedHomesAndBothDeliveryPaths(t *testing.T) {
 	}
 
 	runner := readRepoFile(t, "../../../scripts/upgrade-gauntlet.sh")
-	for _, required := range []string{"ingest", "exec", "doctor", "health"} {
+	for _, required := range []string{"ingest", "exec", "doctor", "health", "ROCA_ALLOW_HOME_MIGRATE=1"} {
 		if !strings.Contains(runner, required) {
 			t.Errorf("the gauntlet does not run %s", required)
 		}
