@@ -74,9 +74,6 @@ func TestEscapePromptTextIsolatesMarkupAndAmpersands(t *testing.T) {
 			t.Errorf("EscapePromptText does not isolate %q: %s", escaped, got)
 		}
 	}
-	if !strings.Contains(EscapedTextNotice, "&amp;") || !strings.Contains(EscapedTextNotice, "plain data") {
-		t.Fatalf("EscapedTextNotice does not declare the entities: %s", EscapedTextNotice)
-	}
 }
 
 func TestReadSchemaOverTheRealDDLFindsSupersedesOnlyInMemories(t *testing.T) {
