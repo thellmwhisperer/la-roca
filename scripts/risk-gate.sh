@@ -278,6 +278,43 @@ gate() {
   has_label() {
     printf '%s\n' "$labels" | grep -Fxq "$1"
   }
+  # A GITHUB_TOKEN may never change draft state (actions/toolkit#1165); the
+  # conversion needs the RISK_GATE_TOKEN secret. The failing check still
+  # blocks the merge without it.
+  to_draft() {
+    if [[ -n ${RISK_GATE_DRAFT_TOKEN:-} ]]; then
+      best_effort "convert the PR to draft" \
+        env GH_TOKEN="$RISK_GATE_DRAFT_TOKEN" gh pr ready "$n" -R "$repo" --undo
+    else
+      printf 'risk-gate: note: draft conversion is disabled until the repository secret RISK_GATE_TOKEN (a token with pull_requests write) exists\n'
+      summary "note: the PR is not converted to draft because the repository secret RISK_GATE_TOKEN (a token with pull_requests write) does not exist; the failing risk-gate check still blocks the merge"
+    fi
+  }
+  # The repository owner is a user or an organization; ask the first resolved
+  # owner candidate who is not the PR author. vars.RISK_GATE_REVIEWER, when
+  # set, names the reviewer explicitly.
+  request_owner_review() {
+    local candidates c
+    candidates=${RISK_GATE_REVIEWER:-}
+    if [[ -z $candidates ]]; then
+      if [[ $(gh api "repos/$repo" --jq '.owner.type') == Organization ]]; then
+        candidates=$(gh api "orgs/$owner/members?role=admin" --jq '.[].login' 2>/dev/null || true)
+      else
+        candidates=$owner
+      fi
+    fi
+    while IFS= read -r c; do
+      [[ -n $c ]] || continue
+      if [[ $c != "$author" ]]; then
+        best_effort "request review from $c" \
+          gh api --method POST "repos/$repo/pulls/$n/requested_reviewers" \
+            -f "reviewers[]=$c"
+        return 0
+      fi
+    done <<<"$candidates"
+    printf 'risk-gate: note: the only owner candidate is the PR author; review request skipped\n'
+    summary "note: review request skipped - the resolved owner candidate list ($candidates) is the PR author"
+  }
   drop_high_label() {
     has_label "$RISK_LABEL" || return 0
     [[ $fork == true ]] && return 0
@@ -313,14 +350,9 @@ gate() {
             gh pr edit "$n" -R "$repo" --add-label "$RISK_LABEL"
         fi
         if [[ $is_draft != true ]]; then
-          best_effort "could not convert the PR to draft" \
-            gh pr ready "$n" -R "$repo" --undo
+          to_draft
         fi
-        if [[ $author != "$owner" ]]; then
-          best_effort "could not request review from $owner" \
-            gh api --method POST "repos/$repo/pulls/$n/requested_reviewers" \
-              -f "reviewers[]=$owner"
-        fi
+        request_owner_review
       fi
       fail_gate "Risk Assessment is High: this PR cannot merge. Fix the findings so the risk drops to Low or Medium, or ask the owner to add $ACCEPT_LABEL."
       ;;
