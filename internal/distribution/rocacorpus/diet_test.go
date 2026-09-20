@@ -1,6 +1,7 @@
 package rocacorpus_test
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
@@ -14,6 +15,30 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/store/exactdedup"
 	_ "modernc.org/sqlite"
 )
+
+func TestCompactRefusesSchemaAdvanceWithoutMutatingCorpus(t *testing.T) {
+	path := prepareCorpusUpgradeBeforeBump(t, func(db *sql.DB) {
+		seedFatCorpus(t, db)
+	})
+	t.Setenv(bundledplugin.EnvAllowHomeMigrate, "")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = rocacorpus.Compact(context.Background(), path)
+	want := fmt.Sprintf("refusing to migrate roca-corpus from schema %d to %d", rocacorpus.SchemaVersion-1, rocacorpus.SchemaVersion)
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("compact error = %v, want %q", err, want)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatal("compact mutated the persisted corpus database before refusing migration")
+	}
+}
 
 func TestCompactRewritesAFatCorpusWithoutLosingCurrentRows(t *testing.T) {
 	db, path := openCorpusDB(t)
