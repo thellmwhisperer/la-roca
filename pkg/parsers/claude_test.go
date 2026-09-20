@@ -62,8 +62,8 @@ func TestClaudeSessionSplitsExchangesOnTheHumanTurn(t *testing.T) {
 	if len(first.Thinking) != 1 || first.Thinking[0].WordCount != 5 {
 		t.Fatalf("thinking = %+v", first.Thinking)
 	}
-	if got := first.Thinking[0].Position; got != 0.5 {
-		t.Errorf("position = %v, want 1/2", got)
+	if got := first.Thinking[0].Position; got != float64(first.Number) {
+		t.Errorf("position = %v, want exchange %d", got, first.Number)
 	}
 	if len(first.Tools) != 1 {
 		t.Fatalf("tools = %+v", first.Tools)

@@ -1577,12 +1577,10 @@ func (w *writer) insertThinking(ctx context.Context, sessionID string, number, p
 		SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
 		WHERE NOT EXISTS (
 		  SELECT 1 FROM thinking_blocks
-		  WHERE session_id IS ? AND exchange_number IS ? AND position_in_session IS ?
-		    AND depth IS ? AND caution_ratio IS ? AND word_count IS ?
-		    AND is_after_compaction IS ? AND full_text IS ?
+		  WHERE session_id IS ? AND exchange_number IS ? AND full_text IS ?
 		)`, sessionID, number, position, depth, caution, block.WordCount, compacted, block.Text,
 		nullIfEmpty(w.machine),
-		sessionID, number, position, depth, caution, block.WordCount, compacted, block.Text)
+		sessionID, number, block.Text)
 	if err != nil {
 		if isExactPayloadConflict(err) || isUniqueConstraint(err) {
 			return false, nil

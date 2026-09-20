@@ -498,15 +498,13 @@ func joinBlockTexts[T any](blocks []T, text func(T) string, separator string) st
 // wordCount counts whitespace-separated words.
 func wordCount(text string) int { return len(strings.Fields(text)) }
 
-// PlaceThinking gives every thinking block its position in the session, which is
-// its exchange's number over how many exchanges the session turned out to have.
-// No parser can know that until it has read the last line, so all of them do it
-// at the end, and the adapters that read a live database do it too.
+// PlaceThinking stamps each thinking block with its exchange number. That value
+// is a stored hint, not identity: ingest dedupes by session, exchange, and text.
+// A fraction of the session length used to move every time an open file grew.
 func PlaceThinking(exchanges []Exchange) {
-	total := float64(max(len(exchanges), 1))
 	for i := range exchanges {
 		for k := range exchanges[i].Thinking {
-			exchanges[i].Thinking[k].Position = float64(exchanges[i].Number) / total
+			exchanges[i].Thinking[k].Position = float64(exchanges[i].Number)
 		}
 	}
 }

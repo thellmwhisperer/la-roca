@@ -256,6 +256,16 @@ func tableExists(t *testing.T, db *sql.DB, name string) bool {
 	return n == 1
 }
 
+func indexExists(t *testing.T, db *sql.DB, name string) bool {
+	t.Helper()
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?`, name).
+		Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n == 1
+}
+
 func assertNoTable(t *testing.T, db *sql.DB, name string) {
 	t.Helper()
 	if tableExists(t, db, name) {
@@ -594,6 +604,68 @@ func dumpHarvestFTSIndex(t *testing.T, db *sql.DB) string {
 		}
 	}
 	return dump.String()
+}
+
+func TestApplySchemaCollapsesThinkingCopiesThatOnlyDifferByPosition(t *testing.T) {
+	t.Setenv(bundledplugin.EnvAllowHomeMigrate, "1")
+	db, path := openCorpusDB(t)
+	statements := []string{
+		`INSERT INTO sessions(session_id, source_agent) VALUES ('open-session', 'claude')`,
+		`INSERT INTO exchanges(session_id, exchange_number, human_text, agent_text)
+		   VALUES ('open-session', 1, 'first', 'answer')`,
+		`DROP INDEX IF EXISTS idx_thinking_blocks_identity`,
+		`INSERT INTO thinking_blocks(session_id, exchange_number, position_in_session, word_count, full_text)
+		   VALUES ('open-session', 1, 1.0, 3, 'keep this thought')`,
+		`INSERT INTO thinking_blocks(session_id, exchange_number, position_in_session, word_count, full_text)
+		   VALUES ('open-session', 1, 0.5, 3, 'keep this thought')`,
+		`INSERT INTO thinking_blocks(session_id, exchange_number, position_in_session, word_count, full_text)
+		   VALUES ('open-session', 1, 0.5, 2, 'a different thought')`,
+	}
+	for _, statement := range statements {
+		if _, err := db.Exec(statement); err != nil {
+			db.Close()
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec(`UPDATE plugin_schema SET schema_version = ?`, rocacorpus.SchemaVersion-1); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	db = reapplySchemaAndReopen(t, path)
+	defer db.Close()
+	var copies int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM thinking_blocks
+		WHERE session_id = 'open-session' AND exchange_number = 1 AND full_text = 'keep this thought'`).
+		Scan(&copies); err != nil {
+		t.Fatal(err)
+	}
+	if copies != 1 {
+		t.Fatalf("thinking copies = %d, want 1 after identity collapse", copies)
+	}
+	var distinct int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM thinking_blocks
+		WHERE session_id = 'open-session' AND exchange_number = 1`).Scan(&distinct); err != nil {
+		t.Fatal(err)
+	}
+	if distinct != 2 {
+		t.Fatalf("thinking rows = %d, want both distinct texts kept", distinct)
+	}
+	var groups int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM (
+		SELECT session_id, exchange_number, substr(full_text,1,40), COUNT(*) AS n
+		FROM thinking_blocks GROUP BY 1, 2, 3 HAVING n > 1)`).Scan(&groups); err != nil {
+		t.Fatal(err)
+	}
+	if groups != 0 {
+		t.Fatalf("duplicate thinking groups = %d, want 0", groups)
+	}
+	if !indexExists(t, db, "idx_thinking_blocks_identity") {
+		t.Fatal("thinking identity index missing after collapse")
+	}
 }
 
 // openCorpusDB applies the corpus schema to a fresh database and opens it,
