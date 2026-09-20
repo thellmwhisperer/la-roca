@@ -228,6 +228,30 @@ func TestCutoverHubLoadsTheDurableCustomLayerRegistry(t *testing.T) {
 	}
 }
 
+func TestCutoverOpenProbesTheCompatibilityRouteWithoutScanningRecords(t *testing.T) {
+	fixture := newHubFixture(t)
+	seedHubCoreMemory(t, fixture.plugins, 21, "Synthetic probe marker")
+	svc := openHubService(t, fixture, LayoutCutover, nil)
+	rows, err := svc.hub.QueryContext(t.Context(), federationRouteProbe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	if rows.Next() {
+		t.Fatal("compatibility route probe returned a row")
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := rows.Close(); err != nil {
+		t.Fatal(err)
+	}
+	result := executeHubSQL(t, svc, `SELECT id FROM memories LIMIT 1`)
+	if result.RowCount != 1 || fmt.Sprint(result.Rows[0]["id"]) != "21" {
+		t.Fatalf("valid view after probe = %+v", result)
+	}
+}
+
 func TestCutoverReopenFailureRollsBackTheMarker(t *testing.T) {
 	fixture := newHubFixture(t)
 	seedHubCoreMemory(t, fixture.plugins, 15, "Synthetic reopen marker")
