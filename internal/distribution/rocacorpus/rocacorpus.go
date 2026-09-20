@@ -52,6 +52,9 @@ func applySchema(ctx context.Context, path string) error {
 	if err := bundledplugin.ApplySchema(path, Name, schema, SchemaVersion, IndexVersion); err != nil {
 		return err
 	}
+	if err := refreshIndexedUpdateTriggers(path); err != nil {
+		return err
+	}
 	if rewrote {
 		if err := restoreMigrationSeals(path, seals); err != nil {
 			return err
@@ -155,17 +158,9 @@ func prepareIngestProvenance(path string) error {
 	if err := backfillMachine(context.Background(), tx); err != nil {
 		return err
 	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit bundled %s provenance migration: %w", Name, err)
-	}
-	if _, err := db.Exec(schema); err != nil {
+	if _, err := tx.Exec(schema); err != nil {
 		return fmt.Errorf("prepare bundled %s schema: %w", Name, err)
 	}
-	tx, err = db.BeginTx(context.Background(), nil)
-	if err != nil {
-		return fmt.Errorf("begin bundled %s provenance backfill: %w", Name, err)
-	}
-	defer tx.Rollback()
 	if altered {
 		if _, err := tx.Exec(`INSERT INTO sessions_fts(sessions_fts) VALUES ('rebuild')`); err != nil {
 			return fmt.Errorf("rebuild the derived session index: %w", err)
@@ -202,6 +197,9 @@ func backfillMachine(ctx context.Context, tx *sql.Tx) error {
 	} else {
 		machine = strings.TrimSpace(machine)
 	}
+	if err := dropIndexedUpdateTriggers(tx); err != nil {
+		return err
+	}
 	for _, table := range []string{"sessions", "exchanges", "thinking_blocks", "tool_uses"} {
 		present, err := tableExists(tx, table)
 		if err != nil {
@@ -213,6 +211,38 @@ func backfillMachine(ctx context.Context, tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, "UPDATE OR IGNORE "+table+" SET machine = ? WHERE machine IS NULL", machine); err != nil {
 			return fmt.Errorf("backfill %s.machine: %w", table, err)
 		}
+	}
+	return nil
+}
+
+func dropIndexedUpdateTriggers(tx *sql.Tx) error {
+	for _, name := range []string{"sessions_au", "exchanges_au", "thinking_au"} {
+		if _, err := tx.Exec("DROP TRIGGER IF EXISTS " + name); err != nil {
+			return fmt.Errorf("drop %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+func refreshIndexedUpdateTriggers(path string) error {
+	db, err := bundledplugin.OpenDatabase(path, false)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin %s trigger refresh: %w", Name, err)
+	}
+	defer tx.Rollback()
+	if err := dropIndexedUpdateTriggers(tx); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(schema); err != nil {
+		return fmt.Errorf("refresh %s update triggers: %w", Name, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit %s trigger refresh: %w", Name, err)
 	}
 	return nil
 }
