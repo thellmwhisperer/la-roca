@@ -1014,17 +1014,11 @@ func TestFailedMachineLessIngestRetriesBeforePromotion(t *testing.T) {
 	}
 	t.Cleanup(func() { parseKind = original })
 
-	home := t.TempDir()
-	workspace := filepath.Join(home, "w")
-	cwd := filepath.Join(workspace, "demo")
-	roots := ResolveRoots(Environment{GOOS: "darwin", Home: home, Hostname: "hub"},
-		Settings{WorkspaceRoots: []string{workspace}})
-	writeClaudeSession(t, roots, cwd, cwdFixtureSessionID)
+	roots, path := machineCursorFixture(t)
 	db, first := runIngest(t, roots)
 	if first.Errors == 0 || parses == 0 {
 		t.Fatalf("first ingest did not fail: parses=%d result=%+v", parses, first)
 	}
-	path := filepath.Join(roots.ClaudeProjects, encodeRoot(cwd), cwdFixtureSessionID+".jsonl")
 	if _, err := db.SQL().Exec(`UPDATE ingest_file_state
 		SET fingerprint = replace(fingerprint, ?, ''), metadata = json_remove(metadata, '$.machine')
 		WHERE path = ?`, ":machine:"+roots.Machine, path); err != nil {
@@ -1058,19 +1052,13 @@ func TestMachineLessCursorPromotedWithoutReparsing(t *testing.T) {
 	}
 	t.Cleanup(func() { parseKind = original })
 
-	home := t.TempDir()
-	workspace := filepath.Join(home, "w")
-	cwd := filepath.Join(workspace, "demo")
-	roots := ResolveRoots(Environment{GOOS: "darwin", Home: home, Hostname: "hub"},
-		Settings{WorkspaceRoots: []string{workspace}})
-	writeClaudeSession(t, roots, cwd, cwdFixtureSessionID)
+	roots, path := machineCursorFixture(t)
 
 	db, first := runIngest(t, roots)
 	if first.Errors != 0 || parses == 0 {
 		t.Fatalf("first ingest parses=%d errors=%d: %+v", parses, first.Errors, first.ErrorDetails)
 	}
 
-	path := filepath.Join(roots.ClaudeProjects, encodeRoot(cwd), cwdFixtureSessionID+".jsonl")
 	if _, err := db.SQL().Exec(`UPDATE ingest_file_state
 		SET fingerprint = replace(fingerprint, ?, ''),
 		    metadata = json_remove(metadata, '$.machine')
@@ -1105,6 +1093,17 @@ func TestMachineLessCursorPromotedWithoutReparsing(t *testing.T) {
 	if cursor.Machine != roots.Machine {
 		t.Fatalf("cursor machine = %q, want %q", cursor.Machine, roots.Machine)
 	}
+}
+
+func machineCursorFixture(t *testing.T) (Roots, string) {
+	t.Helper()
+	home := t.TempDir()
+	workspace := filepath.Join(home, "w")
+	cwd := filepath.Join(workspace, "demo")
+	roots := ResolveRoots(Environment{GOOS: "darwin", Home: home, Hostname: "hub"},
+		Settings{WorkspaceRoots: []string{workspace}})
+	writeClaudeSession(t, roots, cwd, cwdFixtureSessionID)
+	return roots, filepath.Join(roots.ClaudeProjects, encodeRoot(cwd), cwdFixtureSessionID+".jsonl")
 }
 
 // resolveWorkspaceRoots derives roots from a home and workspace the same way
