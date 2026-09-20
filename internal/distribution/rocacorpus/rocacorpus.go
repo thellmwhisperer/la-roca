@@ -19,7 +19,7 @@ const (
 	// BundledSource is what the installer records for this package, and it is
 	// what discovery reads to know the corpus attach alias is the kernel's own.
 	BundledSource = plugin.BundledSource
-	SchemaVersion = 7
+	SchemaVersion = 8
 	IndexVersion  = 3
 )
 
@@ -36,6 +36,9 @@ func ApplySchema(path string) error {
 
 func applySchema(ctx context.Context, path string) error {
 	if err := bundledplugin.CheckSchemaAdvance(path, Name, SchemaVersion); err != nil {
+		return err
+	}
+	if err := prepareThinkingIdentity(ctx, path); err != nil {
 		return err
 	}
 	if err := prepareIngestProvenance(path); err != nil {
