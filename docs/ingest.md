@@ -608,8 +608,10 @@ and exact text, and it is not duplicated onto `exchanges`.
 but is not identity: incremental ingest refreshes it from the distinct exchange
 numbers when an open session grows instead of inserting another row. Corpus
 schema adoption collapses older copies with that identity, retaining the row
-with the highest ID and its stored position. Codex reasoning lands there on the
-exchange that produced it, alongside the other sources' thinking blocks. When a
+with the highest ID and its stored position. Existing thinking-ID aliases are
+redirected to that survivor in the same transaction that deletes the copies.
+Codex reasoning lands there on the exchange that produced it, alongside the
+other sources' thinking blocks. When a
 historical match has no exchange number, replay leaves its thinking blocks out
 and reports each one as a discard rather than assigning them to an unknown
 exchange.

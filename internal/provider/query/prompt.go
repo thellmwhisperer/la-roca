@@ -265,10 +265,10 @@ func provenanceRule(schema Schema) string {
 		"NULL and never read a NULL as a zero"
 }
 
-// SQLSystemPromptWithInventory is SQLSystemPrompt plus the names of attached
-// databases held back from this pass. Their tables stay out of the schema so
-// the model cannot invent them; the names alone tell it a later SQL pass can
-// add them if this SELECT returns no rows.
+// SQLSystemPromptWithInventory builds the playground SQL instruction, including
+// names of attached databases held back from this pass. Their tables stay out
+// of the schema so the model cannot invent them; the names alone tell it a later
+// SQL pass can add them if this SELECT returns no rows.
 func SQLSystemPromptWithInventory(schema Schema, layers []LayerHint, layerFilter, unused []string) string {
 	rules := []string{
 		"- Only generate SELECT queries (read-only)",
