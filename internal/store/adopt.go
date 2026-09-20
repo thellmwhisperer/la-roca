@@ -97,7 +97,16 @@ func Inspect(ctx context.Context, db *DB) (Report, error) {
 // its boundary and always behind a verified backup. An incompatible or foreign
 // one is not touched: the diagnosis is returned naming the difference.
 func Adopt(ctx context.Context, db *DB, backupDir string) (Adoption, error) {
-	report, err := Inspect(ctx, db)
+	return adoptWithInspect(ctx, db, backupDir, Inspect)
+}
+
+func adoptWithInspect(
+	ctx context.Context,
+	db *DB,
+	backupDir string,
+	inspect func(context.Context, *DB) (Report, error),
+) (Adoption, error) {
+	report, err := inspect(ctx, db)
 	if err != nil {
 		return Adoption{}, err
 	}
@@ -112,7 +121,7 @@ func Adopt(ctx context.Context, db *DB, backupDir string) (Adoption, error) {
 		return adoption, err
 	}
 
-	after, err := Inspect(ctx, db)
+	after, err := inspect(ctx, db)
 	if err != nil {
 		return adoption, err
 	}
@@ -124,7 +133,7 @@ func Adopt(ctx context.Context, db *DB, backupDir string) (Adoption, error) {
 		if err := applyMigratable(ctx, db, backupDir, &adoption, after); err != nil {
 			return adoption, err
 		}
-		after, err = Inspect(ctx, db)
+		after, err = inspect(ctx, db)
 		if err != nil {
 			return adoption, err
 		}
