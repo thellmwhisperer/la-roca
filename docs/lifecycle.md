@@ -212,7 +212,10 @@ provenance or machine values; once they are exact duplicates, the dedup flow
 can remove the clone. Read-only
 `roca doctor` and `roca vector query` answer when the only schema gap is a
 missing `machine` column on one of the four harvest tables; a writable open
-adopts those columns.
+adopts those columns. A real table a bundled plugin database carries that its
+semantic layer does not declare — the signature an interrupted `roca migrate`
+leaves — is an orphan: doctor exits 0 and names it, the plugin keeps serving,
+and the table stays in place untouched.
 
 The `roca`, `roca-operations`, and `roca-vector` skills, the generated
 `roca-semantica` catalog skill, `prompt.md`, and
