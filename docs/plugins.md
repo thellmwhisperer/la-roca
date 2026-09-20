@@ -934,10 +934,12 @@ gate = "after_ingest"
 ```
 
 Every selected `rides.d/*.toml` entry must resolve to a readable regular file
-and declare at least one valid ride. An unusable declaration makes `roca cron
-list` and `roca cron run` fail instead of running a partial operator
-configuration. Duplicate operator ride names, whether repeated in one source or
-across `config.toml` and `rides.d` files, are rejected. An operator
+and declare at least one valid ride. An unreadable `rides.d` directory, or a
+gate whose `after_` dependency is not declared among those operator rides, is
+an error. An unusable declaration makes `roca cron list` and `roca cron run`
+fail instead of running a partial operator configuration. Duplicate operator
+ride names, whether repeated in one source or across `config.toml` and
+`rides.d` files, are rejected. An operator
 `vector_delta` ride replaces only the bundled `roca-vector/vector_delta` ride;
 same-named rides from other plugins remain. Plugin rides keep their own plugin
 identity unless replaced; operator rides use the reserved `operator` namespace.

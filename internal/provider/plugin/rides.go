@@ -112,8 +112,8 @@ func DiscoverOperatorRides(configPath, ridesDir string) ([]Ride, []string, error
 	if directory := strings.TrimSpace(ridesDir); directory != "" {
 		entries, err := os.ReadDir(directory)
 		if err != nil && !os.IsNotExist(err) {
-			warnings = append(warnings,
-				fmt.Sprintf("operator rides in %s could not be read: %v", directory, err))
+			return nil, nil, fmt.Errorf(
+				"operator rides in %s could not be read: %w", directory, err)
 		} else if err == nil {
 			names := make([]string, 0, len(entries))
 			for _, entry := range entries {
@@ -167,8 +167,13 @@ func DiscoverOperatorRides(configPath, ridesDir string) ([]Ride, []string, error
 	for _, ride := range byName {
 		rides = append(rides, ride)
 	}
-	rides, dependencyWarnings := filterRideDependencies(rides)
-	warnings = append(warnings, dependencyWarnings...)
+	source := strings.TrimSpace(ridesDir)
+	if source == "" {
+		source = strings.TrimSpace(configPath)
+	}
+	if err := validateRideDependencies(source, rides); err != nil {
+		return nil, warnings, err
+	}
 	slices.SortFunc(rides, func(a, b Ride) int { return strings.Compare(a.Name, b.Name) })
 	return rides, warnings, nil
 }
@@ -252,43 +257,4 @@ func validateRideDependencies(source string, rides []Ride) error {
 		}
 	}
 	return nil
-}
-
-func filterRideDependencies(rides []Ride) ([]Ride, []string) {
-	slices.SortFunc(rides, func(a, b Ride) int { return strings.Compare(a.Name, b.Name) })
-	declared := make(map[string]struct{}, len(rides))
-	for _, ride := range rides {
-		declared[ride.Name] = struct{}{}
-	}
-	var warnings []string
-	for {
-		removed := false
-		for _, ride := range rides {
-			if _, admitted := declared[ride.Name]; !admitted {
-				continue
-			}
-			dependency, gated := strings.CutPrefix(ride.Gate, "after_")
-			if !gated || dependency == "ingest" {
-				continue
-			}
-			if _, ok := declared[dependency]; ok {
-				continue
-			}
-			delete(declared, ride.Name)
-			warnings = append(warnings, fmt.Sprintf(
-				"operator ride %s/%s omitted because gate %q has no admitted dependency",
-				ride.Plugin, ride.Name, ride.Gate))
-			removed = true
-		}
-		if !removed {
-			break
-		}
-	}
-	kept := make([]Ride, 0, len(declared))
-	for _, ride := range rides {
-		if _, ok := declared[ride.Name]; ok {
-			kept = append(kept, ride)
-		}
-	}
-	return kept, warnings
 }
