@@ -168,6 +168,8 @@ CREATE INDEX IF NOT EXISTS custody_memberships_destination
   ON custody_memberships(destination_table, destination_key);
 CREATE INDEX IF NOT EXISTS custody_memberships_batch
   ON custody_memberships(migration, batch_id);
+CREATE INDEX IF NOT EXISTS custody_memberships_migration_destination
+  ON custody_memberships(migration, destination_key);
 `
 
 // batchKeyColumns and membershipKeyColumns are how many columns each custody
@@ -442,6 +444,14 @@ func (batch *Batch) ExecContext(ctx context.Context, query string, args ...any) 
 		return nil, fmt.Errorf("migration batch is closed")
 	}
 	return batch.tx.ExecContext(ctx, query, args...)
+}
+
+// QueryContext reads through the batch transaction, including its pending writes.
+func (batch *Batch) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	if batch == nil || batch.done {
+		return nil, fmt.Errorf("migration batch is closed")
+	}
+	return batch.tx.QueryContext(ctx, query, args...)
 }
 
 func (batch *Batch) AddMembership(ctx context.Context, membership Membership) error {
