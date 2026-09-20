@@ -587,7 +587,7 @@ regression and published-versus-branch evidence procedure.
 
 `main` requires the CI job names from `.github/workflows/ci.yml` plus the
 `risk-gate` check (`.github/workflows/risk-gate.yml`). risk-gate reads the
-no-mistakes `Risk Assessment` in the PR body: High fails, labels `risk:high`,
+`Risk Assessment` section in the PR body: High fails, labels `risk:high`,
 converts the PR to draft and needs the owner's `risk:accepted` to pass;
 Medium passes only with a pasted Aceptación block showing a `$ roca` command
 and its output; Low passes. A missing section declares High.

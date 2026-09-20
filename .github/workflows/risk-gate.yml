@@ -1,7 +1,7 @@
 name: risk-gate
 
 # Required status check on `main` (recorded in docs/operations.md). Judges the
-# PR body's no-mistakes Risk Assessment: High fails, labels `risk:high`,
+# PR body's declared Risk Assessment: High fails, labels `risk:high`,
 # converts the PR to draft and requests the owner's review; Medium passes only
 # with pasted branch acceptance (`$ roca` command and its output); Low passes.
 # The referee script is read from the base branch, so the PR under judgement
