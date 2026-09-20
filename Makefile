@@ -91,13 +91,11 @@ e2e-smoke: build ## Real binary in a disposable home: init, ingest, query, plugi
 	@test -x "$(ROCA_PUBLISHED_BIN)" || { echo "set ROCA_PUBLISHED_BIN to an installed published release" >&2; exit 1; }
 	ROCA_BIN=$(BIN) ROCA_PLAYGROUND_INTEGRATION= ROCA_PLAYGROUND_FEATURES= ROCA_PUBLISHED_BIN="$(ROCA_PUBLISHED_BIN)" go test -tags=acceptance ./test/acceptance -run '^(TestPublishedReleaseUpdateInitSmoke|TestRealBinaryDisposableHomeSmoke)$$' -count=1
 
-e2e-federation: build ## Installed candidate against the frozen synthetic federation Gherkin feature
+e2e-federation: ## Installed candidate against the frozen synthetic federation Gherkin feature
 	@test -x "$(ROCA_PUBLISHED_BIN)" || { echo "set ROCA_PUBLISHED_BIN to an installed published release" >&2; exit 1; }
 	@test -f "$(ROCA_E2E_VECTOR_MODEL)" || { echo "set ROCA_E2E_VECTOR_MODEL to the pinned embedding model" >&2; exit 1; }
-	@mkdir -p .tmp/e2e-federation-installed/bin
-	@cp "$(BIN)" .tmp/e2e-federation-installed/bin/roca
-	@chmod +x .tmp/e2e-federation-installed/bin/roca
-	ROCA_BIN=$(abspath .tmp/e2e-federation-installed/bin/roca) ROCA_PLAYGROUND_INTEGRATION= ROCA_PLAYGROUND_FEATURES= ROCA_PUBLISHED_BIN="$(ROCA_PUBLISHED_BIN)" ROCA_E2E_VECTOR_MODEL="$(ROCA_E2E_VECTOR_MODEL)" go test -tags=acceptance,e2e_federation ./test/acceptance -run '^TestE2EFederationJourney$$' -count=1 -v
+	@test -x "$(ROCA_BIN)" || { echo "set ROCA_BIN to an installed candidate executable" >&2; exit 1; }
+	ROCA_BIN="$(abspath $(ROCA_BIN))" ROCA_PLAYGROUND_INTEGRATION= ROCA_PLAYGROUND_FEATURES= ROCA_PUBLISHED_BIN="$(ROCA_PUBLISHED_BIN)" ROCA_E2E_VECTOR_MODEL="$(ROCA_E2E_VECTOR_MODEL)" go test -tags=acceptance,e2e_federation ./test/acceptance -run '^TestE2EFederationJourney$$' -count=1 -v
 
 # The release-train round: one command that must pass at the pinned candidate
 # SHA before the release merge. docs/release-train.md owns the cadence.

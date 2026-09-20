@@ -120,7 +120,7 @@ type residentEvidence struct {
 	transcript string
 }
 
-func countSharedResidents(binary string) (int, string, error) {
+func (m *world) countSharedResidents() (int, string, error) {
 	if runtime.GOOS == "windows" {
 		return 1, "windows skip", nil
 	}
@@ -128,22 +128,13 @@ func countSharedResidents(binary string) (int, string, error) {
 	if err != nil {
 		return 0, "", err
 	}
-	scratch, err := acceptanceTempDir("roca-e2e-315-")
-	if err != nil {
-		return 0, "", err
-	}
-	defer os.RemoveAll(scratch)
-	fake := filepath.Join(scratch, "roca-vector")
+	fake := filepath.Join(m.home, "tmp", "roca-vector")
 	build := exec.Command("go", "build", "-o", fake, "./testdata/fake-vector-resident")
 	build.Dir = filepath.Join(root, "test", "acceptance")
 	if output, err := build.CombinedOutput(); err != nil {
 		return 0, "", fmt.Errorf("build fake vector resident: %w\n%s", err, output)
 	}
-	home := filepath.Join(scratch, "home")
-	if err := os.MkdirAll(filepath.Join(home, "tmp"), 0o700); err != nil {
-		return 0, "", err
-	}
-	evidence, cleanup, err := startThreeSharedServes(&world{binary: binary, home: home}, binary, fake, time.Second)
+	evidence, cleanup, err := startThreeSharedServes(m, m.installed, fake, time.Second)
 	if err != nil {
 		return 0, "", err
 	}
@@ -155,6 +146,12 @@ func threeServeResidentPS(t *testing.T, binary, fake string, idle time.Duration)
 	t.Helper()
 	m := aWorldIn(t, "vector-share")
 	m.binary = binary
+	if err := m.runInit(); err != nil {
+		t.Fatalf("init: %v\n%s", err, m.last.stderr)
+	}
+	if m.last.code != 0 {
+		t.Fatalf("init: code %d\n%s", m.last.code, m.last.stderr)
+	}
 	evidence, cleanup, err := startThreeSharedServes(m, binary, fake, idle)
 	if err != nil {
 		t.Fatal(err)
@@ -164,12 +161,6 @@ func threeServeResidentPS(t *testing.T, binary, fake string, idle time.Duration)
 }
 
 func startThreeSharedServes(m *world, binary, fake string, idle time.Duration) (residentEvidence, func(), error) {
-	if err := m.runInit(); err != nil {
-		return residentEvidence{}, func() {}, fmt.Errorf("init: %w\n%s", err, m.last.stderr)
-	}
-	if m.last.code != 0 {
-		return residentEvidence{}, func() {}, fmt.Errorf("init: code %d\n%s", m.last.code, m.last.stderr)
-	}
 	if err := enableVectorFeature(m.home); err != nil {
 		return residentEvidence{}, func() {}, err
 	}

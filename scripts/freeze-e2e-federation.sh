@@ -151,6 +151,7 @@ for name in main pill-free pr321 pr324; do
   rm -f "$src/.roca/plugins/.roca-vector.relocation.lock"
   find "$src" -name '*.md' -delete
   cp -R "$src/." "$dest/"
+  apply_sql "$dest/.roca/plugins/roca-corpus/roca-corpus.db" testdata/e2e-federation/seed/sanitize-machine.sql
 done
 
 python3 - "$archive_root" "$stage" <<'PY_NORMALIZE'

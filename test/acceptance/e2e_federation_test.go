@@ -18,6 +18,8 @@ import (
 	"testing"
 	"time"
 	"unicode/utf8"
+
+	"github.com/thellmwhisperer/la-roca/internal/distribution/bundledplugin"
 )
 
 const (
@@ -40,6 +42,34 @@ func TestFrozenFederationBytesArePinned(t *testing.T) {
 		if _, err := os.Stat(db); err != nil {
 			t.Fatalf("frozen snapshot %s has no core database: %v", snapshot, err)
 		}
+	}
+}
+
+func TestFrozenFederationMachineLabelsAreSynthetic(t *testing.T) {
+	root := mustAcceptanceRoot(t)
+	for _, snapshot := range []string{"main", "pill-free"} {
+		t.Run(snapshot, func(t *testing.T) {
+			path := filepath.Join(root, frozenSnapshotRel, snapshot, ".roca", "plugins", "roca-corpus", "roca-corpus.db")
+			db, err := bundledplugin.OpenDatabase(path, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			for _, table := range []string{"sessions", "exchanges"} {
+				var total, synthetic int
+				if err := db.QueryRow("SELECT COUNT(*), COUNT(CASE WHEN machine = 'synthetic-e2e' THEN 1 END) FROM "+table).
+					Scan(&total, &synthetic); err != nil {
+					t.Fatal(err)
+				}
+				if total == 0 || synthetic != total {
+					t.Fatalf("%s: %d of %d rows have a synthetic machine label", table, synthetic, total)
+				}
+			}
+			var integrity string
+			if err := db.QueryRow("PRAGMA integrity_check").Scan(&integrity); err != nil || integrity != "ok" {
+				t.Fatalf("frozen corpus integrity = %q: %v", integrity, err)
+			}
+		})
 	}
 }
 
@@ -630,7 +660,7 @@ func (m *world) oneVectorResidentProcessExists() error {
 	if m.installed == "" {
 		return fmt.Errorf("the installed binary is missing")
 	}
-	count, ps, err := countSharedResidents(m.installed)
+	count, ps, err := m.countSharedResidents()
 	if err != nil {
 		return err
 	}

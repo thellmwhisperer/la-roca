@@ -22,7 +22,7 @@ published-upgrade scenarios.
 From the repository root:
 
 ```sh
-make e2e-federation ROCA_PUBLISHED_BIN=<published-roca>
+make e2e-federation ROCA_BIN=<installed-candidate> ROCA_PUBLISHED_BIN=<published-roca>
 ```
 
 Both `e2e-smoke` and `e2e-federation` require an executable published release;
@@ -35,14 +35,15 @@ that escapes the disposable HOME. The model defaults to the pinned file under
 
 ```sh
 make e2e-federation \
+  ROCA_BIN=<installed-candidate> \
   ROCA_PUBLISHED_BIN=<published-roca> \
   ROCA_E2E_VECTOR_MODEL=<embedding-model.gguf>
 ```
 
-That builds this tree's binary, installs the candidate into
-`.tmp/e2e-federation-installed`, copies that installed binary into `.local/bin`
-under a disposable HOME, copies the frozen snapshots, and runs the Gherkin
-feature only. Missing `ROCA_PUBLISHED_BIN` or `ROCA_E2E_VECTOR_MODEL` is a
+The federation target requires `ROCA_BIN` to select an already installed
+candidate explicitly. It copies that executable into `.local/bin` under a
+disposable HOME, copies the frozen snapshots, and runs the Gherkin feature
+only. Missing `ROCA_BIN`, `ROCA_PUBLISHED_BIN`, or `ROCA_E2E_VECTOR_MODEL` is a
 failure, never a skip.
 
 `make check` includes the non-provisioned Gherkin cases through
@@ -52,7 +53,7 @@ path and the published-release update followed by branch init on a clean home.
 
 Use `e2e-smoke` in place of `e2e-federation` in the command above for the
 shorter suite, or `e2e` to run both suites. The combined target uses the same
-binary and model prerequisites; the [release train](release-train.md) owns
+installed candidate and model prerequisites; the [release train](release-train.md) owns
 when to run it and how to pin the candidate.
 
 ## Coverage

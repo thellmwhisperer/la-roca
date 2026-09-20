@@ -37,6 +37,9 @@ func TestE2EFederationJourney(t *testing.T) {
 
 func requireInstalledCandidate(t *testing.T) {
 	t.Helper()
+	if strings.TrimSpace(os.Getenv("ROCA_BIN")) == "" {
+		t.Fatal("ROCA_BIN is required; select an installed candidate executable explicitly")
+	}
 	binary, err := rocaBinary()
 	if err != nil {
 		t.Fatal(err)
