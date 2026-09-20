@@ -32,7 +32,7 @@ func prepareThinkingIdentity(ctx context.Context, path string) error {
 	if _, err := db.ExecContext(ctx, `
 		DELETE FROM thinking_blocks
 		WHERE id NOT IN (
-		  SELECT MIN(id) FROM thinking_blocks
+		  SELECT MAX(id) FROM thinking_blocks
 		  GROUP BY session_id, exchange_number, full_text
 		)`); err != nil {
 		return fmt.Errorf("collapse thinking identity copies: %w", err)

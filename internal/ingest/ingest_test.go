@@ -399,6 +399,14 @@ func TestAGrowingSessionDoesNotCopyAThinkingBlockWhenPositionWouldMove(t *testin
 	if n != 1 {
 		t.Fatalf("thinking copies = %d, want 1 after the session grew", n)
 	}
+	var position float64
+	if err := db.SQL().QueryRow(`SELECT position_in_session FROM thinking_blocks
+		WHERE session_id=? AND exchange_number=1 AND full_text=?`, sessionID, thought).Scan(&position); err != nil {
+		t.Fatal(err)
+	}
+	if position != 0.5 {
+		t.Fatalf("thinking position = %v, want 0.5 after the session grew", position)
+	}
 }
 
 // The duplication shield covers three routes: the same session reached by a re-run, by a

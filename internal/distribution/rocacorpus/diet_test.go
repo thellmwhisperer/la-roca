@@ -646,6 +646,14 @@ func TestApplySchemaCollapsesThinkingCopiesThatOnlyDifferByPosition(t *testing.T
 	if copies != 1 {
 		t.Fatalf("thinking copies = %d, want 1 after identity collapse", copies)
 	}
+	var position float64
+	if err := db.QueryRow(`SELECT position_in_session FROM thinking_blocks
+		WHERE session_id = 'open-session' AND exchange_number = 1 AND full_text = 'keep this thought'`).Scan(&position); err != nil {
+		t.Fatal(err)
+	}
+	if position != 0.5 {
+		t.Fatalf("thinking position = %v, want newest copy at 0.5", position)
+	}
 	var distinct int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM thinking_blocks
 		WHERE session_id = 'open-session' AND exchange_number = 1`).Scan(&distinct); err != nil {
