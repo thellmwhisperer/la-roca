@@ -198,6 +198,7 @@ A binary whose bundled plugin schema is newer than the version recorded for
 that plugin in the database's `plugin_schema` refuses that migration unless
 `ROCA_ALLOW_HOME_MIGRATE=1`. This compares schema versions, even when the build
 version is unchanged; it does not track which executable installed the home.
+`roca compact` applies the same guard before changing the corpus database.
 Fresh databases and databases without a recorded plugin identity still allow
 initial adoption. The explicit
 `_install-bundled-plugins` command authorizes schema upgrades for both the

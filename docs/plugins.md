@@ -773,7 +773,8 @@ reconciliation seal so current rows can be materialized and reconciled through
 [explicit migration](operations.md#explicit-data-split-migration).
 
 `roca compact` rewrites an existing corpus database onto that one-row law and
-VACUUMs. Current session, exchange, thinking, and tool rows stay. Once those
+VACUUMs, subject to the [schema-upgrade authorization contract](lifecycle.md#update).
+Current session, exchange, thinking, and tool rows stay. Once those
 current rows exist, compact empties `custody_memberships` (the archive
 source-to-digest map) and `corpus_source_rows` (archive coordinates); batch
 hashes remain on `migration_batches`. Backup copies belong outside the database.
@@ -934,10 +935,13 @@ gate = "after_ingest"
 ```
 
 Every selected `rides.d/*.toml` entry must resolve to a readable regular file
-and declare at least one valid ride. An unusable declaration makes `roca cron
-list` and `roca cron run` fail instead of running a partial operator
-configuration. Duplicate operator ride names, whether repeated in one source or
-across `config.toml` and `rides.d` files, are rejected. An operator
+and declare at least one valid ride. Dependencies are validated across all
+operator declarations in `config.toml` and `rides.d`, using the gate rules
+below. An unreadable `rides.d` directory or an unresolved dependency is an
+error. An unusable declaration makes `roca cron list` and `roca cron run`
+fail before any ride runs; dependency errors name the ride and its gate.
+Duplicate operator ride names, whether repeated in one source or across `config.toml` and
+`rides.d` files, are rejected. An operator
 `vector_delta` ride replaces only the bundled `roca-vector/vector_delta` ride;
 same-named rides from other plugins remain. Plugin rides keep their own plugin
 identity unless replaced; operator rides use the reserved `operator` namespace.
