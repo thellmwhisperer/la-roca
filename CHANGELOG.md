@@ -24,6 +24,15 @@ Most users need to do nothing: an already signed-in Codex or Claude CLI is detec
 
 The bootstrap JSON field `external_credential` is now named `command_transport`; it reports that the selected model runs through a local agent CLI without implying that La Roca owns authentication.
 
+## [1.90.1](https://github.com/thellmwhisperer/la-roca/compare/v1.90.0...v1.90.1) (2026-09-20)
+
+
+### Bug Fixes
+
+* **distribution:** speed up custody migration and report progress ([#462](https://github.com/thellmwhisperer/la-roca/issues/462)) ([3911e07](https://github.com/thellmwhisperer/la-roca/commit/3911e0780bf5917a60d4faebeb0cbe10357d7a78))
+* **plugins:** an undeclared table is an orphan, not a broken plugin ([#463](https://github.com/thellmwhisperer/la-roca/issues/463)) ([213b4da](https://github.com/thellmwhisperer/la-roca/commit/213b4da377333509dc93c87651db5c66ee584e97))
+* **store:** repair concurrent schema drift during adoption ([#468](https://github.com/thellmwhisperer/la-roca/issues/468)) ([#469](https://github.com/thellmwhisperer/la-roca/issues/469)) ([2fee7ff](https://github.com/thellmwhisperer/la-roca/commit/2fee7ffa5e12cec04ec86ba3a2aa05f3bbf2ba6d))
+
 ## [1.90.0](https://github.com/thellmwhisperer/la-roca/compare/v1.89.0...v1.90.0) (2026-09-19)
 
 
