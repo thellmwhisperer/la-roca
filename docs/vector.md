@@ -66,14 +66,23 @@ otherwise it omits this section. `roca doctor --json` exposes these under
 The states are `building`, `complete`, `empty`, `outdated`, `invalid`, and `unknown`.
 `complete` requires a sealed source fingerprint, the current declaration,
 and a matching current source-file marker. A missing or unreadable marker
-means `unknown`; the next real indexing pass refreshes the seal. Status never
-hashes or sweeps the source to manufacture proof. A changed declaration or stored marker is `outdated`.
-Ops chunks that still name a compacted `legacy_id` are `invalid`, not merely
-outdated; `roca vector ingest --delta` remaps those `source_id` values and
-keeps the embeddings. A missing
-sidecar, or a readable unsealed sidecar with exactly zero chunks, is `empty`.
+means `unknown`; the next real indexing pass refreshes the seal. Status does
+not hash source files or read source text. For ops, it also checks chunk
+identifiers against `memories.legacy_id`; detected stale identifiers make an
+otherwise `building`, `complete`, or `outdated` sidecar `invalid`.
+A changed declaration or stored marker is `outdated`. A missing sidecar,
+or a readable unsealed sidecar with exactly zero chunks, is `empty`.
 An unsealed sidecar is `building` only while the live worker identifies that
 database. Missing or unreadable evidence is `unknown`.
+
+After ops memory IDs are compacted, the adjacent sidecar remaps chunk and
+source identifiers and locators through `legacy_id`, preserving embeddings.
+For a home compacted before this repair was available, run
+`roca vector ingest --delta`: it repairs those identifiers before checking
+whether the source is unchanged. If both old and current chunk identifiers
+exist, the normal delta sweep removes the obsolete chunks. Unchanged text
+does not require re-embedding; a completed repair restores `complete` once
+the source generation and declaration match.
 
 One worker line says whether a pass is running, its pid, backend (`cpu` or
 `metal`), and current database. Backend and database are unknown unless they
@@ -284,10 +293,11 @@ duplicate chunks. A partially rebuilt sidecar can contain multiple chunk
 generations; queries search all of them while re-embedding continues. Progress
 prints counts, rate, and ETA at batch boundaries.
 
-An ordinary full delta first compares source file identity, size, modification
-and change times (including the WAL) with the completed sidecar's stored
-generation. When that marker, the declaration, model, and progress metadata
-match, it skips source hashing and the row sweep. Otherwise, the worker hashes
+After any ops identifier repair described above, an ordinary full delta
+compares source file identity, size, modification and change times (including
+the WAL) with the completed sidecar's stored generation. When that marker,
+the declaration, model, and progress metadata match, and no stale ops
+identifiers remain, it skips source hashing and the row sweep. Otherwise, the worker hashes
 the database and WAL through `pkg/incrementality`; a matching fingerprint can
 still avoid the sweep. `roca vector ingest --delta --verify` bypasses the cheap
 check and hashes the source even when its marker matches. SQLite

@@ -873,10 +873,8 @@ DATA-1 database adopts this in place on the next `Prepare` — the rows it
 already held stay under an unclaimed empty name, so they can never stand in for
 a migration that has not run. A plugin schema or index bump reopens every named
 migration, because the destination those migrations fill may have moved under
-them. A binary whose schema is newer than the home it is pointed at refuses
-that migration unless `ROCA_ALLOW_HOME_MIGRATE=1`. The explicit
-`_install-bundled-plugins` command used by the installer and `roca update`
-authorizes schema upgrades, including updates from older releases.
+them. [Update lifecycle](lifecycle.md#update) owns the bundled schema-upgrade
+guard and explicit authorization paths.
 
 ## Scheduled rides
 
