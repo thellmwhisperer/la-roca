@@ -1578,8 +1578,9 @@ func (w *writer) insertThinking(ctx context.Context, sessionID string, number, p
 	updated, err := w.tx.ExecContext(ctx, `
 		UPDATE thinking_blocks
 		SET position_in_session = ?
-		WHERE session_id IS ? AND exchange_number IS ? AND full_text IS ?`,
-		position, sessionID, number, block.Text)
+		WHERE session_id IS ? AND exchange_number IS ? AND full_text IS ?
+		  AND position_in_session IS NOT ?`,
+		position, sessionID, number, block.Text, position)
 	if err != nil {
 		return false, err
 	}
@@ -1615,8 +1616,14 @@ func (w *writer) refreshThinkingPositions(ctx context.Context, sessionID string)
 	_, err := w.tx.ExecContext(ctx, `
 		UPDATE thinking_blocks
 		SET position_in_session = CAST(exchange_number AS REAL) /
-			(SELECT COUNT(*) FROM exchanges WHERE session_id = ?)
-		WHERE session_id = ? AND exchange_number IS NOT NULL`, sessionID, sessionID)
+			(SELECT COUNT(DISTINCT exchange_number) FROM exchanges
+			 WHERE session_id = ? AND exchange_number IS NOT NULL)
+		WHERE session_id = ? AND exchange_number IS NOT NULL
+		  AND position_in_session IS NOT (
+			CAST(exchange_number AS REAL) /
+			(SELECT COUNT(DISTINCT exchange_number) FROM exchanges
+			 WHERE session_id = ? AND exchange_number IS NOT NULL)
+		  )`, sessionID, sessionID, sessionID)
 	return err
 }
 
