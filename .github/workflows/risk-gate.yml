@@ -48,4 +48,10 @@ jobs:
           # Fork heads (or deleted head repositories) get the verdict without
           # the metadata writes: the workflow token is read-only there.
           RISK_GATE_FORK: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
+          # GITHUB_TOKEN may never change draft state (actions/toolkit#1165);
+          # when the owner adds the RISK_GATE_TOKEN secret the gate undrafts.
+          RISK_GATE_DRAFT_TOKEN: ${{ secrets.RISK_GATE_TOKEN }}
+          # Optional repo variable naming the reviewer when the owner is an
+          # organization and its admins are all PR authors.
+          RISK_GATE_REVIEWER: ${{ vars.RISK_GATE_REVIEWER }}
         run: ./scripts/risk-gate.sh
