@@ -18,6 +18,10 @@ import (
 	"github.com/thellmwhisperer/la-roca/pkg/parsers"
 )
 
+// parseKind is the file parser used after the fingerprint gate. Tests replace
+// it to count calls without opening a second parse path.
+var parseKind = parsers.Parse
+
 // Database is the little of the store the ingest needs. It travels as an interface
 // so this package can be exercised without one, which is what keeps the parser
 // suite free of any database at all.
@@ -374,6 +378,20 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 			result.FilesSkipped++
 			result.categorizeFile("skipped", "unchanged fingerprint")
 			result.Coverage.skip(target.Path, "unchanged fingerprint")
+			finishTarget()
+			continue
+		}
+		if state[target.Path].LastError == "" &&
+			incrementality.IsMachinePromotion(state[target.Path].Fingerprint, fingerprint, target.Machine) {
+			if !opts.DryRun {
+				if err := promoteMachineWatermark(ctx, db, target, state[target.Path], fingerprint); err != nil {
+					return result, err
+				}
+			}
+			result.addMessageCoverage(source, stateMessageCoverage(state[target.Path]))
+			result.FilesSkipped++
+			result.categorizeFile("skipped", "unchanged fingerprint")
+			result.Coverage.skip(target.Path, "machine watermark promoted")
 			finishTarget()
 			continue
 		}
@@ -855,7 +873,7 @@ func read(ctx context.Context, opts Options, target Target, previous incremental
 		if useRegistered {
 			return registered.Parse(parsers.File{Content: input, Meta: fileMeta})
 		}
-		return parsers.Parse(target.Kind, input, fileMeta)
+		return parseKind(target.Kind, input, fileMeta)
 	}
 	records, err := parse(content, meta)
 	if seed.Incremental && (err != nil || incrementalParseNeedsPrefix(target.Kind, content, records)) {
@@ -928,7 +946,7 @@ func cursorContent(target Target, previous incrementality.FileState,
 	if json.Unmarshal(previous.Metadata, &cursor) != nil || cursor.ByteOffset <= 0 ||
 		cursor.ByteOffset >= int64(len(content)) || cursor.PrefixDigest == "" ||
 		!cursor.LastExchangeComplete || cursor.ParserVersion != readingVersion(target.Kind) ||
-		cursor.Machine != target.Machine {
+		(cursor.Machine != "" && cursor.Machine != target.Machine) {
 		return content, harvestCursorSeed{}
 	}
 	if target.Kind == parsers.KindCodexHistory && len(cursor.ExchangeCursors) == 0 {
@@ -1248,6 +1266,26 @@ func recordHarvestCursor(target Target, seed harvestCursorSeed, full []byte, rec
 func digestBytes(content []byte) string {
 	sum := sha256.Sum256(content)
 	return hex.EncodeToString(sum[:])
+}
+
+func promoteMachineWatermark(ctx context.Context, db Database, target Target,
+	previous incrementality.FileState, fingerprint string) error {
+	summary := map[string]any{}
+	if len(previous.Metadata) > 0 {
+		if err := json.Unmarshal(previous.Metadata, &summary); err != nil {
+			summary = map[string]any{}
+		}
+	}
+	if _, hasCursor := summary["byte_offset"]; hasCursor {
+		machine, _ := summary["machine"].(string)
+		if machine == "" {
+			summary["machine"] = target.Machine
+		}
+	}
+	return db.Write(ctx, func(tx *sql.Tx) error {
+		return incrementality.RecordState(ctx, tx, incrementalityTarget(target),
+			fingerprint, "", summary)
+	})
 }
 
 // resolveProjects settles each session's project with this precedence:

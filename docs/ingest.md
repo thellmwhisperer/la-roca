@@ -2,8 +2,9 @@
 
 First-time path: [install and initialize search](lifecycle.md#install).
 
-`roca ingest` incrementally reads supported artefacts from the local HOME and
-any configured remote source roots:
+`roca ingest` incrementally reads the following supported artefacts. The
+[remote source contract](#remote-source-roots) limits which ones configured
+mirrors contribute:
 
 | Runtime | Artefacts |
 |---|---|
@@ -38,8 +39,9 @@ roca ingest /path/to/extracted-export
 The path belongs only to that invocation. A later `roca ingest` with no path,
 including the nightly run, reads live Claude, Codex, Qwen Code, GLM, Cursor,
 Pi, OpenCode, ZCode, Hermes, Grok Build, Cowork, and the pre-federation store
-from the local HOME and every configured remote source root. It fingerprints
-each source file by path and content, so an explicit rerun of the same export
+from the local HOME, plus the sources allowed by the
+[remote source contract](#remote-source-roots) from configured mirrors. It
+fingerprints each source file by path and content, so an explicit rerun of the same export
 is a zero delta and a newer export contributes only message identities that
 have not already landed. A live session file that grows appends the new
 exchanges. It does not rewrite rows that already landed. A genuine rewrite of
@@ -81,12 +83,17 @@ root = "~/.roca-sources/mini"
 
 The root is a HOME-shaped tree (`.claude/`, `.codex/`, `.pi/`, and the rest).
 How the tree arrives (rsync, a shared disk) is the operator's job; ingest only
-reads it. Every session, exchange, thinking block, and tool call from that
-root is stamped `machine = "mini"`. The local HOME uses this machine's
-hostname; on upgrade, existing corpus rows without a machine label receive that
-hostname too. The same project path on two machines stays distinguishable, and
-removing the `[[sources.remote]]` entry stops reading that root without deleting
-rows already written.
+reads it. Remote roots contribute conversations only: memories, memtrace,
+legacy stores, and other operational files stay on the machine that owns them.
+Every session, exchange, thinking block, and tool call from that root is
+stamped `machine = "mini"`. The local HOME uses this machine's hostname; on
+upgrade, existing corpus rows without a machine label receive that hostname
+without rewriting the lexical index. For successfully ingested files whose
+content and parser revision are unchanged, local fingerprints and harvest
+cursors gain the machine tag without being re-parsed; failed ingests are retried.
+The same project path on two machines stays distinguishable, and removing the
+`[[sources.remote]]` entry
+stops reading that root without deleting rows already written.
 
 ## Import an Anthropic data export
 

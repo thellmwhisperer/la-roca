@@ -34,14 +34,12 @@ type Spec struct {
 	Payload          func() ([]byte, error)
 	MigrationGuard   func(string) (func() error, error)
 	// SchemaVersion is the schema this binary would apply. A newer value
-	// than the installed database refuses to migrate unless the operator
-	// sets EnvAllowHomeMigrate: a branch or test build must not advance a
-	// home it did not install.
+	// than the database's recorded schema requires EnvAllowHomeMigrate;
+	// executable identity is not tracked.
 	SchemaVersion int
 }
 
-// EnvAllowHomeMigrate lets an official update, or an explicit test, apply a
-// newer bundled plugin schema to a home this binary did not originally install.
+// EnvAllowHomeMigrate authorizes advancing a recorded bundled plugin schema.
 const EnvAllowHomeMigrate = "ROCA_ALLOW_HOME_MIGRATE"
 
 func Ensure(root, binDir, version string, spec Spec) (plugininstall.Result, error) {
