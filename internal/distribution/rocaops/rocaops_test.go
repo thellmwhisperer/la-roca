@@ -135,7 +135,7 @@ func TestEnsureInstallsTheBundledResidentDataOnlyPluginAndPreservesItsDatabase(t
 	}
 }
 
-func TestEnsureDoesNotTouchTheDatabaseWhenTheInstalledVersionMatches(t *testing.T) {
+func TestEnsureChecksSchemaReadOnlyWhenTheInstalledVersionMatches(t *testing.T) {
 	root, bin := installOpsFixture(t)
 	writer, err := sql.Open("sqlite", filepath.Join(root, rocaops.Name, rocaops.DatabaseFilename))
 	if err != nil {
@@ -163,8 +163,8 @@ func TestEnsureDoesNotTouchTheDatabaseWhenTheInstalledVersionMatches(t *testing.
 	if err := os.WriteFile(database, sentinel, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := rocaops.Ensure(root, bin, "v-test"); err != nil {
-		t.Fatalf("same-version ensure inspected or rewrote the custody database: %v", err)
+	if _, err := rocaops.Ensure(root, bin, "v-test"); err == nil {
+		t.Fatal("same-version ensure accepted an unreadable schema identity")
 	}
 	got, err := os.ReadFile(database)
 	if err != nil {
