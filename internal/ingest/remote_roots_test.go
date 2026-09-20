@@ -20,6 +20,20 @@ func TestRemoteSourceRootsIngestByMachine(t *testing.T) {
 	remoteEnv := Environment{GOOS: "darwin", Home: mirror}
 	remoteRoots := ResolveRoots(remoteEnv, Settings{})
 	writeClaudeSession(t, remoteRoots, cwd, cwdFixtureSessionID)
+	memory := filepath.Join(remoteRoots.ClaudeProjects, encodeRoot(cwd), "memory", "fact.md")
+	if err := os.MkdirAll(filepath.Dir(memory), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(memory, []byte("---\nname: fact\ntype: project\n---\nA remote fact.\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	memtrace := filepath.Join(remoteRoots.GrokMemtrace, "trace.jsonl")
+	if err := os.MkdirAll(filepath.Dir(memtrace), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(memtrace, []byte("{\"event\":\"synthetic\"}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	combined := ResolveRoots(hubEnv, Settings{
 		WorkspaceRoots: []string{workspace},
@@ -59,6 +73,13 @@ func TestRemoteSourceRootsIngestByMachine(t *testing.T) {
 		`SELECT DISTINCT COALESCE(machine, '') FROM exchanges ORDER BY 1`)
 	if strings.Join(exchangeMachines, " ") != "hub mini" {
 		t.Fatalf("exchange machines = %v", exchangeMachines)
+	}
+	if result.Scanned["claude_memory_files"] != 0 || result.Scanned["grok_memtrace_files"] != 0 {
+		t.Fatalf("remote operational scan = memories %d memtrace %d",
+			result.Scanned["claude_memory_files"], result.Scanned["grok_memtrace_files"])
+	}
+	if memories := countRows(t, db.SQL(), "memories"); memories != 0 {
+		t.Fatalf("memories written = %d, want 0", memories)
 	}
 
 	writeClaudeSession(t, remoteRoots, cwd, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")

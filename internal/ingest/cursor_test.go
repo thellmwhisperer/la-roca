@@ -137,7 +137,7 @@ func TestCursorWorkspaceScanTargetsOnlyStateDatabases(t *testing.T) {
 		t.Fatal("Cursor database parser is not registered")
 	}
 	plan := Plan{Scanned: map[string]int{}}
-	addRegisteredParsers(Roots{Home: home}, &plan, []parsers.Registration{registered})
+	addRegisteredParsers(Roots{Home: home}, &plan, []parsers.Registration{registered}, true)
 
 	if len(plan.Targets) != 1 || plan.Targets[0].Path != filepath.Join(hash, "state.vscdb") ||
 		plan.Targets[0].FileName != "state.vscdb" {
@@ -253,7 +253,7 @@ func TestCursorStoreScanTargetsOnlyStoreDatabasesAndPairsMeta(t *testing.T) {
 		t.Fatal("missing cursor_store registration")
 	}
 	plan := Plan{Scanned: map[string]int{}}
-	addRegisteredParsers(Roots{Home: home}, &plan, []parsers.Registration{store})
+	addRegisteredParsers(Roots{Home: home}, &plan, []parsers.Registration{store}, true)
 	if len(plan.Targets) != 1 {
 		t.Fatalf("store targets = %d, want only store.db: %+v", len(plan.Targets), plan.Targets)
 	}

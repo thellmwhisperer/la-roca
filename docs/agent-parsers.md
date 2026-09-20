@@ -109,6 +109,11 @@ share. `SourceAgent` is the agent this source belongs to: it names the line in
 the ingest summary and rides in the scan metadata your parser receives, and it
 falls back to `Name` when left empty.
 
+`Destination` also controls remote discovery: only registrations including
+`DestinationCorpus` are scanned there. Mixed parsers may still return memories,
+but remote ingest discards `Memories` and `ObservedMemoryFiles` before writing.
+See the [remote source contract](ingest.md#remote-source-roots).
+
 `CanonicalHarness` is the product surface that opened the artifact, such as
 `Claude Code`, `Codex CLI`, `OpenCode`, or `Grok Build`. The registry knows this
 deterministically; never search for it in JSON or copy an incidental agent name

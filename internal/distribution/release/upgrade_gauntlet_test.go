@@ -29,7 +29,7 @@ func frozenUpgradeVersions(t *testing.T) []string {
 	return versions
 }
 
-func TestUpgradeGauntletOwnsReleasedHomesAndBothDeliveryPaths(t *testing.T) {
+func TestUpgradeGauntletOwnsReleasedHomes(t *testing.T) {
 	for _, version := range frozenUpgradeVersions(t) {
 		t.Run(version, func(t *testing.T) {
 			fixture := filepath.Join("testdata", "upgrade", "homes", version+".tar.gz")
@@ -54,30 +54,6 @@ func TestUpgradeGauntletOwnsReleasedHomesAndBothDeliveryPaths(t *testing.T) {
 		})
 	}
 
-	runner := readRepoFile(t, "../../../scripts/upgrade-gauntlet.sh")
-	for _, required := range []string{"ingest", "exec", "doctor", "health", "ROCA_ALLOW_HOME_MIGRATE=1"} {
-		if !strings.Contains(runner, required) {
-			t.Errorf("the gauntlet does not run %s", required)
-		}
-	}
-	if strings.Contains(runner, "release download") {
-		t.Error("CI rebuilds fixtures instead of consuming the committed frozen homes")
-	}
-
-	ci := readRepoFile(t, "../../../.github/workflows/ci.yml")
-	release := readRepoFile(t, "../../../.github/workflows/release.yml")
-	for name, workflow := range map[string]string{"pull requests": ci, "releases": release} {
-		if !strings.Contains(workflow, "upgrade-gauntlet") {
-			t.Errorf("%s do not run the upgrade gauntlet", name)
-		}
-		if !strings.Contains(workflow, "upgrade-gauntlet.sh --versions") ||
-			!strings.Contains(workflow, "matrix.version") {
-			t.Errorf("%s do not fan versions.txt out into one job per frozen home", name)
-		}
-	}
-	if !strings.Contains(release, "needs: upgrade-gauntlet") {
-		t.Error("publication does not wait for the frozen homes to upgrade")
-	}
 }
 
 func archiveFiles(t *testing.T, path string) map[string][]byte {

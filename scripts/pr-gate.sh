@@ -18,7 +18,7 @@ cd "$(dirname "$0")/.."
 
 readonly RISK_LABEL=risk:high
 readonly ACCEPT_LABEL=risk:accepted
-readonly PASTE_MESSAGE='Medium risk: paste branch acceptance output - an Aceptación or Acceptance section with a fenced block showing at least one $ roca command and one output line - in the PR body or a comment.'
+readonly PASTE_MESSAGE='Medium risk: paste branch acceptance output - an Aceptación or Acceptance section with a fenced block showing at least one $ roca command and one output line - in the PR body; editing the body reruns this check.'
 
 # --- parsers (pure, offline, self-tested) ---------------------------------
 
@@ -66,14 +66,11 @@ parse_risk_level() {
   '
 }
 
-# True when one of the given texts (PR body, then comment bodies) carries an
+# True when the PR body carries an
 # Aceptación/Acceptance section with a fenced block holding at least one
 # `$ roca` command line and one output line.
 has_acceptance_evidence() {
-  local chunk
-  for chunk in "$@"; do
-    [[ -n $chunk ]] || continue
-    if printf '%s\n' "$chunk" | awk '
+  printf '%s\n' "$1" | awk '
       {
         line = $0
         if (infence) {
@@ -98,11 +95,7 @@ has_acceptance_evidence() {
         }
       }
       END { exit ok ? 0 : 1 }
-    '; then
-      return 0
-    fi
-  done
-  return 1
+    '
 }
 
 # --- offline evidence ------------------------------------------------------
@@ -169,7 +162,7 @@ Medium
 ## Risk Assessment
 High')" 'first section wins'
 
-  local evidence_full no_output no_roca outside_fence before_heading comment_only
+  local evidence_full no_output no_roca outside_fence before_heading evidence_with_language
   evidence_full='## Aceptación
 
 ```
@@ -197,7 +190,7 @@ roca version 1.74.0
 ```
 
 ## Acceptance'
-  comment_only='The branch acceptance:
+  evidence_with_language='The branch acceptance:
 
 ## Acceptance evidence
 
@@ -209,9 +202,7 @@ roca version 1.74.0
   expect_true 'fenced command plus output passes' \
     "$(has_acceptance_evidence "$evidence_full"; echo $?)"
   expect_true 'fenced block with language passes' \
-    "$(has_acceptance_evidence "$comment_only"; echo $?)"
-  expect_true 'acceptance in a comment passes' \
-    "$(has_acceptance_evidence 'body without evidence' "$comment_only"; echo $?)"
+    "$(has_acceptance_evidence "$evidence_with_language"; echo $?)"
   expect_false 'fenced command without output rejects' \
     "$(has_acceptance_evidence "$no_output"; echo $?)"
   expect_false 'fence without a roca command rejects' \
@@ -269,12 +260,11 @@ gate() {
   local n=${1:-${PR_NUMBER:?PR_NUMBER required}}
   local fork=${PR_GATE_FORK:-false}
 
-  local body author labels owner comments
+  local body author labels owner
   body=$(gh pr view "$n" -R "$repo" --json body --jq '.body // ""')
   author=$(gh pr view "$n" -R "$repo" --json author --jq '.author.login')
   labels=$(gh pr view "$n" -R "$repo" --json labels --jq '.labels[].name' || true)
   owner=$(gh api "repos/$repo" --jq '.owner.login')
-  comments=$(gh api "repos/$repo/issues/$n/comments" --paginate --jq '.[].body' 2>/dev/null || true)
 
   has_label() {
     printf '%s\n' "$labels" | grep -Fxq "$1"
@@ -323,7 +313,7 @@ gate() {
       ;;
     medium)
       drop_high_label
-      if has_acceptance_evidence "$body" "$comments"; then
+      if has_acceptance_evidence "$body"; then
         pass_gate "Risk Assessment is Medium with pasted branch acceptance."
       fi
       fail_gate "$PASTE_MESSAGE"
