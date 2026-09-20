@@ -17,16 +17,10 @@ import (
 )
 
 func TestCompactRefusesSchemaAdvanceWithoutMutatingCorpus(t *testing.T) {
+	path := prepareCorpusUpgradeBeforeBump(t, func(db *sql.DB) {
+		seedFatCorpus(t, db)
+	})
 	t.Setenv(bundledplugin.EnvAllowHomeMigrate, "")
-	db, path := openCorpusDB(t)
-	seedFatCorpus(t, db)
-	if _, err := db.Exec(`UPDATE plugin_schema SET schema_version = ?`, rocacorpus.SchemaVersion-1); err != nil {
-		db.Close()
-		t.Fatal(err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
 	before, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
