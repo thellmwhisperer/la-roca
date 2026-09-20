@@ -85,11 +85,11 @@ func TestPiPlacesThinkingAcrossTheWholeSession(t *testing.T) {
 	if len(exchanges) != 2 {
 		t.Fatalf("exchanges = %d, want 2", len(exchanges))
 	}
-	if got := exchanges[0].Thinking[0].Position; got != float64(exchanges[0].Number) {
-		t.Errorf("first thinking position = %v, want exchange %d", got, exchanges[0].Number)
+	if got := exchanges[0].Thinking[0].Position; got != 0.5 {
+		t.Errorf("first thinking position = %v, want 0.5", got)
 	}
-	if got := exchanges[1].Thinking[0].Position; got != float64(exchanges[1].Number) {
-		t.Errorf("second thinking position = %v, want exchange %d", got, exchanges[1].Number)
+	if got := exchanges[1].Thinking[0].Position; got != 1 {
+		t.Errorf("second thinking position = %v, want 1", got)
 	}
 }
 

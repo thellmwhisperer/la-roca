@@ -656,7 +656,12 @@ func TestApplySchemaCollapsesThinkingCopiesThatOnlyDifferByPosition(t *testing.T
 	}
 	var groups int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM (
-		SELECT session_id, exchange_number, substr(full_text,1,40), COUNT(*) AS n
+		SELECT session_id, exchange_number,
+			roca_payload_hash(
+				typeof(full_text),
+				CASE WHEN typeof(full_text) = 'text' THEN CAST(full_text AS BLOB) ELSE full_text END
+			) AS text_hash,
+			COUNT(*) AS n
 		FROM thinking_blocks GROUP BY 1, 2, 3 HAVING n > 1)`).Scan(&groups); err != nil {
 		t.Fatal(err)
 	}
