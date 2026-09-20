@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -53,7 +54,19 @@ func TestUpgradeGauntletOwnsReleasedHomes(t *testing.T) {
 			}
 		})
 	}
+}
 
+func TestUpgradeGauntletExecutesAgainstAnIsolatedFixture(t *testing.T) {
+	binary := filepath.Join(t.TempDir(), "roca")
+	build := exec.Command("go", "build", "-o", binary, "../../../cmd/roca")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build current binary: %v\n%s", err, output)
+	}
+
+	run := exec.Command("bash", "../../../scripts/upgrade-gauntlet.sh", binary, "v1.84.2")
+	if output, err := run.CombinedOutput(); err != nil {
+		t.Fatalf("run upgrade gauntlet: %v\n%s", err, output)
+	}
 }
 
 func archiveFiles(t *testing.T, path string) map[string][]byte {
