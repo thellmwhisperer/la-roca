@@ -540,7 +540,8 @@ batch receipts. An interrupted run can be invoked again; the
 frozen sources are reused or replaced. When all destination ledgers are
 verified, another run returns without opening frozen snapshots, hashing,
 checking integrity or materializing rows. Backups remain in place.
-Read-only mode refuses migration.
+Read-only mode refuses migration. Preparing bundled destinations also follows
+the [schema-upgrade authorization contract](lifecycle.md#update).
 
 While work remains, stage lines identify DATA-2 snapshot preparation, memory
 import, FTS rebuild and verification, followed by DATA-3 corpus and DATA-4
