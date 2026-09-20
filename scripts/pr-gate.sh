@@ -259,6 +259,7 @@ gate() {
   local repo=${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}
   local n=${1:-${PR_NUMBER:?PR_NUMBER required}}
   local fork=${PR_GATE_FORK:-false}
+  local action=${PR_GATE_ACTION:-}
 
   local body author labels owner
   body=$(gh pr view "$n" -R "$repo" --json body --jq '.body // ""')
@@ -269,6 +270,13 @@ gate() {
   has_label() {
     printf '%s\n' "$labels" | grep -Fxq "$1"
   }
+  if [[ $action == synchronize || $action == edited ]] && has_label "$ACCEPT_LABEL"; then
+    if [[ $fork != true ]]; then
+      best_effort "removing stale $ACCEPT_LABEL" \
+        gh pr edit "$n" -R "$repo" --remove-label "$ACCEPT_LABEL"
+    fi
+    labels=$(printf '%s\n' "$labels" | grep -Fxv "$ACCEPT_LABEL" || true)
+  fi
   # Degraded enforcement (owner decision 2026-09-20): the gate never touches
   # draft state; a GITHUB_TOKEN could not anyway (actions/toolkit#1165).
   # The repository owner is a user or an organization; ask the first resolved
