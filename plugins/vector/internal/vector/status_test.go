@@ -189,6 +189,51 @@ func TestReportVectorizationReadsSidecarFactsAndNeverInventZero(t *testing.T) {
 	}
 }
 
+func TestReportVectorizationMarksOpsLegacySidecarInvalid(t *testing.T) {
+	root := t.TempDir()
+	ops := vectorDatabase{
+		Plugin: "roca-ops", Database: "ops", Path: "roca-ops.db", Alias: "ops",
+		Tables: []vectorTable{{Name: "memories", IDColumn: "id", TextColumns: []string{"content"}}},
+	}
+	writeRegistry(t, root, vectorRegistry{Schema: 2, Databases: []vectorDatabase{ops}})
+	opsPath := filepath.Join(root, ops.Plugin, ops.Path)
+	writeSourceRows(t, opsPath, `
+		CREATE TABLE memories(id INTEGER PRIMARY KEY, legacy_id INTEGER, content TEXT);
+		INSERT INTO memories VALUES (1, 1152921504606853945, 'handoff del CoS');`)
+	sidecar := SidecarPath(opsPath)
+	if err := os.MkdirAll(filepath.Dir(sidecar), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := InitOwnedSidecar(sidecar, ops.owner(), DefaultModel); err != nil {
+		t.Fatal(err)
+	}
+	db := openTestSQLite(t, sidecar)
+	if _, err := db.Exec(`INSERT INTO chunks(source_kind,source_id,text_column,chunk_index,fingerprint,locator)
+		VALUES('memories','memories/1152921504606853945','content',0,'fp','{}')`); err != nil {
+		t.Fatal(err)
+	}
+	marker, err := sourceFileMarker(opsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT OR REPLACE INTO meta(key,value) VALUES(?,?),(?,?),(?,?),(?,?)`,
+		"contract", ops.contractFingerprint(), "source_fingerprint", "sealed-ops",
+		sourceMarkerMetaKey, marker, "completed_generation", marker); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := ReportVectorization(context.Background(), StatusRequest{PluginRoot: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Databases[0].State != StateInvalid {
+		t.Fatalf("ops legacy sidecar state = %q, want invalid", report.Databases[0].State)
+	}
+}
+
 func TestReportVectorizationUnknownNeverBecomesZeroWithoutACompletedCount(t *testing.T) {
 	root := t.TempDir()
 	corpus := vectorDatabase{
