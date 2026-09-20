@@ -94,6 +94,73 @@ func TestFederationBuildsOwnedSidecarsAndGarbageCollectsByDelta(t *testing.T) {
 	}
 }
 
+func TestOpsLegacyIDSidecarDeltaKeepsEmbeddingsAndQueryHits(t *testing.T) {
+	const legacyID = "1152921504606853945"
+	root := t.TempDir()
+	opsDir := filepath.Join(root, "roca-ops")
+	if err := os.MkdirAll(opsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	opsPath := filepath.Join(opsDir, "roca-ops.db")
+	createSourceDatabase(t, opsPath, `
+		CREATE TABLE memories(id INTEGER PRIMARY KEY, content TEXT, created_at TEXT);
+		INSERT INTO memories VALUES (`+legacyID+`, 'handoff del CoS', '2026-03-01');`)
+	writeRegistry(t, root, vectorRegistry{Schema: vectorRegistrySchema, Databases: []vectorDatabase{
+		{Plugin: "roca-ops", Database: "ops", Path: "roca-ops.db", Alias: "plugin_roca_ops",
+			Tables: []vectorTable{{Name: "memories", IDColumn: "id", TextColumns: []string{"content"},
+				Columns: []string{"id", "legacy_id", "content"}}}},
+	}})
+	runner := sqliteExecRunner(t, map[string]string{"plugin_roca_ops": opsPath})
+	runner = databaseScopeRunner(runner, []DatabaseSelection{
+		{Source: "plugin:roca-ops", Database: "ops"},
+	})
+	embedder := &recordingEmbedder{}
+	federation, err := LoadFederation(CoreCLI{Executable: "roca", readRequest: readerFixture(runner)}, root,
+		DefaultModel, "v-test", embedder, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := federation.Ingest(context.Background(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Chunks == 0 {
+		t.Fatalf("first ops ingest = %+v", first)
+	}
+	embeddingCalls := len(embedder.inputs)
+	mutateSourceDatabase(t, opsPath, `ALTER TABLE memories ADD COLUMN legacy_id INTEGER`)
+	mutateSourceDatabase(t, opsPath, `UPDATE memories SET id = -id`)
+	mutateSourceDatabase(t, opsPath, `UPDATE memories SET id = 1, legacy_id = -id`)
+
+	report, err := ReportVectorization(context.Background(), StatusRequest{PluginRoot: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Databases) != 1 || report.Databases[0].State != StateInvalid {
+		t.Fatalf("status after renumber = %+v, want invalid", report.Databases)
+	}
+
+	delta, err := federation.Ingest(context.Background(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if delta.Added != 0 || delta.Updated != 0 || len(embedder.inputs) != embeddingCalls {
+		t.Fatalf("legacy remap re-embedded: delta=%+v calls %d -> %d",
+			delta, embeddingCalls, len(embedder.inputs))
+	}
+	if delta.Chunks != first.Chunks {
+		t.Fatalf("chunk count %d -> %d after legacy remap", first.Chunks, delta.Chunks)
+	}
+
+	query, err := federation.Query(context.Background(), "handoff del CoS", 5, "ops")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(query.Results) == 0 || query.Results[0].ID != "1" {
+		t.Fatalf("ops query after remap = %+v", query.Results)
+	}
+}
+
 func TestChronologicalContractChangeDoesNotReembedExistingChunks(t *testing.T) {
 	federation, corpusPath, _, embedder := federationFixture(t)
 	ctx := context.Background()

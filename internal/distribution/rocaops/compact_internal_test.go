@@ -3,6 +3,8 @@ package rocaops
 import (
 	"database/sql"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/bundledplugin"
@@ -37,6 +39,68 @@ func TestCompactMemoryIDsRestoresMemoryFTSBehavior(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertMemoryFTSCount(t, db, "after update", 0)
+}
+
+func TestCompactMemoryIDsRemapsVectorSidecar(t *testing.T) {
+	path := filepath.Join(t.TempDir(), DatabaseFilename)
+	db, err := bundledplugin.OpenDatabase(path, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(schema); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	legacy := int64(jsSafeInteger + 7)
+	if _, err := db.Exec(`INSERT INTO memories (id, layer, content, origin)
+		VALUES (?, 'discovery', 'handoff del CoS', 'agent')`, legacy); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	sidecar := strings.TrimSuffix(path, ".db") + ".vector.db"
+	side, err := sql.Open("sqlite", sidecar)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := side.Exec(`CREATE TABLE chunks(
+		id INTEGER PRIMARY KEY,
+		source_kind TEXT NOT NULL,
+		source_id TEXT NOT NULL,
+		text_column TEXT NOT NULL DEFAULT '',
+		chunk_index INTEGER NOT NULL,
+		fingerprint TEXT NOT NULL,
+		locator TEXT NOT NULL);
+		INSERT INTO chunks(source_kind,source_id,text_column,chunk_index,fingerprint,locator)
+			VALUES('memories', ?, 'content', 0, 'fp', ?)`,
+		"memories/"+itoa(legacy), `{"source_id":"`+itoa(legacy)+`"}`); err != nil {
+		side.Close()
+		t.Fatal(err)
+	}
+	if err := side.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := compactMemoryIDs(path); err != nil {
+		t.Fatal(err)
+	}
+	side, err = sql.Open("sqlite", sidecar)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer side.Close()
+	var sourceID string
+	if err := side.QueryRow(`SELECT source_id FROM chunks`).Scan(&sourceID); err != nil {
+		t.Fatal(err)
+	}
+	if sourceID != "memories/1" {
+		t.Fatalf("sidecar source_id = %q, want memories/1", sourceID)
+	}
+}
+
+func itoa(value int64) string {
+	return strconv.FormatInt(value, 10)
 }
 
 func TestCompactMemoryIDsClearsLegacySequenceWhenMemoriesAreEmpty(t *testing.T) {

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/bundledplugin"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/reconcile"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/release"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
@@ -248,7 +249,9 @@ func releaseReadiness(ctx context.Context, installed, tag string) func(string) e
 			return nil
 		}
 		command := exec.CommandContext(ctx, path, "_install-bundled-plugins", "--json")
-		command.Env = append(os.Environ(), envRocaPrefix+"="+filepath.Dir(installed))
+		command.Env = append(os.Environ(),
+			envRocaPrefix+"="+filepath.Dir(installed),
+			bundledplugin.EnvAllowHomeMigrate+"=1")
 		output, err := command.CombinedOutput()
 		if err == nil || strings.Contains(string(output), "unknown command") {
 			return nil

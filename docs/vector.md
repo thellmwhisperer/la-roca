@@ -63,11 +63,14 @@ otherwise it omits this section. `roca doctor --json` exposes these under
 `vector`. For the separate `roca doctor --report` snapshot, see
 [Support report](operations.md#support-report).
 
-The states are `building`, `complete`, `empty`, `outdated`, and `unknown`.
+The states are `building`, `complete`, `empty`, `outdated`, `invalid`, and `unknown`.
 `complete` requires a sealed source fingerprint, the current declaration,
 and a matching current source-file marker. A missing or unreadable marker
 means `unknown`; the next real indexing pass refreshes the seal. Status never
-hashes or sweeps the source to manufacture proof. A changed declaration or stored marker is `outdated`. A missing
+hashes or sweeps the source to manufacture proof. A changed declaration or stored marker is `outdated`.
+Ops chunks that still name a compacted `legacy_id` are `invalid`, not merely
+outdated; `roca vector ingest --delta` remaps those `source_id` values and
+keeps the embeddings. A missing
 sidecar, or a readable unsealed sidecar with exactly zero chunks, is `empty`.
 An unsealed sidecar is `building` only while the live worker identifies that
 database. Missing or unreadable evidence is `unknown`.

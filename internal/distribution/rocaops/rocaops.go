@@ -27,5 +27,6 @@ func ApplySchema(path string) error {
 
 func BundleSpec() bundledplugin.Spec {
 	return bundledplugin.Spec{Name: Name, DatabaseFilename: DatabaseFilename,
-		Source: BundledSource, Manifest: manifest, ApplySchema: ApplySchema}
+		Source: BundledSource, Manifest: manifest, ApplySchema: ApplySchema,
+		SchemaVersion: SchemaVersion}
 }

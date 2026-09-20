@@ -20,6 +20,7 @@ import (
 	"github.com/thellmwhisperer/la-roca-vector/internal/engine"
 	"github.com/thellmwhisperer/la-roca-vector/internal/telemetry"
 	"github.com/thellmwhisperer/la-roca/pkg/incrementality"
+	"github.com/thellmwhisperer/la-roca/pkg/opsvector"
 )
 
 const (
@@ -724,6 +725,11 @@ func (f Federation) Ingest(ctx context.Context, sourceKind string) (FederationDe
 			return FederationDelta{}, err
 		}
 		contract := database.contractFingerprint()
+		if database.Plugin == "roca-ops" {
+			if _, err := opsvector.RemapLegacyIDs(databasePath); err != nil {
+				return FederationDelta{}, fmt.Errorf("remap ops vector sidecar: %w", err)
+			}
+		}
 		if sourceKind == "" && !f.Reembed && !f.Verify {
 			marker, markerErr := sourceFileMarker(databasePath)
 			if markerErr == nil {
