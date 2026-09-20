@@ -146,7 +146,7 @@ CREATE TRIGGER IF NOT EXISTS exchanges_ad AFTER DELETE ON exchanges BEGIN
   INSERT INTO exchanges_fts(exchanges_fts, rowid, human_text, agent_text)
     VALUES ('delete', old.id, old.human_text, old.agent_text);
 END;
-CREATE TRIGGER IF NOT EXISTS exchanges_au AFTER UPDATE ON exchanges BEGIN
+CREATE TRIGGER IF NOT EXISTS exchanges_au AFTER UPDATE OF human_text, agent_text ON exchanges BEGIN
   INSERT INTO exchanges_fts(exchanges_fts, rowid, human_text, agent_text)
     VALUES ('delete', old.id, old.human_text, old.agent_text);
   INSERT INTO exchanges_fts(rowid, human_text, agent_text)
@@ -159,7 +159,7 @@ END;
 CREATE TRIGGER IF NOT EXISTS thinking_ad AFTER DELETE ON thinking_blocks BEGIN
   INSERT INTO thinking_fts(thinking_fts, rowid, full_text) VALUES ('delete', old.id, old.full_text);
 END;
-CREATE TRIGGER IF NOT EXISTS thinking_au AFTER UPDATE ON thinking_blocks BEGIN
+CREATE TRIGGER IF NOT EXISTS thinking_au AFTER UPDATE OF full_text ON thinking_blocks BEGIN
   INSERT INTO thinking_fts(thinking_fts, rowid, full_text) VALUES ('delete', old.id, old.full_text);
   INSERT INTO thinking_fts(rowid, full_text) VALUES (new.id, new.full_text);
 END;
@@ -171,7 +171,7 @@ CREATE TRIGGER IF NOT EXISTS sessions_ad AFTER DELETE ON sessions BEGIN
   INSERT INTO sessions_fts(sessions_fts, rowid, title, project)
     VALUES ('delete', old.rowid, old.title, old.project);
 END;
-CREATE TRIGGER IF NOT EXISTS sessions_au AFTER UPDATE ON sessions BEGIN
+CREATE TRIGGER IF NOT EXISTS sessions_au AFTER UPDATE OF title, project ON sessions BEGIN
   INSERT INTO sessions_fts(sessions_fts, rowid, title, project)
     VALUES ('delete', old.rowid, old.title, old.project);
   INSERT INTO sessions_fts(rowid, title, project) VALUES (new.rowid, new.title, new.project);
