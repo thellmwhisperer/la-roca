@@ -87,8 +87,9 @@ func remap(ctx context.Context, opsPath string, detectOnly bool) (int, error) {
 	if chunks == 0 {
 		return 0, nil
 	}
-	if detectOnly {
-		return hasStaleChunks(ctx, store, absolute)
+	stale, err := hasStaleChunks(ctx, store, absolute)
+	if err != nil || detectOnly || stale == 0 {
+		return stale, err
 	}
 	rows, err := source.QueryContext(ctx, `SELECT CAST(id AS TEXT), CAST(legacy_id AS TEXT) FROM memories
 		WHERE legacy_id IS NOT NULL AND CAST(id AS TEXT) <> CAST(legacy_id AS TEXT)`)

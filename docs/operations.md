@@ -309,7 +309,7 @@ only when the hybrid path is required.
 
 `roca doctor` scans the resolved `~/.roca` state tree before opening the
 service. A path owned by a user other than the current operator is an ownership
-failure, not evidence that an index lock is stale. Local human output names the
+failure, not evidence that an index lock is leftover. Local human output names the
 path and owner and prints the exact repair command. `roca doctor --json`
 exposes the same local details under `foreign_owned` as `path`, `owner`, and
 `chown`. If the service itself cannot open the state, human doctor still emits
