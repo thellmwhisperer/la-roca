@@ -234,6 +234,59 @@ func TestReportVectorizationMarksOpsLegacySidecarInvalid(t *testing.T) {
 	}
 }
 
+func TestReportVectorizationReportsUnknownWhileOpsIdentitiesAreLocked(t *testing.T) {
+	root := t.TempDir()
+	ops := vectorDatabase{
+		Plugin: "roca-ops", Database: "ops", Path: "roca-ops.db", Alias: "ops",
+		Tables: []vectorTable{{Name: "memories", IDColumn: "id", TextColumns: []string{"content"}}},
+	}
+	writeRegistry(t, root, vectorRegistry{Schema: 2, Databases: []vectorDatabase{ops}})
+	opsPath := filepath.Join(root, ops.Plugin, ops.Path)
+	writeSourceRows(t, opsPath, `
+		CREATE TABLE memories(id INTEGER PRIMARY KEY, legacy_id INTEGER, content TEXT);
+		INSERT INTO memories VALUES (1, NULL, 'current memory');`)
+	db := openTestSQLite(t, opsPath)
+	defer db.Close()
+	conn, err := db.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(context.Background(), `PRAGMA journal_mode=DELETE`); err != nil {
+		t.Fatal(err)
+	}
+	marker, err := sourceFileMarker(opsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeSidecarWithChunks(t, SidecarPath(opsPath), ops.owner(), 1, map[string]string{
+		"contract": ops.contractFingerprint(), "source_fingerprint": "sealed-ops",
+		sourceMarkerMetaKey: marker, "completed_chunks": "1", "completed_generation": marker,
+	})
+	if _, err := conn.ExecContext(context.Background(), `BEGIN EXCLUSIVE`); err != nil {
+		t.Fatal(err)
+	}
+	defer conn.ExecContext(context.Background(), `ROLLBACK`)
+	for _, want := range []string{StateUnknown, StateComplete} {
+		report, err := ReportVectorization(context.Background(), StatusRequest{PluginRoot: root})
+		if err != nil {
+			t.Fatal(err)
+		}
+		row := report.Databases[0]
+		if row.State != want {
+			t.Fatalf("ops state = %q, want %q", row.State, want)
+		}
+		if row.EmbeddedChunks == nil || *row.EmbeddedChunks != 1 {
+			t.Fatalf("readable sidecar chunks = %v, want 1", row.EmbeddedChunks)
+		}
+		if want == StateUnknown {
+			if _, err := conn.ExecContext(context.Background(), `ROLLBACK`); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+}
+
 func TestReportVectorizationUnknownNeverBecomesZeroWithoutACompletedCount(t *testing.T) {
 	root := t.TempDir()
 	corpus := vectorDatabase{
