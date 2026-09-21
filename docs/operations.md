@@ -191,8 +191,12 @@ command for each unknown runtime layer; migration remains available when the
 right repair is to move those memories into an existing layer instead. Both
 repair commands follow the same selected database and `roca-ops` routing as
 `roca store`; the command printed by doctor includes the matching `--db-path`.
-Every failing `roca health` check prints `roca doctor repair <check>`; that
-command rewrites or deletes only the rows that check named.
+Every failing `roca health` check prints the command that clears it, carrying
+the `--db-path` the verdict came from. Four of them print
+`roca doctor repair <check> --db-path <db>`, which rewrites or deletes only the
+rows that check named; `runtime_layers_not_in_registry` points at the per-layer
+`roca layers add` command doctor already prints, because registering the layer
+and migrating its memories are both right answers.
 
 CLI commands and MCP tool calls write one redacted audit record to JSONL under
 the selected data directory's `logs/`, whether they succeed or fail. CLI runs

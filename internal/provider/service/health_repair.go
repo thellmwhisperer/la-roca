@@ -4,13 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sort"
 	"strings"
 )
 
 const (
-	healthRepairRewrote    = "rewrote"
-	healthRepairDeleted    = "deleted"
-	healthRepairRegistered = "registered"
+	healthRepairRewrote = "rewrote"
+	healthRepairDeleted = "deleted"
 )
 
 // HealthRepairResult is what one scoped health repair did. Count is the
@@ -23,22 +23,21 @@ type HealthRepairResult struct {
 	Rows   []map[string]any `json:"rows,omitempty"`
 }
 
-func healthCheckByName(name string) (healthCheck, bool) {
-	for _, check := range healthChecks {
-		if check.name == name {
-			return check, true
-		}
-	}
-	return healthCheck{}, false
+// healthRepairs is the one place that says which checks carry a scoped repair.
+// A check whose remedy is a command somebody else already owns is absent here.
+var healthRepairs = map[string]func(*Service, context.Context) (HealthRepairResult, error){
+	"orphan_supersedes":         (*Service).repairOrphanSupersedes,
+	"test_metadata_rows":        (*Service).repairTestMetadataRows,
+	"test_source_agent_rows":    (*Service).repairTestSourceAgentRows,
+	"physical_alias_layer_rows": (*Service).repairPhysicalAliasLayerRows,
 }
 
 func healthRepairNames() []string {
-	names := make([]string, 0, len(healthChecks))
-	for _, check := range healthChecks {
-		if check.remedy != "" {
-			names = append(names, check.name)
-		}
+	names := make([]string, 0, len(healthRepairs))
+	for name := range healthRepairs {
+		names = append(names, name)
 	}
+	sort.Strings(names)
 	return names
 }
 
@@ -52,39 +51,32 @@ func (s *Service) RepairHealth(ctx context.Context, name string) (HealthRepairRe
 	if s.opts.ReadOnly {
 		return HealthRepairResult{}, refuseReadOnly("repair health")
 	}
-	name = strings.TrimSpace(name)
-	check, ok := healthCheckByName(name)
-	if !ok || check.remedy == "" {
+	repair, ok := healthRepairs[strings.TrimSpace(name)]
+	if !ok {
 		return HealthRepairResult{}, unknownHealthRepair(name)
 	}
 	if _, err := s.EnsureSchema(ctx); err != nil {
 		return HealthRepairResult{}, err
 	}
-	switch name {
-	case "orphan_supersedes":
-		return s.repairOrphanSupersedes(ctx)
-	case "test_metadata_rows":
-		return s.repairTestMetadataRows(ctx)
-	case "test_source_agent_rows":
-		return s.repairTestSourceAgentRows(ctx)
-	case "physical_alias_layer_rows":
-		return s.repairPhysicalAliasLayerRows(ctx)
-	case "runtime_layers_not_in_registry":
-		return s.repairRuntimeLayers(ctx)
-	default:
-		return HealthRepairResult{}, unknownHealthRepair(name)
-	}
+	return repair(s, ctx)
+}
+
+// healthRepairStatement is one write a repair makes for one row. A repair that
+// deletes needs two: memories.supersedes points at memories.id, so the row has
+// to stop being referenced before it can go.
+type healthRepairStatement struct {
+	sql  string
+	args []any
 }
 
 type healthRepairRow struct {
 	id         int64
 	fields     map[string]any
-	updateSQL  string
-	updateArgs []any
+	statements []healthRepairStatement
 }
 
 func (s *Service) repairMemoryRows(ctx context.Context, check, action, selectSQL string,
-	selectArgs []any, apply func(id int64, fields map[string]any) (string, []any, error),
+	selectArgs []any, apply func(id int64, fields map[string]any) ([]healthRepairStatement, error),
 ) (HealthRepairResult, error) {
 	owner, err := s.memoryOwner()
 	if err != nil {
@@ -97,48 +89,30 @@ func (s *Service) repairMemoryRows(ctx context.Context, check, action, selectSQL
 			return fmt.Errorf("list %s rows: %w", check, err)
 		}
 		defer rows.Close()
-		columns, err := rows.Columns()
+		_, scanned, err := ScanRows(rows, 0, "")
 		if err != nil {
-			return fmt.Errorf("list %s columns: %w", check, err)
-		}
-		var planned []healthRepairRow
-		for rows.Next() {
-			values := make([]any, len(columns))
-			dest := make([]any, len(columns))
-			for i := range values {
-				dest[i] = &values[i]
-			}
-			if err := rows.Scan(dest...); err != nil {
-				return fmt.Errorf("read a %s row: %w", check, err)
-			}
-			fields := make(map[string]any, len(columns))
-			var id int64
-			for i, column := range columns {
-				fields[column] = scanValue(values[i])
-				if column == "id" {
-					id, err = asInt64(values[i])
-					if err != nil {
-						return fmt.Errorf("read a %s id: %w", check, err)
-					}
-				}
-			}
-			statement, arguments, err := apply(id, fields)
-			if err != nil {
-				return err
-			}
-			planned = append(planned, healthRepairRow{
-				id: id, fields: fields, updateSQL: statement, updateArgs: arguments,
-			})
-		}
-		if err := rows.Err(); err != nil {
 			return fmt.Errorf("list %s rows: %w", check, err)
 		}
 		if err := rows.Close(); err != nil {
 			return err
 		}
+		planned := make([]healthRepairRow, 0, len(scanned))
+		for _, fields := range scanned {
+			id, ok := fields["id"].(int64)
+			if !ok {
+				return fmt.Errorf("a %s row has no integer id", check)
+			}
+			statements, err := apply(id, fields)
+			if err != nil {
+				return err
+			}
+			planned = append(planned, healthRepairRow{id: id, fields: fields, statements: statements})
+		}
 		for _, item := range planned {
-			if _, err := tx.ExecContext(ctx, item.updateSQL, item.updateArgs...); err != nil {
-				return fmt.Errorf("%s id %d: %w", action, item.id, err)
+			for _, statement := range item.statements {
+				if _, err := tx.ExecContext(ctx, statement.sql, statement.args...); err != nil {
+					return fmt.Errorf("%s id %d: %w", action, item.id, err)
+				}
 			}
 			result.Rows = append(result.Rows, item.fields)
 		}
@@ -148,14 +122,23 @@ func (s *Service) repairMemoryRows(ctx context.Context, check, action, selectSQL
 	return result, err
 }
 
+func deleteMemoryRow(id int64) ([]healthRepairStatement, error) {
+	return []healthRepairStatement{
+		{sql: `UPDATE memories SET supersedes = NULL WHERE supersedes = ?`, args: []any{id}},
+		{sql: `DELETE FROM memories WHERE id = ?`, args: []any{id}},
+	}, nil
+}
+
 func (s *Service) repairOrphanSupersedes(ctx context.Context) (HealthRepairResult, error) {
 	return s.repairMemoryRows(ctx, "orphan_supersedes", healthRepairRewrote,
 		`SELECT id, supersedes FROM memories
 		 WHERE supersedes IS NOT NULL
 		   AND supersedes NOT IN (SELECT id FROM memories)
 		 ORDER BY id`, nil,
-		func(id int64, _ map[string]any) (string, []any, error) {
-			return `UPDATE memories SET supersedes = NULL WHERE id = ?`, []any{id}, nil
+		func(id int64, _ map[string]any) ([]healthRepairStatement, error) {
+			return []healthRepairStatement{
+				{sql: `UPDATE memories SET supersedes = NULL WHERE id = ?`, args: []any{id}},
+			}, nil
 		})
 }
 
@@ -165,8 +148,8 @@ func (s *Service) repairTestMetadataRows(ctx context.Context) (HealthRepairResul
 		 WHERE json_valid(metadata)
 		   AND json_extract(metadata, '$._test') IN (1, 'true', 'True')
 		 ORDER BY id`, nil,
-		func(id int64, _ map[string]any) (string, []any, error) {
-			return `DELETE FROM memories WHERE id = ?`, []any{id}, nil
+		func(id int64, _ map[string]any) ([]healthRepairStatement, error) {
+			return deleteMemoryRow(id)
 		})
 }
 
@@ -175,8 +158,8 @@ func (s *Service) repairTestSourceAgentRows(ctx context.Context) (HealthRepairRe
 		`SELECT id, layer, source_agent FROM memories
 		 WHERE source_agent IN ('test-agent', 'test')
 		 ORDER BY id`, nil,
-		func(id int64, _ map[string]any) (string, []any, error) {
-			return `DELETE FROM memories WHERE id = ?`, []any{id}, nil
+		func(id int64, _ map[string]any) ([]healthRepairStatement, error) {
+			return deleteMemoryRow(id)
 		})
 }
 
@@ -185,65 +168,19 @@ func (s *Service) repairPhysicalAliasLayerRows(ctx context.Context) (HealthRepai
 	if err != nil {
 		return HealthRepairResult{}, err
 	}
-	check, ok := healthCheckByName("physical_alias_layer_rows")
-	if !ok {
-		return HealthRepairResult{}, unknownHealthRepair("physical_alias_layer_rows")
-	}
-	prefix, arguments := healthQuery(check, registered)
+	prefix, arguments := layerRegistryCTE(registered)
 	return s.repairMemoryRows(ctx, "physical_alias_layer_rows", healthRepairRewrote,
 		prefix+`SELECT m.id, m.layer, l.alias_of FROM memories m
 		 JOIN layers l ON l.name = m.layer
 		 WHERE l.alias_of IS NOT NULL
 		 ORDER BY m.id`, arguments,
-		func(id int64, fields map[string]any) (string, []any, error) {
+		func(id int64, fields map[string]any) ([]healthRepairStatement, error) {
 			physical, _ := fields["alias_of"].(string)
 			if physical == "" {
-				return "", nil, fmt.Errorf("physical alias row %d names no destination", id)
+				return nil, fmt.Errorf("physical alias row %d names no destination", id)
 			}
-			return `UPDATE memories SET layer = ? WHERE id = ?`, []any{physical, id}, nil
+			return []healthRepairStatement{
+				{sql: `UPDATE memories SET layer = ? WHERE id = ?`, args: []any{physical, id}},
+			}, nil
 		})
-}
-
-func (s *Service) repairRuntimeLayers(ctx context.Context) (HealthRepairResult, error) {
-	names, err := s.unregisteredLayers(ctx)
-	if err != nil {
-		return HealthRepairResult{}, err
-	}
-	result := HealthRepairResult{Check: "runtime_layers_not_in_registry", Action: healthRepairRegistered}
-	for _, name := range names {
-		added, err := s.AddLayer(ctx, name)
-		if err != nil {
-			return result, err
-		}
-		if !added.Added {
-			continue
-		}
-		result.Rows = append(result.Rows, map[string]any{"layer": name})
-		result.Count++
-	}
-	return result, nil
-}
-
-func scanValue(value any) any {
-	switch typed := value.(type) {
-	case nil:
-		return nil
-	case []byte:
-		return string(typed)
-	default:
-		return typed
-	}
-}
-
-func asInt64(value any) (int64, error) {
-	switch typed := value.(type) {
-	case int64:
-		return typed, nil
-	case int:
-		return int64(typed), nil
-	case []byte:
-		return 0, fmt.Errorf("id is not an integer")
-	default:
-		return 0, fmt.Errorf("id is not an integer")
-	}
 }

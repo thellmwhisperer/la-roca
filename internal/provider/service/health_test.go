@@ -78,15 +78,17 @@ func TestFailingHealthChecksNameTheirRemedy(t *testing.T) {
 		t.Fatalf("Health: %v", err)
 	}
 
+	quoted := "'" + svc.DB().Path() + "'"
 	cases := []struct {
 		check  string
 		remedy string
 	}{
-		{"orphan_supersedes", "roca doctor repair orphan_supersedes"},
-		{"test_metadata_rows", "roca doctor repair test_metadata_rows"},
-		{"test_source_agent_rows", "roca doctor repair test_source_agent_rows"},
-		{"physical_alias_layer_rows", "roca doctor repair physical_alias_layer_rows"},
-		{"runtime_layers_not_in_registry", "roca doctor repair runtime_layers_not_in_registry"},
+		{"orphan_supersedes", "roca doctor repair orphan_supersedes --db-path " + quoted},
+		{"test_metadata_rows", "roca doctor repair test_metadata_rows --db-path " + quoted},
+		{"test_source_agent_rows", "roca doctor repair test_source_agent_rows --db-path " + quoted},
+		{"physical_alias_layer_rows", "roca doctor repair physical_alias_layer_rows --db-path " + quoted},
+		{"runtime_layers_not_in_registry",
+			"roca doctor --db-path " + quoted + " prints roca layers add for each unknown layer"},
 	}
 	for _, testCase := range cases {
 		check, ok := report.Checks[testCase.check]
@@ -149,12 +151,14 @@ func TestHealthRepairClearsOnlyTheNamedRows(t *testing.T) {
 	}
 
 	for _, check := range []string{
-		"test_source_agent_rows", "orphan_supersedes",
-		"physical_alias_layer_rows", "runtime_layers_not_in_registry",
+		"test_source_agent_rows", "orphan_supersedes", "physical_alias_layer_rows",
 	} {
 		if _, err := svc.RepairHealth(context.Background(), check); err != nil {
 			t.Fatalf("repair %s: %v", check, err)
 		}
+	}
+	if _, err := svc.AddLayer(context.Background(), "a-layer-nobody-declared"); err != nil {
+		t.Fatalf("register the unknown layer doctor names: %v", err)
 	}
 
 	after, err := svc.Health(context.Background(), service.HealthRequest{})
@@ -220,7 +224,7 @@ func TestHealthRepairRefusesAnUnknownCheck(t *testing.T) {
 	}
 	for _, name := range []string{
 		"orphan_supersedes", "test_metadata_rows", "test_source_agent_rows",
-		"physical_alias_layer_rows", "runtime_layers_not_in_registry",
+		"physical_alias_layer_rows",
 	} {
 		if !strings.Contains(err.Error(), name) {
 			t.Errorf("unknown-repair error does not name %q: %v", name, err)
@@ -581,5 +585,54 @@ func TestHealthNamesNoComponentThisVersionDoesNotHave(t *testing.T) {
 				t.Errorf("check %q names %q, which v1 does not have", name, withdrawn)
 			}
 		}
+	}
+}
+
+// A test row can be the head a real memory was auto-superseded onto, which is
+// exactly the shape the live database in issue 484 carries. Deleting it has to
+// clear that pointer too: the core schema declares supersedes as a foreign key
+// with foreign_keys ON, so a bare DELETE aborts the whole repair, and where the
+// key is absent it leaves a fresh orphan the operator was never told about.
+func TestDeletingATestRowClearsThePointersIntoIt(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := serviceWithPaths(t)
+
+	var head int64
+	if err := svc.DB().SQL().QueryRow(
+		`INSERT INTO memories (layer, content, origin, source_agent)
+		 VALUES ('discovery', 'test-written head', 'agent', 'test-agent')
+		 RETURNING id`).Scan(&head); err != nil {
+		t.Fatalf("seed the test-written head: %v", err)
+	}
+	var keeper int64
+	if err := svc.DB().SQL().QueryRow(
+		`INSERT INTO memories (layer, content, origin, supersedes)
+		 VALUES ('discovery', 'real memory superseding it', 'agent', ?)
+		 RETURNING id`, head).Scan(&keeper); err != nil {
+		t.Fatalf("seed the superseding memory: %v", err)
+	}
+
+	result, err := svc.RepairHealth(ctx, "test_source_agent_rows")
+	if err != nil {
+		t.Fatalf("repair test_source_agent_rows: %v", err)
+	}
+	if result.Count != 1 {
+		t.Fatalf("repair deleted %d rows, want the one test row", result.Count)
+	}
+
+	after, err := svc.Health(ctx, service.HealthRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Status != service.HealthPass {
+		t.Fatalf("health after the remedy = %+v", after.Checks)
+	}
+	var supersedes sql.NullInt64
+	if err := svc.DB().SQL().QueryRow(
+		`SELECT supersedes FROM memories WHERE id = ?`, keeper).Scan(&supersedes); err != nil {
+		t.Fatalf("the superseding memory was deleted with the test row: %v", err)
+	}
+	if supersedes.Valid {
+		t.Fatalf("supersedes = %d, want cleared with the row it named", supersedes.Int64)
 	}
 }

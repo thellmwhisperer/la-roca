@@ -67,15 +67,42 @@ func TestHealthRemedyRoundTripClearsASeededLabHome(t *testing.T) {
 		}
 	}
 
+	repaired := 0
 	for _, remedy := range remedies {
-		args, ok := doctorRepairArgs(remedy)
+		if !strings.Contains(remedy, dbPath) {
+			t.Fatalf("remedy %q does not name the diagnosed database %q", remedy, dbPath)
+		}
+		args, ok := rocaArgs(remedy)
 		if !ok {
-			t.Fatalf("remedy is not an executable doctor repair: %q", remedy)
+			t.Fatalf("remedy is not a roca command: %q", remedy)
+		}
+		if len(args) < 2 || args[0] != "doctor" || args[1] != "repair" {
+			continue
 		}
 		out := runRoot(t, contractBuild(), args...)
 		if !strings.Contains(out, "repaired ") {
 			t.Fatalf("remedy %v did not report a repair:\n%s", args, out)
 		}
+		repaired++
+	}
+	if repaired == 0 {
+		t.Fatalf("no printed remedy was an executable doctor repair:\n%s", human)
+	}
+
+	// The unknown layer's remedy is the per-layer command doctor prints, so
+	// registering and migrating stay the operator's choice.
+	doctor := mustJSON(t, runRoot(t, contractBuild(), "doctor", "--json"))
+	layerRepairs, _ := doctor["layer_repairs"].([]any)
+	if len(layerRepairs) == 0 {
+		t.Fatalf("doctor named no layer repair for the unknown layer: %v", doctor)
+	}
+	for _, raw := range layerRepairs {
+		command, _ := raw.(string)
+		args, ok := rocaArgs(command)
+		if !ok {
+			t.Fatalf("layer repair is not a roca command: %q", command)
+		}
+		runRoot(t, contractBuild(), args...)
 	}
 
 	after := mustJSON(t, runRoot(t, contractBuild(), "health", "--json"))
@@ -144,10 +171,16 @@ func containsRemedy(remedies []string, want string) bool {
 	return false
 }
 
-func doctorRepairArgs(remedy string) ([]string, bool) {
-	fields := strings.Fields(remedy)
-	if len(fields) < 3 || fields[0] != "roca" {
+// rocaArgs turns a printed command back into argv. Paths are shell quoted for
+// the operator's terminal; runRoot takes argv directly, so the quotes come off.
+func rocaArgs(command string) ([]string, bool) {
+	fields := strings.Fields(command)
+	if len(fields) < 2 || fields[0] != "roca" {
 		return nil, false
 	}
-	return fields[1:], true
+	args := make([]string, 0, len(fields)-1)
+	for _, field := range fields[1:] {
+		args = append(args, strings.Trim(field, "'"))
+	}
+	return args, true
 }

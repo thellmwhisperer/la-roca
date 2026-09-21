@@ -63,20 +63,32 @@ type HealthReport struct {
 
 // healthCheck declares one check as data: the count, the sample, how a
 // non-zero count is judged, and the command that repairs those rows. Adding a
-// check is a row, not a fifth copy of the same three-step dance.
+// check is a row, not a fifth copy of the same three-step dance. The remedy
+// takes the diagnosed database's path, so the command it prints names the
+// database the verdict came from and never the default one.
 type healthCheck struct {
 	name          string
 	summary       string
 	severity      string
-	remedy        string
+	remedy        func(dbPath string) string
 	memoryOwned   bool
 	registryOwned bool
 	count         string
 	sample        string
 }
 
-func healthRepairCommand(name string) string {
-	return "roca doctor repair " + name
+func healthRepairCommand(name string) func(dbPath string) string {
+	return func(dbPath string) string {
+		return "roca doctor repair " + name + " --db-path " + shellQuoted(dbPath)
+	}
+}
+
+// healthLayerRegistryRemedy points at the per-layer command doctor already
+// prints. Registering an unknown layer and migrating its memories into an
+// existing one are both right answers, and only the operator knows which.
+func healthLayerRegistryRemedy(dbPath string) string {
+	return "roca doctor --db-path " + shellQuoted(dbPath) +
+		" prints roca layers add for each unknown layer"
 }
 
 // The v1 checks. There is deliberately no check over `runs`: that table is v2
@@ -127,7 +139,7 @@ var healthChecks = []healthCheck{
 		name:          "runtime_layers_not_in_registry",
 		summary:       "Layers present in the data and absent from the layer registry.",
 		severity:      HealthFail,
-		remedy:        healthRepairCommand("runtime_layers_not_in_registry"),
+		remedy:        healthLayerRegistryRemedy,
 		memoryOwned:   true,
 		registryOwned: true,
 		count: `SELECT COUNT(*) FROM (
@@ -208,7 +220,7 @@ func (s *Service) Health(ctx context.Context, req HealthRequest) (HealthReport, 
 		if check.memoryOwned {
 			checkReader = memoryReader
 		}
-		outcome, err := runHealthCheck(ctx, checkReader, check, registered, maxRows)
+		outcome, err := runHealthCheck(ctx, checkReader, check, registered, maxRows, s.db.Path())
 		if err != nil {
 			return HealthReport{}, err
 		}
@@ -352,7 +364,7 @@ func healthCount(ctx context.Context, reader *sql.DB, check healthCheck,
 }
 
 func runHealthCheck(ctx context.Context, reader *sql.DB, check healthCheck,
-	registered []registeredLayer, maxRows int) (HealthCheck, error) {
+	registered []registeredLayer, maxRows int, dbPath string) (HealthCheck, error) {
 	count, err := healthCount(ctx, reader, check, registered)
 	if err != nil {
 		return HealthCheck{}, err
@@ -362,8 +374,8 @@ func runHealthCheck(ctx context.Context, reader *sql.DB, check healthCheck,
 		return outcome, nil
 	}
 	outcome.Status = check.severity
-	if check.severity == HealthFail && check.remedy != "" {
-		outcome.Remedy = check.remedy
+	if check.severity == HealthFail && check.remedy != nil {
+		outcome.Remedy = check.remedy(dbPath)
 	}
 	prefix, arguments := healthQuery(check, registered)
 	rows, err := reader.QueryContext(ctx, prefix+check.sample,
