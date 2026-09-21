@@ -1095,6 +1095,53 @@ func TestMachineLessCursorPromotedWithoutReparsing(t *testing.T) {
 	}
 }
 
+func TestChangedContentStillReparsesAfterLegacyWatermark(t *testing.T) {
+	var parses int
+	original := parseKind
+	parseKind = func(kind parsers.Kind, content []byte, meta parsers.FileMeta) (parsers.Records, error) {
+		parses++
+		return original(kind, content, meta)
+	}
+	t.Cleanup(func() { parseKind = original })
+
+	roots, path := machineCursorFixture(t)
+	db, first := runIngest(t, roots)
+	if first.Errors != 0 || parses == 0 {
+		t.Fatalf("first ingest parses=%d errors=%d: %+v", parses, first.Errors, first.ErrorDetails)
+	}
+	before := countRows(t, db.SQL(), "exchanges")
+
+	if _, err := db.SQL().Exec(`UPDATE ingest_file_state
+		SET fingerprint = replace(fingerprint, ?, ''),
+		    metadata = json_remove(metadata, '$.machine')
+		WHERE path = ?`, ":machine:"+roots.Machine, path); err != nil {
+		t.Fatal(err)
+	}
+
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	extra := `{"type":"user","timestamp":"2026-08-01T10:00:02Z","message":{"content":"second question"}}` + "\n" +
+		`{"type":"assistant","timestamp":"2026-08-01T10:00:03Z","message":{"content":[{"type":"text","text":"second answer"}]}}` + "\n"
+	if err := os.WriteFile(path, append(body, extra...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	parses = 0
+	second := runIngestOn(t, db, roots)
+	if second.Errors != 0 {
+		t.Fatalf("changed ingest errors=%d: %+v", second.Errors, second.ErrorDetails)
+	}
+	if parses == 0 || second.FilesRead == 0 {
+		t.Fatalf("changed file after legacy watermark was not reparsed: parses=%d read=%d skipped=%d",
+			parses, second.FilesRead, second.FilesSkipped)
+	}
+	if got := countRows(t, db.SQL(), "exchanges"); got <= before {
+		t.Fatalf("exchanges = %d, want more than %d", got, before)
+	}
+}
+
 func machineCursorFixture(t *testing.T) (Roots, string) {
 	t.Helper()
 	home := t.TempDir()

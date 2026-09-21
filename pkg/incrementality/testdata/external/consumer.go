@@ -9,6 +9,7 @@ var (
 	_ = incrementality.LoadState
 	_ = incrementality.Unchanged
 	_ = incrementality.UnchangedMetadata
+	_ = incrementality.IsMachinePromotion
 	_ = incrementality.RecordState
 )
 

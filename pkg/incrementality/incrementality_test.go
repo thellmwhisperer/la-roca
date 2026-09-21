@@ -55,6 +55,63 @@ func TestPublicPackageFingerprintsTargets(t *testing.T) {
 	}
 }
 
+func TestMachinePromotionCases(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.jsonl")
+	if err := os.WriteFile(path, []byte("same\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := incrementality.TargetFingerprint(incrementality.Target{
+		Path: path, Kind: "example", ParserVersion: "claude-session-v6",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tagged, err := incrementality.TargetFingerprint(incrementality.Target{
+		Path: path, Kind: "example", ParserVersion: "claude-session-v6", Machine: "hub",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("changed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := incrementality.TargetFingerprint(incrementality.Target{
+		Path: path, Kind: "example", ParserVersion: "claude-session-v6", Machine: "hub",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name                         string
+		recorded, current, machine   string
+		wantPromotion, wantUnchanged bool
+	}{
+		{name: "legacy fingerprint", recorded: legacy, current: tagged, machine: "hub",
+			wantPromotion: true},
+		{name: "machine-aware fingerprint", recorded: tagged, current: tagged, machine: "hub",
+			wantUnchanged: true},
+		{name: "changed content", recorded: legacy, current: changed, machine: "hub"},
+		{name: "missing machine field", recorded: legacy, current: tagged, machine: ""},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			gotPromotion := incrementality.IsMachinePromotion(testCase.recorded, testCase.current, testCase.machine)
+			if gotPromotion != testCase.wantPromotion {
+				t.Fatalf("IsMachinePromotion = %v, want %v (recorded=%q current=%q machine=%q)",
+					gotPromotion, testCase.wantPromotion, testCase.recorded, testCase.current, testCase.machine)
+			}
+			gotUnchanged := incrementality.Unchanged(map[string]incrementality.FileState{
+				path: {Fingerprint: testCase.recorded},
+			}, path, testCase.current)
+			if gotUnchanged != testCase.wantUnchanged {
+				t.Fatalf("Unchanged = %v, want %v", gotUnchanged, testCase.wantUnchanged)
+			}
+		})
+	}
+}
+
 func TestContentFingerprintFramesOrderedFields(t *testing.T) {
 	joined := incrementality.ContentFingerprint("ab", "c")
 	boundaryChanged := incrementality.ContentFingerprint("a", "bc")
