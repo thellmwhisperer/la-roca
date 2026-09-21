@@ -32,8 +32,8 @@ type HealthRequest struct {
 
 // HealthCheck is one check with its verdict, how many rows it Found and a
 // sample of them. The count is the truth; the sample is what makes it
-// actionable. A failing check carries the executable command that clears
-// exactly the rows it named.
+// actionable. A failing check carries the remedy that clears exactly the rows
+// it counted.
 type HealthCheck struct {
 	Status  string           `json:"status"`
 	Count   int              `json:"count"`

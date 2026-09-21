@@ -15,7 +15,7 @@ const (
 
 // HealthRepairResult is what one scoped health repair did. Count is the
 // number of rows the named check owned; Rows is each one, so the operator
-// can see that nothing else moved.
+// can see exactly which rows the repair claimed.
 type HealthRepairResult struct {
 	Check  string           `json:"check"`
 	Action string           `json:"action"`
@@ -46,7 +46,9 @@ func unknownHealthRepair(name string) error {
 }
 
 // RepairHealth applies the scoped repair the named failing health check
-// prints. It rewrites or deletes only the rows that check names.
+// prints. Only the rows that check names are rewritten or deleted; a delete
+// also clears the supersedes pointer of the rows that referenced them, which
+// is what lets the row go at all.
 func (s *Service) RepairHealth(ctx context.Context, name string) (HealthRepairResult, error) {
 	if s.opts.ReadOnly {
 		return HealthRepairResult{}, refuseReadOnly("repair health")
