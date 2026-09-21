@@ -2,13 +2,14 @@ package cli
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"github.com/thellmwhisperer/la-roca/data"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/playground"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
-	"github.com/thellmwhisperer/la-roca/internal/provider/query"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 	"io"
 	"os"
@@ -16,6 +17,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	_ "modernc.org/sqlite"
 )
 
 func installPlaygroundFixture(t *testing.T, home, script string) {
@@ -276,9 +279,15 @@ func TestPlaygroundRequiresExplicitMigrationBeforeDelegating(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer svc.Close()
-			_, result, _, _, _, err := svc.SearchByTerm(t.Context(), query.Plan{Template: query.TemplateSearchByTerm, Term: "playground+custody+marker"}, "", service.DefaultMaxChars, true, service.PluginRoute{IncludeCore: true})
-			if err != nil || len(result) != 1 || result[0]["text"] != "Synthetic playground custody marker" {
-				t.Fatalf("cutover memories: result=%+v err=%v", result, err)
+			ops, err := sql.Open("sqlite", filepath.Join(home, ".roca", "plugins", rocaops.Name, rocaops.DatabaseFilename))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer ops.Close()
+			var content string
+			if err := ops.QueryRow(`SELECT content FROM memory_records WHERE content = ?`,
+				"Synthetic playground custody marker").Scan(&content); err != nil {
+				t.Fatalf("cutover memories: %v", err)
 			}
 		})
 	}

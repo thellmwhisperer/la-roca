@@ -13,7 +13,6 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
 	"github.com/thellmwhisperer/la-roca/internal/provider/query"
-	"github.com/thellmwhisperer/la-roca/internal/store/search"
 )
 
 func TestResidentInitializationHonorsItsContext(t *testing.T) {
@@ -206,19 +205,30 @@ func TestKeywordSearchReadsExchangesFromTheResidentCorpus(t *testing.T) {
 		        '2026-08-14T08:00:00Z', '2026-08-14T08:00:01Z')`); err != nil {
 		t.Fatal(err)
 	}
-	columns, rows, statement, _, warnings, err := svc.SearchByTerm(t.Context(),
-		query.Plan{Template: query.TemplateSearchByTerm, Term: "cobalt+atlas", Limit: 10},
-		search.MethodLike, 0, true, PluginRoute{Databases: svc.resident})
+	result, err := svc.Search(t.Context(), SearchRequest{
+		Question: "cobalt atlas", Databases: []string{rocaCorpusPluginName}, Top: 10,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(warnings) != 0 || len(rows) != 1 || rows[0]["database"] != "plugin:roca-corpus" {
-		t.Fatalf("columns = %v, rows = %+v, warnings = %v, statement = %s",
-			columns, rows, warnings, statement)
+	if len(result.Hits) != 1 || result.Hits[0].Database != "plugin:roca-corpus" {
+		t.Fatalf("hits = %+v", result.Hits)
 	}
-	if !strings.Contains(statement, "plugin_roca_corpus") {
-		t.Fatalf("declared search omits corpus SQL:\n%s", statement)
+	if !strings.Contains(strings.ToLower(result.Hits[0].Snippet), "cobalt atlas") &&
+		!strings.Contains(strings.ToLower(result.Hits[0].Snippet), "perennial corpus") {
+		t.Fatalf("corpus hit omitted the seeded text: %+v", result.Hits[0])
 	}
+	_, rows, _, _, warnings, err := svc.SearchByTerm(t.Context(),
+		query.Plan{Template: query.TemplateSearchByTerm, Term: "cobalt+atlas", Limit: 10},
+		"", 0, true, PluginRoute{Databases: svc.resident})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warnings) != 0 || len(rows) != 1 || rows[0]["database"] != "plugin:roca-corpus" ||
+		rows[0]["source"] != "human" || rows[0]["text"] != "where is the cobalt atlas" {
+		t.Fatalf("playground rescue rows = %+v, warnings = %v", rows, warnings)
+	}
+
 }
 
 // Read-only can never install the package it would be demanding, so an

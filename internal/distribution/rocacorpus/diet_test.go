@@ -678,6 +678,95 @@ func TestApplySchemaCollapsesThinkingCopiesThatOnlyDifferByPosition(t *testing.T
 	}
 }
 
+func TestThinkingIdentityUpgradeRetargetsAliasesAtomically(t *testing.T) {
+	for _, exchange := range []string{"1", "NULL"} {
+		for _, failDelete := range []bool{false, true} {
+			t.Run(fmt.Sprintf("exchange=%s/failDelete=%t", exchange, failDelete), func(t *testing.T) {
+				statements := []string{
+					`DROP INDEX idx_thinking_blocks_identity`,
+					`INSERT INTO sessions(session_id, source_agent) VALUES ('growing', 'claude')`,
+					fmt.Sprintf(`INSERT INTO thinking_blocks(id, session_id, exchange_number, position_in_session, full_text)
+					 VALUES (1, 'growing', %[1]s, 1.0, 'shared thought'),
+					        (3, 'growing', %[1]s, 0.5, 'shared thought'),
+					        (4, 'growing', %[1]s, 0.75, 'distinct thought')`, exchange),
+					`CREATE TABLE dedup_runs (
+					 run_id TEXT PRIMARY KEY, manifest_sha256 TEXT NOT NULL, started_at TEXT NOT NULL, committed_at TEXT);
+					 INSERT INTO dedup_runs VALUES ('previous', 'fixture', datetime('now'), datetime('now'));
+					 CREATE TABLE thinking_block_id_remaps (
+					 old_id INTEGER PRIMARY KEY, canonical_id INTEGER NOT NULL REFERENCES thinking_blocks(id),
+					 dedup_run_id TEXT NOT NULL REFERENCES dedup_runs(run_id), payload_sha256 TEXT NOT NULL,
+					 mapped_at TEXT NOT NULL DEFAULT (datetime('now')));
+					 INSERT INTO thinking_block_id_remaps(old_id, canonical_id, dedup_run_id, payload_sha256)
+					 VALUES (2, 1, 'previous', 'shared'), (5, 4, 'previous', 'distinct')`,
+				}
+				if failDelete {
+					statements = append(statements, `CREATE TRIGGER thinking_collapse_failure
+					 BEFORE DELETE ON thinking_blocks BEGIN SELECT RAISE(ABORT, 'fixture collapse failure'); END`)
+				}
+				path := prepareCorpusUpgrade(t, statements...)
+				err := rocacorpus.ApplySchema(path)
+				if failDelete {
+					if err == nil || !strings.Contains(err.Error(), "fixture collapse failure") {
+						t.Fatalf("adoption error = %v, want fixture collapse failure", err)
+					}
+				} else if err != nil {
+					t.Fatal(err)
+				}
+				db, err := sql.Open("sqlite", path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer db.Close()
+				wantCanonical, wantRows := 3, 2
+				if failDelete {
+					wantCanonical, wantRows = 1, 3
+				}
+				assertCountQuery(t, db, fmt.Sprintf(`SELECT COUNT(*) FROM thinking_block_id_remaps
+				 WHERE old_id = 2 AND canonical_id = %d AND dedup_run_id = 'previous'`, wantCanonical), 1)
+				assertCountQuery(t, db, `SELECT COUNT(*) FROM thinking_block_id_remaps WHERE old_id = 5 AND canonical_id = 4`, 1)
+				assertCountQuery(t, db, `SELECT COUNT(*) FROM thinking_blocks`, wantRows)
+				assertCountQuery(t, db, `SELECT COUNT(*) FROM thinking_fts WHERE thinking_fts MATCH 'thought'`, wantRows)
+				assertCountQuery(t, db, `SELECT COUNT(*) FROM pragma_foreign_key_check`, 0)
+				if !failDelete {
+					backup := filepath.Join(t.TempDir(), "adopted.db")
+					before, err := exactdedup.Backup(t.Context(), path, backup)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if _, err := exactdedup.Apply(t.Context(), path, before.ManifestSHA256, "after-adoption", backup); err != nil {
+						t.Fatal(err)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestCompactAdoptsThinkingIdentityBeforeCountingCurrentRows(t *testing.T) {
+	path := prepareCorpusUpgrade(t,
+		`DROP INDEX idx_thinking_blocks_identity`,
+		`INSERT INTO sessions(session_id, source_agent) VALUES ('growing', 'claude')`,
+		`INSERT INTO thinking_blocks(id, session_id, exchange_number, position_in_session, full_text)
+		 VALUES (1, 'growing', 1, 1.0, 'shared thought'),
+		        (2, 'growing', 1, 0.5, 'shared thought'),
+		        (3, 'growing', 1, 0.75, 'distinct thought')`,
+	)
+	for range 2 {
+		report, err := rocacorpus.Compact(t.Context(), path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertCurrentRows(t, report, 1, 0, 2, 0)
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	assertCountQuery(t, db, `SELECT COUNT(*) FROM thinking_blocks WHERE id IN (2, 3)`, 2)
+	assertCountQuery(t, db, `SELECT COUNT(*) FROM thinking_fts WHERE thinking_fts MATCH 'thought'`, 2)
+}
+
 func TestExactDedupReconcilesThinkingIdentityBeforeSessionRemap(t *testing.T) {
 	for _, exchange := range []string{"1", "NULL"} {
 		t.Run(exchange, func(t *testing.T) {

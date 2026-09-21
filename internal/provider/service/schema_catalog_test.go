@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
-	"github.com/thellmwhisperer/la-roca/internal/provider/query"
 )
 
 func TestComposingPluginTablesLeavesTheProcessCatalogUnlabeled(t *testing.T) {
@@ -37,14 +36,14 @@ func TestComposedPluginSchemaTeachesQueryableFTSColumns(t *testing.T) {
 				Description: "Accent-insensitive full-text index over harvested human and agent exchange text.", FTS5: true},
 		},
 	}})
-	prompt := query.SQLSystemPrompt(composed, nil, nil)
+	described := composed.Describe(nil)
 	for _, needle := range []string{
 		"plugin_roca_corpus.exchanges_fts(human_text, agent_text)",
 		"kind: FTS5 virtual table", "only the listed tables", "sqlite_master",
 	} {
-		if !strings.Contains(strings.ToLower(prompt), strings.ToLower(needle)) &&
-			!strings.Contains(prompt, needle) {
-			t.Errorf("composed schema prompt omits %q:\n%s", needle, prompt)
+		if !strings.Contains(strings.ToLower(described), strings.ToLower(needle)) &&
+			!strings.Contains(described, needle) {
+			t.Errorf("composed schema catalog omits %q:\n%s", needle, described)
 		}
 	}
 }
