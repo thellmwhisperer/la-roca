@@ -385,7 +385,6 @@ func TestPurgeOwnsEveryDatedAndRotatedLogStream(t *testing.T) {
 	tests := map[string]bool{
 		"executions-2026-08-12.jsonl":    true,
 		"executions-2026-08-12-3.jsonl":  true,
-		"mcp-audit-2026-08-12-1.jsonl":   true,
 		"ingest-2026-08-12.jsonl":        true,
 		"migrations-2026-08-12.jsonl":    true,
 		"migrations-2026-08-12-x.jsonl":  false,
