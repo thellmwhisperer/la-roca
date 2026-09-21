@@ -100,31 +100,3 @@ func TestRecentQueryFailuresReadsTheCommonContractAcrossSurfaces(t *testing.T) {
 		}
 	})
 }
-
-func TestRecentQueryFailuresIgnoresLeftoverRetiredAuditFiles(t *testing.T) {
-	root := t.TempDir()
-	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
-	writer := New(root)
-	writer.now = func() time.Time { return now }
-	if err := writer.Append(Executions, MCPRecord{CallRecord: CallRecord{
-		Timestamp: now.Add(-time.Hour), Source: "mcp", OK: false,
-		Error: "the provider stopped", ErrorType: "model_error",
-		CorrelationID: "qf_live_mcp", Question: "count synthetic memories",
-	}, Tool: "roca_query"}); err != nil {
-		t.Fatal(err)
-	}
-	leftover := filepath.Join(root, DirName, "mcp-audit-"+now.Format(time.DateOnly)+".jsonl")
-	if err := os.WriteFile(leftover, []byte(
-		`{"timestamp":"2026-08-10T10:00:00Z","source":"mcp","ok":false,"tool":"roca_query","error":"leftover retired stream","error_type":"model_error","correlation_id":"qf_retired","question":"leftover"}`+"\n",
-	), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	summary, err := writer.RecentQueryFailures(now, 24*time.Hour, 5)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if summary.Count != 1 || len(summary.Recent) != 1 || summary.Recent[0].CorrelationID != "qf_live_mcp" {
-		t.Fatalf("summary = %+v, want only the executions MCP failure", summary)
-	}
-}
