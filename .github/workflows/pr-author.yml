@@ -1,0 +1,27 @@
+name: PR author
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  pr-author:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Fetch the PR base
+        run: git fetch --no-tags origin ${{ github.event.pull_request.base.sha }}
+      - name: Synthetic acceptance
+        run: python3 scripts/pr-author-gate-test.py
+      - name: Check PR commit authors
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: python3 scripts/pr-author-gate.py --base "$BASE" --head "$HEAD"
