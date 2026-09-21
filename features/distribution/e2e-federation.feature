@@ -212,6 +212,7 @@ Feature: Frozen federation installed binary
     Then the command exits with code 0
     And the execution log duration_ms is 0
 
+  # Latency budgets are set from the slowest supported lane (WSL on 16 GB) with margin, not from the hub. Decision by Javi, 22-sep-2026.
   Scenario: real-usage exec exact ids
     Given a frozen synthetic federation lab
     When I exec the SQL "SELECT id, legacy_id FROM plugin_roca_ops.memories WHERE id = '1152921504606846980'" as json
@@ -227,8 +228,8 @@ Feature: Frozen federation installed binary
     When I warm the vector index and vector-query "harbor lantern"
     Then the command exits with code 0
     And the vector query executed the ready index
-    And the execution log duration_ms is under 2000
-    And the command finished within 2 seconds
+    And the execution log duration_ms is under 3000
+    And the command finished within 3 seconds
 
   Scenario: real-usage query no silent degrade
     Given a frozen synthetic federation lab
@@ -236,8 +237,8 @@ Feature: Frozen federation installed binary
     Then the command exits with code 0
     And the output contains "engines"
     And the output does not contain "search hybrid"
-    And the execution log duration_ms is under 3000
-    And the command finished within 3 seconds
+    And the execution log duration_ms is under 4000
+    And the command finished within 4 seconds
 
   Scenario: real-usage handoff one per project
     Given a frozen synthetic federation lab
