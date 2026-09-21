@@ -153,8 +153,8 @@ func TestInitAndDoctorTellTheTruthWhenTheCorpusIsEmpty(t *testing.T) {
 		if !strings.Contains(human, "bedrock: your memory has no history yet") {
 			t.Errorf("%s empty bedrock narration:\n%s", command, human)
 		}
-		if strings.Contains(human, "1970") {
-			t.Errorf("%s invented an epoch:\n%s", command, human)
+		if strings.Contains(human, "bedrock: your memory reaches back to") {
+			t.Errorf("%s invented a bedrock date:\n%s", command, human)
 		}
 		doc := mustJSON(t, runRoot(t, contractBuild(), command, "--db-path", dbPath, "--json"))
 		if doc["bedrock"] != nil {
