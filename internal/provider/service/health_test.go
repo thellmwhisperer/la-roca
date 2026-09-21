@@ -36,6 +36,198 @@ func seedOrphanSupersedes(t *testing.T, svc *service.Service, rows int) {
 	}
 }
 
+func seedMemories(t *testing.T, svc *service.Service, rows int, statement string, args ...any) {
+	t.Helper()
+	for range rows {
+		if _, err := svc.DB().SQL().Exec(statement, args...); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+}
+
+func seedFailingHealthRows(t *testing.T, svc *service.Service) {
+	t.Helper()
+	seedOrphanSupersedes(t, svc, 1)
+	seedMemories(t, svc, 1, `INSERT INTO memories (layer, content, origin, metadata)
+		 VALUES ('discovery', hex(randomblob(8)), 'agent', '{"_test":true}')`)
+	seedMemories(t, svc, 1, `INSERT INTO memories (layer, content, origin, source_agent)
+		 VALUES ('discovery', hex(randomblob(8)), 'agent', ?)`, "test-agent")
+	seedMemories(t, svc, 1, `INSERT INTO memories (layer, content, origin)
+		 VALUES ('handover', hex(randomblob(8)), 'agent')`)
+	seedMemories(t, svc, 1, `INSERT INTO memories (layer, content, origin)
+		 VALUES (?, hex(randomblob(8)), 'agent')`, "a-layer-nobody-declared")
+}
+
+func seedKeeper(t *testing.T, svc *service.Service, content string) int64 {
+	t.Helper()
+	result, err := svc.Store(context.Background(), service.StoreRequest{
+		Layer: "discovery", Content: content, Origin: "agent",
+	})
+	if err != nil {
+		t.Fatalf("seed keeper: %v", err)
+	}
+	return result.ID
+}
+
+func TestFailingHealthChecksNameTheirRemedy(t *testing.T) {
+	svc, _ := serviceWithPaths(t)
+	seedFailingHealthRows(t, svc)
+
+	report, err := svc.Health(context.Background(), service.HealthRequest{})
+	if err != nil {
+		t.Fatalf("Health: %v", err)
+	}
+
+	cases := []struct {
+		check  string
+		remedy string
+	}{
+		{"orphan_supersedes", "roca doctor repair orphan_supersedes"},
+		{"test_metadata_rows", "roca doctor repair test_metadata_rows"},
+		{"test_source_agent_rows", "roca doctor repair test_source_agent_rows"},
+		{"physical_alias_layer_rows", "roca doctor repair physical_alias_layer_rows"},
+		{"runtime_layers_not_in_registry", "roca doctor repair runtime_layers_not_in_registry"},
+	}
+	for _, testCase := range cases {
+		check, ok := report.Checks[testCase.check]
+		if !ok {
+			t.Fatalf("missing check %q", testCase.check)
+		}
+		if check.Status != service.HealthFail {
+			t.Errorf("%s status = %q, want fail", testCase.check, check.Status)
+		}
+		if check.Remedy != testCase.remedy {
+			t.Errorf("%s remedy = %q, want %q", testCase.check, check.Remedy, testCase.remedy)
+		}
+	}
+	for name, check := range report.Checks {
+		if check.Status == service.HealthFail && check.Remedy == "" {
+			t.Errorf("failing check %q names no remedy", name)
+		}
+		if check.Status != service.HealthFail && check.Remedy != "" {
+			t.Errorf("non-failing check %q carried remedy %q", name, check.Remedy)
+		}
+	}
+}
+
+func TestHealthRepairClearsOnlyTheNamedRows(t *testing.T) {
+	svc, _ := serviceWithPaths(t)
+	keeperID := seedKeeper(t, svc, "keeper memory that must survive")
+	seedFailingHealthRows(t, svc)
+	seedMemories(t, svc, 1, `INSERT INTO memories (layer, content, origin, source_agent)
+		 VALUES ('discovery', hex(randomblob(8)), 'agent', ?)`, "test")
+
+	before, err := svc.Health(context.Background(), service.HealthRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.Status != service.HealthFail {
+		t.Fatalf("health before repair = %q", before.Status)
+	}
+
+	metadata, err := svc.RepairHealth(context.Background(), "test_metadata_rows")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metadata.Count != 1 || metadata.Action != "deleted" {
+		t.Fatalf("test metadata repair = %+v", metadata)
+	}
+	mid, err := svc.Health(context.Background(), service.HealthRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mid.Checks["test_metadata_rows"].Status != service.HealthPass {
+		t.Fatalf("test metadata still failing: %+v", mid.Checks["test_metadata_rows"])
+	}
+	if mid.Checks["test_source_agent_rows"].Count != 2 {
+		t.Fatalf("test source-agent rows were deleted by the metadata remedy: %+v",
+			mid.Checks["test_source_agent_rows"])
+	}
+	if mid.Checks["orphan_supersedes"].Count != 1 {
+		t.Fatalf("orphan rows were deleted by the metadata remedy: %+v",
+			mid.Checks["orphan_supersedes"])
+	}
+
+	for _, check := range []string{
+		"test_source_agent_rows", "orphan_supersedes",
+		"physical_alias_layer_rows", "runtime_layers_not_in_registry",
+	} {
+		if _, err := svc.RepairHealth(context.Background(), check); err != nil {
+			t.Fatalf("repair %s: %v", check, err)
+		}
+	}
+
+	after, err := svc.Health(context.Background(), service.HealthRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Status != service.HealthPass {
+		t.Fatalf("health after repair = %+v", after)
+	}
+
+	var keeper int
+	if err := svc.DB().SQL().QueryRow(
+		`SELECT COUNT(*) FROM memories WHERE id = ? AND content = ?`,
+		keeperID, "keeper memory that must survive").Scan(&keeper); err != nil {
+		t.Fatal(err)
+	}
+	if keeper != 1 {
+		t.Fatal("the keeper memory was deleted")
+	}
+
+	var orphans, testAgents, aliases, unknown int
+	if err := svc.DB().SQL().QueryRow(
+		`SELECT COUNT(*) FROM memories WHERE supersedes IS NOT NULL
+		   AND supersedes NOT IN (SELECT id FROM memories)`).Scan(&orphans); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DB().SQL().QueryRow(
+		`SELECT COUNT(*) FROM memories WHERE source_agent IN ('test-agent', 'test')`).
+		Scan(&testAgents); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DB().SQL().QueryRow(
+		`SELECT COUNT(*) FROM memories WHERE layer = 'handover'`).Scan(&aliases); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DB().SQL().QueryRow(
+		`SELECT COUNT(*) FROM memories WHERE layer = 'a-layer-nobody-declared'`).
+		Scan(&unknown); err != nil {
+		t.Fatal(err)
+	}
+	if orphans != 0 || testAgents != 0 || aliases != 0 {
+		t.Fatalf("named defects remain: orphans=%d testAgents=%d aliases=%d",
+			orphans, testAgents, aliases)
+	}
+	if unknown != 1 {
+		t.Fatalf("unknown-layer rows = %d, want the one that was registered not deleted", unknown)
+	}
+
+	repeat, err := svc.RepairHealth(context.Background(), "test_metadata_rows")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repeat.Count != 0 {
+		t.Fatalf("idempotent repair deleted %d extra rows", repeat.Count)
+	}
+}
+
+func TestHealthRepairRefusesAnUnknownCheck(t *testing.T) {
+	svc, _ := serviceWithPaths(t)
+	_, err := svc.RepairHealth(context.Background(), "ghost_sessions")
+	if err == nil || !strings.Contains(err.Error(), "unknown health repair") {
+		t.Fatalf("unknown repair error = %v", err)
+	}
+	for _, name := range []string{
+		"orphan_supersedes", "test_metadata_rows", "test_source_agent_rows",
+		"physical_alias_layer_rows", "runtime_layers_not_in_registry",
+	} {
+		if !strings.Contains(err.Error(), name) {
+			t.Errorf("unknown-repair error does not name %q: %v", name, err)
+		}
+	}
+}
+
 func TestHealthOnACleanInstallationPasses(t *testing.T) {
 	svc, _ := serviceWithPaths(t)
 

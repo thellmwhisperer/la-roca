@@ -32,11 +32,13 @@ type HealthRequest struct {
 
 // HealthCheck is one check with its verdict, how many rows it Found and a
 // sample of them. The count is the truth; the sample is what makes it
-// actionable.
+// actionable. A failing check carries the executable command that clears
+// exactly the rows it named.
 type HealthCheck struct {
 	Status  string           `json:"status"`
 	Count   int              `json:"count"`
 	Summary string           `json:"summary"`
+	Remedy  string           `json:"remedy,omitempty"`
 	Rows    []map[string]any `json:"rows,omitempty"`
 	Extra   map[string]int   `json:"formats,omitempty"`
 }
@@ -59,17 +61,22 @@ type HealthReport struct {
 	SourceSHA   string                 `json:"source_sha"`
 }
 
-// healthCheck declares one check as data: the count, the sample and how a
-// non-zero count is judged. Adding a check is a row, not a fifth copy of the
-// same three-step dance.
+// healthCheck declares one check as data: the count, the sample, how a
+// non-zero count is judged, and the command that repairs those rows. Adding a
+// check is a row, not a fifth copy of the same three-step dance.
 type healthCheck struct {
 	name          string
 	summary       string
 	severity      string
+	remedy        string
 	memoryOwned   bool
 	registryOwned bool
 	count         string
 	sample        string
+}
+
+func healthRepairCommand(name string) string {
+	return "roca doctor repair " + name
 }
 
 // The v1 checks. There is deliberately no check over `runs`: that table is v2
@@ -80,6 +87,7 @@ var healthChecks = []healthCheck{
 		name:        "orphan_supersedes",
 		summary:     "Memories whose supersedes pointer references a memory that is not there.",
 		severity:    HealthFail,
+		remedy:      healthRepairCommand("orphan_supersedes"),
 		memoryOwned: true,
 		count: `SELECT COUNT(*) FROM memories
 		        WHERE supersedes IS NOT NULL
@@ -93,6 +101,7 @@ var healthChecks = []healthCheck{
 		name:        "test_metadata_rows",
 		summary:     "Live memories carrying the metadata a test leaves behind.",
 		severity:    HealthFail,
+		remedy:      healthRepairCommand("test_metadata_rows"),
 		memoryOwned: true,
 		count: `SELECT COUNT(*) FROM memories
 		        WHERE json_valid(metadata)
@@ -106,6 +115,7 @@ var healthChecks = []healthCheck{
 		name:        "test_source_agent_rows",
 		summary:     "Live memories written by a test agent.",
 		severity:    HealthFail,
+		remedy:      healthRepairCommand("test_source_agent_rows"),
 		memoryOwned: true,
 		count: `SELECT COUNT(*) FROM memories
 		        WHERE source_agent IN ('test-agent', 'test')`,
@@ -117,6 +127,7 @@ var healthChecks = []healthCheck{
 		name:          "runtime_layers_not_in_registry",
 		summary:       "Layers present in the data and absent from the layer registry.",
 		severity:      HealthFail,
+		remedy:        healthRepairCommand("runtime_layers_not_in_registry"),
 		memoryOwned:   true,
 		registryOwned: true,
 		count: `SELECT COUNT(*) FROM (
@@ -132,6 +143,7 @@ var healthChecks = []healthCheck{
 		name:          "physical_alias_layer_rows",
 		summary:       "Memories stored under an alias layer instead of the physical one.",
 		severity:      HealthFail,
+		remedy:        healthRepairCommand("physical_alias_layer_rows"),
 		memoryOwned:   true,
 		registryOwned: true,
 		count: `SELECT COUNT(*) FROM memories m
@@ -350,6 +362,9 @@ func runHealthCheck(ctx context.Context, reader *sql.DB, check healthCheck,
 		return outcome, nil
 	}
 	outcome.Status = check.severity
+	if check.severity == HealthFail && check.remedy != "" {
+		outcome.Remedy = check.remedy
+	}
 	prefix, arguments := healthQuery(check, registered)
 	rows, err := reader.QueryContext(ctx, prefix+check.sample,
 		append(slices.Clone(arguments), maxRows)...)

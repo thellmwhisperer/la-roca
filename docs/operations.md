@@ -191,6 +191,8 @@ command for each unknown runtime layer; migration remains available when the
 right repair is to move those memories into an existing layer instead. Both
 repair commands follow the same selected database and `roca-ops` routing as
 `roca store`; the command printed by doctor includes the matching `--db-path`.
+Every failing `roca health` check prints `roca doctor repair <check>`; that
+command rewrites or deletes only the rows that check named.
 
 CLI commands and MCP tool calls write one redacted audit record to JSONL under
 the selected data directory's `logs/`, whether they succeed or fail. CLI runs
