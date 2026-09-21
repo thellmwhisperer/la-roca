@@ -1043,7 +1043,7 @@ func TestFailedMachineLessIngestRetriesBeforePromotion(t *testing.T) {
 	}
 }
 
-func TestMachineLessCursorPromotedWithoutReparsing(t *testing.T) {
+func TestMachineLessCursorIsAcceptedWithoutReparsing(t *testing.T) {
 	var parses int
 	original := parseKind
 	parseKind = func(kind parsers.Kind, content []byte, meta parsers.FileMeta) (parsers.Records, error) {
@@ -1083,15 +1083,15 @@ func TestMachineLessCursorPromotedWithoutReparsing(t *testing.T) {
 		path).Scan(&fingerprint, &metadata); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(fingerprint, ":machine:"+roots.Machine) {
-		t.Fatalf("fingerprint not promoted: %q", fingerprint)
+	if strings.Contains(fingerprint, ":machine:"+roots.Machine) {
+		t.Fatalf("legacy fingerprint was rewritten: %q", fingerprint)
 	}
 	var cursor harvestCursorState
 	if err := json.Unmarshal([]byte(metadata), &cursor); err != nil {
 		t.Fatal(err)
 	}
-	if cursor.Machine != roots.Machine {
-		t.Fatalf("cursor machine = %q, want %q", cursor.Machine, roots.Machine)
+	if cursor.Machine != "" {
+		t.Fatalf("legacy cursor machine was rewritten to %q", cursor.Machine)
 	}
 }
 

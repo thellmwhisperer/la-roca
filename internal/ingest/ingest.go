@@ -383,11 +383,6 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 		}
 		if state[target.Path].LastError == "" &&
 			incrementality.IsMachinePromotion(state[target.Path].Fingerprint, fingerprint, target.Machine) {
-			if !opts.DryRun {
-				if err := promoteMachineWatermark(ctx, db, target, state[target.Path], fingerprint); err != nil {
-					return result, err
-				}
-			}
 			result.addMessageCoverage(source, stateMessageCoverage(state[target.Path]))
 			result.FilesSkipped++
 			result.categorizeFile("skipped", "unchanged fingerprint")
@@ -1266,26 +1261,6 @@ func recordHarvestCursor(target Target, seed harvestCursorSeed, full []byte, rec
 func digestBytes(content []byte) string {
 	sum := sha256.Sum256(content)
 	return hex.EncodeToString(sum[:])
-}
-
-func promoteMachineWatermark(ctx context.Context, db Database, target Target,
-	previous incrementality.FileState, fingerprint string) error {
-	summary := map[string]any{}
-	if len(previous.Metadata) > 0 {
-		if err := json.Unmarshal(previous.Metadata, &summary); err != nil {
-			summary = map[string]any{}
-		}
-	}
-	if _, hasCursor := summary["byte_offset"]; hasCursor {
-		machine, _ := summary["machine"].(string)
-		if machine == "" {
-			summary["machine"] = target.Machine
-		}
-	}
-	return db.Write(ctx, func(tx *sql.Tx) error {
-		return incrementality.RecordState(ctx, tx, incrementalityTarget(target),
-			fingerprint, "", summary)
-	})
 }
 
 // resolveProjects settles each session's project with this precedence:
