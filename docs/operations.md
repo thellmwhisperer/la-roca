@@ -213,8 +213,7 @@ CLI and MCP calls share one `executions` JSONL stream. Retention is three
 months. Each file is capped at 5 MiB and the stream keeps at most 200 files.
 The retired `mcp-audit` stream is no longer written or read. Leftover
 `mcp-audit-*.jsonl` files are ignored by `roca doctor` and left untouched by
-uninstall. `ingest` and `migrations`
-stay separate housekeeping streams.
+uninstall. `ingest` and `migrations` stay separate housekeeping streams.
 Consumers should glob `<stream>-*.jsonl`; rotated segments have the same prefix.
 An individual record larger than the file cap is dropped under the same
 non-failing writer contract. Rotation and redaction are unchanged.
@@ -399,9 +398,10 @@ output. Corpus totals remain scale-only.
 
 ## Query one day of call history with SQL
 
-Import only the retained execution and MCP segments for a chosen UTC date into
-scratch SQLite. Python 3's standard library is sufficient. Choose an unused
-scratch database path; this recipe creates it with operator-only permissions
+Import the retained `executions` segments for a chosen UTC date into scratch
+SQLite; they contain both CLI and MCP calls. Python 3's standard library is
+sufficient. Choose an unused scratch database path; this recipe creates it with
+operator-only permissions
 (mode `0600`) and refuses any existing path. It reads the logs without modifying
 them and includes rotated segments. Malformed JSON aborts the import transaction.
 

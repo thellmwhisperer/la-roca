@@ -610,8 +610,9 @@ its own.
 
 The narration says the same thing above the rows: a playground request that paid for a
 correction gets its own `SQL retry after gate rejection` or `SQL retry after
-execution error` line with the time that correction took. Both audit streams
-record the identical distinction, and what they keep is listed under
+execution error` line with the time that correction took. Both call surfaces
+record the identical distinction in the shared `executions` stream, and what it
+keeps is listed under
 [Operations](operations.md#streams-and-contents).
 
 ## Diagnosing
