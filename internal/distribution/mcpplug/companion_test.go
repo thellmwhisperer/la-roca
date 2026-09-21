@@ -187,14 +187,14 @@ func TestConcurrentCompanionsLeaveSingleFlightToThePlugin(t *testing.T) {
 	first := startPluginCompanionsWithPolicy(root, data, &safeBuffer{}, fastCompanionPolicy)
 	defer first.Close()
 	waitFor(t, func() bool {
-		_, err := os.Stat(filepath.Join(data, "holder"))
-		return err == nil
+		raw, err := os.ReadFile(filepath.Join(data, "holder"))
+		return err == nil && strings.TrimSpace(string(raw)) != ""
 	})
 	second := startPluginCompanionsWithPolicy(root, data, &safeBuffer{}, fastCompanionPolicy)
 	defer second.Close()
 	waitFor(t, func() bool {
-		_, err := os.Stat(filepath.Join(data, "standby"))
-		return err == nil
+		raw, err := os.ReadFile(filepath.Join(data, "standby"))
+		return err == nil && strings.TrimSpace(string(raw)) != ""
 	})
 	if !first.alive() || !second.alive() {
 		t.Fatal("concurrent sessions did not both raise a companion")
