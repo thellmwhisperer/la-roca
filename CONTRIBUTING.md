@@ -42,8 +42,10 @@ not see GitHub squash-merge. The repository already uses PR_TITLE/PR_BODY for
 the squash commit, so squash no longer concatenates branch trailers. The
 `pr-author` CI job is the layer that still sees the PR range (`base..head`)
 before squash: it fails on any `Co-authored-by` line and on an author or
-committer email outside `.github/pr-author-allow.txt`. GitHub noreply is not
-on that list. `scripts/pr-author-gate.py` owns the check. Run
+committer email outside the trusted base revision of
+`.github/pr-author-allow.txt`. Allowlist changes take effect after they land on
+the base branch; a pull request cannot weaken its own check. GitHub noreply is
+not on that list. `scripts/pr-author-gate.py` owns the check. Run
 `python3 scripts/pr-author-gate-test.py` for the synthetic pair.
 
 Use the [bug report](.github/ISSUE_TEMPLATE/bug_report.md) or
