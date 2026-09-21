@@ -191,6 +191,19 @@ command for each unknown runtime layer; migration remains available when the
 right repair is to move those memories into an existing layer instead. Both
 repair commands follow the same selected database and `roca-ops` routing as
 `roca store`; the command printed by doctor includes the matching `--db-path`.
+Every failing `roca health` check carries a remedy naming the database the
+verdict came from. Four of them print
+`roca doctor repair <check> --db-path <db>`, a scoped write over exactly the
+rows that check counted: it clears a dangling `supersedes` pointer, moves an
+alias-layer memory onto its physical layer, or deletes a test row. Deleting a
+memory also sets `supersedes` to NULL on the rows that pointed at it, because
+`memories.supersedes` references `memories.id`; nothing else is removed. Each
+repair prints every row it touched, follows the same routing as the layer
+commands above, is refused in read-only mode, and rejects an unknown check by
+listing the repairs that exist. `runtime_layers_not_in_registry` has no scoped
+repair: its remedy points at the per-layer `roca layers add` command doctor
+already prints, because registering the layer and migrating its memories are
+both right answers.
 
 CLI commands and MCP tool calls write one redacted audit record to JSONL under
 the selected data directory's `logs/`, whether they succeed or fail. CLI runs
