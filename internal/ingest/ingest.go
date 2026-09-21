@@ -386,7 +386,7 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 			result.addMessageCoverage(source, stateMessageCoverage(state[target.Path]))
 			result.FilesSkipped++
 			result.categorizeFile("skipped", "unchanged fingerprint")
-			result.Coverage.skip(target.Path, "machine watermark promoted")
+			result.Coverage.skip(target.Path, "legacy machine watermark accepted")
 			finishTarget()
 			continue
 		}

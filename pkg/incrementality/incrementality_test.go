@@ -48,10 +48,10 @@ func TestPublicPackageFingerprintsTargets(t *testing.T) {
 	}, path, tagged) {
 		t.Fatal("Unchanged treated a machine promotion as an exact match")
 	}
-	if !incrementality.UnchangedMetadata(map[string]incrementality.FileState{
+	if incrementality.UnchangedMetadata(map[string]incrementality.FileState{
 		path: {Fingerprint: fingerprint},
 	}, path, metadata, "hub") {
-		t.Fatal("machine-less metadata prefix was rejected after machine tagging")
+		t.Fatal("machine-less metadata prefix was accepted after machine tagging")
 	}
 }
 
