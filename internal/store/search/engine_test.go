@@ -3,6 +3,7 @@ package search_test
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -75,8 +76,8 @@ func TestLexicalSearchHonorsLayerAndSearchExclusions(t *testing.T) {
 		('feedback', 'the layer anchor belongs here', 'agent'),
 		('project', 'the layer anchor belongs elsewhere', 'agent')`)
 
-	plan := query.Plan{Template: query.TemplateSearchByTerm, Term: "zingalor+kumquat", Limit: 10}
-	res, err := engine.Search(context.Background(), requestForPlan(plan, []string{"question"}))
+	res, err := engine.Search(context.Background(), requestWithFilter("zingalor+kumquat",
+		"AND m.layer NOT IN ('question')"))
 	if err != nil {
 		t.Fatalf("excluded-layer search: %v", err)
 	}
@@ -87,8 +88,8 @@ func TestLexicalSearchHonorsLayerAndSearchExclusions(t *testing.T) {
 		t.Errorf("a search-excluded message answered: %v", texts(res.Rows))
 	}
 
-	plan = query.Plan{Template: query.TemplateSearchByTerm, Term: "layer+anchor", Layer: "feedback", Limit: 10}
-	res, err = engine.Search(context.Background(), requestForPlan(plan, nil))
+	res, err = engine.Search(context.Background(), requestWithFilter("layer+anchor",
+		"AND m.layer = 'feedback'"))
 	if err != nil {
 		t.Fatalf("layer-constrained search: %v", err)
 	}
@@ -188,15 +189,26 @@ func TestANewRowEntersTheIndexImmediately(t *testing.T) {
 // --- helpers ---
 
 func request(term, method string) search.Request {
-	plan := query.Plan{Template: query.TemplateSearchByTerm, Term: term, Limit: 10}
-	request := requestForPlan(plan, nil)
-	request.Method = method
-	return request
+	req := requestWithFilter(term, "")
+	req.Method = method
+	return req
 }
 
-func requestForPlan(plan query.Plan, excluded []string) search.Request {
-	stmt, _ := query.RenderSQLFTS(plan, excluded, 10)
-	return search.Request{Term: plan.Term, SQLLexical: stmt, Method: search.MethodFTS, Limit: 10}
+func requestWithFilter(term, extra string) search.Request {
+	expression := search.MatchExpression(term, search.MatchAll)
+	stmt := fmt.Sprintf(
+		"SELECT 'memory' AS source, m.id AS id, NULL AS author, m.content AS text, m.created_at AS created_at, "+
+			"0 AS source_priority, f.rango AS rango "+
+			"FROM (SELECT rowid AS fila, bm25(memories_fts) AS rango FROM memories_fts "+
+			"WHERE memories_fts MATCH %s) AS f JOIN memories AS m ON m.id = f.fila "+
+			"WHERE m.id NOT IN (SELECT supersedes FROM memories WHERE supersedes IS NOT NULL) %s "+
+			"ORDER BY rango LIMIT 10",
+		quoteSQL(expression), extra)
+	return search.Request{Term: term, SQLLexical: stmt, Method: search.MethodFTS, Limit: 10}
+}
+
+func quoteSQL(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
 }
 
 // openWorld is a database with the schema on it and nothing else: the machine

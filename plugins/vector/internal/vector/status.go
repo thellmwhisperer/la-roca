@@ -180,7 +180,9 @@ func inspectDatabaseStatus(ctx context.Context, pluginRoot string, database vect
 		database.contractFingerprint(), snapshot.Fingerprint, snapshot.SourceMarker, marker)
 	if database.Plugin == "roca-ops" && row.State != StateEmpty && row.State != StateUnknown {
 		stale, staleErr := opsvector.HasStaleLegacyIDs(ctx, sourcePath)
-		if staleErr == nil && stale {
+		if staleErr != nil {
+			row.State = StateUnknown
+		} else if stale {
 			row.State = StateInvalid
 		}
 	}
