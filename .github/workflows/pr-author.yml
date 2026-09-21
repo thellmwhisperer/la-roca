@@ -1,7 +1,7 @@
 name: PR author
 
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, synchronize, reopened]
 
 permissions:
@@ -13,11 +13,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 0
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 1
           persist-credentials: false
-      - name: Fetch the PR base
-        run: git fetch --no-tags origin ${{ github.event.pull_request.base.sha }}
+      - name: Fetch the PR head object
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: git fetch --no-tags --no-recurse-submodules origin "refs/pull/${PR_NUMBER}/head"
       - name: Synthetic acceptance
         run: python3 scripts/pr-author-gate-test.py
       - name: Check PR commit authors
