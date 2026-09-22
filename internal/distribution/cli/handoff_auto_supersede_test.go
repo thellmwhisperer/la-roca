@@ -5,12 +5,21 @@ import (
 )
 
 func TestStoreHandoffAutoSupersedesPreviousCurrentForTheProject(t *testing.T) {
-	fixtureInstallation(t)
+	fixture := fixtureInstallation(t)
 	const project = "la-roca-e2e-handoff-auto"
+	insertOpsMemory(t, fixture.home, opsMemory{
+		layer: "pill", content: "uso-de-la-roca: vectors first, then qualified exec",
+		metadata: map[string]any{"pill_slug": "uso-de-la-roca"},
+	})
+	insertOpsMemory(t, fixture.home, opsMemory{
+		id: 7205, layer: "handoff", project: project,
+		content:   "branch/scope: fixture\ndone: handoff 7205\nstate: current\nnext: use the vector-first method",
+		createdAt: "2026-09-21 12:17:00",
+	})
 
 	first := mustJSON(t, runRoot(t, contractBuild(), "store",
 		"--layer", "handoff", "--project", project,
-		"--content", "handoff auto A",
+		"--content", "branch/scope: fixture\ndone: handoff A\nstate: current\nnext: continue with the vector-first method",
 		"--agent", "claude", "--model", "sonnet", "--json"))
 	firstID := jsonInt(t, first["id"])
 	if firstID == 0 {
@@ -47,10 +56,18 @@ func TestStoreHandoffAutoSupersedesPreviousCurrentForTheProject(t *testing.T) {
 	row, _ := rows[0].(map[string]any)
 	switch n := row["n"].(type) {
 	case float64:
-		if n > 1 {
-			t.Fatalf("non-superseded count = %v, want at most 1", n)
+		if n != 1 {
+			t.Fatalf("non-superseded count = %v, want exactly 1", n)
 		}
 	default:
 		t.Fatalf("count n = %#v", row["n"])
+	}
+
+	pill := mustJSON(t, runRoot(t, contractBuild(), "exec",
+		"SELECT count(*) AS n FROM plugin_roca_ops.memories WHERE layer='pill' AND json_extract(metadata, '$.pill_slug')='uso-de-la-roca' AND content LIKE '%vectors first%'",
+		"--json"))
+	pillRows, _ := pill["rows"].([]any)
+	if len(pillRows) != 1 || pillRows[0].(map[string]any)["n"] != float64(1) {
+		t.Fatalf("pill fixture = %#v, want one vector-first pill", pill["rows"])
 	}
 }
