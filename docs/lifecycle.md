@@ -180,8 +180,10 @@ default-off `features.artifact_refresh` key.
 
 All managed-file edits use the shared securefile publication boundary. On
 Darwin and Linux it holds a directory lock, fsyncs the staged bytes, and
-publishes with same-filesystem rename; Windows uses `MoveFileEx` with replace
-and write-through flags. A conditional edit refuses when its expected inode or
+publishes with same-filesystem rename; Windows coordinates processes on the
+same host with a named mutex keyed by directory identity and uses `MoveFileEx`
+with replace and write-through flags. The mutex leaves no lock file and is
+released when its owner exits. A conditional edit refuses when its expected inode or
 bytes changed, and a create-only edit refuses on any collision, including an
 identical-byte collision. Platforms without one of these atomic primitives
 refuse the edit rather than falling back to a check-then-rename. The public
