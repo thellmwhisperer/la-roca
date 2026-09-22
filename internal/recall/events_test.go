@@ -1,6 +1,8 @@
 package recall
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"strings"
 	"testing"
 )
@@ -48,5 +50,27 @@ func TestReadRejectsMalformedCompleteRecord(t *testing.T) {
 	_, err := Read(strings.NewReader(`{"ts":"2026-09-22T10:00:00Z","action":"agent spawn","query_sha":"abc123",}`))
 	if err == nil {
 		t.Fatal("malformed complete record unexpectedly accepted")
+	}
+}
+
+func TestReadPreservesIdenticalEvents(t *testing.T) {
+	raw := `{"ts":"2026-09-22T10:00:00Z","action":"agent spawn","query_sha":"abc123"}`
+	events, err := Read(strings.NewReader(raw + "\n" + raw + "\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 || events[0].EventSHA == events[1].EventSHA {
+		t.Fatalf("events = %+v", events)
+	}
+	digest := sha256.Sum256([]byte(raw))
+	if events[0].EventSHA != hex.EncodeToString(digest[:]) {
+		t.Fatalf("first event sha = %q, want original digest", events[0].EventSHA)
+	}
+	repeated, err := Read(strings.NewReader(raw + "\n" + raw + "\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repeated[0].EventSHA != events[0].EventSHA || repeated[1].EventSHA != events[1].EventSHA {
+		t.Fatalf("event shas are not deterministic: first=%+v second=%+v", events, repeated)
 	}
 }

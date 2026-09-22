@@ -286,7 +286,7 @@ gate() {
       actor=${GITHUB_ACTOR:-}
     else
       actor=$(gh api --paginate --slurp "repos/$repo/issues/$n/events?per_page=100" \
-        --jq 'add | map(select(.event == "labeled" and .label.name == "risk:accepted")) | first | .actor.login // empty' 2>/dev/null || true)
+        --jq 'add | sort_by(.created_at, .id) | reduce .[] as $event (null; if $event.event == "unlabeled" and $event.label.name == "risk:accepted" then null elif $event.event == "labeled" and $event.label.name == "risk:accepted" then $event.actor.login else . end) // empty' 2>/dev/null || true)
     fi
     [[ -n $actor ]] || return 1
     candidates=$(resolved_owner_candidates)

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -36,8 +37,8 @@ type Event struct {
 }
 
 // ReadFile reads a recall JSONL log without retaining its source path in the
-// database. EventSHA makes repeated ingest idempotent while keeping duplicate
-// fires with different timestamps distinct.
+// database. EventSHA makes repeated ingest idempotent while retaining repeated
+// fires, including identical lines.
 func ReadFile(path string) ([]Event, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -51,6 +52,7 @@ func ReadFile(path string) ([]Event, error) {
 func Read(reader io.Reader) ([]Event, error) {
 	lineReader := bufio.NewReaderSize(reader, 64*1024)
 	var events []Event
+	occurrences := make(map[string]int)
 	line := 0
 	for {
 		rawLine, readErr := lineReader.ReadString('\n')
@@ -83,7 +85,14 @@ func Read(reader io.Reader) ([]Event, error) {
 			return nil, fmt.Errorf("recall log line %d: %w", line, err)
 		}
 		digest := sha256.Sum256([]byte(raw))
-		event.EventSHA = hex.EncodeToString(digest[:])
+		baseSHA := hex.EncodeToString(digest[:])
+		occurrence := occurrences[baseSHA]
+		occurrences[baseSHA] = occurrence + 1
+		event.EventSHA = baseSHA
+		if occurrence > 0 {
+			digest = sha256.Sum256([]byte(raw + "\x00" + strconv.Itoa(occurrence)))
+			event.EventSHA = hex.EncodeToString(digest[:])
+		}
 		events = append(events, event)
 		if readErr != nil {
 			if readErr == io.EOF {
