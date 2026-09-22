@@ -4,12 +4,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/thellmwhisperer/la-roca/internal/distribution/bundledplugin"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/migrationledger"
 )
 
 func TestAuditRemovalPreservesCustodyAndRetriesLedgerFailure(t *testing.T) {
-	t.Setenv(bundledplugin.EnvAllowHomeMigrate, "1")
 	for _, fail := range []bool{false, true} {
 		t.Run(map[bool]string{false: "populated", true: "failure-retry"}[fail], func(t *testing.T) {
 			fixture := smallCustodyFixture(t)

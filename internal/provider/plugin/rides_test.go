@@ -123,45 +123,6 @@ func TestDiscoverOperatorRidesIgnoresRideFreeConfig(t *testing.T) {
 	}
 }
 
-func TestDiscoverOperatorRidesRejectsAnUnresolvedAfterDependency(t *testing.T) {
-	ridesDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(ridesDir, "schedule.toml"), []byte(`[ride.keep]
-command = "echo keep"
-
-[ride.upload]
-command = "echo upload"
-gate = "after_export"
-`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	rides, warnings, err := plugin.DiscoverOperatorRides("", ridesDir)
-	if err == nil || rides != nil || len(warnings) != 0 ||
-		!strings.Contains(err.Error(), `ride "upload"`) ||
-		!strings.Contains(err.Error(), "after_export") {
-		t.Fatalf("unresolved after-dependency = rides=%+v warnings=%v err=%v",
-			rides, warnings, err)
-	}
-}
-
-func TestDiscoverOperatorRidesRejectsAnUnreadableDirectory(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("running as root: chmod cannot make a directory unreadable")
-	}
-	ridesDir := t.TempDir()
-	if err := os.Chmod(ridesDir, 0); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(ridesDir, 0o700) })
-
-	rides, warnings, err := plugin.DiscoverOperatorRides("", ridesDir)
-	if err == nil || rides != nil || len(warnings) != 0 ||
-		!strings.Contains(err.Error(), "could not be read") {
-		t.Fatalf("unreadable rides directory = rides=%+v warnings=%v err=%v",
-			rides, warnings, err)
-	}
-}
-
 func TestDiscoverOperatorRidesRejectsAnUnusableFile(t *testing.T) {
 	ridesDir := t.TempDir()
 	for name, spec := range map[string]struct {

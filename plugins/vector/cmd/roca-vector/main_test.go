@@ -295,8 +295,8 @@ done
 	if !strings.Contains(first, "vector reembed (sessions): 2 added") {
 		t.Fatalf("initial targeted delta output = %q", first)
 	}
-	if _, err := os.Stat(staleLock); err != nil {
-		t.Fatalf("finished delta removed a reusable index lock: %v", err)
+	if _, err := os.Stat(staleLock); !os.IsNotExist(err) {
+		t.Fatalf("finished delta left a stale index lock: %v", err)
 	}
 	repeatedReembed := executeForOutput(t, env, "ingest", "--delta", "--reembed", "--source", "sessions")
 	if !strings.Contains(repeatedReembed, "vector reembed (sessions): 0 added · 0 updated · 0 removed · 2 unchanged") {

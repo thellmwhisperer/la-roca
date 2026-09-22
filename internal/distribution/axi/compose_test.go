@@ -497,33 +497,6 @@ func TestHealthRendersTheStatusLineAndCheckTable(t *testing.T) {
 			t.Errorf("a check row was lost (%q):\n%s", want, got)
 		}
 	}
-	if strings.Contains(got, "remedy:") {
-		t.Errorf("a passing report printed a remedy:\n%s", got)
-	}
-}
-
-func TestHealthPrintsARemedyOnEachFailingCheck(t *testing.T) {
-	res := service.HealthReport{
-		Status: service.HealthFail,
-		Checks: map[string]service.HealthCheck{
-			"orphan_supersedes": {
-				Status: service.HealthFail, Count: 2, Summary: "Dangling pointers.",
-				Remedy: "roca doctor repair orphan_supersedes",
-			},
-			"ghost_sessions": {Status: service.HealthWarn, Count: 1, Summary: "Sessions left open."},
-		},
-	}
-	got := axi.Health(res)
-
-	if !strings.Contains(got, "orphan_supersedes: fail") {
-		t.Errorf("the failing check is not named above its remedy:\n%s", got)
-	}
-	if !strings.Contains(got, "      remedy: roca doctor repair orphan_supersedes") {
-		t.Errorf("the failing check has no executable remedy:\n%s", got)
-	}
-	if strings.Contains(got, "ghost_sessions: warn") || strings.Contains(got, "remedy: roca doctor repair ghost") {
-		t.Errorf("a warn check printed a fail remedy:\n%s", got)
-	}
 }
 
 func TestStoreRendersTheIdentityLine(t *testing.T) {

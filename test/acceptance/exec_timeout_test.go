@@ -81,31 +81,22 @@ func TestIssue432ExecTimeLimitOnInstalledBinary(t *testing.T) {
 
 func waitForExecReader(t *testing.T, home string, done <-chan distributionRun) {
 	t.Helper()
-	path := filepath.Join(home, ".roca", "roca.db")
-	deadline := time.Now().Add(3 * time.Second)
-	heldSince := time.Time{}
-	// Opening the database also reports a reader. The runaway SELECT is
-	// the one that keeps the lock; 300ms outlasts inspect/adopt on this fixture.
-	const hold = 300 * time.Millisecond
+	paths := []string{filepath.Join(home, ".roca", "roca.db")}
+	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		select {
 		case run := <-done:
 			t.Fatalf("exec finished before holding a database read lock: %d\n%s%s", run.code, run.stdout, run.stderr)
 		default:
 		}
-		blocked, err := sqliteReaderActive(path)
-		if err != nil {
-			t.Fatalf("probe %s: %v", path, err)
-		}
-		if blocked {
-			if heldSince.IsZero() {
-				heldSince = time.Now()
+		for _, path := range paths {
+			blocked, err := sqliteReaderActive(path)
+			if err != nil {
+				t.Fatalf("probe %s: %v", path, err)
 			}
-			if time.Since(heldSince) >= hold {
+			if blocked {
 				return
 			}
-		} else {
-			heldSince = time.Time{}
 		}
 		time.Sleep(10 * time.Millisecond)
 	}

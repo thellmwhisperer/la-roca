@@ -5,23 +5,20 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
+	"sync"
 	"testing"
+	"time"
 )
 
 func TestReplaceWithResultCarriesPublishedIdentity(t *testing.T) {
-	path, previous := secureFileFixture(t, "config.json", "operator configuration")
-
-	publication, err := ReplaceWithResult(path, []byte("managed configuration"), previous)
+	path := filepath.Join(t.TempDir(), "config.json")
+	publication, err := ReplaceWithResult(path, []byte("managed configuration"), nil)
 	if err != nil {
-		t.Fatalf("replace: %v", err)
+		t.Fatal(err)
 	}
 	if !publication.Identity.Valid() || !publication.Identity.Matches(path) {
-		t.Fatalf("publication identity does not name the published path")
+		t.Fatal("publication identity does not name the published path")
 	}
-
-	// A byte-identical operator replacement has a different inode. The result
-	// must not be inferred from a later path sample by cleanup code.
 	operator := filepath.Join(filepath.Dir(path), ".operator")
 	if err := os.WriteFile(operator, []byte("managed configuration"), 0o600); err != nil {
 		t.Fatal(err)
@@ -35,120 +32,134 @@ func TestReplaceWithResultCarriesPublishedIdentity(t *testing.T) {
 	if _, err := ReplaceWithIdentity(path, []byte("rollback"), []byte("managed configuration"), publication.Identity); err == nil {
 		t.Fatal("rollback accepted a later byte-identical inode")
 	}
-	content, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(content) != "managed configuration" {
-		t.Fatalf("content = %q, want concurrent operator bytes", content)
+	assertFileContentAndMode(t, path, []byte("managed configuration"), 0o600)
+}
+
+func TestConditionalReplacementRefusesUnconditionalPrimitive(t *testing.T) {
+	for _, api := range []string{"Replace", "ReplaceWithResult", "ReplaceRegular", "ReplaceRegularWithResult", "ReplaceWithIdentity"} {
+		t.Run(api, func(t *testing.T) {
+			path, previous := secureFileFixture(t, "config.json", "operator")
+			info, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			realRename := renameReplaceFile
+			t.Cleanup(func() { renameReplaceFile = realRename })
+			renameReplaceFile = func(staged, target string) error {
+				if err := os.WriteFile(target, []byte("concurrent operator"), 0o600); err != nil {
+					return err
+				}
+				return realRename(staged, target)
+			}
+			var result Publication
+			switch api {
+			case "Replace":
+				err = Replace(path, []byte("candidate"), previous)
+			case "ReplaceWithResult":
+				result, err = ReplaceWithResult(path, []byte("candidate"), previous)
+			case "ReplaceRegular":
+				err = ReplaceRegular(path, []byte("candidate"), previous, info)
+			case "ReplaceRegularWithResult":
+				result, err = ReplaceRegularWithResult(path, []byte("candidate"), previous, info)
+			case "ReplaceWithIdentity":
+				result, err = ReplaceWithIdentity(path, []byte("candidate"), previous, identityFromInfo(info))
+			}
+			if !errors.Is(err, ErrConditionalReplaceUnsupported) || result.Identity.Valid() {
+				t.Fatalf("result = %+v, error = %v, want unsupported refusal without publication", result, err)
+			}
+			assertFileContentAndMode(t, path, previous, 0o600)
+			if !identityFromInfo(info).Matches(path) {
+				t.Fatal("refusal changed the operator's inode")
+			}
+			entries, err := os.ReadDir(filepath.Dir(path))
+			if err != nil || len(entries) != 1 {
+				t.Fatalf("refusal left artifacts: %v, %v", entries, err)
+			}
+		})
 	}
 }
 
-func TestConditionalReplacementsSerializeAtPublication(t *testing.T) {
+func TestReplacePreservesSaveAfterValidation(t *testing.T) {
 	path, previous := secureFileFixture(t, "config.json", "old")
-	entered, release := blockFirstPublication(t)
-
-	first := make(chan error, 1)
-	go func() { first <- Replace(path, []byte("first"), previous) }()
-	<-entered
-
-	second := make(chan error, 1)
-	go func() { second <- Replace(path, []byte("operator"), previous) }()
-	select {
-	case err := <-second:
-		t.Fatalf("concurrent replacement completed before publication: %v", err)
-	default:
+	realHook := beforePublication
+	t.Cleanup(func() { beforePublication = realHook })
+	beforePublication = func(target string) {
+		if err := os.WriteFile(target, []byte("operator save"), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
-	close(release)
-
-	if err := <-first; err != nil {
-		t.Fatalf("first replacement: %v", err)
+	if err := Replace(path, []byte("candidate"), previous); !errors.Is(err, ErrConditionalReplaceUnsupported) {
+		t.Fatalf("replace = %v, want unsupported refusal", err)
 	}
-	if err := <-second; err == nil || !strings.Contains(err.Error(), "changed while it was being edited") {
-		t.Fatalf("second replacement error = %v, want conditional refusal", err)
-	}
-	content, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(content) != "first" {
-		t.Fatalf("content = %q, want first publication preserved", content)
-	}
+	assertFileContentAndMode(t, path, []byte("operator save"), 0o600)
 }
 
 func TestMissingConditionalReplacementRefusesIdenticalCollision(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "new.json")
 	data := []byte("generated")
-	entered, release := blockFirstPublication(t)
-
-	first := make(chan error, 1)
-	go func() { first <- CreatePreservingParentMode(path, data, 0o600, 0o700) }()
-	<-entered
-	second := make(chan error, 1)
-	go func() { second <- CreatePreservingParentMode(path, data, 0o600, 0o700) }()
-	select {
-	case err := <-second:
-		t.Fatalf("collision completed before publication: %v", err)
-	default:
+	entered := make(chan struct{}, 2)
+	release := make(chan struct{})
+	var once sync.Once
+	defer once.Do(func() { close(release) })
+	realHook := beforePublication
+	t.Cleanup(func() { beforePublication = realHook })
+	beforePublication = func(string) {
+		entered <- struct{}{}
+		<-release
 	}
-	close(release)
-
-	if err := <-first; err != nil {
-		t.Fatalf("first create: %v", err)
-	}
-	if err := <-second; err == nil || !strings.Contains(err.Error(), "existing file was preserved") {
-		t.Fatalf("second create error = %v, want preserved collision", err)
-	}
-	content, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(content) != string(data) {
-		t.Fatalf("content = %q, want generated", content)
-	}
-}
-
-func TestReplaceRefusesWithoutAtomicPrimitive(t *testing.T) {
-	path, previous := secureFileFixture(t, "config.json", "old")
-
-	realRename := renameReplaceFile
-	t.Cleanup(func() { renameReplaceFile = realRename })
-	renameReplaceFile = func(_, _ string) error { return errAtomicReplaceUnsupported }
-	if err := Replace(path, []byte("new"), previous); err == nil ||
-		!strings.Contains(err.Error(), "atomic replacement publication is unsupported") {
-		t.Fatalf("replace error = %v, want unsupported-publication refusal", err)
-	}
-	content, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(content) != string(previous) {
-		t.Fatalf("content = %q, want old", content)
-	}
-}
-
-func TestReplaceFailureLeavesTheLivePath(t *testing.T) {
-	path, previous := secureFileFixture(t, "config.json", "old")
-
-	realRename := renameReplaceFile
-	t.Cleanup(func() { renameReplaceFile = realRename })
-	renameReplaceFile = func(_, target string) error {
-		if _, err := os.Stat(target); err != nil {
-			t.Fatalf("live path was absent before replacement: %v", err)
+	results := make(chan error, 2)
+	go func() { results <- Replace(path, data, nil) }()
+	go func() { results <- CreatePreservingParentMode(path, data, 0o600, 0o700) }()
+	for range 2 {
+		select {
+		case <-entered:
+		case <-time.After(10 * time.Second):
+			t.Fatal("both writers must reach publication before either proceeds")
 		}
-		return errors.New("injected publication failure")
 	}
-	if err := Replace(path, []byte("new"), previous); err == nil ||
-		!strings.Contains(err.Error(), "injected publication failure") {
-		t.Fatalf("replace error = %v, want injected failure", err)
+	once.Do(func() { close(release) })
+	successes, collisions := 0, 0
+	for range 2 {
+		select {
+		case err := <-results:
+			if err == nil {
+				successes++
+			} else if strings.Contains(err.Error(), "existing file was preserved") {
+				collisions++
+			} else {
+				t.Fatal(err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("publication did not finish")
+		}
 	}
-	content, err := os.ReadFile(path)
-	if err != nil {
+	if successes != 1 || collisions != 1 {
+		t.Fatalf("successes = %d, collisions = %d", successes, collisions)
+	}
+	assertFileContentAndMode(t, path, data, 0o600)
+}
+
+func TestWriteFailureLeavesTheLivePath(t *testing.T) {
+	path, previous := secureFileFixture(t, "config.json", "old")
+	realRename := renameReplaceFile
+	t.Cleanup(func() { renameReplaceFile = realRename })
+	failure := errors.New("injected publication failure")
+	renameReplaceFile = func(_, target string) error {
+		assertFileContentAndMode(t, target, previous, 0o600)
+		return failure
+	}
+	if err := Write(path, []byte("new"), 0o600, 0o700); !errors.Is(err, failure) {
+		t.Fatalf("write = %v, want injected failure", err)
+	}
+	assertFileContentAndMode(t, path, previous, 0o600)
+}
+
+func TestWriteStillReplacesUnconditionally(t *testing.T) {
+	path, _ := secureFileFixture(t, "config.json", "old")
+	if err := Write(path, []byte("new"), 0o600, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if string(content) != string(previous) {
-		t.Fatalf("content = %q, want old", content)
-	}
+	assertFileContentAndMode(t, path, []byte("new"), 0o600)
 }
 
 func secureFileFixture(t *testing.T, name, content string) (string, []byte) {
@@ -159,21 +170,4 @@ func secureFileFixture(t *testing.T, name, content string) (string, []byte) {
 		t.Fatal(err)
 	}
 	return path, previous
-}
-
-func blockFirstPublication(t *testing.T) (chan struct{}, chan struct{}) {
-	t.Helper()
-	realHook := beforePublication
-	t.Cleanup(func() { beforePublication = realHook })
-	entered := make(chan struct{})
-	release := make(chan struct{})
-	var calls atomic.Int32
-	beforePublication = func(string) {
-		if calls.Add(1) != 1 {
-			return
-		}
-		close(entered)
-		<-release
-	}
-	return entered, release
 }

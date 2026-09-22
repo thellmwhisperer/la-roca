@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Freeze the synthetic federation homes the e2e suite copies. The suite never
-# runs this script. CI reads testdata/e2e-federation/frozen only.
+# runs this script. CI reads testdata/e2e-federation/frozen.tar.gz only.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -149,13 +149,12 @@ for name in main pill-free pr321 pr324; do
   rm -rf "$src/.roca/plugins/roca-vector"
   rm -f "$src/.local/bin/roca-vector"
   rm -f "$src/.roca/plugins/.roca-vector.relocation.lock"
-  find "$src" -name '*.md' -delete
   cp -R "$src/." "$dest/"
-  apply_sql "$dest/.roca/plugins/roca-corpus/roca-corpus.db" testdata/e2e-federation/seed/sanitize-machine.sql
 done
 
-python3 - "$archive_root" "$stage" <<'PY_NORMALIZE'
-import hashlib, pathlib, sqlite3, subprocess, sys
+archive="$stage/frozen.tar.gz"
+python3 - "$archive_root" "$stage" "$archive" <<'PY_NORMALIZE'
+import pathlib, sqlite3, subprocess, sys, tarfile
 root = pathlib.Path(sys.argv[1])
 stage = pathlib.Path(sys.argv[2])
 prefixes = []
@@ -190,17 +189,21 @@ dbs = [str(p) for p in root.rglob("*.db")]
 if dbs:
     subprocess.run(["go", "run", "scripts/freeze-upgrade-vacuum.go", *dbs], check=True)
 
-dest = pathlib.Path("testdata/e2e-federation/frozen")
-if dest.exists():
-    subprocess.run(["rm", "-rf", str(dest)], check=True)
-dest.parent.mkdir(parents=True, exist_ok=True)
-subprocess.run(["cp", "-R", str(root), str(dest)], check=True)
-rows = []
-for path in sorted(dest.rglob("*.db")):
-    digest = hashlib.sha256(path.read_bytes()).hexdigest()
-    rows.append(f"{digest}  {path.relative_to(dest).as_posix()}")
-pathlib.Path("testdata/e2e-federation/frozen.sha256").write_text("\n".join(rows) + "\n")
+def owner(info):
+    info.uid = info.gid = 0
+    info.uname = info.gname = "root"
+    return info
+with tarfile.open(sys.argv[3], "w:gz") as archive:
+    archive.add(root, arcname=".", filter=owner)
 PY_NORMALIZE
 
-echo "froze testdata/e2e-federation/frozen"
-echo "sha256 $(wc -l < testdata/e2e-federation/frozen.sha256 | tr -d ' ') databases"
+mkdir -p testdata/e2e-federation
+mv -f "$archive" testdata/e2e-federation/frozen.tar.gz
+if command -v sha256sum >/dev/null 2>&1; then
+  sha256sum testdata/e2e-federation/frozen.tar.gz | awk '{print $1}' > testdata/e2e-federation/frozen.sha256
+else
+  shasum -a 256 testdata/e2e-federation/frozen.tar.gz | awk '{print $1}' > testdata/e2e-federation/frozen.sha256
+fi
+
+echo "froze testdata/e2e-federation/frozen.tar.gz"
+echo "sha256 $(cat testdata/e2e-federation/frozen.sha256)"

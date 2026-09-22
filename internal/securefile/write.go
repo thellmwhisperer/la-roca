@@ -11,15 +11,15 @@ import (
 )
 
 var (
-	errAtomicNoReplaceUnsupported = errors.New("atomic no-replace publication is unsupported")
-	errAtomicReplaceUnsupported   = errors.New("atomic replacement publication is unsupported")
-	renameNoReplaceFile           = renameNoReplace
-	renameReplaceFile             = renameReplace
-	beforePublication             = func(string) {}
+	ErrConditionalReplaceUnsupported = errors.New("atomic conditional replacement is unsupported")
+	errAtomicNoReplaceUnsupported    = errors.New("atomic no-replace publication is unsupported")
+	errAtomicReplaceUnsupported      = errors.New("atomic replacement publication is unsupported")
+	renameNoReplaceFile              = renameNoReplace
+	renameReplaceFile                = renameReplace
+	beforePublication                = func(string) {}
 )
 
 // Write replaces path atomically after the new bytes and permissions are durable.
-// It serializes with the conditional publication boundary for the same path.
 func Write(path string, data []byte, mode, dirMode os.FileMode) error {
 	_, err := publish(path, data, nil, mode, dirMode, true, false)
 	return err
@@ -38,7 +38,7 @@ func CreatePreservingParentModeWithResult(path string, data []byte, mode, dirMod
 	return publish(path, data, nil, mode, dirMode, false, true)
 }
 
-// Replace atomically replaces an operator-owned file while preserving its mode.
+// Replace conditionally publishes data, refusing unsupported replacements.
 // previous is the exact preimage. A nil previous means that the caller expects
 // the path not to exist; it is never an instruction to overwrite an unknown
 // file. Use Write when unconditional replacement is intentional.
@@ -60,9 +60,7 @@ func ReplaceWithResult(path string, data, previous []byte) (Publication, error) 
 }
 
 // ReplaceWithIdentity conditionally publishes against the exact inode returned
-// by an earlier publication. It closes the cleanup/rollback race in which a
-// concurrent writer installs byte-identical content between an identity check
-// and the next conditional write.
+// by an earlier publication, refusing unsupported replacements.
 func ReplaceWithIdentity(path string, data, previous []byte,
 	identity FileIdentity) (Publication, error) {
 	if !identity.Valid() {
@@ -72,9 +70,8 @@ func ReplaceWithIdentity(path string, data, previous []byte,
 	return publish(path, data, expected, identity.info.Mode().Perm(), 0o700, false, false)
 }
 
-// ReplaceRegular stages a replacement for a previously inspected regular file
-// while preserving its mode. Before publication, it refuses if the path no
-// longer names that file or its expected bytes changed.
+// ReplaceRegular validates a previously inspected regular file and its bytes.
+// It refuses replacement when atomic conditional publication is unsupported.
 func ReplaceRegular(path string, data, previous []byte, original os.FileInfo) error {
 	_, err := ReplaceRegularWithResult(path, data, previous, original)
 	return err
@@ -145,6 +142,15 @@ func expectedOriginal(path string, previous []byte) (os.FileInfo, error) {
 
 func publish(path string, data []byte, expected *conditionalFile, mode, dirMode os.FileMode,
 	restrictDir, createOnly bool) (result Publication, err error) {
+	if expected != nil {
+		if err := verifyExpected(path, expected); err != nil {
+			return result, err
+		}
+		if expected.original != nil {
+			beforePublication(path)
+			return result, fmt.Errorf("cannot safely replace %s: %w", path, ErrConditionalReplaceUnsupported)
+		}
+	}
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, dirMode); err != nil {
 		return result, err
@@ -155,28 +161,6 @@ func publish(path string, data []byte, expected *conditionalFile, mode, dirMode 
 		}
 	}
 
-	// The directory lock is the shared publication boundary. All La Roca
-	// writers use the same lock, so a second writer cannot land between the
-	// preimage check and the atomic rename. The public path is never moved
-	// aside or left absent, and no lock artifact is left beside it.
-	release, err := lockPublication(dir)
-	if err != nil {
-		return result, fmt.Errorf("lock %s for publication: %w", path, err)
-	}
-	defer func() {
-		if releaseErr := release(); err == nil && releaseErr != nil {
-			err = fmt.Errorf("release publication lock for %s: %w", path, releaseErr)
-		}
-	}()
-
-	if expected != nil {
-		if err = verifyExpected(path, expected); err != nil {
-			return result, err
-		}
-		if mode == 0 && expected.original != nil {
-			mode = expected.original.Mode().Perm()
-		}
-	}
 	if mode == 0 {
 		mode = 0o600
 	}
@@ -209,19 +193,7 @@ func publish(path string, data []byte, expected *conditionalFile, mode, dirMode 
 		return result, err
 	}
 
-	// Recheck after staging: staging can be slow, and a cooperative writer may
-	// have been waiting for the boundary when the caller first inspected path.
-	if expected != nil {
-		if err = verifyExpected(path, expected); err != nil {
-			return result, err
-		}
-	}
 	beforePublication(path)
-	if expected != nil {
-		if err = verifyExpected(path, expected); err != nil {
-			return result, err
-		}
-	}
 
 	if createOnly {
 		if err = renameNoReplaceFile(staged, path); err != nil {

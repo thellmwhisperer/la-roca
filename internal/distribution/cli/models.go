@@ -132,7 +132,6 @@ func doctorCommand(env *cliEnv) *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&support, "report", false,
 		"emit a privacy-safe support snapshot for pasting into a chat or issue")
-	cmd.AddCommand(doctorRepairCommand(env))
 	return cmd
 }
 
@@ -325,39 +324,4 @@ func renderForeignOwnedStateTo(out io.Writer, found []stateOwnership) {
 		fmt.Fprintf(out, "state file owned by %s: %s\n", item.Owner, item.Path)
 		fmt.Fprintf(out, "      remedy: %s\n", item.Command)
 	}
-}
-
-func doctorRepairCommand(env *cliEnv) *cobra.Command {
-	return &cobra.Command{
-		Use:   "repair <check>",
-		Short: "Apply the scoped repair a failing health check names",
-		Args:  cobra.ExactArgs(1),
-		RunE: env.serviceRunE(func(cmd *cobra.Command, args []string, svc *service.Service) error {
-			result, err := svc.RepairHealth(cmd.Context(), args[0])
-			if err != nil {
-				return err
-			}
-			if env.json {
-				return env.printJSON(result)
-			}
-			for _, row := range result.Rows {
-				env.print("%s %s", result.Action, formatRepairRow(row))
-			}
-			env.print("repaired %s: %d", result.Check, result.Count)
-			return nil
-		}),
-	}
-}
-
-func formatRepairRow(row map[string]any) string {
-	keys := make([]string, 0, len(row))
-	for key := range row {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	parts := make([]string, 0, len(keys))
-	for _, key := range keys {
-		parts = append(parts, fmt.Sprintf("%s=%v", key, row[key]))
-	}
-	return strings.Join(parts, " ")
 }

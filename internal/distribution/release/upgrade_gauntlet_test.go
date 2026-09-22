@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -30,7 +29,7 @@ func frozenUpgradeVersions(t *testing.T) []string {
 	return versions
 }
 
-func TestUpgradeGauntletOwnsReleasedHomes(t *testing.T) {
+func TestUpgradeGauntletOwnsReleasedHomesAndBothDeliveryPaths(t *testing.T) {
 	for _, version := range frozenUpgradeVersions(t) {
 		t.Run(version, func(t *testing.T) {
 			fixture := filepath.Join("testdata", "upgrade", "homes", version+".tar.gz")
@@ -54,18 +53,30 @@ func TestUpgradeGauntletOwnsReleasedHomes(t *testing.T) {
 			}
 		})
 	}
-}
 
-func TestUpgradeGauntletExecutesAgainstAnIsolatedFixture(t *testing.T) {
-	binary := filepath.Join(t.TempDir(), "roca")
-	build := exec.Command("go", "build", "-o", binary, "../../../cmd/roca")
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build current binary: %v\n%s", err, output)
+	runner := readRepoFile(t, "../../../scripts/upgrade-gauntlet.sh")
+	for _, required := range []string{"ingest", "exec", "doctor", "health"} {
+		if !strings.Contains(runner, required) {
+			t.Errorf("the gauntlet does not run %s", required)
+		}
+	}
+	if strings.Contains(runner, "release download") {
+		t.Error("CI rebuilds fixtures instead of consuming the committed frozen homes")
 	}
 
-	run := exec.Command("bash", "../../../scripts/upgrade-gauntlet.sh", binary, "v1.84.2")
-	if output, err := run.CombinedOutput(); err != nil {
-		t.Fatalf("run upgrade gauntlet: %v\n%s", err, output)
+	ci := readRepoFile(t, "../../../.github/workflows/ci.yml")
+	release := readRepoFile(t, "../../../.github/workflows/release.yml")
+	for name, workflow := range map[string]string{"pull requests": ci, "releases": release} {
+		if !strings.Contains(workflow, "upgrade-gauntlet") {
+			t.Errorf("%s do not run the upgrade gauntlet", name)
+		}
+		if !strings.Contains(workflow, "upgrade-gauntlet.sh --versions") ||
+			!strings.Contains(workflow, "matrix.version") {
+			t.Errorf("%s do not fan versions.txt out into one job per frozen home", name)
+		}
+	}
+	if !strings.Contains(release, "needs: upgrade-gauntlet") {
+		t.Error("publication does not wait for the frozen homes to upgrade")
 	}
 }
 

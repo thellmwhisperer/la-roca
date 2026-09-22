@@ -162,10 +162,8 @@ func registerSteps(ctx *godog.ScenarioContext, binary string) {
 	ctx.Given(`^a frozen pr324 federation lab$`, m.aFrozenPR324FederationLab)
 
 	ctx.When(`^I run "([^"]*)"$`, m.iRun)
-	ctx.When(`^I run the installed roca version through PATH$`, m.iRunInstalledRocaVersionThroughPATH)
 	ctx.When(`^I exec the SQL "([^"]*)"$`, m.iExecSQL)
 	ctx.When(`^I exec the SQL "([^"]*)" with max-chars (\d+)$`, m.iExecSQLMaxChars)
-	ctx.When(`^I exec the SQL "([^"]*)" with max-chars (\d+) as json$`, m.iExecSQLMaxCharsJSON)
 	ctx.When(`^I exec the SQL "([^"]*)" as json$`, m.iExecSQLJSON)
 	ctx.When(`^I store a pill with slug ([^ ]+) and content (.+)$`, m.iStorePill)
 	ctx.When(`^I vector-query "([^"]*)"$`, m.iVectorQuery)
@@ -173,8 +171,6 @@ func registerSteps(ctx *godog.ScenarioContext, binary string) {
 	ctx.When(`^I run the claude authorship hook$`, m.iRunClaudeAuthorshipHook)
 	ctx.When(`^I start three mcp serve processes$`, m.iStartThreeMCPServeProcesses)
 	ctx.When(`^I call the health tool over stdio$`, m.iCallHealthOverStdio)
-	ctx.When(`^I store a discovery over MCP superseding historical id "([^"]*)"$`, m.iStoreDiscoverySupersedingHistoricalID)
-	ctx.Then(`^the MCP stored id is a JS-safe integer of at most 12 digits$`, m.theMCPStoredIDIsJSSafe)
 	ctx.When(`^I run the e2e-smoke operator path$`, m.iRunTheE2ESmokeOperatorPath)
 	ctx.When(`^I run "([^"]*)" a second time$`, m.iRun)
 	ctx.When(`^I run "roca exec" with the SQL it returned, in JSON format$`, m.iRunTheSQLItReturned)
@@ -195,7 +191,6 @@ func registerSteps(ctx *godog.ScenarioContext, binary string) {
 	ctx.Then(`^the output contains a digit run of at least (\d+) characters$`, m.outputDigitRunAtLeast)
 	ctx.Then(`^the JSON output field "([^"]*)" is the string "([^"]*)"$`, m.jsonFieldIsString)
 	ctx.Then(`^the JSON output field "([^"]*)" is a JS-safe integer of at most 12 digits$`, m.jsonFieldIsJSSafeInteger)
-	ctx.Then(`^the JSON output field "([^"]*)" has between (\d+) and (\d+) runes$`, m.jsonFieldRuneCountBetween)
 	ctx.Then(`^the frozen Codex identity has (\d+) sessions, (\d+) exact source session, (\d+) split siblings, (\d+) exchanges, (\d+) tools, (\d+) orphan tools, (\d+) failed tool, and (\d+) control session$`, func(sessions, exactSourceSession, splitSiblings, exchanges, tools, orphanTools, failedTools, controlSessions int) error {
 		return m.theFrozenCodexIdentityHas(sessions, exactSourceSession, splitSiblings, exchanges, tools, orphanTools, failedTools, controlSessions)
 	})

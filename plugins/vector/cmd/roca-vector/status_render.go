@@ -31,8 +31,8 @@ func statusHelp(report vector.Vectorization) []string {
 	lines := []string{"Run `roca vector status --json` for the complete result envelope"}
 	needsInstall := false
 	var compact []string
-	var held []string
-	var inspect []string
+	var stale []string
+	var live []string
 	for _, row := range report.Databases {
 		if needsVectorInstall(row) {
 			needsInstall = true
@@ -45,10 +45,10 @@ func statusHelp(report vector.Vectorization) []string {
 			compact = append(compact, name)
 		}
 		switch row.IndexLock {
-		case vector.IndexLockHeld:
-			held = append(held, name)
-		case vector.IndexLockError:
-			inspect = append(inspect, name)
+		case vector.IndexLockStale:
+			stale = append(stale, name)
+		case vector.IndexLockLive:
+			live = append(live, name)
 		}
 	}
 	if !report.Worker.Running && needsInstall {
@@ -57,11 +57,11 @@ func statusHelp(report vector.Vectorization) []string {
 	if len(compact) > 0 {
 		lines = append(lines, "Run `roca vector compact` to reclaim empty embedding pages on "+strings.Join(compact, ", "))
 	}
-	if len(held) > 0 {
-		lines = append(lines, "index.lock is held on "+strings.Join(held, ", "))
+	if len(live) > 0 {
+		lines = append(lines, "index.lock is held on "+strings.Join(live, ", "))
 	}
-	if len(inspect) > 0 {
-		lines = append(lines, "could not inspect index.lock on "+strings.Join(inspect, ", "))
+	if len(stale) > 0 {
+		lines = append(lines, "stale lock; the next ingest or compact takes it, nothing to do")
 	}
 	return lines
 }

@@ -789,8 +789,9 @@ func (s sourceRow) stableID() string {
 			return "exchanges/" + escape(s.sessionID) + "/unkeyed/" + s.identity()
 		}
 	case "thinking_blocks":
-		if s.sessionID != "" && s.hasOrdinal {
-			return fmt.Sprintf("thinking_blocks/%s/%d/%s", escape(s.sessionID), s.ordinal, s.identity())
+		if s.sessionID != "" && s.hasOrdinal && s.position != "" {
+			return fmt.Sprintf("thinking_blocks/%s/%d/%s/%s", escape(s.sessionID), s.ordinal,
+				escape(s.position), s.identity())
 		}
 		if s.sessionID != "" {
 			return "thinking_blocks/" + escape(s.sessionID) + "/unkeyed/" + s.identity()

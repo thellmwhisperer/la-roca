@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/bundledplugin"
-	"github.com/thellmwhisperer/la-roca/pkg/opsvector"
 )
 
 const jsSafeInteger = 1<<53 - 1
@@ -53,13 +52,7 @@ func compactMemoryIDs(path string) error {
 	if err := createMemoryFTSTriggers(tx); err != nil {
 		return err
 	}
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-	if _, err := opsvector.RemapLegacyIDs(path); err != nil {
-		return fmt.Errorf("remap ops vector sidecar after memory id compact: %w", err)
-	}
-	return nil
+	return tx.Commit()
 }
 
 func clearLegacySequence(ctx context.Context, tx *sql.Tx) error {

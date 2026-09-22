@@ -256,6 +256,14 @@ func ingestCommand(env *environment) *cobra.Command {
 					model = vector.ConfiguredModel(vectorPath)
 				}
 			}
+			sidecars := []string{vectorPath}
+			if federated {
+				sidecars = federation.SidecarPaths()
+			}
+			if err := vector.ClearUnheldIndexLocks(sidecars); err != nil {
+				return err
+			}
+			defer func() { err = errors.Join(err, vector.ClearUnheldIndexLocks(sidecars)) }()
 			if err := env.calmGate().Wait(command.Context()); err != nil {
 				return err
 			}

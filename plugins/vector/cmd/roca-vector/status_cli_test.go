@@ -135,7 +135,7 @@ func TestStatusHelpSuggestsInstallOnlyWhenChunksAreMissing(t *testing.T) {
 	zero := int64(0)
 	report := vector.Vectorization{
 		Databases: []vector.DatabaseVectorization{
-			{Plugin: "roca-ops", Database: "ops", State: vector.StateComplete, EmbeddedChunks: &chunks, IndexLock: vector.IndexLockUnheld},
+			{Plugin: "roca-ops", Database: "ops", State: vector.StateComplete, EmbeddedChunks: &chunks, IndexLock: vector.IndexLockStale},
 			{Plugin: "roca-corpus", Database: "corpus", State: vector.StateEmpty, EmbeddedChunks: &zero},
 		},
 	}
@@ -144,34 +144,19 @@ func TestStatusHelpSuggestsInstallOnlyWhenChunksAreMissing(t *testing.T) {
 	if !strings.Contains(joined, "roca vector install") {
 		t.Fatalf("zero chunks did not suggest install: %v", help)
 	}
-	if strings.Contains(joined, "stale") {
-		t.Fatalf("unheld lock still narrated as stale: %v", help)
+	if !strings.Contains(joined, "stale lock; the next ingest or compact takes it, nothing to do") {
+		t.Fatalf("stale lock hint missing: %v", help)
 	}
 
 	completeOnly := vector.Vectorization{
 		Databases: []vector.DatabaseVectorization{
-			{Plugin: "roca-ops", Database: "ops", State: vector.StateComplete, EmbeddedChunks: &chunks, IndexLock: vector.IndexLockUnheld},
+			{Plugin: "roca-ops", Database: "ops", State: vector.StateComplete, EmbeddedChunks: &chunks, IndexLock: vector.IndexLockStale},
 		},
 	}
 	help = statusHelp(completeOnly)
 	joined = strings.Join(help, "\n")
 	if strings.Contains(joined, "roca vector install") {
 		t.Fatalf("embedded sidecar still suggested install: %v", help)
-	}
-
-	locked := vector.Vectorization{
-		Databases: []vector.DatabaseVectorization{
-			{Plugin: "roca-ops", Database: "ops", State: vector.StateComplete, EmbeddedChunks: &chunks, IndexLock: vector.IndexLockHeld},
-			{Plugin: "roca-notes", Database: "notes", State: vector.StateUnknown, IndexLock: vector.IndexLockError},
-		},
-	}
-	help = statusHelp(locked)
-	joined = strings.Join(help, "\n")
-	if !strings.Contains(joined, "index.lock is held on roca-ops/ops") {
-		t.Fatalf("held lock hint missing: %v", help)
-	}
-	if !strings.Contains(joined, "could not inspect index.lock on roca-notes/notes") {
-		t.Fatalf("inspection error hint missing: %v", help)
 	}
 }
 

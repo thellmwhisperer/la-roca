@@ -165,7 +165,7 @@ func TestLegacyStoreIngest(t *testing.T) {
 	if !ok {
 		t.Fatalf("source %q missing: %v", legacyStoreSource, SortedSources(first.Sources))
 	}
-	if counts.Sessions != 4 || counts.Exchanges != 2 || counts.ThinkingBlocks != 4 ||
+	if counts.Sessions != 4 || counts.Exchanges != 2 || counts.ThinkingBlocks != 5 ||
 		counts.ToolUses != 2 || counts.MemoriesInserted != 5 {
 		t.Fatalf("first source counts = %+v", counts)
 	}
@@ -212,7 +212,7 @@ func TestLegacyStoreIngest(t *testing.T) {
 		legacyFixtureSession).Scan(&unmatched, &distinctPositions, &assignedExchanges); err != nil {
 		t.Fatal(err)
 	}
-	if unmatched != 1 || assignedExchanges != 0 {
+	if unmatched != 2 || distinctPositions != 2 || assignedExchanges != 0 {
 		t.Errorf("landed unmatched thinking = rows %d positions %d assigned exchanges %d",
 			unmatched, distinctPositions, assignedExchanges)
 	}

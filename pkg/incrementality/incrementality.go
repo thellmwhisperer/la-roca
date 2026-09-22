@@ -139,22 +139,6 @@ func machineAwareFingerprint(fingerprint, machine string) string {
 	return fingerprint + ":machine:" + machine
 }
 
-func stripMachineTag(fingerprint, machine string) string {
-	if machine == "" {
-		return fingerprint
-	}
-	return strings.Replace(fingerprint, ":machine:"+machine, "", 1)
-}
-
-// IsMachinePromotion reports that fingerprint is the machine-tagged form of
-// recorded: same content digest, only the machine tag was added.
-func IsMachinePromotion(recorded, fingerprint, machine string) bool {
-	if machine == "" || recorded == "" || recorded == fingerprint {
-		return false
-	}
-	return recorded == stripMachineTag(fingerprint, machine)
-}
-
 func parserAwareFingerprint(fingerprint, version string) string {
 	if version == "" {
 		return fingerprint
@@ -211,10 +195,7 @@ func UnchangedMetadata(state map[string]FileState, path, metadata string, machin
 	if len(machine) == 0 || machine[0] == "" {
 		return true
 	}
-	if strings.Contains(known.Fingerprint, ":machine:"+machine[0]) {
-		return true
-	}
-	return !strings.Contains(known.Fingerprint, ":machine:")
+	return strings.Contains(known.Fingerprint, ":machine:"+machine[0])
 }
 
 // RecordState upserts one target's state in the caller's transaction. Keeping

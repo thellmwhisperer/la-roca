@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
@@ -999,111 +998,6 @@ func assertLineageHasNoContent(t *testing.T, db *store.DB) {
 			t.Fatalf("lineage still stores content column %s", column)
 		}
 	}
-}
-
-func TestFailedMachineLessIngestRetriesBeforePromotion(t *testing.T) {
-	original := parseKind
-	parses := 0
-	fail := true
-	parseKind = func(kind parsers.Kind, content []byte, meta parsers.FileMeta) (parsers.Records, error) {
-		parses++
-		if fail {
-			return parsers.Records{}, fmt.Errorf("fixture parse failure")
-		}
-		return original(kind, content, meta)
-	}
-	t.Cleanup(func() { parseKind = original })
-
-	roots, path := machineCursorFixture(t)
-	db, first := runIngest(t, roots)
-	if first.Errors == 0 || parses == 0 {
-		t.Fatalf("first ingest did not fail: parses=%d result=%+v", parses, first)
-	}
-	if _, err := db.SQL().Exec(`UPDATE ingest_file_state
-		SET fingerprint = replace(fingerprint, ?, ''), metadata = json_remove(metadata, '$.machine')
-		WHERE path = ?`, ":machine:"+roots.Machine, path); err != nil {
-		t.Fatal(err)
-	}
-	var lastError string
-	if err := db.SQL().QueryRow(`SELECT last_error FROM ingest_file_state WHERE path = ?`, path).Scan(&lastError); err != nil {
-		t.Fatal(err)
-	}
-	if lastError == "" || countRows(t, db.SQL(), "exchanges") != 0 {
-		t.Fatal("fixture must retain a failed fingerprint without exchanges")
-	}
-	fail, parses = false, 0
-	second := runIngestOn(t, db, roots)
-	if second.Errors != 0 || parses == 0 || countRows(t, db.SQL(), "exchanges") == 0 {
-		t.Fatalf("failed ingest was not retried: parses=%d result=%+v", parses, second)
-	}
-	parses = 0
-	third := runIngestOn(t, db, roots)
-	if third.Errors != 0 || parses != 0 || third.FilesRead != 0 {
-		t.Fatalf("successful retry was not retained: parses=%d result=%+v", parses, third)
-	}
-}
-
-func TestMachineLessCursorPromotedWithoutReparsing(t *testing.T) {
-	var parses int
-	original := parseKind
-	parseKind = func(kind parsers.Kind, content []byte, meta parsers.FileMeta) (parsers.Records, error) {
-		parses++
-		return original(kind, content, meta)
-	}
-	t.Cleanup(func() { parseKind = original })
-
-	roots, path := machineCursorFixture(t)
-
-	db, first := runIngest(t, roots)
-	if first.Errors != 0 || parses == 0 {
-		t.Fatalf("first ingest parses=%d errors=%d: %+v", parses, first.Errors, first.ErrorDetails)
-	}
-
-	if _, err := db.SQL().Exec(`UPDATE ingest_file_state
-		SET fingerprint = replace(fingerprint, ?, ''),
-		    metadata = json_remove(metadata, '$.machine')
-		WHERE path = ?`, ":machine:"+roots.Machine, path); err != nil {
-		t.Fatal(err)
-	}
-
-	parses = 0
-	second := runIngestOn(t, db, roots)
-	if second.Errors != 0 {
-		t.Fatalf("promotion ingest errors=%d: %+v", second.Errors, second.ErrorDetails)
-	}
-	if parses != 0 {
-		t.Fatalf("parser called %d times on machine-less cursor promotion", parses)
-	}
-	if second.FilesRead != 0 {
-		t.Fatalf("files read = %d, want 0", second.FilesRead)
-	}
-
-	var fingerprint, metadata string
-	if err := db.SQL().QueryRow(`SELECT fingerprint, metadata FROM ingest_file_state WHERE path = ?`,
-		path).Scan(&fingerprint, &metadata); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(fingerprint, ":machine:"+roots.Machine) {
-		t.Fatalf("fingerprint not promoted: %q", fingerprint)
-	}
-	var cursor harvestCursorState
-	if err := json.Unmarshal([]byte(metadata), &cursor); err != nil {
-		t.Fatal(err)
-	}
-	if cursor.Machine != roots.Machine {
-		t.Fatalf("cursor machine = %q, want %q", cursor.Machine, roots.Machine)
-	}
-}
-
-func machineCursorFixture(t *testing.T) (Roots, string) {
-	t.Helper()
-	home := t.TempDir()
-	workspace := filepath.Join(home, "w")
-	cwd := filepath.Join(workspace, "demo")
-	roots := ResolveRoots(Environment{GOOS: "darwin", Home: home, Hostname: "hub"},
-		Settings{WorkspaceRoots: []string{workspace}})
-	writeClaudeSession(t, roots, cwd, cwdFixtureSessionID)
-	return roots, filepath.Join(roots.ClaudeProjects, encodeRoot(cwd), cwdFixtureSessionID+".jsonl")
 }
 
 // resolveWorkspaceRoots derives roots from a home and workspace the same way

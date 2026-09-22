@@ -69,7 +69,6 @@ run_roca() {
   home="$1"
   shift
   env -i HOME="$home" PATH=/usr/bin:/bin ROCA_MODELS_ORDER=none \
-    ROCA_ALLOW_HOME_MIGRATE=1 \
     "$binary" --db-path "$home/.roca/roca.db" --json "$@"
 }
 

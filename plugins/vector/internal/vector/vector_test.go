@@ -123,14 +123,8 @@ func TestStableSourceIDsUseCoreNaturalKeys(t *testing.T) {
 	}
 	thinking := sourceRow{kind: "thinking_blocks", sessionID: "session/a", ordinal: 7,
 		hasOrdinal: true, position: "1.5", text: "first reasoning"}
-	if got, want := thinking.stableID(), "thinking_blocks/session%2Fa/7/"+thinking.identity(); got != want {
+	if got, want := thinking.stableID(), "thinking_blocks/session%2Fa/7/1.5/"+thinking.identity(); got != want {
 		t.Fatalf("thinking stable id = %q, want %q", got, want)
-	}
-	thinkingMoved := thinking
-	thinkingMoved.position = "0.5"
-	if thinking.stableID() != thinkingMoved.stableID() {
-		t.Fatalf("same thinking text changed identity when position moved: %q vs %q",
-			thinking.stableID(), thinkingMoved.stableID())
 	}
 	thinkingSibling := thinking
 	thinkingSibling.text = "second reasoning"

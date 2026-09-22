@@ -169,18 +169,6 @@ func installBundledPluginsCommand(env *cliEnv) *cobra.Command {
 				payload := slices.Clone(env.bundledVectorPayload)
 				vectorSpec.Payload = func() ([]byte, error) { return payload, nil }
 			}
-			previous, wasSet := os.LookupEnv(bundledplugin.EnvAllowHomeMigrate)
-			if err := os.Setenv(bundledplugin.EnvAllowHomeMigrate, "1"); err != nil {
-				return err
-			}
-			defer func() {
-				if wasSet {
-					_ = os.Setenv(bundledplugin.EnvAllowHomeMigrate, previous)
-				} else {
-					_ = os.Unsetenv(bundledplugin.EnvAllowHomeMigrate)
-				}
-			}()
-
 			installed, err := bundledplugin.EnsureAll(root, binDir, env.build.Version,
 				rocaops.BundleSpec(), rocacorpus.BundleSpec(), rocacron.BundleSpec(), vectorSpec)
 			if err != nil {

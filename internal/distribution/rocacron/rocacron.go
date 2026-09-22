@@ -112,9 +112,6 @@ func Open(options Options) (*Service, error) {
 			return nil, err
 		}
 	} else {
-		if err := bundledplugin.CheckSchemaAdvance(options.Database, Name, SchemaVersion); err != nil {
-			return nil, err
-		}
 		if err := os.MkdirAll(filepath.Dir(options.Database), 0o700); err != nil {
 			return nil, fmt.Errorf("create the journey database directory: %w", err)
 		}

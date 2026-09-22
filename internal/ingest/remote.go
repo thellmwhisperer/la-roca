@@ -28,10 +28,6 @@ func owningRoots(opts Options, target Target) Roots {
 }
 
 func labelRecords(target Target, records *parsers.Records) {
-	if target.Remote {
-		records.Memories = nil
-		records.ObservedMemoryFiles = nil
-	}
 	if target.Machine == "" {
 		return
 	}

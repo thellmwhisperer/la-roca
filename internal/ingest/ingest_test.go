@@ -362,53 +362,6 @@ func TestAGrowingSourceExchangeReplacesItsIdentityInsteadOfAppending(t *testing.
 	}
 }
 
-func TestAGrowingSessionDoesNotCopyAThinkingBlockWhenPositionWouldMove(t *testing.T) {
-	world, db, ctx, options := seededWorld(t)
-	const sessionID = "33333333-4444-5555-6666-777777777777"
-	const thought = "keep this thought"
-	transcript := filepath.Join(world.roots().ClaudeProjects, world.projectDir(), sessionID+".jsonl")
-	write := func(turns int) {
-		body := `{"type":"user","message":{"content":"first"}}
-{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"` + thought + `"},{"type":"text","text":"first answer"}]}}
-`
-		if turns > 1 {
-			body += `{"type":"user","message":{"content":"second"}}
-{"type":"assistant","message":{"content":[{"type":"text","text":"second answer"}]}}
-`
-		}
-		world.write(t, transcript, body)
-		touchFuture(t, transcript)
-	}
-	write(1)
-	if _, err := Run(ctx, db, registry(t), options); err != nil {
-		t.Fatal(err)
-	}
-	write(2)
-	second, err := Run(ctx, db, registry(t), options)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if second.Errors != 0 {
-		t.Fatalf("second ingest errors=%+v", second.ErrorDetails)
-	}
-	var n int
-	if err := db.SQL().QueryRow(`SELECT COUNT(*) FROM thinking_blocks
-		WHERE session_id=? AND exchange_number=1 AND full_text=?`, sessionID, thought).Scan(&n); err != nil {
-		t.Fatal(err)
-	}
-	if n != 1 {
-		t.Fatalf("thinking copies = %d, want 1 after the session grew", n)
-	}
-	var position float64
-	if err := db.SQL().QueryRow(`SELECT position_in_session FROM thinking_blocks
-		WHERE session_id=? AND exchange_number=1 AND full_text=?`, sessionID, thought).Scan(&position); err != nil {
-		t.Fatal(err)
-	}
-	if position != 0.5 {
-		t.Fatalf("thinking position = %v, want 0.5 after the session grew", position)
-	}
-}
-
 // The duplication shield covers three routes: the same session reached by a re-run, by a
 // re-scan of rewritten content, and by a copy under a second path, leaves not one
 // duplicate row and not one rewrite.

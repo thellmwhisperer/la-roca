@@ -178,18 +178,33 @@ separate from an operator-owned USER zone, and `roca update` tracks their
 release in `~/.roca/artifacts.json`. Automatic refresh is available behind the
 default-off `features.artifact_refresh` key.
 
-All managed-file edits use the shared securefile publication boundary. On
-Darwin and Linux it holds a directory lock, fsyncs the staged bytes, and
-publishes with same-filesystem rename; Windows coordinates processes on the
-same host with a named mutex keyed by directory identity and uses `MoveFileEx`
-with replace and write-through flags. The mutex leaves no lock file and is
-released when its owner exits. A conditional edit refuses when its expected inode or
-bytes changed, and a create-only edit refuses on any collision, including an
-identical-byte collision. Platforms without one of these atomic primitives
-refuse the edit rather than falling back to a check-then-rename. The public
-path is never moved aside for validation, and callers that need cleanup use the
-publication identity returned by the boundary instead of sampling the path
-again.
+The shared securefile boundary refuses replacement of an existing file with
+`ErrConditionalReplaceUnsupported` after checking its expected bytes and
+identity. This applies on Darwin, Linux, Windows, and other platforms: none
+of the implemented primitives compares an existing target's bytes atomically
+with publication. Closing an editor or retrying does not enable that operation.
+Callers receive the refusal and must not retry with unconditional `Write`.
+ZCode integration is a separate change.
+
+When `Replace` receives a nil preimage, it expects an absent path and uses the
+same atomic create-only boundary as `CreatePreservingParentMode`. Darwin uses
+`RENAME_EXCL`, Linux uses `RENAME_NOREPLACE`, and Windows uses `MoveFile` without
+replacement. Unsupported platforms or filesystems refuse creation. Any target
+that appears before publication is preserved, including byte-identical files.
+Explicit unconditional `Write` remains available for callers that own that
+policy; it does not provide conditional replacement guarantees.
+
+Staged bytes are synced before creation, and the parent directory is synced
+on Unix after publication. The operator path is never moved aside, exchanged,
+or used for temporary recovery. A process killed before creation can leave
+only an unpublished candidate; an operator's bytes stay at the public path.
+Restart does not recover or publish that candidate. A process killed after
+creation leaves the complete published file. These are process-crash guarantees,
+not claims about every filesystem's behavior after power loss.
+
+The primitive contracts are documented in the [Linux rename manual](https://man7.org/linux/man-pages/man2/rename.2.html)
+and the [Windows MoveFile reference](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-movefilew).
+An exchange operation cannot supply a byte comparison before visibility.
 
 The `pill` layer is built for what comes next: condensed artifacts distilled
 from your own history and injected through hooks, charging an agent with
@@ -206,17 +221,7 @@ roca update
 
 Update resolves the selected release, verifies its checksum, runs the staged
 binary's version check, and swaps it into place by rename. The swapped binary
-then refreshes every shipped plugin payload exactly as installation does.
-A binary whose bundled plugin schema is newer than the version recorded for
-that plugin in the database's `plugin_schema` refuses that migration unless
-`ROCA_ALLOW_HOME_MIGRATE=1`. This compares schema versions, even when the build
-version is unchanged; it does not track which executable installed the home.
-`roca compact` applies the same guard before changing the corpus database.
-Fresh databases and databases without a recorded plugin identity still allow
-initial adoption. The explicit
-`_install-bundled-plugins` command authorizes schema upgrades for both the
-installer and `roca update`, including updates from older releases. Validate
-branch and test builds only against fixtures or isolated homes. Data
+then refreshes every shipped plugin payload exactly as installation does. Data
 plugins keep the databases and adjacent vector sidecars they already own;
 `roca-vector` is replaced from the same core release while its manifest-owned
 worker `state/` directory is preserved byte for byte. An unowned or externally

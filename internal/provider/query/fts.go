@@ -7,6 +7,16 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/store/search"
 )
 
+// Plan is a search the rescue runs: which term, against which layer, with what
+// cap. It carries no classification and no agent or project — those were the
+// compiler's, and v1 has none.
+type Plan struct {
+	Template string `json:"template"`
+	Term     string `json:"term,omitempty"`
+	Layer    string `json:"layer,omitempty"`
+	Limit    int    `json:"limit,omitempty"`
+}
+
 // TemplateSearchByTerm is the rescue's only plan: the cross-source FTS5 search.
 const TemplateSearchByTerm = "search_all_sources_by_term"
 
@@ -250,6 +260,13 @@ func RenderSQLAttachedCorpusLike(plan Plan, coordinationLayers []string,
 	}
 	return strings.Join(parts, " UNION ALL ") +
 		fmt.Sprintf(" ORDER BY created_at DESC LIMIT %d", limit), nil
+}
+
+// RenderSearchUnion declares the two halves of a merged keyword answer as one
+// runnable statement. Each half is projected down to the presented columns,
+// because the ranked route carries ordering columns the literal route has not.
+func RenderSearchUnion(core, attached string, limit int) (string, error) {
+	return RenderSearchUnionParts([]string{core, attached}, limit)
 }
 
 // RenderSearchUnionParts declares every database half of a merged keyword

@@ -19,7 +19,7 @@ func Ensure(root, binDir, version string) (plugininstall.Result, error) {
 func BundleSpec() bundledplugin.Spec {
 	return bundledplugin.Spec{
 		Name: Name, DatabaseFilename: DatabaseFilename, Source: BundledSource,
-		Semantic: semantic, ApplySchema: ApplySchema, SchemaVersion: SchemaVersion,
+		Semantic: semantic, ApplySchema: ApplySchema,
 	}
 }
 

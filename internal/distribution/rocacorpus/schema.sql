@@ -93,15 +93,6 @@ CREATE INDEX IF NOT EXISTS idx_memories_provenance ON memories(provenance);
 CREATE INDEX IF NOT EXISTS idx_exchanges_session ON exchanges(session_id);
 CREATE INDEX IF NOT EXISTS idx_tool_uses_session ON tool_uses(session_id);
 CREATE INDEX IF NOT EXISTS idx_thinking_session ON thinking_blocks(session_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_thinking_blocks_identity
-  ON thinking_blocks(
-    session_id,
-    IFNULL(exchange_number, -1),
-    roca_payload_hash(
-      typeof(full_text),
-      CASE WHEN typeof(full_text) = 'text' THEN CAST(full_text AS BLOB) ELSE full_text END
-    )
-  );
 CREATE INDEX IF NOT EXISTS idx_exchanges_identity
   ON exchanges(session_id, exchange_number);
 CREATE INDEX IF NOT EXISTS idx_ingest_state_project ON ingest_file_state(project);
@@ -155,7 +146,7 @@ CREATE TRIGGER IF NOT EXISTS exchanges_ad AFTER DELETE ON exchanges BEGIN
   INSERT INTO exchanges_fts(exchanges_fts, rowid, human_text, agent_text)
     VALUES ('delete', old.id, old.human_text, old.agent_text);
 END;
-CREATE TRIGGER IF NOT EXISTS exchanges_au AFTER UPDATE OF human_text, agent_text ON exchanges BEGIN
+CREATE TRIGGER IF NOT EXISTS exchanges_au AFTER UPDATE ON exchanges BEGIN
   INSERT INTO exchanges_fts(exchanges_fts, rowid, human_text, agent_text)
     VALUES ('delete', old.id, old.human_text, old.agent_text);
   INSERT INTO exchanges_fts(rowid, human_text, agent_text)
@@ -168,7 +159,7 @@ END;
 CREATE TRIGGER IF NOT EXISTS thinking_ad AFTER DELETE ON thinking_blocks BEGIN
   INSERT INTO thinking_fts(thinking_fts, rowid, full_text) VALUES ('delete', old.id, old.full_text);
 END;
-CREATE TRIGGER IF NOT EXISTS thinking_au AFTER UPDATE OF full_text ON thinking_blocks BEGIN
+CREATE TRIGGER IF NOT EXISTS thinking_au AFTER UPDATE ON thinking_blocks BEGIN
   INSERT INTO thinking_fts(thinking_fts, rowid, full_text) VALUES ('delete', old.id, old.full_text);
   INSERT INTO thinking_fts(rowid, full_text) VALUES (new.id, new.full_text);
 END;
@@ -180,7 +171,7 @@ CREATE TRIGGER IF NOT EXISTS sessions_ad AFTER DELETE ON sessions BEGIN
   INSERT INTO sessions_fts(sessions_fts, rowid, title, project)
     VALUES ('delete', old.rowid, old.title, old.project);
 END;
-CREATE TRIGGER IF NOT EXISTS sessions_au AFTER UPDATE OF title, project ON sessions BEGIN
+CREATE TRIGGER IF NOT EXISTS sessions_au AFTER UPDATE ON sessions BEGIN
   INSERT INTO sessions_fts(sessions_fts, rowid, title, project)
     VALUES ('delete', old.rowid, old.title, old.project);
   INSERT INTO sessions_fts(rowid, title, project) VALUES (new.rowid, new.title, new.project);

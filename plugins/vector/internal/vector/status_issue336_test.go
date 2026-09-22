@@ -36,50 +36,35 @@ func TestReportVectorizationTreatsSealedSidecarWithoutMarkerAsUnknown(t *testing
 	}
 }
 
-func TestReportVectorizationReportsUnheldHeldAndInspectionError(t *testing.T) {
+func TestReportVectorizationReportsStaleAndLiveIndexLock(t *testing.T) {
 	root := t.TempDir()
-	unheldDB := vectorDatabase{
+	staleDB := vectorDatabase{
 		Plugin: "roca-ops", Database: "ops", Path: "roca-ops.db", Alias: "ops",
 		Tables: []vectorTable{{Name: "memories", IDColumn: "id", TextColumns: []string{"content"}}},
 	}
-	heldDB := vectorDatabase{
+	liveDB := vectorDatabase{
 		Plugin: "roca-corpus", Database: "corpus", Path: "roca-corpus.db", Alias: "corpus",
 		Tables: []vectorTable{{Name: "notes", IDColumn: "id", TextColumns: []string{"body"}}},
 	}
-	brokenDB := vectorDatabase{
-		Plugin: "roca-notes", Database: "notes", Path: "notes.db", Alias: "notes",
-		Tables: []vectorTable{{Name: "task_state_versions", IDColumn: "id", TextColumns: []string{"body"}}},
-	}
-	writeRegistry(t, root, vectorRegistry{Schema: 2, Databases: []vectorDatabase{unheldDB, heldDB, brokenDB}})
-	unheldPath := filepath.Join(root, unheldDB.Plugin, unheldDB.Path)
-	heldPath := filepath.Join(root, heldDB.Plugin, heldDB.Path)
-	brokenPath := filepath.Join(root, brokenDB.Plugin, brokenDB.Path)
-	writeSourceRows(t, unheldPath, `CREATE TABLE memories(id TEXT PRIMARY KEY, content TEXT);
+	writeRegistry(t, root, vectorRegistry{Schema: 2, Databases: []vectorDatabase{staleDB, liveDB}})
+	stalePath := filepath.Join(root, staleDB.Plugin, staleDB.Path)
+	livePath := filepath.Join(root, liveDB.Plugin, liveDB.Path)
+	writeSourceRows(t, stalePath, `CREATE TABLE memories(id TEXT PRIMARY KEY, content TEXT);
 		INSERT INTO memories VALUES ('a','alpha');`)
-	writeSourceRows(t, heldPath, `CREATE TABLE notes(id TEXT PRIMARY KEY, body TEXT);
+	writeSourceRows(t, livePath, `CREATE TABLE notes(id TEXT PRIMARY KEY, body TEXT);
 		INSERT INTO notes VALUES ('a','alpha');`)
-	writeSourceRows(t, brokenPath, `CREATE TABLE task_state_versions(id TEXT PRIMARY KEY, body TEXT);
-		INSERT INTO task_state_versions VALUES ('a','alpha');`)
-	unheldSidecar := SidecarPath(unheldPath)
-	heldSidecar := SidecarPath(heldPath)
-	brokenSidecar := SidecarPath(brokenPath)
-	writeSidecarWithChunks(t, unheldSidecar, unheldDB.owner(), 1, nil)
-	writeSidecarWithChunks(t, heldSidecar, heldDB.owner(), 1, nil)
-	writeSidecarWithChunks(t, brokenSidecar, brokenDB.owner(), 1, nil)
-	unheldLock := unheldSidecar + ".index.lock"
-	if err := os.WriteFile(unheldLock, nil, 0o600); err != nil {
+	staleSidecar := SidecarPath(stalePath)
+	liveSidecar := SidecarPath(livePath)
+	writeSidecarWithChunks(t, staleSidecar, staleDB.owner(), 1, nil)
+	writeSidecarWithChunks(t, liveSidecar, liveDB.owner(), 1, nil)
+	if err := os.WriteFile(staleSidecar+".index.lock", nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	release, err := lockFile(heldSidecar + ".index.lock")
+	release, err := lockFile(liveSidecar + ".index.lock")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer release()
-	brokenDir := filepath.Join(root, brokenDB.Plugin)
-	t.Cleanup(func() { _ = os.Chmod(brokenDir, 0o700) })
-	if err := os.Chmod(brokenDir, 0); err != nil {
-		t.Fatal(err)
-	}
 
 	report, err := ReportVectorization(context.Background(), StatusRequest{PluginRoot: root})
 	if err != nil {
@@ -89,20 +74,11 @@ func TestReportVectorizationReportsUnheldHeldAndInspectionError(t *testing.T) {
 	for _, row := range report.Databases {
 		got[row.Plugin] = row
 	}
-	if got["roca-ops"].IndexLock != IndexLockUnheld {
-		t.Fatalf("free lock = %q, want unheld", got["roca-ops"].IndexLock)
+	if got["roca-ops"].IndexLock != IndexLockStale {
+		t.Fatalf("stale lock = %q, want stale", got["roca-ops"].IndexLock)
 	}
-	if _, err := os.Stat(unheldLock); err != nil {
-		t.Fatalf("free lock was removed: %v", err)
-	}
-	if got["roca-corpus"].IndexLock != IndexLockHeld {
-		t.Fatalf("held lock = %q, want held", got["roca-corpus"].IndexLock)
-	}
-	if got["roca-notes"].IndexLock != IndexLockError {
-		t.Fatalf("unreadable sidecar dir = %q, want error", got["roca-notes"].IndexLock)
-	}
-	if got["roca-notes"].IndexLock == "stale" || got["roca-ops"].IndexLock == "stale" {
-		t.Fatal("status still reports stale")
+	if got["roca-corpus"].IndexLock != IndexLockLive {
+		t.Fatalf("live lock = %q, want live", got["roca-corpus"].IndexLock)
 	}
 }
 

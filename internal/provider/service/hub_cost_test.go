@@ -9,6 +9,7 @@ import (
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
+	"github.com/thellmwhisperer/la-roca/internal/provider/query"
 )
 
 // TestCostHubFTS observes the actual connection, including FTS shadow tables.
@@ -74,11 +75,20 @@ func TestCostHubFTS(t *testing.T) {
 			}
 		})
 	}
+	_, rows, _, provenance, _, err := svc.SearchByTerm(t.Context(), query.Plan{Term: "quartz", Layer: "project", Limit: 10}, "", DefaultMaxChars, false, PluginRoute{IncludeCore: true})
+	if err != nil || len(rows) != 1 || fmt.Sprint(rows[0]["id"]) != "101" || provenance.Method != "fts" {
+		t.Fatalf("legacy identity: rows=%v provenance=%+v err=%v", rows, provenance, err)
+	}
+	_, allRows, _, _, _, err := svc.SearchByTerm(t.Context(), query.Plan{Term: "quartz", Limit: 1000}, "", DefaultMaxChars, false, PluginRoute{IncludeCore: true})
+	if err != nil || len(allRows) == 0 {
+		t.Fatalf("legacy corpus search: rows=%d err=%v", len(allRows), err)
+	}
+
 	var tables int
 	if err := svc.hub.QueryRow(`SELECT COUNT(*) FROM sqlite_temp_master WHERE type = 'table' AND name LIKE '%_fts%'`).Scan(&tables); err != nil {
 		t.Fatal(err)
 	}
 	if tables != 0 {
-		t.Fatalf("qualified MATCH created %d temporary FTS tables", tables)
+		t.Fatalf("legacy search created %d temporary FTS tables", tables)
 	}
 }

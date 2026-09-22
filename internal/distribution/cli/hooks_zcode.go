@@ -73,7 +73,7 @@ func installZcodeSessionHook(configPath, executable string, req sessionRequest) 
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
 	wrapperContent := zcodeWrapper(executable, req)
-	wrapperBackup, wrapperIdentity, err := writeZcodeWrapper(wrapperPath, wrapperContent)
+	wrapperBackup, err := writeZcodeWrapper(wrapperPath, wrapperContent)
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
@@ -112,7 +112,7 @@ func installZcodeSessionHook(configPath, executable string, req sessionRequest) 
 	}, true)
 	if err != nil {
 		return outcome, "", errors.Join(err,
-			rollbackZcodeWrapper(wrapperPath, wrapperContent, wrapperBefore, wrapperBackup, wrapperIdentity))
+			rollbackZcodeWrapper(wrapperPath, wrapperContent, wrapperBefore, wrapperBackup))
 	}
 	if outcome.Changed {
 		if err := agentcfg.SaveOwnedHooks(configPath, created); err != nil {
@@ -348,38 +348,30 @@ func readZcodeWrapperState(path string) (zcodeWrapperState, error) {
 	return zcodeWrapperState{body: body, mode: info.Mode().Perm(), exists: true}, nil
 }
 
-func writeZcodeWrapper(path, content string) (string, securefile.FileIdentity, error) {
+func writeZcodeWrapper(path, content string) (string, error) {
 	previous, err := os.ReadFile(path)
 	if err == nil && string(previous) == content {
-		return "", securefile.FileIdentity{}, os.Chmod(path, 0o700)
+		return "", os.Chmod(path, 0o700)
 	}
 	if err != nil && !os.IsNotExist(err) {
-		return "", securefile.FileIdentity{}, fmt.Errorf("read %s: %w", path, err)
+		return "", fmt.Errorf("read %s: %w", path, err)
 	}
 	var backup string
 	if err == nil {
 		backup, err = securefile.BackUp(path, previous)
 		if err != nil {
-			return "", securefile.FileIdentity{}, err
+			return "", err
 		}
-		publication, err := securefile.ReplaceWithResult(path, []byte(content), previous)
-		if err != nil {
-			return backup, publication.Identity, err
+		if err := securefile.Replace(path, []byte(content), previous); err != nil {
+			return backup, err
 		}
-		return backup, publication.Identity, os.Chmod(path, 0o700)
+	} else if err := securefile.Write(path, []byte(content), 0o700, 0o700); err != nil {
+		return "", err
 	}
-	publication, err := securefile.CreatePreservingParentModeWithResult(path, []byte(content), 0o700, 0o700)
-	if err != nil {
-		return "", publication.Identity, err
-	}
-	return "", publication.Identity, os.Chmod(path, 0o700)
+	return backup, os.Chmod(path, 0o700)
 }
 
-func rollbackZcodeWrapper(path, installed string, previous zcodeWrapperState, backup string,
-	installedIdentity securefile.FileIdentity) error {
-	if installedIdentity.Valid() && !installedIdentity.Matches(path) {
-		return fmt.Errorf("refuse to roll back %s because the published file changed after installation", path)
-	}
+func rollbackZcodeWrapper(path, installed string, previous zcodeWrapperState, backup string) error {
 	current, err := os.ReadFile(path)
 	if os.IsNotExist(err) && !previous.exists {
 		return nil
@@ -392,14 +384,8 @@ func rollbackZcodeWrapper(path, installed string, previous zcodeWrapperState, ba
 	}
 	if previous.exists {
 		if string(current) != string(previous.body) {
-			var rollbackErr error
-			if installedIdentity.Valid() {
-				_, rollbackErr = securefile.ReplaceWithIdentity(path, previous.body, current, installedIdentity)
-			} else {
-				rollbackErr = securefile.Replace(path, previous.body, current)
-			}
-			if rollbackErr != nil {
-				return fmt.Errorf("roll back %s: %w", path, rollbackErr)
+			if err := securefile.Replace(path, previous.body, current); err != nil {
+				return fmt.Errorf("roll back %s: %w", path, err)
 			}
 		}
 		if err := os.Chmod(path, previous.mode); err != nil {

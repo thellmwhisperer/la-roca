@@ -1,6 +1,6 @@
 schema: 1
 id: R1
-status: removed
+status: accepted
 category: adjacent_feature
 title: "D2 opening still counts memories"
 created_at: 2026-09-09
@@ -10,9 +10,8 @@ incident:
   justifying_sentence: "Accepted for a separate opening-cost correction as issue #385 requests. The migration rerun remains removed; this count does not justify restoring PrepareHub or MaterializeCurrent."
   source: "https://github.com/thellmwhisperer/la-roca/issues/385, residue R1"
   cost: "One COUNT statement per hub open; bytes and seconds on production are not measured."
-rule: "openHub probes the federation compatibility route without aggregating memories. SELECT ... LIMIT 0, or an equivalent schema check, is enough. A discarded count does not belong on the open path."
+rule: "Accepted for a separate opening-cost correction as issue #385 requests. The migration rerun remains removed; this count does not justify restoring PrepareHub or MaterializeCurrent."
 forbid:
   paths: []
   symbols: []
-  strings:
-    - 'internal/provider/service/**hub.go::COUNT(*)'
+  strings: []

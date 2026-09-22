@@ -353,14 +353,6 @@ func Health(res service.HealthReport) string {
 		})
 	}
 	appendLine(&b, RowOutput([]string{"status", "check", "count", "summary"}, rows))
-	for _, name := range names {
-		check := res.Checks[name]
-		if check.Status != service.HealthFail || check.Remedy == "" {
-			continue
-		}
-		appendLine(&b, name+": "+check.Status)
-		appendLine(&b, "      remedy: "+check.Remedy)
-	}
 	return b.String()
 }
 

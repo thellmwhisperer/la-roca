@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/thellmwhisperer/la-roca/internal/distribution/bundledplugin"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/corpusarchive"
 	"testing"
 
@@ -148,7 +147,6 @@ func openCutoverDatabase(t *testing.T, path string) *sql.DB {
 }
 
 func TestMigrateMaterializesCurrentRowsAfterStorageUpgrade(t *testing.T) {
-	t.Setenv(bundledplugin.EnvAllowHomeMigrate, "1")
 	options := newMigrationFixture(t)
 	if _, err := Migrate(t.Context(), options); err != nil {
 		t.Fatal(err)

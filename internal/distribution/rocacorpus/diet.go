@@ -37,12 +37,8 @@ type migrationSeal struct {
 }
 
 // Compact rewrites an existing corpus database to the one-row storage law and
-// VACUUMs. The preserved row-count baseline follows schema adoption, which may
-// collapse old thinking identities before the storage rewrite begins.
+// VACUUMs. Current harvest rows are counted before and after; they must match.
 func Compact(ctx context.Context, path string) (CompactReport, error) {
-	if err := bundledplugin.CheckSchemaAdvance(path, Name, SchemaVersion); err != nil {
-		return CompactReport{}, err
-	}
 	beforeBytes, err := databaseSize(path)
 	if err != nil {
 		return CompactReport{}, fmt.Errorf("measure corpus database: %w", err)
@@ -55,15 +51,10 @@ func Compact(ctx context.Context, path string) (CompactReport, error) {
 		db.Close()
 		return CompactReport{}, err
 	}
-	if err := preflightHashGuards(ctx, db); err != nil {
-		db.Close()
-		return CompactReport{}, err
-	}
-	if err := restoreCompactSchema(ctx, path); err != nil {
-		db.Close()
-		return CompactReport{}, err
-	}
 	before, err := countCurrentRows(ctx, db)
+	if err == nil {
+		err = preflightHashGuards(ctx, db)
+	}
 	if closeErr := db.Close(); err != nil {
 		return CompactReport{}, err
 	} else if closeErr != nil {
@@ -563,7 +554,6 @@ var storageLawPrefix = []string{
 	`DROP TABLE IF EXISTS thinking_block_versions_fts`,
 	`DROP INDEX IF EXISTS idx_exchanges_exact_payload`,
 	`DROP INDEX IF EXISTS idx_thinking_blocks_exact_payload`,
-	`DROP INDEX IF EXISTS idx_thinking_blocks_identity`,
 	`DROP INDEX IF EXISTS idx_sessions_exact_payload`,
 	`DROP INDEX IF EXISTS idx_memories_exact_payload`,
 	`DROP INDEX IF EXISTS custody_memberships_digest`,

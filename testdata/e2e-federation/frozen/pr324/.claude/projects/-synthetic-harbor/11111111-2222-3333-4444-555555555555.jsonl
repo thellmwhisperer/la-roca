@@ -1,4 +1,0 @@
-{"type":"user","timestamp":"2026-09-07T12:00:01Z","cwd":"/synthetic/harbor","message":{"content":"synthetic first turn"}}
-{"type":"assistant","timestamp":"2026-09-07T12:00:01Z","message":{"content":[{"type":"text","text":"synthetic first answer"}]}}
-{"type":"user","timestamp":"2026-09-07T12:00:02Z","cwd":"/synthetic/harbor","message":{"content":"harbor lantern on the dock"}}
-{"type":"assistant","timestamp":"2026-09-07T12:00:02Z","message":{"content":[{"type":"text","text":"the harbor lantern is recorded"}]}}

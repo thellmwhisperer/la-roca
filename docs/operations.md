@@ -191,19 +191,6 @@ command for each unknown runtime layer; migration remains available when the
 right repair is to move those memories into an existing layer instead. Both
 repair commands follow the same selected database and `roca-ops` routing as
 `roca store`; the command printed by doctor includes the matching `--db-path`.
-Every failing `roca health` check carries a remedy naming the database the
-verdict came from. Four of them print
-`roca doctor repair <check> --db-path <db>`, a scoped write over exactly the
-rows that check counted: it clears a dangling `supersedes` pointer, moves an
-alias-layer memory onto its physical layer, or deletes a test row. Deleting a
-memory also sets `supersedes` to NULL on the rows that pointed at it, because
-`memories.supersedes` references `memories.id`; nothing else is removed. Each
-repair prints every row it touched, follows the same routing as the layer
-commands above, is refused in read-only mode, and rejects an unknown check by
-listing the repairs that exist. `runtime_layers_not_in_registry` has no scoped
-repair: its remedy points at the per-layer `roca layers add` command doctor
-already prints, because registering the layer and migrating its memories are
-both right answers.
 
 CLI commands and MCP tool calls write one redacted audit record to JSONL under
 the selected data directory's `logs/`, whether they succeed or fail. CLI runs
@@ -322,7 +309,7 @@ only when the hybrid path is required.
 
 `roca doctor` scans the resolved `~/.roca` state tree before opening the
 service. A path owned by a user other than the current operator is an ownership
-failure, not evidence that an index lock is leftover. Local human output names the
+failure, not evidence that an index lock is stale. Local human output names the
 path and owner and prints the exact repair command. `roca doctor --json`
 exposes the same local details under `foreign_owned` as `path`, `owner`, and
 `chown`. If the service itself cannot open the state, human doctor still emits
@@ -480,16 +467,10 @@ table, the exact and ambiguous groups observed at rest, then the certified
 apply set after session IDs are canonicalized. This makes session-induced child
 duplicates visible instead of hiding them inside a changed aggregate. Row
 counts before and after and same-identity groups whose payloads differ travel
-beside those two views. Divergent groups are preserved except for the adopted
-thinking-block identity described below. The four governed tables are
+beside those two views. Divergent groups are evidence for a future key decision
+and are never deleted. The four governed tables are
 `memories`, `sessions`, `exchanges`, and `thinking_blocks`; session winners are
 resolved first so child payloads are compared using canonical session IDs.
-
-When the corpus has its unique thinking identity index, dedup uses the
-[thinking identity contract](ingest.md#per-exchange-provenance) after resolving
-session aliases. It keeps the highest-ID thinking row even when non-identity
-fields differ, and redirects existing thinking aliases to that survivor.
-Without that index, thinking rows still require an exact-payload match.
 
 An apply is deliberately not inferred from a dry run and is restricted to the
 two federated custody databases. First freeze writes,
@@ -559,8 +540,7 @@ batch receipts. An interrupted run can be invoked again; the
 frozen sources are reused or replaced. When all destination ledgers are
 verified, another run returns without opening frozen snapshots, hashing,
 checking integrity or materializing rows. Backups remain in place.
-Read-only mode refuses migration. Preparing bundled destinations also follows
-the [schema-upgrade authorization contract](lifecycle.md#update).
+Read-only mode refuses migration.
 
 While work remains, stage lines identify DATA-2 snapshot preparation, memory
 import, FTS rebuild and verification, followed by DATA-3 corpus and DATA-4
@@ -602,18 +582,3 @@ Explicit SQL follows the
 
 [Build and test](../CONTRIBUTING.md#build-and-test) owns the synthetic D2 cost
 regression and published-versus-branch evidence procedure.
-
-## Required checks on main
-
-`main` requires the CI job names from `.github/workflows/ci.yml`. The
-`pr-gate` check (`.github/workflows/pr-gate.yml`) joins them once it is green
-on `main` (owner decision 2026-09-20). pr-gate reads the `Risk Assessment`
-section in the PR body: High fails, labels `risk:high` and needs the owner's
-`risk:accepted` to pass. Editing the PR body or synchronizing a new head removes
-that acceptance before judging the current revision. Medium passes only with an
-Aceptación or Acceptance section in the PR body, containing a
-fenced block with a `$ roca` command followed by output; editing the body reruns
-the check. Low passes. A missing or unparseable risk section
-declares High. Degraded enforcement: the PR is not converted to draft; the
-failing check blocks the merge. Fork PRs receive the verdict without label or
-review-request writes.

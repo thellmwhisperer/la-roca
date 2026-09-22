@@ -10,9 +10,6 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/store"
 )
 
-// federationRouteProbe prepares the compatibility view without aggregating it.
-const federationRouteProbe = `SELECT 1 FROM memories LIMIT 0`
-
 func (s *Service) openHub(ctx context.Context) error {
 	ops := databaseForVerb(s.resident, StoreVerb, rocaOpsPluginName)
 	corpus := databaseForVerb(s.resident, IngestVerb, rocaCorpusPluginName)
@@ -35,11 +32,8 @@ func (s *Service) openHub(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	rows, err := hub.QueryContext(ctx, federationRouteProbe)
-	if err != nil {
-		return fmt.Errorf("smoke the federation compatibility route: %w", err)
-	}
-	if err := rows.Close(); err != nil {
+	var smoke int
+	if err := hub.QueryRowContext(ctx, "SELECT COUNT(*) FROM memories").Scan(&smoke); err != nil {
 		return fmt.Errorf("smoke the federation compatibility route: %w", err)
 	}
 	return nil

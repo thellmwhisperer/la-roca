@@ -34,25 +34,6 @@ func TestPublicPackageFingerprintsTargets(t *testing.T) {
 		!strings.HasSuffix(fingerprint, ":parser:example-v2") {
 		t.Fatalf("target fingerprint = %q", fingerprint)
 	}
-	tagged, err := incrementality.TargetFingerprint(incrementality.Target{
-		Path: path, Kind: "example", ParserVersion: "example-v2", Machine: "hub",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !incrementality.IsMachinePromotion(fingerprint, tagged, "hub") {
-		t.Fatalf("promotion not recognized: recorded=%q fingerprint=%q", fingerprint, tagged)
-	}
-	if incrementality.Unchanged(map[string]incrementality.FileState{
-		path: {Fingerprint: fingerprint},
-	}, path, tagged) {
-		t.Fatal("Unchanged treated a machine promotion as an exact match")
-	}
-	if !incrementality.UnchangedMetadata(map[string]incrementality.FileState{
-		path: {Fingerprint: fingerprint},
-	}, path, metadata, "hub") {
-		t.Fatal("machine-less metadata prefix was rejected after machine tagging")
-	}
 }
 
 func TestContentFingerprintFramesOrderedFields(t *testing.T) {
