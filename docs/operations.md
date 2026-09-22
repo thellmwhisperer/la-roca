@@ -186,11 +186,14 @@ expose physical storage.
 Register a deliberate custom layer with `roca layers add <name>`. To repair
 existing rows that used the wrong layer, run
 `roca layers migrate <from> <registered-to>`. `roca doctor` reports
-`runtime_layers_not_in_registry` drift and prints an exact `roca layers add`
-command for each unknown runtime layer. Migration remains available when the
-right repair is to move those memories into an existing layer instead. Both
-repair commands follow the same selected database and `roca-ops` routing as
-`roca store`; commands printed by doctor include the matching `--db-path`.
+`runtime_layers_not_in_registry` drift and prints a `roca layers add` command
+for each unknown runtime layer. Those per-layer commands use the normal
+trimmed-input path; for padded legacy spellings, or to register all unknown
+layers in one pass, use `roca doctor repair runtime_layers_not_in_registry`.
+Migration remains available when the right repair is to move those memories
+into an existing layer. Layer commands follow the same selected database and
+`roca-ops` routing as `roca store`; commands printed by doctor include the
+matching `--db-path`.
 Every failing `roca health` check carries a remedy naming the database the
 verdict came from. Five of them print
 `roca doctor repair <check> --db-path <db>`, a scoped write over exactly the
