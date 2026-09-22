@@ -2,6 +2,7 @@
 """Executable synthetic acceptance and bounded cost check for public-text."""
 
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -31,7 +32,10 @@ class PublicTextTest(unittest.TestCase):
                               text=True, capture_output=True, cwd=self.cwd)
 
     def git(self, *args):
-        return subprocess.check_output(["git", *args], cwd=self.cwd, text=True).strip()
+        env = os.environ.copy()
+        env["GIT_CONFIG_GLOBAL"] = os.devnull
+        return subprocess.check_output(["git", *args], cwd=self.cwd, text=True,
+                                       env=env).strip()
 
     def event(self, kind, title="Synthetic report", body=""):
         event = self.cwd / "event.json"
