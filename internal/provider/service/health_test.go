@@ -86,9 +86,8 @@ func TestFailingHealthChecksNameTheirRemedy(t *testing.T) {
 		{"orphan_supersedes", "roca doctor repair orphan_supersedes --db-path " + quoted},
 		{"test_metadata_rows", "roca doctor repair test_metadata_rows --db-path " + quoted},
 		{"test_source_agent_rows", "roca doctor repair test_source_agent_rows --db-path " + quoted},
+		{"runtime_layers_not_in_registry", "roca doctor repair runtime_layers_not_in_registry --db-path " + quoted},
 		{"physical_alias_layer_rows", "roca doctor repair physical_alias_layer_rows --db-path " + quoted},
-		{"runtime_layers_not_in_registry",
-			"roca doctor --db-path " + quoted + " prints roca layers add for each unknown layer"},
 	}
 	for _, testCase := range cases {
 		check, ok := report.Checks[testCase.check]
@@ -213,6 +212,51 @@ func TestHealthRepairClearsOnlyTheNamedRows(t *testing.T) {
 	}
 	if repeat.Count != 0 {
 		t.Fatalf("idempotent repair deleted %d extra rows", repeat.Count)
+	}
+}
+
+func TestRuntimeLayerRemedyRegistersEveryUnknownLayer(t *testing.T) {
+	svc, _ := serviceWithPaths(t)
+	seedMemories(t, svc, 1, `INSERT INTO memories (layer, content, origin)
+		 VALUES ('unknown-one', 'unknown layer one', 'agent')`)
+	seedMemories(t, svc, 1, `INSERT INTO memories (layer, content, origin)
+		 VALUES ('unknown-two', 'unknown layer two', 'agent')`)
+	seedMemories(t, svc, 1, `INSERT INTO memories (layer, content, origin)
+		 VALUES (' knowledge ', 'legacy whitespace layer', 'agent')`)
+
+	report, err := svc.Health(context.Background(), service.HealthRequest{MaxRows: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := report.Checks["runtime_layers_not_in_registry"]
+	quoted := "'" + svc.DB().Path() + "'"
+	wantRemedy := "roca doctor repair runtime_layers_not_in_registry --db-path " + quoted
+	if check.Remedy != wantRemedy {
+		t.Fatalf("runtime layer remedy = %q, want %q", check.Remedy, wantRemedy)
+	}
+
+	result, err := svc.RepairHealth(context.Background(), "runtime_layers_not_in_registry")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Count != 3 || len(result.Rows) != 3 {
+		t.Fatalf("runtime layer repair = %+v, want three registrations", result)
+	}
+
+	after, err := svc.Health(context.Background(), service.HealthRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Checks["runtime_layers_not_in_registry"].Status != service.HealthPass {
+		t.Fatalf("runtime layer health after repair = %+v", after.Checks["runtime_layers_not_in_registry"])
+	}
+	var exactLegacy int
+	if err := svc.DB().SQL().QueryRow(
+		`SELECT COUNT(*) FROM layers WHERE name = ' knowledge '`).Scan(&exactLegacy); err != nil {
+		t.Fatal(err)
+	}
+	if exactLegacy != 1 {
+		t.Fatalf("exact legacy layer registrations = %d, want one", exactLegacy)
 	}
 }
 
@@ -588,27 +632,35 @@ func TestHealthNamesNoComponentThisVersionDoesNotHave(t *testing.T) {
 	}
 }
 
-// A test row can be the head a real memory was auto-superseded onto, which is
-// exactly the shape the live database in issue 484 carries. Deleting it has to
-// clear that pointer too: the core schema declares supersedes as a foreign key
-// with foreign_keys ON, so a bare DELETE aborts the whole repair, and where the
-// key is absent it leaves a fresh orphan the operator was never told about.
-func TestDeletingATestRowClearsThePointersIntoIt(t *testing.T) {
+func TestDeletingTestRowsBypassesDeletedPointers(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := serviceWithPaths(t)
 
-	var head int64
+	var predecessor int64
 	if err := svc.DB().SQL().QueryRow(
-		`INSERT INTO memories (layer, content, origin, source_agent)
-		 VALUES ('discovery', 'test-written head', 'agent', 'test-agent')
-		 RETURNING id`).Scan(&head); err != nil {
-		t.Fatalf("seed the test-written head: %v", err)
+		`INSERT INTO memories (layer, content, origin)
+		 VALUES ('discovery', 'real predecessor', 'agent')
+		 RETURNING id`).Scan(&predecessor); err != nil {
+		t.Fatalf("seed the predecessor: %v", err)
+	}
+	var first, second int64
+	if err := svc.DB().SQL().QueryRow(
+		`INSERT INTO memories (layer, content, origin, source_agent, supersedes)
+		 VALUES ('discovery', 'first test row', 'agent', 'test-agent', ?)
+		 RETURNING id`, predecessor).Scan(&first); err != nil {
+		t.Fatalf("seed the first test row: %v", err)
+	}
+	if err := svc.DB().SQL().QueryRow(
+		`INSERT INTO memories (layer, content, origin, source_agent, supersedes)
+		 VALUES ('discovery', 'second test row', 'agent', 'test-agent', ?)
+		 RETURNING id`, first).Scan(&second); err != nil {
+		t.Fatalf("seed the second test row: %v", err)
 	}
 	var keeper int64
 	if err := svc.DB().SQL().QueryRow(
 		`INSERT INTO memories (layer, content, origin, supersedes)
-		 VALUES ('discovery', 'real memory superseding it', 'agent', ?)
-		 RETURNING id`, head).Scan(&keeper); err != nil {
+		 VALUES ('discovery', 'real memory superseding them', 'agent', ?)
+		 RETURNING id`, second).Scan(&keeper); err != nil {
 		t.Fatalf("seed the superseding memory: %v", err)
 	}
 
@@ -616,8 +668,8 @@ func TestDeletingATestRowClearsThePointersIntoIt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("repair test_source_agent_rows: %v", err)
 	}
-	if result.Count != 1 {
-		t.Fatalf("repair deleted %d rows, want the one test row", result.Count)
+	if result.Count != 2 {
+		t.Fatalf("repair deleted %d rows, want both test rows", result.Count)
 	}
 
 	after, err := svc.Health(ctx, service.HealthRequest{})
@@ -632,7 +684,54 @@ func TestDeletingATestRowClearsThePointersIntoIt(t *testing.T) {
 		`SELECT supersedes FROM memories WHERE id = ?`, keeper).Scan(&supersedes); err != nil {
 		t.Fatalf("the superseding memory was deleted with the test row: %v", err)
 	}
-	if supersedes.Valid {
-		t.Fatalf("supersedes = %d, want cleared with the row it named", supersedes.Int64)
+	if !supersedes.Valid || supersedes.Int64 != predecessor {
+		t.Fatalf("supersedes = %+v, want predecessor %d", supersedes, predecessor)
+	}
+}
+
+func TestDeletingTestRowsClearsMemoryIDRemaps(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := serviceWithPaths(t)
+
+	var metadataID, sourceID int64
+	if err := svc.DB().SQL().QueryRow(
+		`INSERT INTO memories (layer, content, origin, metadata)
+		 VALUES ('discovery', 'test metadata canonical', 'agent', '{"_test":true}')
+		 RETURNING id`).Scan(&metadataID); err != nil {
+		t.Fatalf("seed the metadata row: %v", err)
+	}
+	if err := svc.DB().SQL().QueryRow(
+		`INSERT INTO memories (layer, content, origin, source_agent)
+		 VALUES ('discovery', 'test source canonical', 'agent', 'test-agent')
+		 RETURNING id`).Scan(&sourceID); err != nil {
+		t.Fatalf("seed the source-agent row: %v", err)
+	}
+	if _, err := svc.DB().SQL().Exec(`CREATE TABLE memory_id_remaps (
+		old_id INTEGER PRIMARY KEY,
+		canonical_id INTEGER NOT NULL REFERENCES memories(id))`); err != nil {
+		t.Fatalf("create memory remaps: %v", err)
+	}
+	if _, err := svc.DB().SQL().Exec(
+		`INSERT INTO memory_id_remaps (old_id, canonical_id) VALUES (1001, ?), (1002, ?)`,
+		metadataID, sourceID); err != nil {
+		t.Fatalf("seed memory remaps: %v", err)
+	}
+
+	for _, check := range []string{"test_metadata_rows", "test_source_agent_rows"} {
+		result, err := svc.RepairHealth(ctx, check)
+		if err != nil {
+			t.Fatalf("repair %s: %v", check, err)
+		}
+		if result.Count != 1 {
+			t.Fatalf("repair %s deleted %d rows, want one", check, result.Count)
+		}
+	}
+
+	var remaining int
+	if err := svc.DB().SQL().QueryRow(`SELECT COUNT(*) FROM memory_id_remaps`).Scan(&remaining); err != nil {
+		t.Fatalf("count memory remaps: %v", err)
+	}
+	if remaining != 0 {
+		t.Fatalf("memory remaps remaining = %d, want zero", remaining)
 	}
 }

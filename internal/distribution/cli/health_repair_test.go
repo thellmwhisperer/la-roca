@@ -31,7 +31,9 @@ func TestHealthRemedyRoundTripClearsASeededLabHome(t *testing.T) {
 		INSERT INTO memories (layer, content, origin)
 		VALUES ('handover', 'alias layer fixture', 'agent');
 		INSERT INTO memories (layer, content, origin)
-		VALUES ('knowledge', 'unknown layer fixture', 'agent');`)
+		VALUES ('knowledge', 'unknown layer fixture', 'agent');
+		INSERT INTO memories (layer, content, origin)
+		VALUES ('experiments', 'second unknown layer fixture', 'agent');`)
 	closeErr := db.Close()
 	if err != nil {
 		t.Fatal(err)
@@ -76,33 +78,23 @@ func TestHealthRemedyRoundTripClearsASeededLabHome(t *testing.T) {
 		if !ok {
 			t.Fatalf("remedy is not a roca command: %q", remedy)
 		}
-		if len(args) < 2 || args[0] != "doctor" || args[1] != "repair" {
-			continue
-		}
 		out := runRoot(t, contractBuild(), args...)
-		if !strings.Contains(out, "repaired ") {
-			t.Fatalf("remedy %v did not report a repair:\n%s", args, out)
+		switch {
+		case len(args) >= 2 && args[0] == "doctor" && args[1] == "repair":
+			if !strings.Contains(out, "repaired ") {
+				t.Fatalf("remedy %v did not report a repair:\n%s", args, out)
+			}
+		case len(args) >= 2 && args[0] == "layers" && args[1] == "add":
+			if !strings.Contains(out, "registered layer ") {
+				t.Fatalf("remedy %v did not register its layer:\n%s", args, out)
+			}
+		default:
+			t.Fatalf("unsupported executable remedy %q", remedy)
 		}
 		repaired++
 	}
 	if repaired == 0 {
-		t.Fatalf("no printed remedy was an executable doctor repair:\n%s", human)
-	}
-
-	// The unknown layer's remedy is the per-layer command doctor prints, so
-	// registering and migrating stay the operator's choice.
-	doctor := mustJSON(t, runRoot(t, contractBuild(), "doctor", "--json"))
-	layerRepairs, _ := doctor["layer_repairs"].([]any)
-	if len(layerRepairs) == 0 {
-		t.Fatalf("doctor named no layer repair for the unknown layer: %v", doctor)
-	}
-	for _, raw := range layerRepairs {
-		command, _ := raw.(string)
-		args, ok := rocaArgs(command)
-		if !ok {
-			t.Fatalf("layer repair is not a roca command: %q", command)
-		}
-		runRoot(t, contractBuild(), args...)
+		t.Fatalf("no printed remedy was executable:\n%s", human)
 	}
 
 	after := mustJSON(t, runRoot(t, contractBuild(), "health", "--json"))
@@ -142,12 +134,13 @@ func TestHealthRemedyRoundTripClearsASeededLabHome(t *testing.T) {
 			testRows, orphans, aliases)
 	}
 	var unknown int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM memories WHERE content = 'unknown layer fixture'`).
+	if err := db.QueryRow(`SELECT COUNT(*) FROM memories
+		WHERE content IN ('unknown layer fixture', 'second unknown layer fixture')`).
 		Scan(&unknown); err != nil {
 		t.Fatal(err)
 	}
-	if unknown != 1 {
-		t.Fatal("the unknown-layer memory was deleted instead of registered")
+	if unknown != 2 {
+		t.Fatal("the unknown-layer memories were deleted instead of registered")
 	}
 }
 
