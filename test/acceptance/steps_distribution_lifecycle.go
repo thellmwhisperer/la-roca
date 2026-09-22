@@ -18,7 +18,7 @@ import (
 func registerDistributionLifecycleSteps(ctx *godog.ScenarioContext, w *distributionWorld) {
 	ctx.When(`^update checks an unreachable synthetic release endpoint$`, w.updateAgainstUnreachableRelease)
 	ctx.Then(`^update fails plainly, the installation is unchanged and one audit record is added$`, w.failedUpdateChangesNothing)
-	ctx.Given(`^two synthetic homes with every La Roca integration installed$`, w.twoFullyIntegratedHomes)
+	ctx.Given(`^two synthetic homes with skills installed and MCP replacements refused$`, w.twoFullyIntegratedHomes)
 	ctx.When(`^one home uninstalls with data kept and the other consents to purge$`, w.uninstallAndPurge)
 	ctx.Then(`^the first keeps only its data and the second has zero La Roca residue$`, w.lifecycleConsentIsRespected)
 	ctx.When(`^the installer artefact catalogue is compared with the release code$`, w.compareArtefactNames)
@@ -32,7 +32,6 @@ type lifecycleFixture struct {
 	home         string
 	binary       string
 	operatorFile map[string]string
-	configs      map[string]bool
 	result       distributionRun
 }
 
@@ -53,7 +52,7 @@ func (w *distributionWorld) integratedHome(label string) (*lifecycleFixture, err
 	if err := w.prepare(label); err != nil {
 		return nil, err
 	}
-	fixture := &lifecycleFixture{home: w.home, binary: w.installed, operatorFile: map[string]string{}, configs: map[string]bool{}}
+	fixture := &lifecycleFixture{home: w.home, binary: w.installed, operatorFile: map[string]string{}}
 	for _, runtime := range distributionAgents {
 		instructionDir := filepath.Join(w.home, "."+runtime)
 		if slices.Contains(agentcfg.Runtimes(), runtime) {
@@ -66,10 +65,16 @@ func (w *distributionWorld) integratedHome(label string) (*lifecycleFixture, err
 				return nil, err
 			}
 			fixture.operatorFile[path] = config
-			fixture.configs[path] = true
 			instructionDir = filepath.Dir(path)
-			if run := w.runAt(w.home, w.installed, "mcp", "install", runtime); run.code != 0 {
-				return nil, fmt.Errorf("install %s MCP: %s", runtime, run.stderr)
+			run := w.runAt(w.home, w.installed, "mcp", "install", runtime)
+			if run.code != 1 || !strings.Contains(run.stderr, "atomic conditional replacement is unsupported") {
+				return nil, fmt.Errorf("install %s MCP: want conditional refusal, got code %d: %s", runtime, run.code, run.stderr)
+			}
+			for _, preserved := range []string{path, path + ".roca.bak"} {
+				body, err := os.ReadFile(preserved)
+				if err != nil || string(body) != config {
+					return nil, fmt.Errorf("MCP refusal did not preserve %s: %v", preserved, err)
+				}
 			}
 		}
 		// grok and qwen are skill seats without a measured MCP surface, so an
@@ -124,18 +129,8 @@ func (w *distributionWorld) lifecycleConsentIsRespected() error {
 			if err != nil {
 				return fmt.Errorf("%s changed operator file %s: %v", name, path, err)
 			}
-			if fixture.configs[path] {
-				for _, line := range strings.Split(expected, "\n") {
-					line = strings.TrimSpace(line)
-					if line != "" && !strings.Contains(string(current), line) {
-						return fmt.Errorf("%s configuration %s lost %q", name, path, line)
-					}
-				}
-				if strings.Contains(strings.ToLower(string(current)), "roca") {
-					return fmt.Errorf("%s configuration %s still declares La Roca", name, path)
-				}
-			} else if string(current) != expected {
-				return fmt.Errorf("%s changed operator instruction file %s", name, path)
+			if string(current) != expected {
+				return fmt.Errorf("%s changed operator file %s", name, path)
 			}
 		}
 		for _, runtime := range distributionAgents {

@@ -10,7 +10,7 @@ Feature: Distribution lifecycle
     Then update fails plainly, the installation is unchanged and one audit record is added
 
   Scenario: Uninstall removes La Roca and keeps the data unless the operator consents; purge removes everything La Roca ever created, zero residue
-    Given two synthetic homes with every La Roca integration installed
+    Given two synthetic homes with skills installed and MCP replacements refused
     When one home uninstalls with data kept and the other consents to purge
     Then the first keeps only its data and the second has zero La Roca residue
 

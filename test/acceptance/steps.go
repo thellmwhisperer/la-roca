@@ -62,11 +62,10 @@ type world struct {
 	// agentConfig and settings are the two files an integration touches: the
 	// runtime's MCP configuration and its lifecycle settings. Both keep the
 	// bytes they had before Roca arrived.
-	agentConfig        string
-	agentConfigBefore  string
-	agentConfigRuntime string
-	settings           string
-	settingsBefore     string
+	agentConfig       string
+	agentConfigBefore string
+	settings          string
+	settingsBefore    string
 	// install is the scenario's release channel, and installed is the copy of
 	// the binary that lives inside its HOME. Every scenario runs its own copy,
 	// because `roca uninstall` deletes the binary it runs from and a shared one
@@ -121,7 +120,7 @@ func registerSteps(ctx *godog.ScenarioContext, binary string) {
 		m.plug = plugWorld{}
 		m.readOnly = false
 		m.codexIdentityBefore = nil
-		m.agentConfig, m.agentConfigBefore, m.agentConfigRuntime = "", "", ""
+		m.agentConfig, m.agentConfigBefore = "", ""
 		m.settings, m.settingsBefore = "", ""
 		m.installed = ""
 		m.agentConfigsBefore = nil

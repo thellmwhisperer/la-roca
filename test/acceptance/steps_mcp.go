@@ -59,6 +59,16 @@ func registerMCPSteps(ctx *godog.ScenarioContext, m *world) {
 	ctx.Given(`^La Roca is in read-only mode$`, m.inReadOnlyMode)
 	ctx.Given(`^the agent "([^"]*)" has its configuration file with content of its own$`,
 		m.anAgentWithItsOwnConfiguration)
+	ctx.Given(`^the agent "([^"]*)" has no configuration file$`, func(agent string) error {
+		path, _, err := configurationOf(agent, m.home)
+		if err != nil {
+			return err
+		}
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			return fmt.Errorf("expected absent configuration %s, got %v", path, err)
+		}
+		return nil
+	})
 
 	ctx.When(`^I open an MCP session over stdio against the binary$`, m.openThePlug)
 	ctx.When(`^I open an MCP session as client "([^"]*)"$`, m.iOpenAnMCPSessionAsClient)
@@ -582,7 +592,6 @@ func (m *world) anAgentWithItsOwnConfiguration(agent string) error {
 	}
 	m.agentConfig = path
 	m.agentConfigBefore = content
-	m.agentConfigRuntime = agent
 	return nil
 }
 
@@ -601,41 +610,24 @@ func (m *world) theConfigurationCarriesRoca(agent string) error {
 	return nil
 }
 
-// Byte for byte, measured the only way that is not a matter of opinion:
-// withdrawing gives back the exact bytes that were there.
+// A refused replacement leaves the persisted operator configuration unchanged.
 func (m *world) thePreviousContentSurvives() error {
 	current, err := os.ReadFile(m.agentConfig)
 	if err != nil {
 		return err
 	}
-	for _, line := range strings.Split(m.agentConfigBefore, "\n") {
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		if !strings.Contains(string(current), line) {
-			return fmt.Errorf("the line %q was lost from %s", line, m.agentConfig)
-		}
-	}
-	if _, err := m.run("roca mcp uninstall " + m.agentConfigRuntime); err != nil {
-		return err
-	}
-	after, err := os.ReadFile(m.agentConfig)
-	if err != nil {
-		return err
-	}
-	if string(after) != m.agentConfigBefore {
+	if string(current) != m.agentConfigBefore {
 		return fmt.Errorf(
-			"the configuration did not come back to what it was.\n--- before ---\n%s\n--- after ---\n%s",
-			m.agentConfigBefore, after)
+			"refusal changed the configuration.\n--- before ---\n%s\n--- after ---\n%s",
+			m.agentConfigBefore, current)
 	}
-	// And it is left installed, because the scenario is not over.
-	_, err = m.run("roca mcp install " + m.agentConfigRuntime)
-	return err
+	return nil
 }
 
 func (m *world) aBackupOfTheConfigurationExists() error {
-	if _, err := os.Stat(m.agentConfig + ".roca.bak"); err != nil {
-		return fmt.Errorf("there is no backup of %s: %w", m.agentConfig, err)
+	body, err := os.ReadFile(m.agentConfig + ".roca.bak")
+	if err != nil || string(body) != m.agentConfigBefore {
+		return fmt.Errorf("backup does not preserve %s: %v", m.agentConfig, err)
 	}
 	return nil
 }

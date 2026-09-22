@@ -17,14 +17,29 @@ Feature: The operator's real flow
     And if the binaries directory is not on the PATH, the output warns about it
 
   @acceptance
-  Scenario Outline: Installing La Roca into an agent's config
+  Scenario Outline: Installing La Roca refuses to replace an agent's existing config
     Given La Roca is installed and initialized
     And the agent "<agent>" has its configuration file with content of its own
     When I run "roca mcp install <agent>"
-    Then the command exits with code 0
-    And the configuration of "<agent>" contains an MCP server entry for Roca
+    Then the command exits with code 1
+    And the output contains "atomic conditional replacement is unsupported"
     And all the previous content of that configuration is preserved byte for byte
     And a backup of the previous file exists
+
+    Examples:
+      | agent           |
+      | codex           |
+      | claude          |
+      | claude-desktop  |
+      | opencode        |
+
+  @acceptance
+  Scenario Outline: Installing La Roca creates an absent agent config
+    Given La Roca is installed and initialized
+    And the agent "<agent>" has no configuration file
+    When I run "roca mcp install <agent>"
+    Then the command exits with code 0
+    And the configuration of "<agent>" contains an MCP server entry for Roca
 
     Examples:
       | agent           |

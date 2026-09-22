@@ -23,19 +23,19 @@ claims:
   internal/distribution/cli/hooks_context.go:
     contract:
       file: features/distribution/skill.feature
-      item: "Every supported harness gets the same session hook, beside the hooks it already has"
+      item: "Session hook installation preserves existing files and creates separate scripts"
   internal/distribution/cli/hooks_json.go:
     contract:
       file: features/distribution/skill.feature
-      item: "Every supported harness gets the same session hook, beside the hooks it already has"
+      item: "Session hook installation preserves existing files and creates separate scripts"
   internal/distribution/cli/hooks_runtimes.go:
     contract:
       file: features/distribution/skill.feature
-      item: "Every supported harness gets the same session hook, beside the hooks it already has"
+      item: "Session hook installation preserves existing files and creates separate scripts"
   internal/distribution/cli/hooks_script.go:
     contract:
       file: features/distribution/skill.feature
-      item: "Every supported harness gets the same session hook, beside the hooks it already has"
+      item: "Session hook installation preserves existing files and creates separate scripts"
   internal/distribution/cli/hooks_zcode.go:
     contract:
       file: features/distribution/skill.feature
