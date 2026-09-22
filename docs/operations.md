@@ -196,10 +196,10 @@ into an existing layer. Layer commands follow the same selected database and
 matching `--db-path`.
 Every failing `roca health` check carries a remedy naming the database the
 verdict came from. Five of them print
-`roca doctor repair <check> --db-path <db>`, a scoped write over exactly the
-rows that check counted: it clears a dangling `supersedes` pointer, registers
-every unknown runtime layer, moves an alias-layer memory onto its physical
-layer, or deletes a test row. Deleting a memory repairs incoming
+`roca doctor repair <check> --db-path <db>`, whose direct targets are exactly
+the rows that check counted: it clears a dangling `supersedes` pointer,
+registers every unknown runtime layer, moves an alias-layer memory onto its
+physical layer, or deletes a test row. Deleting a memory repairs incoming
 `supersedes` references to the nearest surviving predecessor, or NULL when
 none remains, because `memories.supersedes` references `memories.id`; any
 exact-dedup `memory_id_remaps` aliases that named the deleted memory as
