@@ -282,6 +282,7 @@ gate() {
   owner_accepted_label() {
     local actor candidate candidates
     if [[ $action == labeled ]]; then
+      [[ ${PR_GATE_LABEL_NAME:-} == "$ACCEPT_LABEL" ]] || return 1
       actor=${GITHUB_ACTOR:-}
     else
       actor=$(gh api --paginate --slurp "repos/$repo/issues/$n/events?per_page=100" \

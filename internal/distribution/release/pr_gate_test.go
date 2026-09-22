@@ -77,13 +77,16 @@ esac
 	for _, test := range []struct {
 		name   string
 		actor  string
+		label  string
 		passed bool
 	}{
-		{name: "owner", actor: "owner", passed: true},
-		{name: "collaborator", actor: "collaborator", passed: false},
+		{name: "owner accepts risk", actor: "owner", label: "risk:accepted", passed: true},
+		{name: "collaborator cannot accept risk", actor: "collaborator", label: "risk:accepted", passed: false},
+		{name: "owner cannot accept unrelated label", actor: "owner", label: "documentation", passed: false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Setenv("GITHUB_ACTOR", test.actor)
+			t.Setenv("PR_GATE_LABEL_NAME", test.label)
 			cmd := exec.Command("bash", "../../../scripts/pr-gate.sh")
 			output, err := cmd.CombinedOutput()
 			if (err == nil) != test.passed {

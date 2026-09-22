@@ -36,6 +36,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_GATE_ACTION: ${{ github.event.action }}
+          PR_GATE_LABEL_NAME: ${{ github.event.label.name }}
           # Fork heads (or deleted head repositories) get the verdict without
           # the metadata writes: the workflow token is read-only there.
           PR_GATE_FORK: ${{ github.event.pull_request.head.repo.full_name != github.repository }}

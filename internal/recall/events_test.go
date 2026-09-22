@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-func TestReadKeepsStimulusAndSessionProvenance(t *testing.T) {
-	events, err := Read(strings.NewReader(`{"ts":"2026-09-22T10:00:00Z","action":"agent spawn","tool":"Agent","query_sha":"abc123","stimulus":"preserve the decision","session_id":"session-1","exchange_id":42,"hits":1,"ids":["7"],"elapsed_ms":12}` + "\n"))
+func TestReadKeepsQueryAndSessionProvenance(t *testing.T) {
+	events, err := Read(strings.NewReader(`{"ts":"2026-09-22T10:00:00Z","action":"agent spawn","tool":"Agent","query_sha":"abc123","query":"preserve the decision","session_id":"session-1","exchange_id":42,"hits":1,"ids":["7"],"elapsed_ms":12}` + "\n"))
 	if err != nil {
 		t.Fatal(err)
 	}

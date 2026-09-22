@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strconv"
 	"strings"
 )
 
@@ -108,10 +107,12 @@ func decode(document map[string]json.RawMessage) (Event, error) {
 		return Event{}, err
 	}
 	_ = stringField(document, "tool", &event.Tool)
-	if err := firstStringField(document, &event.Query, "query", "stimulus"); err != nil {
+	if err := stringFieldOptional(document, "query", &event.Query); err != nil {
 		return Event{}, err
 	}
-	_ = firstStringField(document, &event.SessionID, "session_id", "session")
+	if err := stringFieldOptional(document, "session_id", &event.SessionID); err != nil {
+		return Event{}, err
+	}
 	if err := intField(document, "exchange_id", &event.ExchangeID); err != nil {
 		return Event{}, err
 	}
@@ -153,14 +154,13 @@ func stringField(document map[string]json.RawMessage, name string, target *strin
 	return nil
 }
 
-func firstStringField(document map[string]json.RawMessage, target *string, names ...string) error {
-	for _, name := range names {
-		if raw, ok := document[name]; ok {
-			if err := json.Unmarshal(raw, target); err != nil {
-				return fmt.Errorf("%s: %w", name, err)
-			}
-			return nil
-		}
+func stringFieldOptional(document map[string]json.RawMessage, name string, target *string) error {
+	raw, ok := document[name]
+	if !ok || string(raw) == "null" {
+		return nil
+	}
+	if err := json.Unmarshal(raw, target); err != nil {
+		return fmt.Errorf("%s: %w", name, err)
 	}
 	return nil
 }
@@ -172,15 +172,7 @@ func intField(document map[string]json.RawMessage, name string, target **int64) 
 	}
 	var value int64
 	if err := json.Unmarshal(raw, &value); err != nil {
-		var text string
-		if textErr := json.Unmarshal(raw, &text); textErr != nil {
-			return fmt.Errorf("%s: %w", name, err)
-		}
-		parsed, parseErr := strconv.ParseInt(text, 10, 64)
-		if parseErr != nil {
-			return fmt.Errorf("%s: %w", name, parseErr)
-		}
-		value = parsed
+		return fmt.Errorf("%s: %w", name, err)
 	}
 	*target = &value
 	return nil
