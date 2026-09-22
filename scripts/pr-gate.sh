@@ -106,7 +106,7 @@ release_train_step() { # release_train_step <base> <head>
     printf '%s\n' 'back-merge main -> integration'
   elif [[ $base == main && $head == integration ]]; then
     printf '%s\n' 'release integration -> main'
-  elif [[ $base == main && $head == release-please--branches--main ]]; then
+  elif [[ $base == main && $head == release-please--branches--main--components--roca ]]; then
     printf '%s\n' 'release-please'
   elif [[ $base == main && $head == hotfix/* ]]; then
     printf '%s\n' 'hotfix'

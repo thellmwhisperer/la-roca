@@ -45,9 +45,9 @@ esac
 		{"body edit supplies acceptance", body + evidence, "main", "feature", "fixture/repo", true},
 		{"removing evidence fails again", body, "main", "feature", "fixture/repo", false},
 		{"unrecognized PR remains gated", "", "main", "feature", "fixture/repo", false},
-		{"release-please wrong direction remains gated", "", "integration", "release-please--branches--main", "fixture/repo", false},
+		{"release-please wrong direction remains gated", "", "integration", "release-please--branches--main--components--roca", "fixture/repo", false},
 		{"hotfix wrong direction remains gated", "", "integration", "hotfix/fix-outage", "fixture/repo", false},
-		{"fork cannot impersonate release-please", "", "main", "release-please--branches--main", "contributor/repo", false},
+		{"fork cannot impersonate release-please", "", "main", "release-please--branches--main--components--roca", "contributor/repo", false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Setenv("TEST_PR_BODY", test.body)
@@ -71,7 +71,7 @@ esac
 	}{
 		{"back-merge", "integration", "main", "back-merge main -> integration"},
 		{"release", "main", "integration", "release integration -> main"},
-		{"release-please", "main", "release-please--branches--main", "release-please"},
+		{"release-please", "main", "release-please--branches--main--components--roca", "release-please"},
 		{"hotfix", "main", "hotfix/fix-outage", "hotfix"},
 	} {
 		t.Run(test.name, func(t *testing.T) {

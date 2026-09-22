@@ -41,7 +41,7 @@ The `pr-gate` check recognizes and logs only these release-train PR directions:
 
 - back-merge: head `main` to base `integration`;
 - release: head `integration` to base `main`;
-- Release Please: head `release-please--branches--main` to base `main`;
+- Release Please: head `release-please--branches--main--components--roca` to base `main`;
 - hotfix: a `hotfix/…` head to base `main`.
 
 A recognized step passes this risk-declaration check without requiring a
