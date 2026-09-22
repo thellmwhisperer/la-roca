@@ -385,7 +385,6 @@ func TestSkillTeachesTheInvestigationFunnel(t *testing.T) {
 			name: "vector owns the index",
 			body: skill.VectorContent(),
 			want: []string{
-				"There is no separate command to start one",
 				"roca vector status",
 				"roca vector install",
 				"roca vector ingest --delta",

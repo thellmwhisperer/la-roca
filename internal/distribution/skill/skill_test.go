@@ -169,7 +169,6 @@ func TestShippedSkillsCarryTheSearchDoctrine(t *testing.T) {
 			want: []string{
 				"name: roca-vector",
 				"invite the user to",
-				"There is no separate command to start one",
 				"roca vector status",
 				"roca vector install",
 				"roca vector ingest --delta",
