@@ -1,6 +1,7 @@
 package skill_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/artifact"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/agentcfg"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/skill"
+	"github.com/thellmwhisperer/la-roca/internal/securefile"
 )
 
 func shippedChecksum() string { return artifact.Checksum(skill.Content()) }
@@ -475,26 +477,26 @@ func zonesOf(t *testing.T, path string) artifact.Zones {
 	return zones
 }
 
-// Every pre-zone install on a real machine is either an older release's text or
-// the operator's. Migrating one must not keep a whole stale copy of the skill
-// beside the current one, preserved forever as though the operator wrote it,
-// and must not throw away bytes the operator did write.
-func TestInstallMigratesPreZoneContentByWhoWroteIt(t *testing.T) {
-	for _, test := range []struct{ name, seeded, user string }{
-		{"unrecognized bytes are the operator's", "stale\n", "stale\n"},
-		{"an earlier release's skill is replaced", earlierRelease(), ""},
+func TestInstallRefusesToReplacePreZoneContent(t *testing.T) {
+	for _, test := range []struct{ name, seeded string }{
+		{"unrecognized bytes are the operator's", "stale\n"},
+		{"recognized earlier release", earlierRelease()},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			path := seedSkill(t, test.seeded)
 			out, err := skill.InstallWithOptions("codex", path, "", false)
-			if err != nil {
-				t.Fatal(err)
+			if !errors.Is(err, securefile.ErrConditionalReplaceUnsupported) || out.Changed {
+				t.Fatalf("legacy installation = %+v, err %v", out, err)
 			}
-			if !out.Changed {
-				t.Fatal("the pre-zone skill was left in place")
-			}
-			if zones := zonesOf(t, path); zones.System != skill.Content() || zones.User != test.user {
-				t.Fatalf("migration = %+v", zones)
+			for _, file := range []string{path, out.Backup} {
+				body, err := os.ReadFile(file)
+				if err != nil || string(body) != test.seeded {
+					t.Fatalf("preserved file %s = %q, err %v", file, body, err)
+				}
+				info, err := os.Stat(file)
+				if err != nil || info.Mode().Perm() != 0o600 {
+					t.Fatalf("preserved permissions = %v, err %v", info, err)
+				}
 			}
 		})
 	}

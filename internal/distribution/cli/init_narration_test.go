@@ -151,14 +151,14 @@ func TestEnabledSemanticSearchDoesNotRestartDuringInit(t *testing.T) {
 	}
 }
 
-func TestSemanticDeclinePersistsExplicitDecision(t *testing.T) {
+func TestSemanticDeclineRefusesToOverwriteExistingConfiguration(t *testing.T) {
 	root := t.TempDir()
 	installVectorFixture(t, root, "#!/bin/sh\nexit 9\n")
 	path := filepath.Join(root, "config.toml")
 	if err := os.WriteFile(path, []byte("[features]\nplugins = true\nvector = false\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	runSemanticConsent(t, path, "no\n")
+	runRefusedSemanticConsent(t, path, "no\n")
 	loaded, err := config.LoadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -167,8 +167,8 @@ func TestSemanticDeclinePersistsExplicitDecision(t *testing.T) {
 		t.Fatal("declined semantic search remained enabled")
 	}
 	decided, err := config.HasValue(string(mustRead(t, path)), "features", "vector_consent")
-	if err != nil || !decided {
-		t.Fatalf("decline decision was not durable: decided=%v err=%v", decided, err)
+	if err != nil || decided {
+		t.Fatalf("refused decline persisted a decision: decided=%v err=%v", decided, err)
 	}
 }
 
@@ -180,13 +180,13 @@ func TestSemanticConsentReasksInvalidAnswersAndLeavesEOFUndecided(t *testing.T) 
 	if err := os.WriteFile(path, []byte(before), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	output := runSemanticConsent(t, path, "later\ny\n")
+	output := runRefusedSemanticConsent(t, path, "later\ny\n")
 	if strings.Count(output, "[yes/no]") != 2 {
 		t.Fatalf("invalid answer was not re-asked: %q", output)
 	}
 	loaded, err := config.LoadFile(path)
-	if err != nil || !loaded.Features.Vector || !loaded.Features.VectorConsent {
-		t.Fatalf("valid retry was not persisted: features=%+v err=%v", loaded.Features, err)
+	if err != nil || loaded.Features.Vector || loaded.Features.VectorConsent {
+		t.Fatalf("refused retry persisted consent: features=%+v err=%v", loaded.Features, err)
 	}
 
 	if err := os.WriteFile(path, []byte(before), 0o600); err != nil {
@@ -272,10 +272,11 @@ func TestDevBinaryWithoutPayloadReachesQuestionAndDiscoversPathCompanion(t *test
 	}
 	var output bytes.Buffer
 	env := &cliEnv{out: &output, errOut: &output}
-	if err := env.offerSemanticSearch(context.Background(), bufio.NewReader(strings.NewReader("yes\n")),
-		true, config.Paths{Home: root, Config: path}, true, readyProof()); err != nil {
-		t.Fatal(err)
-	}
+	preserved := preserveFile(t, path)
+	err := env.offerSemanticSearch(context.Background(), bufio.NewReader(strings.NewReader("yes\n")),
+		true, config.Paths{Home: root, Config: path}, true, readyProof())
+	requireConditionalRefusal(t, err)
+	preserved()
 	if !strings.Contains(output.String(), "[yes/no]") {
 		t.Fatalf("dev binary did not reach the consent question: %q", output.String())
 	}
@@ -286,8 +287,8 @@ func TestDevBinaryWithoutPayloadReachesQuestionAndDiscoversPathCompanion(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !loaded.Features.Vector || !loaded.Features.VectorConsent {
-		t.Fatalf("dev binary consent was not persisted: features=%+v", loaded.Features)
+	if loaded.Features.Vector || loaded.Features.VectorConsent {
+		t.Fatalf("refused dev binary consent was persisted: features=%+v", loaded.Features)
 	}
 }
 

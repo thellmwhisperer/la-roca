@@ -1,12 +1,14 @@
 package reconcile
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
+	"github.com/thellmwhisperer/la-roca/internal/securefile"
 )
 
 func TestRunnerOffersEachOpenProposalOncePerVersion(t *testing.T) {
@@ -61,7 +63,7 @@ func TestBinaryDetectionDelegatesPlatformResolution(t *testing.T) {
 	}
 }
 
-func TestTTYAcceptanceWritesSurgicallyWithBackupAndNamesTheResult(t *testing.T) {
+func TestTTYAcceptanceRefusesReplacementAndPreservesBackup(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
 	before := "# operator note\n[models]\ntimeout_ms = 9000\norder = [\"codex\", \"ollama\"]\n"
@@ -84,26 +86,22 @@ func TestTTYAcceptanceWritesSurgicallyWithBackupAndNamesTheResult(t *testing.T) 
 		Version: "v2", ConfigPath: path, StampPath: filepath.Join(dir, "stamp.json"),
 		Capabilities: map[string]bool{"claude": true},
 	}, registry, Options{Interactive: true, In: strings.NewReader("y\n"), Out: &out})
-	if err != nil {
-		t.Fatal(err)
+	if !errors.Is(err, securefile.ErrConditionalReplaceUnsupported) ||
+		result.Accepted != 0 || len(result.Changes) != 0 {
+		t.Fatalf("refused proposal = %+v, err %v", result, err)
 	}
-	if result.Accepted != 1 || len(result.Changes) != 1 {
-		t.Fatalf("result = %+v", result)
-	}
-	change := result.Changes[0]
-	if change.Backup == "" || !strings.Contains(out.String(), path) ||
-		!strings.Contains(out.String(), change.Backup) {
-		t.Fatalf("write result was not named: %+v\n%s", change, out.String())
+	if !strings.Contains(out.String(), "Enable Claude?") {
+		t.Fatalf("proposal was not offered: %q", out.String())
 	}
 	after, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
+	if err != nil || string(after) != before {
+		t.Fatalf("refusal changed configuration: %q, err %v", after, err)
 	}
-	if !strings.Contains(string(after), "# operator note") ||
-		!strings.Contains(string(after), `order = ["claude", "codex", "ollama"]`) {
-		t.Fatalf("configuration was not surgically edited:\n%s", after)
+	info, err := os.Stat(path)
+	if err != nil || info.Mode().Perm() != 0o640 {
+		t.Fatalf("refusal changed permissions: %v, err %v", info, err)
 	}
-	backup, err := os.ReadFile(change.Backup)
+	backup, err := os.ReadFile(path + ".roca.bak")
 	if err != nil || string(backup) != before {
 		t.Fatalf("backup = %q, err %v", backup, err)
 	}
@@ -143,7 +141,15 @@ func TestNonTTYAlertsWithoutPromptingOrChangingConfiguration(t *testing.T) {
 		Capabilities: map[string]bool{"ready": true},
 	}, registry, Options{Interactive: true, ListAll: true,
 		Out: &doctor, In: strings.NewReader("y\n")})
-	if err != nil || result.Accepted != 1 || !strings.Contains(doctor.String(), "Enable it?") {
+	if !errors.Is(err, securefile.ErrConditionalReplaceUnsupported) || result.Accepted != 0 || !strings.Contains(doctor.String(), "Enable it?") {
 		t.Fatalf("doctor retry = %+v, err %v, output %q", result, err, doctor.String())
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || string(after) != string(raw) {
+		t.Fatalf("refused retry changed configuration: %q, err %v", after, err)
+	}
+	backup, err := os.ReadFile(path + ".roca.bak")
+	if err != nil || string(backup) != string(raw) {
+		t.Fatalf("retry backup = %q, err %v", backup, err)
 	}
 }

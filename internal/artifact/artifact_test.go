@@ -67,14 +67,14 @@ func TestRefreshPreservesTheUserZoneAndGuardsTheSystemZone(t *testing.T) {
 
 func TestLegacyAdoptionAndDisabledRefreshAreNonDestructive(t *testing.T) {
 	tests := []struct {
-		name, previous, wantUser string
+		name, previous string
 	}{
 		{name: "recognized shipped content", previous: "## shipped\nv1\n"},
 		// Every earlier release carried the signature and none of their bodies
 		// are known here, so recognition cannot be an equality test against the
 		// bytes this build happens to ship.
 		{name: "recognized older release", previous: "## shipped\nv0 said something else\n"},
-		{name: "unrecognized content", previous: "operator legacy bytes\n", wantUser: "operator legacy bytes\n"},
+		{name: "unrecognized content", previous: "operator legacy bytes\n"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -93,13 +93,7 @@ func TestLegacyAdoptionAndDisabledRefreshAreNonDestructive(t *testing.T) {
 
 			request.Enabled = true
 			out, err = artifact.RefreshFile(request)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !out.Changed || !out.Adopted {
-				t.Fatalf("legacy adoption outcome = %+v", out)
-			}
-			assertZones(t, path, "## shipped\nv2\n", test.wantUser)
+			assertRefusedArtifact(t, path, test.previous, out, err)
 		})
 	}
 }
@@ -169,17 +163,22 @@ func TestDivergenceClassesAreToldApart(t *testing.T) {
 				Path: path, System: "system\n", PreviousSystemSHA256: test.previous, Enabled: true,
 			}
 			out, err := artifact.RefreshFile(request)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !out.Diverged || out.Changed ||
+			if err != nil || !out.Diverged || out.Changed ||
 				out.Missing != test.missing || out.Unregistered != test.unregistered {
-				t.Fatalf("refusal = %+v", out)
+				t.Fatalf("divergence guard = %+v, err %v", out, err)
 			}
 			request.Force = true
 			out, err = artifact.RefreshFile(request)
-			if err != nil || !out.Changed || out.Diverged || out.Unregistered || out.Missing {
-				t.Fatalf("forced replacement = %+v, err %v", out, err)
+			if test.missing {
+				if err != nil || !out.Changed || out.Diverged || out.Unregistered || out.Missing {
+					t.Fatalf("forced creation = %+v, err %v", out, err)
+				}
+				assertZones(t, path, "system\n", "")
+			} else {
+				assertRefusedArtifact(t, path, test.seeded, out, err)
+				if !out.Diverged || out.Unregistered != test.unregistered {
+					t.Fatalf("refusal lost divergence class: %+v", out)
+				}
 			}
 		})
 	}
@@ -216,11 +215,8 @@ func TestMalformedZoneMarkersAreNeverAdoptedAsUserContent(t *testing.T) {
 	}
 }
 
-// Force is the documented remedy for a broken artifact, so it has to reach the
-// one file nothing else can repair: bytes appended after the last marker are
-// the most natural way an operator breaks the zones, and before this the file
-// could never be installed, refreshed, or withdrawn again.
-func TestForceRepairsAFileWhoseMarkersAreBroken(t *testing.T) {
+// Force may pass the zone guard but cannot weaken conditional publication.
+func TestForceRefusesAFileWhoseMarkersAreBroken(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "SKILL.md")
 	broken := artifact.Zoned("shipped-v1\n", "mine\n") + "appended after the last marker\n"
 	write(t, path, broken)
@@ -228,15 +224,22 @@ func TestForceRepairsAFileWhoseMarkersAreBroken(t *testing.T) {
 	out, err := artifact.RefreshFile(artifact.FileRequest{
 		Path: path, System: "shipped-v2\n", Enabled: true, Force: true,
 	})
-	if err != nil {
-		t.Fatal(err)
+	assertRefusedArtifact(t, path, broken, out, err)
+}
+
+func assertRefusedArtifact(t *testing.T, path, previous string, out artifact.FileOutcome, err error) {
+	t.Helper()
+	if !errors.Is(err, securefile.ErrConditionalReplaceUnsupported) || out.Changed || !out.Outdated {
+		t.Fatalf("refused artifact = %+v, err %v", out, err)
 	}
-	if !out.Changed || out.Backup == "" {
-		t.Fatalf("forced repair outcome = %+v", out)
+	if read(t, path) != previous || out.Backup == "" || read(t, out.Backup) != previous {
+		t.Fatalf("refusal did not preserve live bytes and backup: %+v", out)
 	}
-	assertZones(t, path, "shipped-v2\n", "")
-	if got := read(t, out.Backup); got != broken {
-		t.Fatalf("the replaced bytes were not preserved in the backup: %q", got)
+	for _, file := range []string{path, out.Backup} {
+		info, err := os.Stat(file)
+		if err != nil || info.Mode().Perm() != 0o600 {
+			t.Fatalf("permissions for %s: %v, err %v", file, info, err)
+		}
 	}
 }
 

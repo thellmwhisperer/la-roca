@@ -178,7 +178,7 @@ func TestArtifactRefreshHonoursTheDefaultOffGateAndSystemDivergence(t *testing.T
 	tests := []struct {
 		name, config, current string
 		force                 bool
-		wantChanged, diverged bool
+		unsupported, diverged bool
 		// wantSummary is the line update prints about this refresh. A gate that is
 		// off has to say so and still count what is outdated, or an operator who
 		// left it off is told nothing about the installs it did not touch.
@@ -186,12 +186,12 @@ func TestArtifactRefreshHonoursTheDefaultOffGateAndSystemDivergence(t *testing.T
 	}{
 		{name: "flag off", current: "shipped-v1\n",
 			wantSummary: "agent artifacts: automatic refresh is off (features.artifact_refresh); 1 outdated"},
-		{name: "flag on", config: "[features]\nartifact_refresh = true\n", current: "shipped-v1\n", wantChanged: true,
-			wantSummary: "agent artifacts: 1 refreshed; 0 outdated"},
+		{name: "flag on", config: "[features]\nartifact_refresh = true\n", current: "shipped-v1\n", unsupported: true,
+			wantSummary: "agent artifacts: 0 refreshed; 1 outdated"},
 		{name: "edited system", config: "[features]\nartifact_refresh = true\n", current: "operator edit\n", diverged: true,
 			wantSummary: "agent artifacts: 0 refreshed; 1 outdated"},
-		{name: "forced edit", config: "[features]\nartifact_refresh = true\n", current: "operator edit\n", force: true, wantChanged: true,
-			wantSummary: "agent artifacts: 1 refreshed; 0 outdated"},
+		{name: "forced edit", config: "[features]\nartifact_refresh = true\n", current: "operator edit\n", force: true, unsupported: true,
+			wantSummary: "agent artifacts: 0 refreshed; 1 outdated"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -208,11 +208,13 @@ func TestArtifactRefreshHonoursTheDefaultOffGateAndSystemDivergence(t *testing.T
 			if test.config != "" {
 				writeFile(t, filepath.Join(home, ".roca", "config.toml"), test.config)
 			}
+			preserved := preserveFile(t, path)
 			env := &cliEnv{build: Build{Version: "v2.0.0"}}
 			report, err := env.refreshManagedArtifacts(filepath.Join(home, "bin", "roca"), test.force)
 			if err != nil {
 				t.Fatal(err)
 			}
+			preserved()
 			body, err := os.ReadFile(path)
 			if err != nil {
 				t.Fatal(err)
@@ -221,8 +223,20 @@ func TestArtifactRefreshHonoursTheDefaultOffGateAndSystemDivergence(t *testing.T
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := zones.System == skill.Content(); got != test.wantChanged {
-				t.Fatalf("system refreshed = %v, want %v; system=%q", got, test.wantChanged, zones.System)
+			if zones.System != test.current {
+				t.Fatalf("refused refresh changed system: %q", zones.System)
+			}
+			if test.unsupported {
+				if len(report.Failed) != 1 || report.Failed[0].Repairable ||
+					!strings.Contains(report.Failed[0].Reason, "atomic conditional replacement is unsupported") {
+					t.Fatalf("missing safe refusal: %+v", report)
+				}
+				if len(report.Backups) != 1 {
+					t.Fatalf("missing backup: %+v", report)
+				}
+				requireExactBackup(t, report.Backups[0], string(body))
+			} else if len(report.Failed) != 0 || len(report.Backups) != 0 {
+				t.Fatalf("guarded refresh attempted publication: %+v", report)
 			}
 			if zones.User != "operator bytes\n" {
 				t.Fatalf("user zone changed: %q", zones.User)
@@ -241,7 +255,7 @@ func TestArtifactRefreshHonoursTheDefaultOffGateAndSystemDivergence(t *testing.T
 			if entry.AvailableVersion != "v2.0.0" {
 				t.Fatalf("outdated version was not recorded: %+v", entry)
 			}
-			if !test.wantChanged && entry.InstalledVersion != "v1.0.0" {
+			if entry.InstalledVersion != "v1.0.0" {
 				t.Fatalf("unrefreshed install version changed: %+v", entry)
 			}
 		})

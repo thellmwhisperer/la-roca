@@ -1,12 +1,14 @@
 package agentcfg_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/agentcfg"
+	"github.com/thellmwhisperer/la-roca/internal/securefile"
 )
 
 // Each supported runtime has a synthetic configuration in its own format. A
@@ -95,7 +97,7 @@ logging: verbose
 func TestInstallDeclaresTheStdioServerInEveryRuntime(t *testing.T) {
 	for _, runtime := range agentcfg.Runtimes() {
 		t.Run(runtime, func(t *testing.T) {
-			path := fixtureFile(t, runtime)
+			path := filepath.Join(t.TempDir(), "config"+extensionOf(runtime))
 
 			outcome, err := agentcfg.Install(runtime, path, "roca")
 			if err != nil {
@@ -104,11 +106,8 @@ func TestInstallDeclaresTheStdioServerInEveryRuntime(t *testing.T) {
 			if !outcome.Changed {
 				t.Error("installing over a config with no Roca changed nothing")
 			}
-			if outcome.Backup == "" {
-				t.Error("no backup of the previous file was left")
-			}
-			if _, err := os.Stat(outcome.Backup); err != nil {
-				t.Errorf("the declared backup does not exist: %v", err)
+			if outcome.Backup != "" {
+				t.Fatal("creation backed up a nonexistent file")
 			}
 
 			status, err := agentcfg.Status(runtime, path)
@@ -128,22 +127,22 @@ func TestInstallDeclaresTheStdioServerInEveryRuntime(t *testing.T) {
 			if strings.Contains(read(t, path), "url") {
 				t.Error("the entry names a URL: v1 serves over stdio and has no port")
 			}
+			refused := expectRefusedEdit(t, path)
+			outcome, err = agentcfg.Uninstall(runtime, path)
+			refused(outcome, err)
 		})
 	}
 }
 
-// Byte-for-byte preservation, measured the only way that is not a matter of
-// opinion: installing and then withdrawing has to give back the exact bytes
-// that were there, every comment, every blank line and every ordering.
-func TestInstallingAndWithdrawingGivesBackTheExactPreviousBytes(t *testing.T) {
+func TestRefusedInstallationAndNoopWithdrawalPreserveTheExactPreviousBytes(t *testing.T) {
 	for _, runtime := range agentcfg.Runtimes() {
 		t.Run(runtime, func(t *testing.T) {
 			path := fixtureFile(t, runtime)
 			before := read(t, path)
 
-			if _, err := agentcfg.Install(runtime, path, "roca"); err != nil {
-				t.Fatalf("Install: %v", err)
-			}
+			refused := expectRefusedEdit(t, path)
+			outcome, err := agentcfg.Install(runtime, path, "roca")
+			refused(outcome, err)
 			if _, err := agentcfg.Uninstall(runtime, path); err != nil {
 				t.Fatalf("Uninstall: %v", err)
 			}
@@ -156,60 +155,45 @@ func TestInstallingAndWithdrawingGivesBackTheExactPreviousBytes(t *testing.T) {
 	}
 }
 
-func TestJSONCWithdrawalPreservesBytesBeforeTheNextMember(t *testing.T) {
+func TestRefusedJSONCWithdrawalPreservesBytesBeforeTheNextMember(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "opencode.json")
 	const before = "{\n  \"mcp\": {\"roca\": {\"type\": \"local\", \"command\": [\"roca\", \"mcp\", \"serve\"], \"enabled\": true},\n    // This comment belongs to the next member.\n    \"other\": {\"type\": \"local\", \"command\": [\"other\"]}\n  }\n}\n"
-	const want = "{\n  \"mcp\": {\n    // This comment belongs to the next member.\n    \"other\": {\"type\": \"local\", \"command\": [\"other\"]}\n  }\n}\n"
 	if err := os.WriteFile(path, []byte(before), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := agentcfg.Uninstall(agentcfg.RuntimeOpencode, path); err != nil {
-		t.Fatal(err)
-	}
-	if got := read(t, path); got != want {
-		t.Fatalf("uninstalled bytes:\n--- want ---\n%s--- got ---\n%s", want, got)
-	}
+	refused := expectRefusedEdit(t, path)
+	outcome, err := agentcfg.Uninstall(agentcfg.RuntimeOpencode, path)
+	refused(outcome, err)
 }
 
-func TestCodexEditsQuotedRocaTableHeaders(t *testing.T) {
+func TestCodexRefusesEditsToQuotedRocaTableHeaders(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	const before = "model = \"synthetic\"\n\n[mcp_servers.\"roca\"]\ncommand = \"old-roca\"\nargs = [\"old\"]\n\n[mcp_servers.other]\ncommand = \"other\"\n"
 	if err := os.WriteFile(path, []byte(before), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := agentcfg.Install(agentcfg.RuntimeCodex, path, "new-roca"); err != nil {
-		t.Fatal(err)
-	}
-	installed := read(t, path)
-	if strings.Count(installed, "roca\"]") != 1 || !strings.Contains(installed, "command = \"new-roca\"") {
-		t.Fatalf("quoted table was not replaced in place:\n%s", installed)
-	}
-	if _, err := agentcfg.Uninstall(agentcfg.RuntimeCodex, path); err != nil {
-		t.Fatal(err)
-	}
-	want := "model = \"synthetic\"\n\n[mcp_servers.other]\ncommand = \"other\"\n"
-	if got := read(t, path); got != want {
-		t.Fatalf("uninstalled bytes:\n--- want ---\n%s--- got ---\n%s", want, got)
+	for _, operation := range []func() (agentcfg.Outcome, error){
+		func() (agentcfg.Outcome, error) { return agentcfg.Install(agentcfg.RuntimeCodex, path, "new-roca") },
+		func() (agentcfg.Outcome, error) { return agentcfg.Uninstall(agentcfg.RuntimeCodex, path) },
+	} {
+		refused := expectRefusedEdit(t, path)
+		outcome, err := operation()
+		refused(outcome, err)
 	}
 }
 
-func TestHermesInstallsIntoEmptyServerMappings(t *testing.T) {
+func TestHermesRefusesInstallationIntoExistingEmptyServerMappings(t *testing.T) {
 	cases := []struct {
 		name   string
 		before string
-		after  string
 	}{
 		{
 			name:   "null block mapping",
 			before: "# Hermes configuration\nruntime: hermes\nmcp_servers:\nlogging: verbose\n",
-			after: "# Hermes configuration\nruntime: hermes\nmcp_servers:\n  roca:\n" +
-				"    command: roca\n    args:\n      - mcp\n      - serve\nlogging: verbose\n",
 		},
 		{
 			name:   "empty flow mapping",
 			before: "# Hermes configuration\nruntime: hermes\nmcp_servers: {}\nlogging: verbose\n",
-			after: "# Hermes configuration\nruntime: hermes\nmcp_servers: " +
-				"{roca: {command: roca, args: [mcp, serve]}}\nlogging: verbose\n",
 		},
 	}
 	for _, tc := range cases {
@@ -218,47 +202,26 @@ func TestHermesInstallsIntoEmptyServerMappings(t *testing.T) {
 			if err := os.WriteFile(path, []byte(tc.before), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := agentcfg.Install(agentcfg.RuntimeHermes, path, "roca"); err != nil {
-				t.Fatalf("Install: %v", err)
-			}
-			if got := read(t, path); got != tc.after {
-				t.Errorf("installed bytes:\n--- want ---\n%s--- got ---\n%s", tc.after, got)
-			}
+			refused := expectRefusedEdit(t, path)
+			outcome, err := agentcfg.Install(agentcfg.RuntimeHermes, path, "roca")
+			refused(outcome, err)
 			status, err := agentcfg.Status(agentcfg.RuntimeHermes, path)
-			if err != nil {
-				t.Fatalf("Status: %v", err)
-			}
-			if status.State != agentcfg.StateConfigured {
-				t.Errorf("state = %q, want %q", status.State, agentcfg.StateConfigured)
-			}
-			second, err := agentcfg.Install(agentcfg.RuntimeHermes, path, "roca")
-			if err != nil {
-				t.Fatalf("second Install: %v", err)
-			}
-			if second.Changed || read(t, path) != tc.after {
-				t.Error("the second installation moved bytes")
-			}
-			if _, err := agentcfg.Uninstall(agentcfg.RuntimeHermes, path); err != nil {
-				t.Fatalf("Uninstall: %v", err)
-			}
-			if got := read(t, path); got != tc.before {
-				t.Errorf("uninstalled bytes:\n--- want ---\n%s--- got ---\n%s", tc.before, got)
+			if err != nil || status.State != agentcfg.StateNotConfigured {
+				t.Fatalf("refused install status = %+v, err %v", status, err)
 			}
 		})
 	}
 }
 
-// The other half of the same question: while Roca is installed, everything that
-// was not Roca is still there, in the same order.
-func TestTheNeighboursSurviveTheInstallation(t *testing.T) {
+func TestTheNeighboursSurviveARefusedInstallation(t *testing.T) {
 	for _, runtime := range agentcfg.Runtimes() {
 		t.Run(runtime, func(t *testing.T) {
 			path := fixtureFile(t, runtime)
 			before := read(t, path)
 
-			if _, err := agentcfg.Install(runtime, path, "roca"); err != nil {
-				t.Fatalf("Install: %v", err)
-			}
+			refused := expectRefusedEdit(t, path)
+			outcome, err := agentcfg.Install(runtime, path, "roca")
+			refused(outcome, err)
 			after := read(t, path)
 
 			for _, line := range strings.Split(before, "\n") {
@@ -282,11 +245,15 @@ func TestTheNeighboursSurviveTheInstallation(t *testing.T) {
 func TestInstallingTwiceIsIdempotentAndWritesNothingTheSecondTime(t *testing.T) {
 	for _, runtime := range agentcfg.Runtimes() {
 		t.Run(runtime, func(t *testing.T) {
-			path := fixtureFile(t, runtime)
+			path := filepath.Join(t.TempDir(), "config"+extensionOf(runtime))
 			if _, err := agentcfg.Install(runtime, path, "roca"); err != nil {
 				t.Fatalf("first Install: %v", err)
 			}
 			afterFirst := read(t, path)
+			original, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
 
 			second, err := agentcfg.Install(runtime, path, "roca")
 			if err != nil {
@@ -300,6 +267,10 @@ func TestInstallingTwiceIsIdempotentAndWritesNothingTheSecondTime(t *testing.T) 
 			}
 			if read(t, path) != afterFirst {
 				t.Error("the second installation moved bytes")
+			}
+			current, err := os.Stat(path)
+			if err != nil || !os.SameFile(original, current) || original.Mode() != current.Mode() {
+				t.Fatalf("idempotent install changed file identity or permissions: %v", err)
 			}
 		})
 	}
@@ -434,7 +405,7 @@ func TestAnUnknownRuntimeNamesTheOnesThatExist(t *testing.T) {
 // bare `roca` keeps a config portable between machines; an absolute path is
 // written only when somebody asks for one.
 func TestTheExecutableWrittenIntoTheConfigIsTheOneAsked(t *testing.T) {
-	path := fixtureFile(t, agentcfg.RuntimeClaude)
+	path := filepath.Join(t.TempDir(), "config.json")
 
 	if _, err := agentcfg.Install(agentcfg.RuntimeClaude, path,
 		"/opt/roca/bin/roca"); err != nil {
@@ -445,9 +416,7 @@ func TestTheExecutableWrittenIntoTheConfigIsTheOneAsked(t *testing.T) {
 	}
 }
 
-// When a config file carries no servers key at all, install creates it and
-// uninstall has to remove it entirely, not leave an empty object behind.
-func TestWithdrawingFromAConfigWhoseServersKeyWasCreatedByInstallRestoresTheExactBytes(t *testing.T) {
+func TestRefusedInstallationLeavesAbsentServerKeysAbsent(t *testing.T) {
 	verify := func(runtime string) {
 		t.Helper()
 		path := filepath.Join(t.TempDir(), "config"+extensionOf(runtime))
@@ -455,9 +424,9 @@ func TestWithdrawingFromAConfigWhoseServersKeyWasCreatedByInstallRestoresTheExac
 		if err := os.WriteFile(path, []byte(before), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := agentcfg.Install(runtime, path, "roca"); err != nil {
-			t.Fatal(err)
-		}
+		refused := expectRefusedEdit(t, path)
+		outcome, err := agentcfg.Install(runtime, path, "roca")
+		refused(outcome, err)
 		if _, err := agentcfg.Uninstall(runtime, path); err != nil {
 			t.Fatal(err)
 		}
@@ -547,7 +516,7 @@ func lookup(env map[string]string) func(string) string {
 // The inline-table refusal matched the servers key as a PREFIX, so a document
 // carrying an unrelated key that merely starts the same way was refused with a
 // complaint about a table it does not have.
-func TestAKeyThatMerelyStartsLikeTheServersKeyIsNotRefused(t *testing.T) {
+func TestAKeyThatMerelyStartsLikeTheServersKeyReachesPublication(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
 	// `mcp_servers_legacy` is somebody else's key, written inline, beside a
@@ -557,27 +526,12 @@ func TestAKeyThatMerelyStartsLikeTheServersKeyIsNotRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := agentcfg.Install(agentcfg.RuntimeCodex, path, "roca"); err != nil {
-		t.Fatalf("an unrelated inline key was refused: %v", err)
-	}
-
-	after, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(after), "mcp_servers_legacy = { old = true }") {
-		t.Errorf("the neighbour key did not survive:\n%s", after)
-	}
-	if !strings.Contains(string(after), "[mcp_servers.roca]") {
-		t.Errorf("the declaration did not land:\n%s", after)
-	}
+	refused := expectRefusedEdit(t, path)
+	outcome, err := agentcfg.Install(agentcfg.RuntimeCodex, path, "roca")
+	refused(outcome, err)
 }
 
-// write promises "the previous file's permissions are kept: this file is the
-// operator's". os.WriteFile only applies its mode when it CREATES the file, and
-// the staged file already exists at 0600 from os.CreateTemp, so the mode was
-// computed and then thrown away: an operator's 0644 config came back 0600.
-func TestTheOperatorsPermissionsSurviveAnEdit(t *testing.T) {
+func TestTheOperatorsPermissionsSurviveARefusedEdit(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	if err := os.WriteFile(path, []byte("[mcp_servers.other]\ncommand = \"x\"\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -586,9 +540,9 @@ func TestTheOperatorsPermissionsSurviveAnEdit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := agentcfg.Install(agentcfg.RuntimeCodex, path, "roca"); err != nil {
-		t.Fatalf("install: %v", err)
-	}
+	refused := expectRefusedEdit(t, path)
+	outcome, err := agentcfg.Install(agentcfg.RuntimeCodex, path, "roca")
+	refused(outcome, err)
 
 	info, err := os.Stat(path)
 	if err != nil {
@@ -606,5 +560,35 @@ func TestBackupNameStatErrorsAreReturned(t *testing.T) {
 	}
 	if _, err := agentcfg.Install(agentcfg.RuntimeCodex, path, "roca"); err == nil || !strings.Contains(err.Error(), "inspect backup") {
 		t.Fatalf("Install error = %v, want backup inspection failure", err)
+	}
+}
+
+// Capture the live file before an edit, then verify the public refusal contract.
+func expectRefusedEdit(t *testing.T, path string) func(agentcfg.Outcome, error) {
+	t.Helper()
+	before := read(t, path)
+	original, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return func(outcome agentcfg.Outcome, err error) {
+		t.Helper()
+		if !errors.Is(err, securefile.ErrConditionalReplaceUnsupported) || outcome.Changed {
+			t.Fatalf("edit = %+v, err %v; want safe refusal", outcome, err)
+		}
+		current, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if read(t, path) != before || !os.SameFile(original, current) || original.Mode() != current.Mode() {
+			t.Fatal("refused edit changed live bytes, identity, or permissions")
+		}
+		if outcome.Backup == "" || read(t, outcome.Backup) != before {
+			t.Fatalf("refused edit lost its exact backup: %+v", outcome)
+		}
+		backup, err := os.Stat(outcome.Backup)
+		if err != nil || backup.Mode().Perm() != 0o600 {
+			t.Fatalf("backup permissions: %v, err %v", backup, err)
+		}
 	}
 }

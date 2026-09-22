@@ -33,11 +33,11 @@ func TestCodexInstallKeepsForeignSessionHooks(t *testing.T) {
 	var output strings.Builder
 	command := sessionHookCommand(binary, agentcfg.RuntimeCodex, sessionRequest{pills: true})
 	for range 2 {
-		runHookCLI(t, &output, nil, "install", "codex", "--pills")
+		runRefusedHookCLI(t, path, "install", "codex", "--pills")
 		entries := nestedHookCommands(t, path, "SessionStart")
 		assertCommandCount(t, entries, "tasks-axi", 1)
 		assertCommandCount(t, entries, "bash '/opt/pane-state.sh' session", 1)
-		assertCommandCount(t, entries, command, 1)
+		assertCommandCount(t, entries, command, 0)
 	}
 
 	runHookCLI(t, &output, nil, "uninstall", "codex")
@@ -47,25 +47,24 @@ func TestCodexInstallKeepsForeignSessionHooks(t *testing.T) {
 	assertCommandCount(t, entries, command, 0)
 }
 
-// A reinstall after the binary moved repoints the entry La Roca owns instead of
-// adding a second one beside it.
-func TestCodexReinstallRepointsAMovedBinary(t *testing.T) {
+func TestCodexReinstallRefusesToRepointAMovedBinary(t *testing.T) {
 	home := skillTestHome(t)
 	path := filepath.Join(home, ".codex", "hooks.json")
 	var output strings.Builder
 
-	t.Setenv(EnvExecutable, filepath.Join(home, "bin", "roca"))
+	original := filepath.Join(home, "bin", "roca")
+	t.Setenv(EnvExecutable, original)
 	runHookCLI(t, &output, nil, "install", "codex")
 	moved := filepath.Join(home, "elsewhere", "roca")
 	t.Setenv(EnvExecutable, moved)
-	runHookCLI(t, &output, nil, "install", "codex")
+	runRefusedHookCLI(t, path, "install", "codex")
 
 	entries := nestedHookCommands(t, path, "SessionStart")
 	if len(entries) != 1 {
 		t.Fatalf("SessionStart entries = %d, want one repointed hook: %v", len(entries), entries)
 	}
 	assertCommandCount(t, entries,
-		sessionHookCommand(moved, agentcfg.RuntimeCodex, sessionRequest{}), 1)
+		sessionHookCommand(original, agentcfg.RuntimeCodex, sessionRequest{}), 1)
 }
 
 func TestCursorInstallKeepsForeignSessionHooksAndSchemaVersion(t *testing.T) {
@@ -83,10 +82,10 @@ func TestCursorInstallKeepsForeignSessionHooksAndSchemaVersion(t *testing.T) {
 	var output strings.Builder
 	command := sessionHookCommand(binary, agentcfg.RuntimeCursor, sessionRequest{handoff: true})
 	for range 2 {
-		runHookCLI(t, &output, nil, "install", "cursor", "--handoff")
+		runRefusedHookCLI(t, path, "install", "cursor", "--handoff")
 		entries := flatHookCommands(t, path, "sessionStart")
 		assertCommandCount(t, entries, foreign, 1)
-		assertCommandCount(t, entries, command, 1)
+		assertCommandCount(t, entries, command, 0)
 		if version := hookDocument(t, path)["version"]; version != float64(1) {
 			t.Fatalf("cursor schema version = %#v", version)
 		}
@@ -244,9 +243,7 @@ func TestScriptInstallWritesTheShapeEachHarnessLoads(t *testing.T) {
 	}
 }
 
-// The whole script is the SYSTEM fragment, so an operator's edits inside it are
-// left alone and named until `--force` says to replace them.
-func TestScriptInstallKeepsAnEditedScriptUntilForced(t *testing.T) {
+func TestScriptInstallKeepsAnEditedScriptEvenWhenForced(t *testing.T) {
 	home := skillTestHome(t)
 	t.Setenv(EnvExecutable, filepath.Join(home, "bin", "roca"))
 	path := mustHookPath(t, agentcfg.RuntimePi)
@@ -264,10 +261,7 @@ func TestScriptInstallKeepsAnEditedScriptUntilForced(t *testing.T) {
 		t.Fatalf("the warning does not say how to replace it: %q", warning.String())
 	}
 
-	runHookCLI(t, &output, nil, "install", "pi", "--pills", "--force")
-	if got := string(mustRead(t, path)); got == edited {
-		t.Fatal("--force did not replace the edited script")
-	}
+	runRefusedHookCLI(t, path, "install", "pi", "--pills", "--force")
 }
 
 // A file at La Roca's own path that La Roca did not write belongs to someone

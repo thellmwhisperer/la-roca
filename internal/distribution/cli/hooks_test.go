@@ -71,67 +71,41 @@ func TestClaudeHookSignsRocaStoreFromTheTranscriptIdentity(t *testing.T) {
 	}
 }
 
-func TestClaudeHookInstallerPreservesSettingsAndIsIdempotent(t *testing.T) {
+func TestClaudeHookInstallerCreatesIdempotentlyAndRefusesExistingEdits(t *testing.T) {
 	home := t.TempDir()
 	path := filepath.Join(home, "settings.json")
 	binary := filepath.Join(home, "bin", "roca")
-	initial := `{"permissions":{"allow":["Read"]},"hooks":{"PreToolUse":[{"matcher":"Write","hooks":[]}]}}`
-	if err := os.WriteFile(path, []byte(initial), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	for attempt, wantChanged := range []bool{true, false} {
 		outcome, err := installClaudeAuthorshipHook(path, binary)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if outcome.Changed != wantChanged {
-			t.Errorf("attempt %d changed = %v, want %v", attempt+1, outcome.Changed, wantChanged)
-		}
-		if attempt == 0 && outcome.Backup == "" {
-			t.Error("installer replaced settings without a recovery backup")
+		if err != nil || outcome.Changed != wantChanged || outcome.Backup != "" {
+			t.Fatalf("attempt %d: %+v, err %v", attempt, outcome, err)
 		}
 	}
-	body := readSettings(t, path)
-	// The hook runs in Claude's non-interactive shell, where a bare `roca` is
-	// whatever PATH happens to hold, so the entry names this binary in full.
-	if !strings.Contains(body, `"permissions"`) ||
-		strings.Count(body, shellQuote(binary)+" hooks run claude") != 1 {
-		t.Errorf("installer lost existing settings or did not name the binary once: %s", body)
+	preserved := preserveFile(t, path)
+	previous := readSettings(t, path)
+	outcome, err := installClaudeAuthorshipHook(path, filepath.Join(home, "opt", "roca"))
+	requireConditionalRefusal(t, err)
+	if outcome.Changed {
+		t.Fatal("refused reinstall reported a change")
 	}
-
-	moved := filepath.Join(home, "opt", "roca")
-	if _, err := installClaudeAuthorshipHook(path, moved); err != nil {
-		t.Fatal(err)
-	}
-	body = readSettings(t, path)
-	if strings.Contains(body, binary) ||
-		strings.Count(body, shellQuote(moved)+" hooks run claude") != 1 {
-		t.Errorf("reinstall left the hook pointing at a binary that moved: %s", body)
-	}
-
+	preserved()
+	requireExactBackup(t, outcome.Backup, previous)
 	outcome, warning, err := uninstallClaudeAuthorshipHook(path)
-	if err != nil {
-		t.Fatal(err)
+	requireConditionalRefusal(t, err)
+	if outcome.Changed || warning != "" {
+		t.Fatalf("refused uninstall = %+v, warning %q", outcome, warning)
 	}
-	if !outcome.Changed || warning != "" {
-		t.Errorf("uninstall left the signing hook behind or warned about its own file: %q", warning)
-	}
-	body = readSettings(t, path)
-	if strings.Contains(body, "hooks run claude") || !strings.Contains(body, `"permissions"`) ||
-		!strings.Contains(body, `"Write"`) {
-		t.Errorf("uninstall did not withdraw exactly its own hook: %s", body)
-	}
-	if again, _, err := uninstallClaudeAuthorshipHook(path); err != nil || again.Changed {
-		t.Errorf("uninstall is not idempotent: changed=%v err=%v", again.Changed, err)
-	}
+	preserved()
+	requireExactBackup(t, outcome.Backup, previous)
 
-	root := rootCommand(&cliEnv{})
-	for _, verb := range []string{"install", "uninstall"} {
-		command, _, err := root.Find([]string{"hooks", verb, "claude"})
-		if err != nil || command == nil {
-			t.Fatalf("roca hooks %s claude is unavailable: %v", verb, err)
-		}
-	}
+	operator := filepath.Join(home, "operator.json")
+	initial := "{\"permissions\":{\"allow\":[\"Read\"]},\"hooks\":{\"PreToolUse\":[{\"matcher\":\"Write\",\"hooks\":[]}]}}"
+	writeFile(t, operator, initial)
+	preserved = preserveFile(t, operator)
+	outcome, err = installClaudeAuthorshipHook(operator, binary)
+	requireConditionalRefusal(t, err)
+	preserved()
+	requireExactBackup(t, outcome.Backup, initial)
 }
 
 func TestHookCommandRegistersTheOwnedClaudeFragment(t *testing.T) {
@@ -141,9 +115,7 @@ func TestHookCommandRegistersTheOwnedClaudeFragment(t *testing.T) {
 	var output strings.Builder
 	root := rootCommand(&cliEnv{out: &output, build: Build{Version: "v1.2.3"}})
 	root.SetArgs([]string{"hooks", "install", "claude"})
-	if err := root.Execute(); err != nil {
-		t.Fatal(err)
-	}
+	requireConditionalRefusal(t, root.Execute())
 	settings := filepath.Join(home, ".claude", "settings.json")
 	registry, err := artifact.LoadRegistry(filepath.Join(home, ".roca", "artifacts.json"))
 	if err != nil {
@@ -167,43 +139,32 @@ func TestHookCommandRegistersTheOwnedClaudeFragment(t *testing.T) {
 	var warning strings.Builder
 	root = rootCommand(&cliEnv{out: &output, errOut: &warning, build: Build{Version: "v1.2.3"}})
 	root.SetArgs([]string{"hooks", "install", "claude"})
-	if err := root.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	if got := readSettings(t, settings); !strings.Contains(got, operatorBinary) ||
-		!strings.Contains(warning.String(), "hooks install claude --force") {
-		t.Fatalf("diverged hook was overwritten or not warned: body=%s warning=%q", got, warning.String())
+	requireConditionalRefusal(t, root.Execute())
+	if got := readSettings(t, settings); got != edited {
+		t.Fatalf("refused install changed the diverged hook: %s", got)
 	}
 
 	root = rootCommand(&cliEnv{out: &output, build: Build{Version: "v1.2.3"}})
 	root.SetArgs([]string{"hooks", "install", "claude", "--force"})
-	if err := root.Execute(); err != nil {
-		t.Fatal(err)
+	requireConditionalRefusal(t, root.Execute())
+	if got := readSettings(t, settings); got != edited {
+		t.Fatalf("forced refusal changed SYSTEM: %s", got)
 	}
-	if got := readSettings(t, settings); strings.Contains(got, operatorBinary) || !strings.Contains(got, binary) {
-		t.Fatalf("forced hook refresh did not restore SYSTEM: %s", got)
-	}
+	requireExactBackup(t, settings+".roca.bak.1", edited)
 
 	root = rootCommand(&cliEnv{out: &output, build: Build{Version: "v1.2.3"}})
 	root.SetArgs([]string{"hooks", "uninstall", "claude"})
-	if err := root.Execute(); err != nil {
-		t.Fatal(err)
-	}
+	requireConditionalRefusal(t, root.Execute())
 	registry, err = artifact.LoadRegistry(filepath.Join(home, ".roca", "artifacts.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := registry.Find("hook", "claude", settings); ok {
-		t.Fatal("explicit hook uninstall left the artifact registered")
+	if _, ok := registry.Find("hook", "claude", settings); !ok {
+		t.Fatal("refused hook uninstall removed the artifact registration")
 	}
 }
 
-// The refresh rewrites the bytes of the command it registered and no others:
-// the operator's numeric spelling, spacing and trailing members survive. The
-// reader only ever looks inside PreToolUse, so the edit looks there too, and an
-// operator who declared the identical command under another event owns those
-// bytes: they are neither rewritten nor a reason to refuse the refresh.
-func TestHookRefreshChangesOnlyItsRegisteredCommandBytes(t *testing.T) {
+func TestHookRefreshRefusalPreservesRegisteredAndOperatorBytes(t *testing.T) {
 	home := t.TempDir()
 	oldBinary := filepath.Join(home, "old", "roca")
 	newBinary := filepath.Join(home, "new", "roca")
@@ -224,15 +185,14 @@ func TestHookRefreshChangesOnlyItsRegisteredCommandBytes(t *testing.T) {
 			if err != nil || !found {
 				t.Fatalf("read installed hook: found=%v err=%v", found, err)
 			}
+			preserved := preserveFile(t, path)
 			outcome, err := refreshClaudeHook(path, newBinary, artifact.Checksum(system), true, false)
-			if err != nil {
-				t.Fatalf("an operator's own bytes blocked the refresh: %v", err)
+			requireConditionalRefusal(t, err)
+			if outcome.Changed {
+				t.Fatal("refused refresh reported a change")
 			}
-			want := strings.Replace(test.previous, oldCommand,
-				encodedJSONString(t, claudeHookCommand(newBinary)), 1)
-			if got := readSettings(t, path); !outcome.Changed || got != want {
-				t.Fatalf("refresh did not edit exactly its own registered command:\nwant %s\n got %s", want, got)
-			}
+			preserved()
+			requireExactBackup(t, path+".roca.bak", test.previous)
 		})
 	}
 }
@@ -354,7 +314,7 @@ func assertClaudeProductWithdrawalWarnings(t *testing.T, warned, path string, se
 	}
 }
 
-func TestProductUninstallWithdrawsSessionHooksWhenPreToolUseIsUnreadable(t *testing.T) {
+func TestProductUninstallReportsRefusedSessionWithdrawalAndUnreadablePreToolUse(t *testing.T) {
 	home := skillTestHome(t)
 	path := filepath.Join(home, ".claude", "settings.json")
 	binary := filepath.Join(home, "O'Brien Tools", "roca")
@@ -371,19 +331,24 @@ func TestProductUninstallWithdrawsSessionHooksWhenPreToolUseIsUnreadable(t *test
 	}
 	writeFile(t, path, string(encoded))
 
+	preserved := preserveFile(t, path)
 	var out, errOut strings.Builder
 	env := &cliEnv{out: &out, errOut: &errOut}
 	report := lifecycle.Report{Purged: true, Deleted: []string{}}
 	env.withdrawTheIntegrations(&report, false)
+	preserved()
+	if !strings.Contains(strings.Join(report.Errors, "\n"), "atomic conditional replacement is unsupported") {
+		t.Fatalf("missing refusal error: %+v", report)
+	}
 	groups := readClaudeSessionStartHooks(t, path)
-	assertHookCommand(t, groups, "", claudePillsHookCommand(binary), 0)
-	assertHookCommand(t, groups, "", claudeHandoffHookCommand(binary), 0)
-	if !strings.Contains(errOut.String(), "PreToolUse") {
-		t.Fatalf("product uninstall did not warn about the unreadable signing hook: %q", errOut.String())
+	assertHookCommand(t, groups, "", claudePillsHookCommand(binary), 1)
+	assertHookCommand(t, groups, "", claudeHandoffHookCommand(binary), 1)
+	if report.Purged {
+		t.Fatal("refused integration withdrawal was reported as complete")
 	}
 }
 
-func TestSessionStartHooksInstallAndUninstallAreIdempotent(t *testing.T) {
+func TestSessionStartHooksRefuseExistingSettingsAndLeaveWithdrawalANoop(t *testing.T) {
 	home, binary, path := claudeHookHomeAt(t, "O'Brien Tools")
 	foreign := "/opt/acme pill"
 	writeFile(t, path,
@@ -392,18 +357,18 @@ func TestSessionStartHooksInstallAndUninstallAreIdempotent(t *testing.T) {
 	session := sessionHookCommand(binary, "claude", sessionRequest{pills: true, handoff: true})
 	var output strings.Builder
 	for range 2 {
-		runHookCLI(t, &output, nil, "install", "claude", "--pills", "--handoff")
+		runRefusedHookCLI(t, path, "install", "claude", "--pills", "--handoff")
 		settings := readClaudeHookSettings(t, path)
 		assertHookCommand(t, settings.Hooks["SessionStart"], "", foreign, 1)
-		assertHookCommand(t, settings.Hooks["SessionStart"], "", session, 1)
-		assertHookCommand(t, settings.Hooks["PreToolUse"], "Bash", claudeHookCommand(binary), 1)
+		assertHookCommand(t, settings.Hooks["SessionStart"], "", session, 0)
+		assertHookCommand(t, settings.Hooks["PreToolUse"], "Bash", claudeHookCommand(binary), 0)
 	}
 	registry, err := artifact.LoadRegistry(filepath.Join(home, ".roca", "artifacts.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, found := registry.Find("hook", "claude", path); !found {
-		t.Fatal("a Claude install did not register its signing fragment")
+	if _, found := registry.Find("hook", "claude", path); found {
+		t.Fatal("a refused Claude install registered its signing fragment")
 	}
 
 	runHookCLI(t, &output, nil, "uninstall", "claude")
@@ -417,34 +382,30 @@ func TestSessionStartHooksInstallAndUninstallAreIdempotent(t *testing.T) {
 	assertHookCommand(t, settings.Hooks["SessionStart"], "", foreign, 1)
 }
 
-// A bare install is the same session hook every other harness gets: the fixed
-// fragment, and neither the pills nor the handoff nobody asked for.
-func TestBareInstallWritesTheSessionHookWithoutOptionalContext(t *testing.T) {
+func TestBareClaudeInstallReportsRefusedSessionHookAfterSigningCreation(t *testing.T) {
 	_, binary, path := claudeHookHome(t)
 
-	var output strings.Builder
-	runHookCLI(t, &output, nil, "install", "claude")
+	root := rootCommand(&cliEnv{out: io.Discard, errOut: io.Discard})
+	root.SetArgs([]string{"hooks", "install", "claude"})
+	requireConditionalRefusal(t, root.Execute())
 	settings := readClaudeHookSettings(t, path)
 	assertHookCommand(t, settings.Hooks["SessionStart"], "",
-		sessionHookCommand(binary, "claude", sessionRequest{}), 1)
+		sessionHookCommand(binary, "claude", sessionRequest{}), 0)
 	assertHookCommand(t, settings.Hooks["PreToolUse"], "Bash", claudeHookCommand(binary), 1)
 }
 
-// An install that supersedes a pre-1.85 one takes the two entries it replaces
-// back out, so the same pills are not injected twice from one settings file.
-func TestInstallWithdrawsTheSupersededSessionEntries(t *testing.T) {
+func TestRefusedInstallPreservesSupersededSessionEntries(t *testing.T) {
 	_, binary, path := claudeHookHome(t)
 	writeFile(t, path, `{"hooks":{"SessionStart":[`+
 		`{"hooks":[{"type":"command","command":`+quoteJSON(claudePillsHookCommand(binary))+`}]},`+
 		`{"hooks":[{"type":"command","command":`+quoteJSON(claudeHandoffHookCommand(binary))+`}]}]}}`)
 
-	var output strings.Builder
-	runHookCLI(t, &output, nil, "install", "claude", "--pills")
+	runRefusedHookCLI(t, path, "install", "claude", "--pills")
 	settings := readClaudeHookSettings(t, path)
-	assertHookCommand(t, settings.Hooks["SessionStart"], "", claudePillsHookCommand(binary), 0)
-	assertHookCommand(t, settings.Hooks["SessionStart"], "", claudeHandoffHookCommand(binary), 0)
+	assertHookCommand(t, settings.Hooks["SessionStart"], "", claudePillsHookCommand(binary), 1)
+	assertHookCommand(t, settings.Hooks["SessionStart"], "", claudeHandoffHookCommand(binary), 1)
 	assertHookCommand(t, settings.Hooks["SessionStart"], "",
-		sessionHookCommand(binary, "claude", sessionRequest{pills: true}), 1)
+		sessionHookCommand(binary, "claude", sessionRequest{pills: true}), 0)
 }
 
 // claudeHookHome is the fixture every Claude hook test opens with: an isolated
@@ -473,21 +434,25 @@ func quoteJSON(value string) string {
 func TestSessionHookInstallLeavesADivergedSigningHookAlone(t *testing.T) {
 	home, binary, path := claudeHookHome(t)
 	var output strings.Builder
-	runHookCLI(t, &output, nil, "install", "claude")
+	root := rootCommand(&cliEnv{out: &output, errOut: io.Discard})
+	root.SetArgs([]string{"hooks", "install", "claude"})
+	requireConditionalRefusal(t, root.Execute())
 	operatorCommand := claudeHookCommand(filepath.Join(home, "operator", "roca"))
 	body := readSettings(t, path)
 	body = strings.Replace(body, claudeHookCommand(binary), operatorCommand, 1)
 	writeFile(t, path, body)
 
 	var warning strings.Builder
-	runHookCLI(t, &output, &warning, "install", "claude", "--pills", "--handoff")
+	preserved := preserveFile(t, path)
+	root = rootCommand(&cliEnv{out: &output, errOut: &warning})
+	root.SetArgs([]string{"hooks", "install", "claude", "--pills", "--handoff"})
+	requireConditionalRefusal(t, root.Execute())
+	preserved()
 	settings := readClaudeHookSettings(t, path)
 	assertHookCommand(t, settings.Hooks["PreToolUse"], "Bash", operatorCommand, 1)
 	assertHookCommand(t, settings.Hooks["SessionStart"], "",
-		sessionHookCommand(binary, "claude", sessionRequest{pills: true, handoff: true}), 1)
-	if !strings.Contains(warning.String(), "--force") {
-		t.Fatalf("an edited signing fragment was replaced without consent: %q", warning.String())
-	}
+		sessionHookCommand(binary, "claude", sessionRequest{pills: true, handoff: true}), 0)
+	requireExactBackup(t, path+".roca.bak.1", body)
 }
 
 // Claude settings this product cannot parse refuse the install rather than

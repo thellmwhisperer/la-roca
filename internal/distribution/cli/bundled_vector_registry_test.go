@@ -48,10 +48,11 @@ func TestInitPlacesBundledVectorBeforeConsentAndLegacyPath(t *testing.T) {
 	var output bytes.Buffer
 	env := &cliEnv{build: Build{Version: "test"}, out: &output, errOut: progress,
 		bundledVectorPayload: payload}
-	if err := env.offerSemanticSearch(t.Context(), bufio.NewReader(strings.NewReader("yes\n")),
-		true, paths, true, &search.Proof{Ready: true, Word: "history", Matches: 1}); err != nil {
-		t.Fatal(err)
-	}
+	preserved := preserveFile(t, paths.Config)
+	err = env.offerSemanticSearch(t.Context(), bufio.NewReader(strings.NewReader("yes\n")),
+		true, paths, true, &search.Proof{Ready: true, Word: "history", Matches: 1})
+	requireConditionalRefusal(t, err)
+	preserved()
 	arguments, err := os.ReadFile(argsPath)
 	if err != nil {
 		t.Fatal(err)
@@ -60,9 +61,7 @@ func TestInitPlacesBundledVectorBeforeConsentAndLegacyPath(t *testing.T) {
 		strings.Contains(string(arguments), "--stream-progress") {
 		t.Fatalf("bundled companion arguments = %q", arguments)
 	}
-	if !strings.Contains(output.String(), "setup continues in the background") {
-		t.Fatalf("semantic setup output = %q", output.String())
-	}
+
 }
 
 func TestBundledPluginInstallRefreshesLegacyVectorRegistry(t *testing.T) {

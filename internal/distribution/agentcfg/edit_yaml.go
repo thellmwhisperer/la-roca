@@ -30,7 +30,7 @@ func yamlDeclare(r runtime, text string, entry fields) (string, error) {
 			text += "\n"
 		}
 		return text + r.serversKey + ":\n" + indent + ServerName + ":\n" +
-			renderYAML(entry, indent+indent) + "\n", nil
+			renderYAML(entry, indent) + "\n", nil
 	}
 	servers := document.Content[key+1]
 	keyLine := document.Content[key].Line - 1

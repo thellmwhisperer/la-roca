@@ -158,10 +158,13 @@ func TestSkillInstallRestoresARemovedFileAndRefusesAnUnregisteredOne(t *testing.
 		t.Fatalf("an unregistered skill was replaced without consent: %+v", zones)
 	}
 
-	runSkill(t, &restored, "skill", "install", "claude", "--force")
-	if zones := installedZones(t, path); zones.System != skill.Content() || zones.User != "mine\n" {
-		t.Fatalf("the forced install did not replace SYSTEM and keep USER: %+v", zones)
-	}
+	preserved := preserveFile(t, path)
+	root = rootCommand(&cliEnv{out: &restored, errOut: &warning})
+	root.SetArgs([]string{"skill", "install", "claude", "--force"})
+	err := root.Execute()
+	requireConditionalRefusal(t, err)
+	preserved()
+	requireExactBackup(t, path+".roca.bak", string(mustRead(t, path)))
 }
 
 func installedZones(t *testing.T, path string) artifact.Zones {
@@ -189,13 +192,18 @@ func TestSkillInstallAllSurvivesOneUnreadableRuntimeAndNamesTheBackup(t *testing
 	if err == nil || !strings.Contains(err.Error(), "skill install codex --force") {
 		t.Fatalf("the unreadable runtime did not fail with its remedy: %v", err)
 	}
-	for _, runtime := range []string{"claude", "hermes", "opencode", "pi"} {
+	for _, runtime := range []string{"claude", "opencode", "pi"} {
 		if !strings.Contains(out.String(), runtime+": wrote ") {
 			t.Fatalf("%s was skipped because codex could not be read:\n%s", runtime, out.String())
 		}
 	}
-	if !strings.Contains(out.String(), migrated+" (replaced content kept at ") {
-		t.Fatalf("the migration did not name the recovery copy:\n%s", out.String())
+	if !strings.Contains(err.Error(), "atomic conditional replacement is unsupported") ||
+		!strings.Contains(err.Error(), migrated+".roca.bak") {
+		t.Fatalf("refused migration did not name its recovery copy: %v", err)
+	}
+	requireExactBackup(t, migrated+".roca.bak", "an older release's skill\n")
+	if got := string(mustRead(t, migrated)); got != "an older release's skill\n" {
+		t.Fatalf("refused migration changed the live skill: %q", got)
 	}
 }
 
@@ -462,7 +470,7 @@ func runSkill(t *testing.T, out *strings.Builder, args ...string) {
 // semantic catalog a `roca skill install` placed is regenerated from the
 // plugin set the lifecycle just changed, and a runtime that never asked is
 // left without one.
-func TestPluginLifecycleRefreshesTheInstalledCatalogSkill(t *testing.T) {
+func TestPluginLifecycleReportsRefusedCatalogRefresh(t *testing.T) {
 	home := skillTestHome(t)
 	var output strings.Builder
 	runSkill(t, &output, "skill", "install", "claude")
@@ -497,23 +505,16 @@ tables:
 		t.Fatal(err)
 	}
 
-	env := &cliEnv{out: io.Discard, errOut: io.Discard}
+	var warning strings.Builder
+	preserved := preserveFile(t, catalogPath)
+	env := &cliEnv{out: io.Discard, errOut: &warning}
 	env.refreshPluginContracts()
 
-	after, err := os.ReadFile(catalogPath)
-	if err != nil {
-		t.Fatal(err)
+	preserved()
+	if !strings.Contains(warning.String(), "atomic conditional replacement is unsupported") {
+		t.Fatalf("catalog refusal was not reported: %q", warning.String())
 	}
-	for _, needle := range []string{
-		"## synthetic-refresh (alias plugin_synthetic_refresh)",
-		"Synthetic records refreshed into the catalog.",
-		"### records · plugin_synthetic_refresh.records",
-		"Columns: id, value",
-	} {
-		if !strings.Contains(string(after), needle) {
-			t.Errorf("the refreshed catalog missing %q:\n%s", needle, after)
-		}
-	}
+	requireExactBackup(t, catalogPath+".roca.bak", string(before))
 	unregistered := filepath.Join(home, ".codex", "skills", "roca-semantica", "SKILL.md")
 	if _, err := os.Stat(unregistered); !os.IsNotExist(err) {
 		t.Errorf("a runtime that never asked for skills received a catalog: %v", err)

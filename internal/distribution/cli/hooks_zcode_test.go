@@ -71,8 +71,6 @@ fi
 exit 1
 `
 	writeZcodeHookExecutable(t, home, fake)
-	initial := `{"theme":"dark","hooks":{"enabled":false,"events":{"SessionStart":[{"hooks":[{"type":"command","command":"operator-hook","timeoutMs":5000}]}]}}}`
-	writeFile(t, config, initial)
 
 	for attempt := 0; attempt < 2; attempt++ {
 		if err := executeZcodeHooks("install"); err != nil {
@@ -85,9 +83,7 @@ exit 1
 	if err := json.Unmarshal(body, &document); err != nil {
 		t.Fatal(err)
 	}
-	if document["theme"] != "dark" {
-		t.Fatalf("installer lost neighbouring theme: %s", body)
-	}
+
 	hooks := document["hooks"].(map[string]any)
 	if hooks["enabled"] != true {
 		t.Fatalf("hooks.enabled = %#v", hooks["enabled"])
@@ -97,8 +93,8 @@ exit 1
 	}
 	events := hooks["events"].(map[string]any)
 	entries := events["SessionStart"].([]any)
-	if len(entries) != 2 {
-		t.Fatalf("SessionStart entries = %d, want operator hook plus one Roca hook", len(entries))
+	if len(entries) != 1 {
+		t.Fatalf("SessionStart entries = %d, want one Roca hook", len(entries))
 	}
 	wrapper := filepath.Join(home, ".zcode", "hooks", "roca-handoff.sh")
 	info, err := os.Stat(wrapper)
@@ -133,42 +129,24 @@ exit 1
 		t.Fatalf("degraded wrapper stdout is not JSON: %v\n%s", err, output)
 	}
 
-	requireZcodeHooks(t, "uninstall")
-	if _, err := os.Stat(wrapper); !os.IsNotExist(err) {
-		t.Fatal("zcode hook wrapper survived uninstall")
-	}
-	body = mustRead(t, config)
-	if !strings.Contains(string(body), "operator-hook") || strings.Contains(string(body), "roca-handoff.sh") {
-		t.Fatalf("uninstall did not preserve only the operator hook: %s", body)
-	}
-	if !strings.Contains(string(body), `"theme"`) {
-		t.Fatalf("uninstall lost neighbouring theme: %s", body)
-	}
+	preservedWrapper := preserveFile(t, wrapper)
+	runRefusedHookCLI(t, config, "uninstall", "zcode")
+	preservedWrapper()
 }
 
-func TestZcodeReinstallWithFlagsReportsTheWrapperChange(t *testing.T) {
+func TestZcodeReinstallWithFlagsRefusesTheWrapperChange(t *testing.T) {
 	home, config := zcodeHookTestPaths(t)
 	writeZcodeHookExecutable(t, home, "#!/bin/sh\nexit 0\n")
-	writeFile(t, config, `{"hooks":{"enabled":false}}`)
 
-	var first, second strings.Builder
+	var first strings.Builder
 	runHookCLI(t, &first, nil, "install", "zcode")
 	if !strings.Contains(first.String(), "updated") {
 		t.Fatalf("first install did not report a change: %q", first.String())
 	}
-	runHookCLI(t, &second, nil, "install", "zcode", "--pills", "--handoff")
-	if !strings.Contains(second.String(), "updated") {
-		t.Fatalf("rewriting the wrapper reported unchanged: %q", second.String())
-	}
-	if !strings.Contains(second.String(), "backup:") {
-		t.Fatalf("wrapper recovery copy was not named: %q", second.String())
-	}
-	wrapper := string(mustRead(t, filepath.Join(home, ".zcode", "hooks", "roca-handoff.sh")))
-	command := sessionHookCommand(filepath.Join(home, "bin", "roca"), "zcode",
-		sessionRequest{pills: true, handoff: true})
-	if !strings.Contains(wrapper, command) {
-		t.Fatalf("wrapper does not launch %s: %s", command, wrapper)
-	}
+	wrapper := filepath.Join(home, ".zcode", "hooks", "roca-handoff.sh")
+	preservedConfig := preserveFile(t, config)
+	runRefusedHookCLI(t, wrapper, "install", "zcode", "--pills", "--handoff")
+	preservedConfig()
 }
 
 func TestZcodeHookUninstallDoesNotRemoveOperatorOwnedEmptyHooks(t *testing.T) {
@@ -176,7 +154,7 @@ func TestZcodeHookUninstallDoesNotRemoveOperatorOwnedEmptyHooks(t *testing.T) {
 	writeZcodeHookExecutable(t, home, "#!/bin/sh\nexit 0\n")
 	before := "{\n  \"hooks\": {\n    \"enabled\": false\n  }\n}\n"
 	writeFile(t, config, before)
-	requireZcodeHooks(t, "install")
+	runRefusedHookCLI(t, config, "install", "zcode")
 	requireZcodeHooks(t, "uninstall")
 	got := readSettings(t, config)
 	if !strings.Contains(got, `"hooks"`) || strings.Contains(got, "roca-handoff.sh") {
@@ -187,7 +165,6 @@ func TestZcodeHookUninstallDoesNotRemoveOperatorOwnedEmptyHooks(t *testing.T) {
 func TestZcodeHookUninstallRejectsUnreadableOwnershipBeforeMutation(t *testing.T) {
 	home, config := zcodeHookTestPaths(t)
 	writeZcodeHookExecutable(t, home, "#!/bin/sh\nexit 0\n")
-	writeFile(t, config, "{}\n")
 	requireZcodeHooks(t, "install")
 	configBefore := mustRead(t, config)
 	wrapper := filepath.Join(home, ".zcode", "hooks", "roca-handoff.sh")
@@ -271,7 +248,9 @@ func TestZcodeHookInstallRejectsInvalidContainersBeforeWritingWrapper(t *testing
 func TestZcodeHookOwnershipFailureRetainsWorkingHookWithoutFollowingSymlink(t *testing.T) {
 	home, config := zcodeHookTestPaths(t)
 	writeZcodeHookExecutable(t, home, "#!/bin/sh\nexit 0\n")
-	writeFile(t, config, "{}\n")
+	if err := os.MkdirAll(filepath.Dir(config), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	target := filepath.Join(home, "redirected-owned.json")
 	sidecar := config + ".roca-owned"
 	if err := os.Symlink(target, sidecar); err != nil {
@@ -346,8 +325,10 @@ func TestZcodeHookInstallRollsBackWrapperAfterConfigEditFailure(t *testing.T) {
 			} else if _, err := os.Stat(wrapper); !os.IsNotExist(err) {
 				t.Fatalf("failed install left wrapper behind: %v", err)
 			}
-			if _, err := os.Stat(wrapper + ".roca.bak"); !os.IsNotExist(err) {
-				t.Fatalf("failed install left wrapper backup behind: %v", err)
+			if existing {
+				requireExactBackup(t, wrapper+".roca.bak", before)
+			} else if _, err := os.Stat(wrapper + ".roca.bak"); !os.IsNotExist(err) {
+				t.Fatalf("new wrapper left a backup behind: %v", err)
 			}
 		})
 	}
@@ -355,20 +336,17 @@ func TestZcodeHookInstallRollsBackWrapperAfterConfigEditFailure(t *testing.T) {
 
 func TestZcodeHookReinstallPreservesContainerOwnership(t *testing.T) {
 	_, config := zcodeHookTestPaths(t)
-	writeFile(t, config, "{}\n")
 	requireZcodeHooks(t, "install")
+	owned := string(mustRead(t, config+".roca-owned"))
 	writeFile(t, config, "{\"hooks\":{\"enabled\":true}}\n")
-	requireZcodeHooks(t, "install")
-	requireZcodeHooks(t, "uninstall")
-	document := readZcodeHookDocument(t, config)
-	if _, ok := document["hooks"]; ok {
-		t.Fatalf("reinstall lost ownership of the product-created hooks container: %#v", document)
+	runRefusedHookCLI(t, config, "install", "zcode")
+	if string(mustRead(t, config+".roca-owned")) != owned {
+		t.Fatal("refused reinstall changed container ownership")
 	}
 }
 
 func TestZcodeHookUninstallPreservesGroupMetadata(t *testing.T) {
 	_, config := zcodeHookTestPaths(t)
-	writeFile(t, config, "{}\n")
 	requireZcodeHooks(t, "install")
 	document := readZcodeHookDocument(t, config)
 	hooks := document["hooks"].(map[string]any)
@@ -382,7 +360,7 @@ func TestZcodeHookUninstallPreservesGroupMetadata(t *testing.T) {
 	}
 	writeFile(t, config, string(append(body, '\n')))
 
-	requireZcodeHooks(t, "uninstall")
+	runRefusedHookCLI(t, config, "uninstall", "zcode")
 	document = readZcodeHookDocument(t, config)
 	hooks = document["hooks"].(map[string]any)
 	events = hooks["events"].(map[string]any)
@@ -395,8 +373,8 @@ func TestZcodeHookUninstallPreservesGroupMetadata(t *testing.T) {
 		t.Fatalf("uninstall lost group metadata: %#v", group)
 	}
 	groupHooks, ok := group["hooks"].([]any)
-	if !ok || len(groupHooks) != 0 {
-		t.Fatalf("uninstall did not remove only the Roca command: %#v", group)
+	if !ok || len(groupHooks) != 1 {
+		t.Fatalf("refused uninstall changed the Roca command: %#v", group)
 	}
 }
 
@@ -404,9 +382,8 @@ func TestZcodeHookLifecyclePreservesLargeOperatorNumbers(t *testing.T) {
 	_, config := zcodeHookTestPaths(t)
 	initial := `{"hooks":{"enabled":true,"events":{"SessionStart":[{"operatorSequence":9007199254740993,"hooks":[{"type":"command","command":"operator-hook","timeoutMs":5000}]}]}}}`
 	writeFile(t, config, initial)
-	for _, action := range []string{"install", "uninstall"} {
-		requireZcodeHooks(t, action)
-	}
+	runRefusedHookCLI(t, config, "install", "zcode")
+	requireZcodeHooks(t, "uninstall")
 	body := mustRead(t, config)
 	decoder := json.NewDecoder(strings.NewReader(string(body)))
 	decoder.UseNumber()

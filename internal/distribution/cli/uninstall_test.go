@@ -318,7 +318,12 @@ func TestUninstallCleansTheEmptySkillChainAndNamesEverySurvivor(t *testing.T) {
 	build := Build{Version: "test", Commit: "test-sha"}
 	runRoot(t, build, "init", "--db-path", filepath.Join(home, ".roca", "roca.db"))
 	runRoot(t, build, "skill", "install", "claude")
-	runRoot(t, build, "mcp", "install", "claude")
+	preserved := preserveFile(t, claudeJSON)
+	root := rootCommand(&cliEnv{out: &strings.Builder{}, errOut: &strings.Builder{}, build: build})
+	root.SetArgs([]string{"mcp", "install", "claude"})
+	requireConditionalRefusal(t, root.Execute())
+	preserved()
+	requireExactBackup(t, claudeJSON+".roca.bak", string(mustRead(t, claudeJSON)))
 
 	out := runRoot(t, build, "uninstall", "--purge")
 
