@@ -98,6 +98,21 @@ has_acceptance_evidence() {
     '
 }
 
+# --- release-train step recognition (pure, exact branch contracts) ---------
+
+release_train_step() { # release_train_step <base> <head>
+  local base=$1 head=$2
+  if [[ $base == integration && $head == main ]]; then
+    printf '%s\n' 'back-merge main -> integration'
+  elif [[ $base == main && $head == integration ]]; then
+    printf '%s\n' 'release integration -> main'
+  elif [[ $base == main && $head == release-please--branches--main ]]; then
+    printf '%s\n' 'release-please'
+  elif [[ $base == main && $head == hotfix/* ]]; then
+    printf '%s\n' 'hotfix'
+  fi
+}
+
 # --- offline evidence ------------------------------------------------------
 
 self_test() {
@@ -260,6 +275,14 @@ gate() {
   local n=${1:-${PR_NUMBER:?PR_NUMBER required}}
   local fork=${PR_GATE_FORK:-false}
   local action=${PR_GATE_ACTION:-}
+
+  local base head head_repo step
+  base=$(gh pr view "$n" -R "$repo" --json baseRefName --jq '.baseRefName')
+  head=$(gh pr view "$n" -R "$repo" --json headRefName --jq '.headRefName')
+  head_repo=$(gh pr view "$n" -R "$repo" --json headRepository --jq '.headRepository.nameWithOwner // ""')
+  if [[ $head_repo == "$repo" ]] && step=$(release_train_step "$base" "$head") && [[ -n $step ]]; then
+    pass_gate "recognized release-train step: $step ($head -> $base)"
+  fi
 
   local body author labels owner
   body=$(gh pr view "$n" -R "$repo" --json body --jq '.body // ""')

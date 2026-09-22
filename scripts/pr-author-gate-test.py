@@ -18,6 +18,7 @@ TESEO = "sol@javiermellado.com"
 CURSOR = "cursoragent@cursor.com"
 LAB = "agent@host.mellado.lab"
 NOREPLY = "1+synthetic@users.noreply.github.com"
+GITHUB_NOREPLY = "noreply@github.com"
 
 
 class PrAuthorGateTest(unittest.TestCase):
@@ -27,12 +28,12 @@ class PrAuthorGateTest(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.cwd = Path(self.tmp.name)
 
-    def git(self, *args, email=TESEO, cwd=None):
+    def git(self, *args, email=TESEO, committer_email=None, cwd=None):
         env = os.environ.copy()
         env["GIT_AUTHOR_NAME"] = "Javier Mellado"
         env["GIT_AUTHOR_EMAIL"] = email
         env["GIT_COMMITTER_NAME"] = "Javier Mellado"
-        env["GIT_COMMITTER_EMAIL"] = email
+        env["GIT_COMMITTER_EMAIL"] = committer_email or email
         return subprocess.check_output(
             ["git", "-c", "core.hooksPath=/dev/null", *args],
             cwd=cwd or self.cwd, text=True, env=env,
@@ -54,10 +55,11 @@ class PrAuthorGateTest(unittest.TestCase):
         self.git("commit", "-qm", "Synthetic base", cwd=cwd)
         return cwd, self.git("rev-parse", "HEAD", cwd=cwd)
 
-    def commit_file(self, cwd, name, body, email=TESEO):
+    def commit_file(self, cwd, name, body, email=TESEO, committer_email=None):
         (cwd / name).write_text(name + "\n")
         self.git("add", name, cwd=cwd)
-        self.git("commit", "-qm", body, email=email, cwd=cwd)
+        self.git("commit", "-qm", body, email=email,
+                 committer_email=committer_email, cwd=cwd)
         return self.git("rev-parse", "HEAD", cwd=cwd)
 
     def test_synthetic_pair_and_frozen_base(self):
@@ -68,6 +70,13 @@ class PrAuthorGateTest(unittest.TestCase):
                  cwd=cwd)
         dirty_base = self.git("rev-parse", "HEAD", cwd=cwd)
         clean = self.commit_file(cwd, "clean.txt", "Synthetic teseo change")
+        github_committer = self.commit_file(
+            cwd, "github-committer.txt", "Synthetic Teseo GitHub committer",
+            email=TESEO, committer_email=GITHUB_NOREPLY,
+        )
+        accepted = self.check(clean, github_committer, cwd=cwd)
+        self.assertEqual(accepted.returncode, 0, accepted.stdout + accepted.stderr)
+        self.assertIn("pr-author: clean", accepted.stdout)
         passed = self.check(dirty_base, clean, cwd=cwd)
         self.assertEqual(passed.returncode, 0, passed.stdout + passed.stderr)
         self.assertIn("pr-author: clean", passed.stdout)
@@ -88,6 +97,26 @@ class PrAuthorGateTest(unittest.TestCase):
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                 self.assertIn("not on allowlist", result.stdout)
                 self.assertIn(email, result.stdout)
+
+        for email in (CURSOR, LAB, NOREPLY):
+            with self.subTest(author=email, committer=GITHUB_NOREPLY):
+                foreign, base = self.repo_with_base()
+                self.commit_file(
+                    foreign, "bad-github-committer.txt", "Synthetic wrong author",
+                    email=email, committer_email=GITHUB_NOREPLY,
+                )
+                result = self.check(base, cwd=foreign)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("author email not on allowlist", result.stdout)
+
+        wrong_committer, base = self.repo_with_base()
+        self.commit_file(
+            wrong_committer, "bad-committer.txt", "Synthetic Teseo wrong committer",
+            email=TESEO, committer_email="other@github.com",
+        )
+        result = self.check(base, cwd=wrong_committer)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("committer email not on allowlist", result.stdout)
 
         empty = self.check(clean, clean, cwd=cwd)
         self.assertEqual(empty.returncode, 0, empty.stdout + empty.stderr)
