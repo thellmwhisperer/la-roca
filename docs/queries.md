@@ -104,6 +104,22 @@ and their keyword rescue retain their existing core-name compatibility.
 The regression contract lives in
 [`unqualified_test.go`](../internal/provider/query/sqlgate/unqualified_test.go).
 
+## Recall provenance
+
+With the ops plugin enabled (`features.roca_ops = true`), `roca ingest`
+imports `$HOME/.roca/logs/recall.jsonl` into the ops-owned `recall_events`
+table. New recall records may include `query` (the exact
+stimulus sent to `roca vector query`), `session_id`, and `exchange_id`; older
+records remain importable with those fields empty. The hit arrays stay as JSON
+so their order and scores are preserved.
+
+Use qualified SQL to reconstruct a fire and its conversation context:
+
+```sh
+roca ingest
+roca exec "SELECT r.ts, r.action, r.query_sha, r.query, r.session_id, r.exchange_id, r.ids, e.human_text FROM plugin_roca_ops.recall_events AS r LEFT JOIN plugin_roca_corpus.exchanges AS e ON e.id = r.exchange_id ORDER BY r.ts DESC LIMIT 20"
+```
+
 SQL returned by `roca playground --sql-only` or MCP `roca_sql` can therefore
 still contain bare table names. Before submitting it to `exec`, inspect those
 references and qualify them for the intended database; compilation alone does

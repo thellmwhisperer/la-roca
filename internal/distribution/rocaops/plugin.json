@@ -45,6 +45,12 @@
             "columns": ["canonical_digest", "record_type", "payload"]
           },
           {
+            "name": "recall_events",
+            "description": "Recall hook fires with the vector-query stimulus, hit payload, and optional session or exchange provenance.",
+            "questions": ["Which recall hook fires retrieved a given stimulus?", "Which session or exchange preceded a recall fire?"],
+            "columns": ["id", "ts", "action", "tool", "query_sha", "query", "session_id", "exchange_id", "raw", "hits", "top_score", "ids", "scores", "dates", "cands", "elapsed_ms", "event_sha"]
+          },
+          {
             "name": "plugin_schema",
             "description": "The ops database schema and index versions; its migration lifecycle lives in plugin_migrations.",
             "columns": ["singleton", "plugin_name", "schema_version", "index_version", "migration_state", "verification_digest", "prepared_at", "verified_at", "updated_at"]

@@ -68,6 +68,33 @@ CREATE TABLE IF NOT EXISTS legacy_records (
   payload           TEXT NOT NULL CHECK (json_valid(payload))
 );
 
+-- Recall hook provenance is durable operational evidence. JSON arrays retain
+-- the hook's hit ordering without creating a second child table, while the
+-- nullable query/session fields keep older recall lines importable.
+CREATE TABLE IF NOT EXISTS recall_events (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts          TEXT NOT NULL,
+  action      TEXT NOT NULL,
+  tool        TEXT,
+  query_sha   TEXT NOT NULL,
+  query       TEXT,
+  session_id  TEXT,
+  exchange_id INTEGER,
+  raw         INTEGER,
+  hits        INTEGER,
+  top_score   REAL,
+  ids         TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(ids)),
+  scores      TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(scores)),
+  dates       TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(dates)),
+  cands       INTEGER,
+  elapsed_ms  INTEGER,
+  event_sha   TEXT NOT NULL UNIQUE
+);
+
+CREATE INDEX IF NOT EXISTS idx_recall_events_query_sha ON recall_events(query_sha);
+CREATE INDEX IF NOT EXISTS idx_recall_events_session_id ON recall_events(session_id);
+CREATE INDEX IF NOT EXISTS idx_recall_events_ts ON recall_events(ts);
+
 -- DATA-2 builds the future ops-owned memory route beside the currently served
 -- `memories` table. Nothing in the semantic fragment exposes these structures,
 -- so copying custody cannot change a query before the federation cutover.
