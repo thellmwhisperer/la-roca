@@ -8,10 +8,7 @@ import (
 )
 
 func TestRecentQueryFailuresReadsTheCommonContractAcrossSurfaces(t *testing.T) {
-	root := t.TempDir()
-	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
-	writer := New(root)
-	writer.now = func() time.Time { return now }
+	root, now, writer := fixedQueryFailureWriter(t)
 	records := []struct {
 		stream string
 		value  any
@@ -102,10 +99,7 @@ func TestRecentQueryFailuresReadsTheCommonContractAcrossSurfaces(t *testing.T) {
 }
 
 func TestRecentQueryFailuresIgnoresLeftoverRetiredAuditFiles(t *testing.T) {
-	root := t.TempDir()
-	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
-	writer := New(root)
-	writer.now = func() time.Time { return now }
+	root, now, writer := fixedQueryFailureWriter(t)
 	if err := writer.Append(Executions, MCPRecord{CallRecord: CallRecord{
 		Timestamp: now.Add(-time.Hour), Source: "mcp", OK: false,
 		Error: "the provider stopped", ErrorType: "model_error",
@@ -127,4 +121,13 @@ func TestRecentQueryFailuresIgnoresLeftoverRetiredAuditFiles(t *testing.T) {
 	if summary.Count != 1 || len(summary.Recent) != 1 || summary.Recent[0].CorrelationID != "qf_live_mcp" {
 		t.Fatalf("summary = %+v, want only the executions MCP failure", summary)
 	}
+}
+
+func fixedQueryFailureWriter(t *testing.T) (string, time.Time, *Writer) {
+	t.Helper()
+	root := t.TempDir()
+	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	writer := New(root)
+	writer.now = func() time.Time { return now }
+	return root, now, writer
 }
