@@ -231,8 +231,10 @@ below to query retained records without restoring an ops audit destination.
 
 CLI and MCP calls share one `executions` JSONL stream. Retention is three
 months. Each file is capped at 5 MiB and the stream keeps at most 200 files.
-Older `mcp-audit-*.jsonl` files are still read by `roca doctor` and removed on
-uninstall. `ingest` and `migrations` stay separate housekeeping streams.
+The retired `mcp-audit` stream is no longer written or read. Leftover
+`mcp-audit-*.jsonl` files are ignored by `roca doctor` and left untouched by
+uninstall. `ingest` and `migrations`
+stay separate housekeeping streams.
 Consumers should glob `<stream>-*.jsonl`; rotated segments have the same prefix.
 An individual record larger than the file cap is dropped under the same
 non-failing writer contract. Rotation and redaction are unchanged.
@@ -307,8 +309,8 @@ repairs, and failure. Both streams are plain files beside the call audit.
 
 ## Reading query failures
 
-Doctor reads retained `executions` JSONL segments, plus leftover `mcp-audit`
-files from earlier builds.
+Doctor reads retained `executions` JSONL segments, including MCP calls that
+land there with `source` `mcp` and a `tool` field.
 Malformed lines and unreadable files remain visible as gaps in that sample.
 
 Doctor reports the number of failed query calls in the last 24 hours, on either
@@ -430,7 +432,7 @@ logs, day, scratch = sys.argv[1:]
 os.close(os.open(scratch, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
 with sqlite3.connect(scratch) as db:
     db.execute("CREATE TABLE audit (record TEXT NOT NULL CHECK(json_valid(record)))")
-    for stream in ("executions", "mcp-audit"):
+    for stream in ("executions",):
         for path in sorted(pathlib.Path(logs).glob(f"{stream}-{day}*.jsonl")):
             with path.open() as source:
                 for line in source:
