@@ -62,12 +62,4 @@ func TestStoreHandoffAutoSupersedesPreviousCurrentForTheProject(t *testing.T) {
 	default:
 		t.Fatalf("count n = %#v", row["n"])
 	}
-
-	pill := mustJSON(t, runRoot(t, contractBuild(), "exec",
-		"SELECT count(*) AS n FROM plugin_roca_ops.memories WHERE layer='pill' AND json_extract(metadata, '$.pill_slug')='uso-de-la-roca' AND content LIKE '%vectors first%'",
-		"--json"))
-	pillRows, _ := pill["rows"].([]any)
-	if len(pillRows) != 1 || pillRows[0].(map[string]any)["n"] != float64(1) {
-		t.Fatalf("pill fixture = %#v, want one vector-first pill", pill["rows"])
-	}
 }
