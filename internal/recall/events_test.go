@@ -31,3 +31,22 @@ func TestReadAcceptsLegacyRecordWithoutNewProvenance(t *testing.T) {
 		t.Fatalf("legacy event = %+v", events)
 	}
 }
+
+func TestReadIgnoresIncompleteTrailingRecord(t *testing.T) {
+	input := `{"ts":"2026-09-22T10:00:00Z","action":"agent spawn","query_sha":"abc123"}` + "\n" +
+		`{"ts":"2026-09-22T10:01:00Z","action":"agent spawn","query_sha":"def456"`
+	events, err := Read(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].QuerySHA != "abc123" {
+		t.Fatalf("events = %+v", events)
+	}
+}
+
+func TestReadRejectsMalformedCompleteRecord(t *testing.T) {
+	_, err := Read(strings.NewReader(`{"ts":"2026-09-22T10:00:00Z","action":"agent spawn","query_sha":"abc123",}`))
+	if err == nil {
+		t.Fatal("malformed complete record unexpectedly accepted")
+	}
+}

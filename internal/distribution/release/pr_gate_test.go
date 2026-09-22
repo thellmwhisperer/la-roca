@@ -53,3 +53,42 @@ esac
 		})
 	}
 }
+
+func TestPRGateHighRiskAcceptanceRequiresOwnerActor(t *testing.T) {
+	bin := t.TempDir()
+	fakeGH := `#!/bin/sh
+case "$*" in
+  *--json\ body*) printf '%b\n' '## Risk Assessment\nHigh' ;;
+  *--json\ author*) printf '%s\n' author ;;
+  *--json\ labels*) printf '%s\n' 'risk:accepted' ;;
+  "api repos/fixture/repo --jq .owner.login") printf '%s\n' owner ;;
+  *) printf 'unexpected gh call: %s\n' "$*" >&2; exit 1 ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(bin, "gh"), []byte(fakeGH), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("GITHUB_REPOSITORY", "fixture/repo")
+	t.Setenv("PR_NUMBER", "1")
+	t.Setenv("PR_GATE_FORK", "true")
+	t.Setenv("PR_GATE_ACTION", "labeled")
+	t.Setenv("PR_GATE_REVIEWER", "owner")
+	for _, test := range []struct {
+		name   string
+		actor  string
+		passed bool
+	}{
+		{name: "owner", actor: "owner", passed: true},
+		{name: "collaborator", actor: "collaborator", passed: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("GITHUB_ACTOR", test.actor)
+			cmd := exec.Command("bash", "../../../scripts/pr-gate.sh")
+			output, err := cmd.CombinedOutput()
+			if (err == nil) != test.passed {
+				t.Fatalf("passed=%t, error=%v\n%s", test.passed, err, output)
+			}
+		})
+	}
+}

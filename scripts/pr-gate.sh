@@ -270,6 +270,30 @@ gate() {
   has_label() {
     printf '%s\n' "$labels" | grep -Fxq "$1"
   }
+  resolved_owner_candidates() {
+    if [[ -n ${PR_GATE_REVIEWER:-} ]]; then
+      printf '%s\n' "$PR_GATE_REVIEWER"
+    elif [[ $(gh api "repos/$repo" --jq '.owner.type') == Organization ]]; then
+      gh api "orgs/$owner/members?role=admin" --jq '.[].login' 2>/dev/null || true
+    else
+      printf '%s\n' "$owner"
+    fi
+  }
+  owner_accepted_label() {
+    local actor candidate candidates
+    if [[ $action == labeled ]]; then
+      actor=${GITHUB_ACTOR:-}
+    else
+      actor=$(gh api --paginate --slurp "repos/$repo/issues/$n/events?per_page=100" \
+        --jq 'add | map(select(.event == "labeled" and .label.name == "risk:accepted")) | first | .actor.login // empty' 2>/dev/null || true)
+    fi
+    [[ -n $actor ]] || return 1
+    candidates=$(resolved_owner_candidates)
+    while IFS= read -r candidate; do
+      [[ -n $candidate && $candidate == "$actor" ]] && return 0
+    done <<<"$candidates"
+    return 1
+  }
   if [[ $action == synchronize || $action == edited ]] && has_label "$ACCEPT_LABEL"; then
     if [[ $fork != true ]]; then
       best_effort "removing stale $ACCEPT_LABEL" \
@@ -284,14 +308,7 @@ gate() {
   # set, names the reviewer explicitly.
   request_owner_review() {
     local candidates c
-    candidates=${PR_GATE_REVIEWER:-}
-    if [[ -z $candidates ]]; then
-      if [[ $(gh api "repos/$repo" --jq '.owner.type') == Organization ]]; then
-        candidates=$(gh api "orgs/$owner/members?role=admin" --jq '.[].login' 2>/dev/null || true)
-      else
-        candidates=$owner
-      fi
-    fi
+    candidates=$(resolved_owner_candidates)
     while IFS= read -r c; do
       [[ -n $c ]] || continue
       if [[ $c != "$author" ]]; then
@@ -327,7 +344,7 @@ gate() {
       fail_gate "$PASTE_MESSAGE"
       ;;
     high)
-      if has_label "$ACCEPT_LABEL"; then
+      if has_label "$ACCEPT_LABEL" && owner_accepted_label; then
         pass_gate "Risk Assessment is High; $ACCEPT_LABEL is set by the owner."
       fi
       if [[ $fork != true ]]; then

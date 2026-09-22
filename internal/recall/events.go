@@ -50,18 +50,33 @@ func ReadFile(path string) ([]Event, error) {
 
 // Read decodes one JSON object per line from a recall log.
 func Read(reader io.Reader) ([]Event, error) {
-	scanner := bufio.NewScanner(reader)
-	scanner.Buffer(make([]byte, 64*1024), maxLineSize)
+	lineReader := bufio.NewReaderSize(reader, 64*1024)
 	var events []Event
 	line := 0
-	for scanner.Scan() {
+	for {
+		rawLine, readErr := lineReader.ReadString('\n')
+		if len(rawLine) > maxLineSize {
+			return nil, fmt.Errorf("read recall log line %d: exceeds %d bytes", line+1, maxLineSize)
+		}
+		if len(rawLine) == 0 && readErr != nil {
+			if readErr == io.EOF {
+				break
+			}
+			return nil, fmt.Errorf("read recall log: %w", readErr)
+		}
 		line++
-		raw := strings.TrimSpace(scanner.Text())
+		raw := strings.TrimSpace(rawLine)
 		if raw == "" {
+			if readErr == io.EOF {
+				break
+			}
 			continue
 		}
 		var document map[string]json.RawMessage
 		if err := json.Unmarshal([]byte(raw), &document); err != nil {
+			if readErr == io.EOF && strings.Contains(err.Error(), "unexpected end of JSON input") {
+				break
+			}
 			return nil, fmt.Errorf("recall log line %d: %w", line, err)
 		}
 		event, err := decode(document)
@@ -71,9 +86,12 @@ func Read(reader io.Reader) ([]Event, error) {
 		digest := sha256.Sum256([]byte(raw))
 		event.EventSHA = hex.EncodeToString(digest[:])
 		events = append(events, event)
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("read recall log: %w", err)
+		if readErr != nil {
+			if readErr == io.EOF {
+				break
+			}
+			return nil, fmt.Errorf("read recall log: %w", readErr)
+		}
 	}
 	return events, nil
 }
