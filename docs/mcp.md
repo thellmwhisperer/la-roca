@@ -215,12 +215,13 @@ Where each runtime keeps its configuration, and what Roca writes into it:
 | `zcode` | `$ZCODE_HOME`/`~/.zcode/cli/config.json` | `mcp.servers` | `{"type": "stdio", "command", "args"}` |
 
 **The file belongs to the operator.** Roca owns exactly one entry inside it and
-every other byte comes back untouched: comments, ordering, blank lines, the
-JSONC OpenCode tolerates and the neighbouring servers. That is why the edits are
-surgical text-range edits and not a parse-and-reserialize round trip, which is
-easy and eats comments. It is measured the only way that is not a matter of
-opinion: installing and then withdrawing gives back the exact previous bytes
-(`internal/distribution/agentcfg/agentcfg_test.go`, every supported runtime).
+candidate edits preserve surrounding comments, ordering, blank lines, the
+JSONC OpenCode tolerates and neighbouring servers through surgical text ranges.
+Publishing an edit to an existing configuration, including withdrawal, follows
+the [conditional file boundary](lifecycle.md#conditional-file-publication).
+An unchanged declaration is a no-op; a missing configuration can be created.
+The refusal tests in `internal/distribution/agentcfg/agentcfg_test.go` verify
+that existing files keep their bytes, identity and permissions.
 
 Three more things the shared spine gives every edit: the previous bytes are
 backed up first (`<file>.roca.bak`, and an earlier copy is never overwritten);
@@ -248,7 +249,7 @@ An agent learns La Roca three different ways. They stack; none replaces another.
 
 | Layer | What it is | How the operator turns it on |
 |---|---|---|
-| **Prompt** | The generated `prompt.md` block for agent instructions | Automatic on every init |
+| **Prompt** | The generated `prompt.md` block for agent instructions | Init attempts installation; see [Initialize](lifecycle.md#initialize) |
 | **Skill** | Three embedded skills (`roca`, `roca-operations`, `roca-vector`) plus `roca-semantica`, the semantic catalog generated from the installed plugin manifests | `roca init` installs all four (the three embedded skills plus `roca-semantica`) into every detected skill seat and names `roca` and `roca-operations` as must-read; `roca skill install <runtime>` or `--all` writes the same four as registered, zoned files |
 | **MCP** | Core passthrough tools for agents with no shell, plus conditional semantic-search and playground tools | `roca mcp install <runtime>` |
 
@@ -275,18 +276,16 @@ runtime receives `skills/roca/SKILL.md`, `skills/roca-operations/SKILL.md`,
 | `qwen` | `$QWEN_HOME`/`~/.qwen` |
 | `zcode` | `$ZCODE_HOME`/`~/.zcode` (opt-in: init and update do not seed it) |
 
-Only those files are created or refreshed. Explicit markers divide the shipped
-SYSTEM zone from the operator's USER zone. Re-running is a no-op when SYSTEM
-already matches; otherwise USER is transplanted verbatim and the previous file
-is backed up. An edited SYSTEM zone is left alone unless the operator passes
-`--force`. The embedded skill sources live in
+Only those files are installation targets. [Artifact lifecycle](lifecycle.md#update)
+owns their SYSTEM/USER zones, no-op detection, backups, force and current
+refresh refusals. The embedded skill sources live in
 `internal/distribution/skill/agents.md` (which generates `roca`),
 `internal/distribution/skill/OPERATIONS.md`, and
 `internal/distribution/skill/VECTOR.md`, and ship inside the
 binary via `go:embed`; the catalog body is composed at install time from the semantic
 fragments of the installed plugin manifests, the same fragments the query
-catalog composes, and every `roca plugin install`, `update` and `uninstall`
-regenerates it in each runtime where it is registered.
+catalog composes. Plugin install, update and uninstall attempt to refresh
+registered copies under that same artifact lifecycle.
 
 ### How a runtime earns a skill seat
 

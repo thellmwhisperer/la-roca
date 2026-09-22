@@ -18,7 +18,7 @@ import (
 // each harness already scans and never reads, moves, or rewrites its
 // neighbours, so every extension and plugin another tool installed there stays
 // exactly as it is. The whole file is the SYSTEM fragment; there is no USER zone
-// inside it, which is why an operator's edits are left alone until `--force`.
+// inside it. Force bypasses the edit guard, not conditional publication.
 
 // rocaScriptMarker is the ownership line every script this product writes
 // carries. A file in the same directory without it was written by someone else
@@ -108,7 +108,8 @@ export default function (pi) {
 
 // installSessionScript writes one runtime's extension or plugin. A file this
 // product did not write is never replaced; one it wrote and the operator edited
-// is left alone, named in a warning, until `--force` says otherwise.
+// requires `--force` to pass the edit guard. Publication still follows
+// securefile.Replace's contract.
 //
 // The registry is read before anything is written, because an install that
 // wrote the script and then failed its own bookkeeping would leave a working

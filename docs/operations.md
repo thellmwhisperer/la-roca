@@ -42,8 +42,8 @@ signs `roca store` commands with `--agent claude` and the latest model recorded
 in Claude's own transcript, or `unknown` when that direct evidence is absent.
 The entry launches this executable's absolute path, overridable with
 `--executable` or `ROCA_BIN`, because Claude runs hooks in a non-interactive
-shell that does not read an interactive `PATH`. Reinstalling repoints an entry
-whose binary moved instead of adding a second one.
+shell that does not read an interactive `PATH`. Changes to an existing entry
+follow the [conditional file boundary](lifecycle.md#conditional-file-publication).
 
 ### Session hooks
 
@@ -62,10 +62,11 @@ the envelope.
 
 Every installed hook launches this executable's absolute path, overridable with
 `--executable` or `ROCA_BIN`, because harnesses run hooks in a non-interactive
-shell that does not read an interactive `PATH`. Reinstalling repoints an entry
-whose binary moved instead of adding a second one. `roca hooks uninstall
-<runtime>` is symmetric, idempotent, takes no flags, and withdraws everything La
-Roca owns for that runtime. Neighbouring hooks another tool installed are never
+shell that does not read an interactive `PATH`. Changes to an existing entry
+follow the [conditional file boundary](lifecycle.md#conditional-file-publication).
+`roca hooks uninstall <runtime>` takes no flags and attempts to withdraw La Roca's entries. Edits
+to existing settings follow that same boundary; deleting an owned script is a
+separate operation. Neighbouring hooks another tool installed are never
 moved, rewritten or removed, on any of the files below.
 
 | Runtime | File this install touches | How to verify it |
@@ -97,20 +98,21 @@ names, and parent containers (`hooks`, `hooks.events`) this install created are
 recorded beside the config and pruned on uninstall only when they remain empty.
 For pi and OpenCode the whole written file is the SYSTEM fragment: it carries an
 ownership line, a file at that path without it is refused rather than replaced,
-and one La Roca wrote and the operator edited is left alone until `roca hooks
-install <runtime> --force` replaces it, keeping a recovery copy. `roca update`
-does not refresh those two scripts; reinstalling is how they are repointed.
+and an operator edit requires `--force` to pass the ownership guard.
+Reinstalling prepares a recovery copy when the script needs changing, but
+publication still follows the conditional file boundary. `roca update` does
+not refresh those two scripts.
 
 `roca hooks install claude` additionally maintains the Claude-only `PreToolUse`
 hook described under [Memory authorship](#memory-authorship). That exact command
 hook inside `PreToolUse` is its own registered SYSTEM fragment; the enclosing
 group, surrounding Claude settings, and every other hook are its USER zone.
-Refresh never rewrites the surrounding settings, and an edited fragment is left
-alone until `roca hooks install claude --force` replaces it. See
+Candidate edits preserve surrounding settings; `--force` only bypasses the
+fragment's divergence guard. See
 [Update](lifecycle.md#update) for the shared zone, divergence and registry
-contract. Because both Claude hooks live in one file, the signing entry is
-written first: settings this product cannot parse refuse the whole install
-rather than leave one hook written and the other not.
+contract. The signing entry is attempted first. If it creates a previously
+missing settings file, adding the session entry then requires replacement and
+can be refused, leaving only the signing hook installed.
 
 Codex is the one harness with a step this product cannot take for the operator:
 it runs a hook only once that exact command has been trusted, recording a
@@ -118,9 +120,9 @@ it runs a hook only once that exact command has been trusted, recording a
 silence. `roca hooks install codex` says so; accepting the hook is the
 operator's decision and La Roca never writes that approval on their behalf.
 
-Installs that supersede a pre-1.85 Claude install withdraw its two separate
-`hooks run claude-pills` and `hooks run claude-handoff` entries, so the same
-pills are not injected twice from one file.
+Migration of a pre-1.85 Claude install proposes withdrawing its separate
+`hooks run claude-pills` and `hooks run claude-handoff` entries. Publishing that
+migration is subject to the conditional file boundary above.
 
 `roca hooks uninstall <runtime>` leaves every other setting, and every hook that
 is not La Roca's, exactly as it was. `roca uninstall` independently attempts the

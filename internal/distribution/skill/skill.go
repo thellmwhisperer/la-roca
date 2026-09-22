@@ -155,8 +155,8 @@ func ownedDir(name string) bool {
 
 // LegacySignature opens every definitive SKILL.md this product has shipped. A
 // pre-zone file that starts with it came from an older release, so a migration
-// replaces it instead of preserving a stale copy of the skill as operator
-// content.
+// candidate omits it instead of preserving a stale skill as operator content.
+// Candidate generation does not authorize publication.
 func LegacySignature() string { return legacyOpening(SkillName) }
 
 func legacyOpening(name string) string { return "---\nname: " + name + "\n" }
@@ -341,9 +341,9 @@ func UninstallWithChecksum(name, path, systemSHA256 string) (Outcome, error) {
 	return out, nil
 }
 
-// InstallWithOptions writes the zoned canonical skill at path. Idempotent
-// installs are left alone and legacy operator bytes are adopted into USER; a
-// changed SYSTEM zone is only overridden when force is explicit.
+// InstallWithOptions attempts to publish the zoned canonical skill at path.
+// Idempotent installs are left alone. Force bypasses the SYSTEM divergence
+// guard, but publication still follows securefile.Replace's contract.
 //
 // A registered skill the operator deleted is written again without force: the
 // install they typed is the consent, and a file that is not there has no bytes

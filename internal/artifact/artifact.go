@@ -24,11 +24,9 @@ const (
 	frontmatterBegin = "# ROCA SYSTEM BEGIN"
 )
 
-// ErrBrokenZones is the one refresh failure force repairs: the markers are
-// there and no zone can be read from between them. Every other failure — a
-// permission, a disk, a concurrent-edit refusal — is told apart from it,
-// because offering force for those is either useless or the clobber the
-// refusal exists to prevent.
+// ErrBrokenZones identifies unreadable zone markers. Force bypasses this
+// parsing guard to prepare a whole-file candidate, but cannot bypass the
+// securefile publication boundary or other I/O failures.
 var ErrBrokenZones = errors.New("zone markers are broken")
 
 type Zones struct {
@@ -150,9 +148,9 @@ func RefreshFile(request FileRequest) (FileOutcome, error) {
 			next = Zoned(request.System, zones.User)
 		} else if markersArePresent(current) {
 			// Markers that are there but broken are the one state no zone can be
-			// read from, so nothing can be transplanted. Force is the documented
-			// remedy for a broken artifact and it must reach this file too: the
-			// replaced bytes survive in the backup replaceFile writes.
+			// read from, so nothing can be transplanted. Force permits a whole-file
+			// candidate; replaceFile still enforces conditional publication and
+			// reports the backup even if publication is refused.
 			if !request.Force {
 				return out, fmt.Errorf("read zones from %s: %w: %w", request.Path, ErrBrokenZones, parseErr)
 			}
@@ -192,10 +190,9 @@ func markersArePresent(content string) bool {
 	return strings.Contains(content, "<!-- ROCA ") || strings.Contains(content, frontmatterBegin)
 }
 
-// legacyZoned decides what a pre-zone file becomes. Text this product
-// recognizes as its own earlier shipped artifact is replaced outright, because
-// keeping it would preserve a stale copy of the product beside the current one
-// forever. Everything else is the operator's and moves into USER verbatim.
+// legacyZoned prepares a candidate for a pre-zone file. Recognized shipped
+// content is omitted to avoid preserving a stale product copy inside USER.
+// Unrecognized bytes become USER verbatim. Publication is checked separately.
 func legacyZoned(current string, request FileRequest) string {
 	if request.LegacySignature != "" && strings.HasPrefix(current, request.LegacySignature) {
 		return Zoned(request.System, "")

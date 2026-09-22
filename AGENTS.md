@@ -40,9 +40,9 @@ is the checked SELECT seat.
 
 The skills ARE the semantic layer: the memory layers, the tables, and worked
 examples of how to query them. That map is static; it does not drift as data
-grows, and it regenerates automatically when the installed plugin set
-changes. Reading it is the difference between composing good SQL and
-guessing:
+grows. [Artifact lifecycle](docs/lifecycle.md#update) owns catalog refresh
+and its current publication limits. Reading it is the difference between
+composing good SQL and guessing:
 
 This ships the operating craft plus `roca-semantica`, the generated catalog
 of every installed database's tables and example questions. Read both
@@ -54,8 +54,9 @@ runtime, `roca mcp install <runtime>` exposes the same operations as tools.
 Do not make the first working answer depend on vectors. Full-text search works
 first. During interactive init, after word search works, La Roca asks once for
 permission to find history by meaning and to download the model it needs. A
-yes records the decision and starts the background build. The companion's
-`install` and `status` lifecycle commands remain available while the feature is
+yes attempts setup; [init consent](docs/lifecycle.md#the-yes-inside-the-same-run)
+owns configuration persistence and the manual steps when it is refused.
+The companion's `install` and `status` lifecycle commands remain available while the feature is
 off; its answering verbs require `vector = true`.
 
 If they decline during init and choose semantic search later, set

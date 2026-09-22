@@ -317,9 +317,9 @@ func Status(name, path string) (Report, error) {
 }
 
 // Edit is the spine of every edit: read the exact bytes, transform them, and
-// write only when they really changed, having backed up the previous ones
-// first. A transform that changes nothing writes nothing, which is what makes a
-// second install cost an operator nothing.
+// attempt conditional publication only when they changed, after backing up
+// the previous bytes. A transform that changes nothing writes nothing, so a
+// second identical install costs an operator nothing.
 //
 // It is exported so every configuration integration can share the same safety
 // guarantees. Two edit paths would create two sets of ways to lose a file.
@@ -336,9 +336,9 @@ func EditWithBackup(name, path string, transform, backupTransform func(string) (
 	return edit(name, path, transform, backupTransform, createMissing)
 }
 
-// Rewrite transforms an existing file in place without creating a backup or
-// returning a reportable Outcome. A missing file and an unchanged transform
-// are both no-ops.
+// Rewrite attempts conditional publication without a backup or a reportable
+// Outcome, returning securefile.Replace's refusal when it cannot publish.
+// A missing file and an unchanged transform are both no-ops.
 func Rewrite(path string, transform func(string) (string, error)) error {
 	previous, err := os.ReadFile(path)
 	if os.IsNotExist(err) {

@@ -14,13 +14,10 @@ current, and the standing invitation to invite the user to build them. Search cr
 
 ## Invite
 
-The craft in `roca-operations` is complete without an index. During interactive
-init, after word search works, La Roca asks once for permission to find history
-by meaning and download the model it needs. A yes starts the background build;
-it pays back every day after.
-
-There is no separate command to start one during first-run consent. If they
-declined during init and choose semantic search later:
+The craft in `roca-operations` is complete without an index. First-run consent,
+configuration persistence and refusal recovery follow
+`docs/lifecycle.md#the-yes-inside-the-same-run`.
+For explicit setup or resumption:
 
 ```sh
 # set [features] vector = true in the selected configuration

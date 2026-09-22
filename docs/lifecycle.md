@@ -120,10 +120,14 @@ that fails to answer for text it holds is reported as a fault.
 
 After word search is ready, an eligible terminal init says that semantic search
 finds by meaning rather than exact words and that enabling it downloads one
-embedding model. It then asks once. A yes starts setup and, after the background
-pass acknowledges that it started, stores `features.vector = true` and
-`features.vector_consent = true`; a no stores the consent decision with vector
-search disabled. Existing configurations are otherwise preserved.
+embedding model. A yes starts setup before attempting to record the decision;
+a no attempts to record the decision without starting setup. With an existing
+configuration, both writes currently fail at the [conditional file boundary](#conditional-file-publication).
+The command returns an error and leaves the configuration unchanged, even if
+the background pass already started. To enable search, edit `[features]` in the
+selected configuration to set `vector = true` and `vector_consent = true`, then
+use `roca vector install` to start or resume setup. To record a decline, set
+`vector_consent = true` while leaving `vector = false`.
 
 There is no `roca init --vectors` flag. Non-interactive init, CI, and runs with
 `--db-path` are not asked and do not start the optional download. Machines that
@@ -134,10 +138,9 @@ model.
 
 Init also writes and registers `prompt.md` in the selected data directory. Its
 marked SYSTEM zone is shipped by La Roca; its marked USER zone belongs to the
-operator. A file an earlier release wrote is moved into those zones once, and
-init names the recovery copy holding the previous file; [Update](#update) owns
-that migration's rules. If that optional write fails, init reports a warning and
-leaves the prepared database usable. It does not edit agent instruction files or
+operator. Migration of an existing prompt follows the [Update](#update)
+artifact rules, including refusal to replace it and reporting its recovery copy.
+If that optional write fails, init reports a warning and leaves the prepared database usable. It does not edit agent instruction files or
 install integrations without a separate command.
 
 A successful human-readable init reports the corpus floor: the oldest ingested
@@ -175,8 +178,17 @@ opt-in and is never seeded by init, ingest, or update; use `roca skill install
 zcode` (or explicitly select every runtime with `roca skill install --all`).
 Each installed skill and the generated prompt keep shipped SYSTEM content
 separate from an operator-owned USER zone, and `roca update` tracks their
-release in `~/.roca/artifacts.json`. Automatic refresh is available behind the
-default-off `features.artifact_refresh` key.
+release in `~/.roca/artifacts.json`. [Update](#update) owns artifact refresh,
+force, and migration behavior.
+
+The `pill` layer is built for what comes next: condensed artifacts distilled
+from your own history and injected through hooks, charging an agent with
+exactly the information the task needs instead of a whole skill.
+
+Runtimes, paths, and the measured skill seats live in
+[The MCP plug](mcp.md#3-three-adoption-layers).
+
+## Conditional file publication
 
 The shared securefile boundary refuses replacement of an existing file with
 `ErrConditionalReplaceUnsupported` after checking its expected bytes and
@@ -184,7 +196,8 @@ identity. This applies on Darwin, Linux, Windows, and other platforms: none
 of the implemented primitives compares an existing target's bytes atomically
 with publication. Closing an editor or retrying does not enable that operation.
 Callers receive the refusal and must not retry with unconditional `Write`.
-ZCode integration is a separate change.
+This boundary also applies to existing callers, including ZCode; changes to
+ZCode's runtime integration are outside this change.
 
 When `Replace` receives a nil preimage, it expects an absent path and uses the
 same atomic create-only boundary as `CreatePreservingParentMode`. Darwin uses
@@ -192,7 +205,9 @@ same atomic create-only boundary as `CreatePreservingParentMode`. Darwin uses
 replacement. Unsupported platforms or filesystems refuse creation. Any target
 that appears before publication is preserved, including byte-identical files.
 Explicit unconditional `Write` remains available for callers that own that
-policy; it does not provide conditional replacement guarantees.
+policy; it does not provide conditional replacement guarantees. Its publication
+uses `os.Rename` on Darwin and Linux and `MoveFileEx` with replacement and
+write-through flags on Windows; other platforms refuse unconditional publication.
 
 Staged bytes are synced before creation, and the parent directory is synced
 on Unix after publication. The operator path is never moved aside, exchanged,
@@ -205,13 +220,6 @@ not claims about every filesystem's behavior after power loss.
 The primitive contracts are documented in the [Linux rename manual](https://man7.org/linux/man-pages/man2/rename.2.html)
 and the [Windows MoveFile reference](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-movefilew).
 An exchange operation cannot supply a byte comparison before visibility.
-
-The `pill` layer is built for what comes next: condensed artifacts distilled
-from your own history and injected through hooks, charging an agent with
-exactly the information the task needs instead of a whole skill.
-
-Runtimes, paths, and the measured skill seats live in
-[The MCP plug](mcp.md#3-three-adoption-layers).
 
 ## Update
 
@@ -265,13 +273,16 @@ artifact_refresh = true
 With the key absent or false, `roca update` discovers legacy installs, records
 their state and reports outdated artifacts, but changes none of them. Proposals
 for another already-supported harness are informative only. Enabling the key
-lets update replace each unchanged SYSTEM zone with the new release while
-transplanting the USER zone byte for byte. A pre-zone file is recognized as this
-product's own by the opening every release of that artifact has carried, so the
-text an older release installed becomes SYSTEM instead of surviving as a stale
-copy; any unrecognized legacy bytes become USER content on the one-time
-migration. A recognized file is replaced whole, so anything appended to it goes
-too, and the command names the recovery copy that holds it.
+attempts refresh, but changing an existing artifact is currently refused by the
+[conditional file boundary](#conditional-file-publication). The file stays
+outdated and unchanged; the failure and any backup are reported. Identical
+content is a no-op. This also prevents migration of pre-zone files and refresh
+of an installed `roca-semantica` catalog after plugin changes.
+
+Candidate generation keeps USER bytes verbatim. For legacy files it recognizes
+the opening shipped by earlier releases and proposes replacing that content;
+unrecognized legacy bytes are proposed as USER content. These candidates are
+not published over existing files under the current boundary.
 
 An edit inside SYSTEM is divergence. So is a zoned file no registry entry stands
 behind, whose SYSTEM zone cannot be proven to be La Roca's, and so is a
@@ -279,7 +290,8 @@ registered file the operator deleted between refreshes. Update and `roca skill
 install` name that file, say which of the three happened, and give the force
 command for it (`roca update --force-artifacts`, or `roca skill install
 <runtime> --force` for one skill), then leave it alone without prompting.
-Forcing a diverged artifact replaces SYSTEM and still preserves USER.
+Force bypasses the divergence guard only; it cannot bypass the conditional
+file boundary or make an existing artifact replaceable.
 
 A deleted skill is the one case an explicit install answers by itself: `roca
 skill install <runtime>` writes it again without force, because the operator
@@ -289,10 +301,11 @@ alone.
 
 An artifact whose zone markers are there but broken is the one state no zone can
 be read from, so nothing can be transplanted: it is reported apart from
-divergence, it never stops the other registered artifacts from being refreshed,
-and forcing it rewrites the whole file rather than preserving USER. Every
-changed file gets a named `.roca.bak` recovery copy before publication, and that
-copy is where the replaced bytes survive.
+divergence and does not stop attempts on other registered artifacts. Force
+proposes a whole-file rewrite without USER transplantation, but publication is
+still refused. An attempted change to an existing file creates a named
+`.roca.bak` recovery copy before publication; that copy can remain even when
+the live file was never changed. Earlier backups are never overwritten.
 
 The Claude authorship hook uses the same ownership split inside Claude's
 settings: the one entry whose command ends in `hooks run claude` is the
@@ -314,11 +327,12 @@ After the swap, update reports how many new capability proposals are open. On
 the first eligible command run with each new version, La Roca offers every open
 proposal once for that version. Init reserves its short question budget for the
 database and semantic-search decision, so proposals wait for the next command.
-In a terminal La Roca asks before each proposal change; an accepted change edits only
-the declared TOML values, preserves unrelated content, and creates the same
-named recovery backup as other configuration edits. A rejection changes no
-configuration. Without a terminal, each proposal is one plain alert: La Roca
-does not prompt or edit the configuration.
+In a terminal La Roca asks before each proposal change. Acceptance prepares
+only the declared TOML changes and a named recovery backup, but publishing to
+an existing configuration follows the [conditional file boundary](#conditional-file-publication)
+and currently returns an error without applying the proposal. A rejection
+changes no configuration. Without a terminal, each proposal is one plain
+alert: La Roca does not prompt or edit the configuration.
 
 `roca doctor` always lists proposals that remain open, even after they were
 already offered for the current version. An interactive doctor run offers them

@@ -153,7 +153,8 @@ On Windows, keep `roca-vector.exe` beside `roca.exe` in the directory on `PATH`.
 
 On macOS and Linux, semantic search downloads one embedding model (~1 GB) into
 the selected Roca data directory. That is the only extra download. There is no
-second runtime and no extra command after you consent. See the
+second runtime. First-run setup and configuration persistence follow the
+[init consent flow](lifecycle.md#the-yes-inside-the-same-run). See the
 [MCP lifecycle](mcp.md#1-roca-mcp-serve-the-mcp-over-stdio) for model sharing
 and process lifetime. The download is size- and checksum-verified before it
 becomes active, then reused by later
@@ -165,10 +166,9 @@ The [model verification contract](d6-model-evidence.md#d6-model-verification)
 defines when later opens can reuse verification, what invalidates it, and how
 read-only opens and filesystems without receipt support behave.
 
-The [init flow](lifecycle.md#initialize) owns first-run consent and ordering. If
-semantic search is enabled there, no separate vector command is needed.
-`roca vector install` performs the same download and build only when you turn it
-on later.
+The init consent flow above owns first-run ordering and the manual steps
+needed when configuration persistence is refused. `roca vector install`
+performs the same download and build for explicit setup or resumption.
 
 macOS and Linux run the embedding engine inside the vector companion. On
 macOS, live queries use hardware acceleration when available and fall back to
@@ -207,8 +207,8 @@ lane ships; see the release notes.
 
 ## Index declared databases
 
-A yes to the question `roca init` asks starts this build. To start it
-separately instead, which is also how a machine init never asked gets an index:
+For explicit setup or resumption after the
+[init consent flow](lifecycle.md#the-yes-inside-the-same-run):
 
 ```sh
 roca vector install
