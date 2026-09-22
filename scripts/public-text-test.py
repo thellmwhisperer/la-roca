@@ -103,6 +103,10 @@ class PublicTextTest(unittest.TestCase):
 
     def test_pr_metadata_commits_and_diff(self):
         self.git("init", "-q")
+        # This fixture deliberately commits text that the public-text hook
+        # rejects so the scanner can inspect it. Keep host-level hooks from
+        # intercepting the synthetic commit before the product sees it.
+        self.git("config", "core.hooksPath", ".git/no-hooks")
         self.git("config", "user.name", "Synthetic")
         self.git("config", "user.email", "synthetic@example.invalid")
         (self.cwd / "existing.txt").write_text(HOME_PATH + "\n")
