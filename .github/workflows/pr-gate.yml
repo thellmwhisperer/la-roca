@@ -1,10 +1,9 @@
 name: pr-gate
 
 # Required status check on `main` once green there (recorded in
-# docs/operations.md). Judges the PR body's declared Risk Assessment: High
-# fails, labels `risk:high` and requests the owner's review; Medium passes
-# only with pasted branch acceptance (`$ roca` command and its output); Low
-# passes. The referee script is read from the base branch, so the PR under
+# docs/operations.md). Exact release-train steps follow the contract in
+# docs/release-train.md; every other PR is judged from its declared Risk
+# Assessment. The referee script is read from the base branch, so the PR under
 # judgement cannot soften its own gate.
 on:
   pull_request_target:
