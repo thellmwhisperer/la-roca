@@ -31,7 +31,9 @@ func TestHealthRemedyRoundTripClearsASeededLabHome(t *testing.T) {
 		INSERT INTO memories (layer, content, origin)
 		VALUES ('handover', 'alias layer fixture', 'agent');
 		INSERT INTO memories (layer, content, origin)
-		VALUES ('knowledge', 'unknown layer fixture', 'agent');`)
+		VALUES ('knowledge', 'unknown layer fixture', 'agent');
+		INSERT INTO memories (layer, content, origin)
+		VALUES ('experiments', 'second unknown layer fixture', 'agent');`)
 	closeErr := db.Close()
 	if err != nil {
 		t.Fatal(err)
@@ -132,12 +134,13 @@ func TestHealthRemedyRoundTripClearsASeededLabHome(t *testing.T) {
 			testRows, orphans, aliases)
 	}
 	var unknown int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM memories WHERE content = 'unknown layer fixture'`).
+	if err := db.QueryRow(`SELECT COUNT(*) FROM memories
+		WHERE content IN ('unknown layer fixture', 'second unknown layer fixture')`).
 		Scan(&unknown); err != nil {
 		t.Fatal(err)
 	}
-	if unknown != 1 {
-		t.Fatal("the unknown-layer memory was deleted instead of registered")
+	if unknown != 2 {
+		t.Fatal("the unknown-layer memories were deleted instead of registered")
 	}
 }
 

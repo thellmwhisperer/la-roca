@@ -86,9 +86,8 @@ func TestFailingHealthChecksNameTheirRemedy(t *testing.T) {
 		{"orphan_supersedes", "roca doctor repair orphan_supersedes --db-path " + quoted},
 		{"test_metadata_rows", "roca doctor repair test_metadata_rows --db-path " + quoted},
 		{"test_source_agent_rows", "roca doctor repair test_source_agent_rows --db-path " + quoted},
+		{"runtime_layers_not_in_registry", "roca doctor repair runtime_layers_not_in_registry --db-path " + quoted},
 		{"physical_alias_layer_rows", "roca doctor repair physical_alias_layer_rows --db-path " + quoted},
-		{"runtime_layers_not_in_registry",
-			"roca layers add 'a-layer-nobody-declared' --db-path " + quoted},
 	}
 	for _, testCase := range cases {
 		check, ok := report.Checks[testCase.check]
@@ -213,6 +212,41 @@ func TestHealthRepairClearsOnlyTheNamedRows(t *testing.T) {
 	}
 	if repeat.Count != 0 {
 		t.Fatalf("idempotent repair deleted %d extra rows", repeat.Count)
+	}
+}
+
+func TestRuntimeLayerRemedyRegistersEveryUnknownLayer(t *testing.T) {
+	svc, _ := serviceWithPaths(t)
+	seedMemories(t, svc, 1, `INSERT INTO memories (layer, content, origin)
+		 VALUES ('unknown-one', 'unknown layer one', 'agent')`)
+	seedMemories(t, svc, 1, `INSERT INTO memories (layer, content, origin)
+		 VALUES ('unknown-two', 'unknown layer two', 'agent')`)
+
+	report, err := svc.Health(context.Background(), service.HealthRequest{MaxRows: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := report.Checks["runtime_layers_not_in_registry"]
+	quoted := "'" + svc.DB().Path() + "'"
+	wantRemedy := "roca doctor repair runtime_layers_not_in_registry --db-path " + quoted
+	if check.Remedy != wantRemedy {
+		t.Fatalf("runtime layer remedy = %q, want %q", check.Remedy, wantRemedy)
+	}
+
+	result, err := svc.RepairHealth(context.Background(), "runtime_layers_not_in_registry")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Count != 2 || len(result.Rows) != 2 {
+		t.Fatalf("runtime layer repair = %+v, want two registrations", result)
+	}
+
+	after, err := svc.Health(context.Background(), service.HealthRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Checks["runtime_layers_not_in_registry"].Status != service.HealthPass {
+		t.Fatalf("runtime layer health after repair = %+v", after.Checks["runtime_layers_not_in_registry"])
 	}
 }
 

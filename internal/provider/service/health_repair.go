@@ -26,10 +26,11 @@ type HealthRepairResult struct {
 // healthRepairs is the one place that says which checks carry a scoped repair.
 // A check whose remedy is a command somebody else already owns is absent here.
 var healthRepairs = map[string]func(*Service, context.Context) (HealthRepairResult, error){
-	"orphan_supersedes":         (*Service).repairOrphanSupersedes,
-	"test_metadata_rows":        (*Service).repairTestMetadataRows,
-	"test_source_agent_rows":    (*Service).repairTestSourceAgentRows,
-	"physical_alias_layer_rows": (*Service).repairPhysicalAliasLayerRows,
+	"orphan_supersedes":              (*Service).repairOrphanSupersedes,
+	"test_metadata_rows":             (*Service).repairTestMetadataRows,
+	"test_source_agent_rows":         (*Service).repairTestSourceAgentRows,
+	"runtime_layers_not_in_registry": (*Service).repairRuntimeLayersNotInRegistry,
+	"physical_alias_layer_rows":      (*Service).repairPhysicalAliasLayerRows,
 }
 
 func healthRepairNames() []string {
@@ -172,6 +173,29 @@ func (s *Service) repairTestSourceAgentRows(ctx context.Context) (HealthRepairRe
 		func(id int64, _ map[string]any, remapsPresent bool) ([]healthRepairStatement, error) {
 			return deleteMemoryRow(id, remapsPresent)
 		})
+}
+
+func (s *Service) repairRuntimeLayersNotInRegistry(ctx context.Context) (HealthRepairResult, error) {
+	names, err := s.unregisteredLayers(ctx)
+	if err != nil {
+		return HealthRepairResult{}, err
+	}
+	result := HealthRepairResult{
+		Check:  "runtime_layers_not_in_registry",
+		Action: "registered",
+		Count:  len(names),
+	}
+	for _, name := range names {
+		added, err := s.AddLayer(ctx, name)
+		if err != nil {
+			return HealthRepairResult{}, err
+		}
+		result.Rows = append(result.Rows, map[string]any{
+			"name":  added.Name,
+			"added": added.Added,
+		})
+	}
+	return result, nil
 }
 
 func (s *Service) repairPhysicalAliasLayerRows(ctx context.Context) (HealthRepairResult, error) {
