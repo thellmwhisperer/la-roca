@@ -16,7 +16,7 @@ func TestRefreshPreservesTheUserZoneAndGuardsTheSystemZone(t *testing.T) {
 	// their own lines is content and must remain readable after a refused refresh.
 	user := "operator line one\n" + artifact.UserEnd + " is what closes my zone\n"
 	for _, test := range []struct {
-		name, system                string
+		name, system                 string
 		force, diverged, unsupported bool
 	}{
 		{name: "registered system", system: "shipped-v1\n", unsupported: true},
