@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# pr-gate - judge a PR's declared Risk Assessment (issue #457).
+# pr-gate - recognize release controls or judge declared Risk Assessment.
 #
-# Reads the PR body's "Risk Assessment" section and rules:
+# Exact release-train steps are logged and passed under the contract in
+# docs/release-train.md. Every other PR is judged from its "Risk Assessment":
 #   High   -> fail, label risk:high, request owner review. Degraded
 #             enforcement (owner decision 2026-09-20): the PR is not
 #             converted to draft; the failing check blocks the merge. The
@@ -96,6 +97,21 @@ has_acceptance_evidence() {
       }
       END { exit ok ? 0 : 1 }
     '
+}
+
+# --- release-train step recognition (pure, exact branch contracts) ---------
+
+release_train_step() { # release_train_step <base> <head>
+  local base=$1 head=$2
+  if [[ $base == integration && $head == main ]]; then
+    printf '%s\n' 'back-merge main -> integration'
+  elif [[ $base == main && $head == integration ]]; then
+    printf '%s\n' 'release integration -> main'
+  elif [[ $base == main && $head == release-please--branches--main--components--roca ]]; then
+    printf '%s\n' 'release-please'
+  elif [[ $base == main && $head == hotfix/* ]]; then
+    printf '%s\n' 'hotfix'
+  fi
 }
 
 # --- offline evidence ------------------------------------------------------
@@ -260,6 +276,21 @@ gate() {
   local n=${1:-${PR_NUMBER:?PR_NUMBER required}}
   local fork=${PR_GATE_FORK:-false}
   local action=${PR_GATE_ACTION:-}
+
+  local base head head_repo step
+  base=$(gh pr view "$n" -R "$repo" --json baseRefName --jq '.baseRefName')
+  head=$(gh pr view "$n" -R "$repo" --json headRefName --jq '.headRefName')
+  head_repo=$(gh pr view "$n" -R "$repo" --json headRepository,headRepositoryOwner --jq '
+    if (.headRepository.nameWithOwner // "") != "" then
+      .headRepository.nameWithOwner
+    elif (.headRepositoryOwner.login // "") != "" and (.headRepository.name // "") != "" then
+      .headRepositoryOwner.login + "/" + .headRepository.name
+    else
+      ""
+    end')
+  if [[ $head_repo == "$repo" ]] && step=$(release_train_step "$base" "$head") && [[ -n $step ]]; then
+    pass_gate "recognized release-train step: $step ($head -> $base)"
+  fi
 
   local body author labels owner
   body=$(gh pr view "$n" -R "$repo" --json body --jq '.body // ""')

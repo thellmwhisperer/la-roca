@@ -30,6 +30,26 @@ Checks and admin enforcement alone still allow a direct push of a green SHA.
 CI runs on every pull request and on pushes to both branches, so the tip of
 `integration` always carries the status the e2e round pins.
 
+## Release-control checks
+
+The `pr-author` check rejects `Co-authored-by` trailers and untrusted author or
+committer emails. Its only committer exception is the exact pair: author email
+`sol@javiermellado.com` (Teseo) and committer email `noreply@github.com`.
+No other author or committer identity is covered.
+
+The `pr-gate` check recognizes and logs only these release-train PR directions:
+
+- back-merge: head `main` to base `integration`;
+- release: head `integration` to base `main`;
+- Release Please: head `release-please--branches--main--components--roca` to base `main`;
+- hotfix: a `hotfix/…` head to base `main`.
+
+A recognized step passes this risk-declaration check without requiring a
+`risk:accepted` label. The PR head must belong to this repository, and branch
+direction and head name must match; all other PRs continue through the existing
+risk gate. These recognizers do not waive CI,
+the candidate/e2e round, or branch protections.
+
 ## The cycle
 
 1. **Land.** Open a pull request against `integration` and let it merge.
