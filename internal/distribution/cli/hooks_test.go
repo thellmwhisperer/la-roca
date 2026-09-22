@@ -355,13 +355,17 @@ func TestSessionStartHooksRefuseExistingSettingsAndLeaveWithdrawalANoop(t *testi
 		`{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"/opt/acme pill"}]}]}}`)
 
 	session := sessionHookCommand(binary, "claude", sessionRequest{pills: true, handoff: true})
-	var output strings.Builder
-	for range 2 {
-		runRefusedHookCLI(t, path, "install", "claude", "--pills", "--handoff")
+	assertSettingsPreserved := func() {
+		t.Helper()
 		settings := readClaudeHookSettings(t, path)
 		assertHookCommand(t, settings.Hooks["SessionStart"], "", foreign, 1)
 		assertHookCommand(t, settings.Hooks["SessionStart"], "", session, 0)
 		assertHookCommand(t, settings.Hooks["PreToolUse"], "Bash", claudeHookCommand(binary), 0)
+	}
+	var output strings.Builder
+	for range 2 {
+		runRefusedHookCLI(t, path, "install", "claude", "--pills", "--handoff")
+		assertSettingsPreserved()
 	}
 	registry, err := artifact.LoadRegistry(filepath.Join(home, ".roca", "artifacts.json"))
 	if err != nil {
@@ -371,15 +375,10 @@ func TestSessionStartHooksRefuseExistingSettingsAndLeaveWithdrawalANoop(t *testi
 		t.Fatal("a refused Claude install registered its signing fragment")
 	}
 
-	runHookCLI(t, &output, nil, "uninstall", "claude")
-	settings := readClaudeHookSettings(t, path)
-	assertHookCommand(t, settings.Hooks["SessionStart"], "", foreign, 1)
-	assertHookCommand(t, settings.Hooks["SessionStart"], "", session, 0)
-	assertHookCommand(t, settings.Hooks["PreToolUse"], "Bash", claudeHookCommand(binary), 0)
-
-	runHookCLI(t, &output, nil, "uninstall", "claude")
-	settings = readClaudeHookSettings(t, path)
-	assertHookCommand(t, settings.Hooks["SessionStart"], "", foreign, 1)
+	for range 2 {
+		runHookCLI(t, &output, nil, "uninstall", "claude")
+		assertSettingsPreserved()
+	}
 }
 
 func TestBareClaudeInstallReportsRefusedSessionHookAfterSigningCreation(t *testing.T) {

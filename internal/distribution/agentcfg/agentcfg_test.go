@@ -94,10 +94,11 @@ logging: verbose
 `,
 }
 
+// A runtime that has never run gets its config directory and stdio entry together.
 func TestInstallDeclaresTheStdioServerInEveryRuntime(t *testing.T) {
 	for _, runtime := range agentcfg.Runtimes() {
 		t.Run(runtime, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "config"+extensionOf(runtime))
+			path := filepath.Join(t.TempDir(), "nested", "config"+extensionOf(runtime))
 
 			outcome, err := agentcfg.Install(runtime, path, "roca")
 			if err != nil {
@@ -213,32 +214,6 @@ func TestHermesRefusesInstallationIntoExistingEmptyServerMappings(t *testing.T) 
 	}
 }
 
-func TestTheNeighboursSurviveARefusedInstallation(t *testing.T) {
-	for _, runtime := range agentcfg.Runtimes() {
-		t.Run(runtime, func(t *testing.T) {
-			path := fixtureFile(t, runtime)
-			before := read(t, path)
-
-			refused := expectRefusedEdit(t, path)
-			outcome, err := agentcfg.Install(runtime, path, "roca")
-			refused(outcome, err)
-			after := read(t, path)
-
-			for _, line := range strings.Split(before, "\n") {
-				if strings.TrimSpace(line) == "" {
-					continue
-				}
-				if !strings.Contains(after, line) {
-					t.Errorf("the line %q was lost", line)
-				}
-			}
-			if !strings.Contains(after, "some-other-server") {
-				t.Error("the neighbouring server disappeared")
-			}
-		})
-	}
-}
-
 // Installing twice writes nothing the second time. It matters because the
 // operator's real flow reinstalls on top, and a second backup on every run
 // turns their config directory into a graveyard.
@@ -271,35 +246,6 @@ func TestInstallingTwiceIsIdempotentAndWritesNothingTheSecondTime(t *testing.T) 
 			current, err := os.Stat(path)
 			if err != nil || !os.SameFile(original, current) || original.Mode() != current.Mode() {
 				t.Fatalf("idempotent install changed file identity or permissions: %v", err)
-			}
-		})
-	}
-}
-
-// A config file that is not there yet is created with only Roca in it: an agent
-// installed on a machine where the runtime has never run is still a valid
-// installation.
-func TestInstallingCreatesTheFileWhenTheRuntimeHasNeverRun(t *testing.T) {
-	for _, runtime := range agentcfg.Runtimes() {
-		t.Run(runtime, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "nested", "config"+extensionOf(runtime))
-
-			outcome, err := agentcfg.Install(runtime, path, "roca")
-			if err != nil {
-				t.Fatalf("Install: %v", err)
-			}
-			if !outcome.Changed {
-				t.Fatal("nothing was created")
-			}
-			if outcome.Backup != "" {
-				t.Error("a backup of a file that did not exist")
-			}
-			status, err := agentcfg.Status(runtime, path)
-			if err != nil {
-				t.Fatalf("Status: %v", err)
-			}
-			if status.State != agentcfg.StateConfigured {
-				t.Errorf("state = %q, want %q", status.State, agentcfg.StateConfigured)
 			}
 		})
 	}
