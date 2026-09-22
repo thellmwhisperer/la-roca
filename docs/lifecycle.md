@@ -346,10 +346,12 @@ roca uninstall --purge
 
 Without an explicit data flag, uninstall asks for consent in an interactive
 terminal. `--keep-data` removes the executable and integrations while retaining
-the data directory. `--purge` removes every artefact La Roca owns, including the
-database, configuration, indexes, logs, generated prompt, backups, skills, and
-integration recovery copies, plus the credential files and model catalogue cache
-that older releases left behind. The recovery copies a refresh left beside a
+the data directory. `--purge` removes every artefact La Roca currently owns,
+including the database, configuration, indexes, owned logs, generated prompt,
+backups, skills, and integration recovery copies, plus the credential files and
+model catalogue cache that older releases left behind. See
+[streams and contents](operations.md#streams-and-contents) for the detailed log
+ownership contract. The recovery copies a refresh left beside a
 managed artifact belong to the same family: a regular uninstall names them as
 kept, and a purge takes them with the rest, so the directory holding them can be
 taken back too.

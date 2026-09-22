@@ -18,7 +18,6 @@ const (
 	DirName         = "logs"
 	RetentionMonths = 3
 	Executions      = "executions"
-	MCPAudit        = "mcp-audit"
 	Ingest          = "ingest"
 	Migrations      = "migrations"
 	Companions      = "companions"

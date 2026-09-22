@@ -261,7 +261,7 @@ func auditCalls(audit *logfile.Writer, warnings io.Writer) mcp.Middleware {
 			appendErr := audit.AppendExisting(logfile.Executions, record)
 			if appendErr != nil {
 				warned.Do(func() {
-					fmt.Fprintf(warnings, "warning: MCP calls are not being written to the audit log: %v\n", appendErr)
+					fmt.Fprintf(warnings, "warning: MCP calls are not being written to the execution log: %v\n", appendErr)
 				})
 			}
 			// Name the correlation ID only when its JSONL record was written.
