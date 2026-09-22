@@ -23,20 +23,12 @@ func lock(path string, flags int) (func() error, error) {
 		return nil, err
 	}
 	if err := file.Chmod(0o600); err != nil {
-		file.Close()
+		_ = file.Close()
 		return nil, err
 	}
-	if err := unix.Flock(int(file.Fd()), unix.LOCK_EX); err != nil {
-		file.Close()
+	release, err := lockUnixFile(file)
+	if err != nil {
 		return nil, err
-	}
-	release := func() error {
-		unlockErr := unix.Flock(int(file.Fd()), unix.LOCK_UN)
-		closeErr := file.Close()
-		if unlockErr != nil {
-			return unlockErr
-		}
-		return closeErr
 	}
 	if flags&os.O_CREATE == 0 {
 		if err := validateExistingLock(path, file, release); err != nil {
@@ -44,4 +36,19 @@ func lock(path string, flags int) (func() error, error) {
 		}
 	}
 	return release, nil
+}
+
+func lockUnixFile(file *os.File) (func() error, error) {
+	if err := unix.Flock(int(file.Fd()), unix.LOCK_EX); err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	return func() error {
+		unlockErr := unix.Flock(int(file.Fd()), unix.LOCK_UN)
+		closeErr := file.Close()
+		if unlockErr != nil {
+			return unlockErr
+		}
+		return closeErr
+	}, nil
 }

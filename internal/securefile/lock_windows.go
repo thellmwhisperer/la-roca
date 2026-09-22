@@ -18,34 +18,17 @@ func LockExisting(path string) (func() error, error) {
 }
 
 func lock(path string, disposition uint32) (func() error, error) {
-	name, err := windows.UTF16PtrFromString(path)
+	file, err := openWindowsFile(path, disposition, windows.FILE_ATTRIBUTE_NORMAL)
 	if err != nil {
 		return nil, err
 	}
-	handle, err := windows.CreateFile(name,
-		windows.GENERIC_READ|windows.GENERIC_WRITE,
-		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
-		nil, disposition, windows.FILE_ATTRIBUTE_NORMAL, 0)
-	if err != nil {
-		return nil, &os.PathError{Op: "open", Path: path, Err: err}
-	}
-	file := os.NewFile(uintptr(handle), path)
 	if err := file.Chmod(0o600); err != nil {
-		file.Close()
+		_ = file.Close()
 		return nil, err
 	}
-	overlapped := &windows.Overlapped{}
-	if err := windows.LockFileEx(windows.Handle(file.Fd()), windows.LOCKFILE_EXCLUSIVE_LOCK, 0, 1, 0, overlapped); err != nil {
-		file.Close()
+	release, err := lockWindowsFile(file)
+	if err != nil {
 		return nil, err
-	}
-	release := func() error {
-		unlockErr := windows.UnlockFileEx(windows.Handle(file.Fd()), 0, 1, 0, overlapped)
-		closeErr := file.Close()
-		if unlockErr != nil {
-			return unlockErr
-		}
-		return closeErr
 	}
 	if disposition == windows.OPEN_EXISTING {
 		if err := validateExistingLock(path, file, release); err != nil {
@@ -53,4 +36,35 @@ func lock(path string, disposition uint32) (func() error, error) {
 		}
 	}
 	return release, nil
+}
+
+func openWindowsFile(path string, disposition, flags uint32) (*os.File, error) {
+	name, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return nil, err
+	}
+	handle, err := windows.CreateFile(name,
+		windows.GENERIC_READ|windows.GENERIC_WRITE,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+		nil, disposition, flags, 0)
+	if err != nil {
+		return nil, &os.PathError{Op: "open", Path: path, Err: err}
+	}
+	return os.NewFile(uintptr(handle), path), nil
+}
+
+func lockWindowsFile(file *os.File) (func() error, error) {
+	overlapped := &windows.Overlapped{}
+	if err := windows.LockFileEx(windows.Handle(file.Fd()), windows.LOCKFILE_EXCLUSIVE_LOCK, 0, 1, 0, overlapped); err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	return func() error {
+		unlockErr := windows.UnlockFileEx(windows.Handle(file.Fd()), 0, 1, 0, overlapped)
+		closeErr := file.Close()
+		if unlockErr != nil {
+			return unlockErr
+		}
+		return closeErr
+	}, nil
 }

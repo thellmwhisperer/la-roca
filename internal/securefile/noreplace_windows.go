@@ -9,11 +9,7 @@ import (
 )
 
 func renameNoReplace(staged, target string) error {
-	from, err := windows.UTF16PtrFromString(staged)
-	if err != nil {
-		return err
-	}
-	to, err := windows.UTF16PtrFromString(target)
+	from, to, err := windowsPathPair(staged, target)
 	if err != nil {
 		return err
 	}
