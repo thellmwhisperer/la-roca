@@ -21,20 +21,12 @@ var (
 
 // Write replaces path atomically after the new bytes and permissions are durable.
 func Write(path string, data []byte, mode, dirMode os.FileMode) error {
-	_, err := publish(path, data, nil, mode, dirMode, true, false)
-	return err
+	return publish(path, data, nil, mode, dirMode, true, false)
 }
 
 // CreatePreservingParentMode atomically creates a file without replacing a
 // path that already exists or changing an existing parent directory's mode.
 func CreatePreservingParentMode(path string, data []byte, mode, dirMode os.FileMode) error {
-	_, err := CreatePreservingParentModeWithResult(path, data, mode, dirMode)
-	return err
-}
-
-// CreatePreservingParentModeWithResult is CreatePreservingParentMode plus the
-// identity of the inode that was published.
-func CreatePreservingParentModeWithResult(path string, data []byte, mode, dirMode os.FileMode) (Publication, error) {
 	return publish(path, data, nil, mode, dirMode, false, true)
 }
 
@@ -43,48 +35,21 @@ func CreatePreservingParentModeWithResult(path string, data []byte, mode, dirMod
 // the path not to exist; it is never an instruction to overwrite an unknown
 // file. Use Write when unconditional replacement is intentional.
 func Replace(path string, data, previous []byte) error {
-	_, err := ReplaceWithResult(path, data, previous)
-	return err
-}
-
-// ReplaceWithResult is Replace plus the identity of the inode that was
-// published. Callers that later remove or roll back the file must compare this
-// identity rather than taking a new path sample after publication.
-func ReplaceWithResult(path string, data, previous []byte) (Publication, error) {
 	original, err := expectedOriginal(path, previous)
 	if err != nil {
-		return Publication{}, err
+		return err
 	}
-	expected := &conditionalFile{original: original, previous: previous, checkMode: original != nil}
+	expected := &conditionalFile{original: original, previous: previous}
 	return publish(path, data, expected, 0, 0o700, false, original == nil)
-}
-
-// ReplaceWithIdentity conditionally publishes against the exact inode returned
-// by an earlier publication, refusing unsupported replacements.
-func ReplaceWithIdentity(path string, data, previous []byte,
-	identity FileIdentity) (Publication, error) {
-	if !identity.Valid() {
-		return Publication{}, fmt.Errorf("refuse to replace %s without a published identity", path)
-	}
-	expected := &conditionalFile{original: identity.info, previous: previous}
-	return publish(path, data, expected, identity.info.Mode().Perm(), 0o700, false, false)
 }
 
 // ReplaceRegular validates a previously inspected regular file and its bytes.
 // It refuses replacement when atomic conditional publication is unsupported.
 func ReplaceRegular(path string, data, previous []byte, original os.FileInfo) error {
-	_, err := ReplaceRegularWithResult(path, data, previous, original)
-	return err
-}
-
-// ReplaceRegularWithResult is ReplaceRegular plus the identity of the inode
-// that was published.
-func ReplaceRegularWithResult(path string, data, previous []byte,
-	original os.FileInfo) (Publication, error) {
 	if original == nil || !original.Mode().IsRegular() {
-		return Publication{}, fmt.Errorf("refuse to replace non-regular file %s", path)
+		return fmt.Errorf("refuse to replace non-regular file %s", path)
 	}
-	expected := &conditionalFile{original: original, previous: previous, checkMode: true}
+	expected := &conditionalFile{original: original, previous: previous}
 	return publish(path, data, expected, original.Mode().Perm(), 0o700, false, false)
 }
 
@@ -116,9 +81,8 @@ func BackUp(path string, previous []byte) (string, error) {
 }
 
 type conditionalFile struct {
-	original  os.FileInfo
-	previous  []byte
-	checkMode bool
+	original os.FileInfo
+	previous []byte
 }
 
 func expectedOriginal(path string, previous []byte) (os.FileInfo, error) {
@@ -141,23 +105,23 @@ func expectedOriginal(path string, previous []byte) (os.FileInfo, error) {
 }
 
 func publish(path string, data []byte, expected *conditionalFile, mode, dirMode os.FileMode,
-	restrictDir, createOnly bool) (result Publication, err error) {
+	restrictDir, createOnly bool) (err error) {
 	if expected != nil {
 		if err := verifyExpected(path, expected); err != nil {
-			return result, err
+			return err
 		}
 		if expected.original != nil {
 			beforePublication(path)
-			return result, fmt.Errorf("cannot safely replace %s: %w", path, ErrConditionalReplaceUnsupported)
+			return fmt.Errorf("cannot safely replace %s: %w", path, ErrConditionalReplaceUnsupported)
 		}
 	}
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, dirMode); err != nil {
-		return result, err
+		return err
 	}
 	if restrictDir {
 		if err := os.Chmod(dir, dirMode); err != nil {
-			return result, fmt.Errorf("restrict directory permissions: %w", err)
+			return fmt.Errorf("restrict directory permissions: %w", err)
 		}
 	}
 
@@ -167,7 +131,7 @@ func publish(path string, data []byte, expected *conditionalFile, mode, dirMode 
 
 	temporary, err := os.CreateTemp(dir, "."+filepath.Base(path)+"-*")
 	if err != nil {
-		return result, err
+		return err
 	}
 	staged := temporary.Name()
 	defer func() {
@@ -177,20 +141,16 @@ func publish(path string, data []byte, expected *conditionalFile, mode, dirMode 
 		}
 	}()
 	if err = temporary.Chmod(mode); err != nil {
-		return result, err
+		return err
 	}
 	if _, err = temporary.Write(data); err != nil {
-		return result, err
+		return err
 	}
 	if err = temporary.Sync(); err != nil {
-		return result, err
-	}
-	stagedInfo, err := temporary.Stat()
-	if err != nil {
-		return result, fmt.Errorf("inspect staged %s: %w", path, err)
+		return err
 	}
 	if err = temporary.Close(); err != nil {
-		return result, err
+		return err
 	}
 
 	beforePublication(path)
@@ -198,30 +158,29 @@ func publish(path string, data []byte, expected *conditionalFile, mode, dirMode 
 	if createOnly {
 		if err = renameNoReplaceFile(staged, path); err != nil {
 			if os.IsExist(err) {
-				return result, createCollisionError(path)
+				return createCollisionError(path)
 			}
 			if errors.Is(err, errAtomicNoReplaceUnsupported) {
-				return result, fmt.Errorf("cannot safely create %s: %w", path, err)
+				return fmt.Errorf("cannot safely create %s: %w", path, err)
 			}
-			return result, fmt.Errorf("atomically create %s: %w", path, err)
+			return fmt.Errorf("atomically create %s: %w", path, err)
 		}
 	} else if err = renameReplaceFile(staged, path); err != nil {
 		if errors.Is(err, errAtomicReplaceUnsupported) {
-			return result, fmt.Errorf("cannot safely replace %s: %w", path, err)
+			return fmt.Errorf("cannot safely replace %s: %w", path, err)
 		}
-		return result, err
+		return err
 	}
-	result.Identity = identityFromInfo(stagedInfo)
 
 	if runtime.GOOS == "windows" {
-		return result, nil
+		return nil
 	}
 	directory, err := os.Open(dir)
 	if err != nil {
-		return result, err
+		return err
 	}
 	defer directory.Close()
-	return result, directory.Sync()
+	return directory.Sync()
 }
 
 func verifyExpected(path string, expected *conditionalFile) error {
@@ -233,7 +192,7 @@ func verifyExpected(path string, expected *conditionalFile) error {
 		}
 		return nil
 	}
-	if err := requireSameRegularFile(path, expected.original, expected.checkMode); err != nil {
+	if err := requireSameRegularFile(path, expected.original); err != nil {
 		return err
 	}
 	current, err := os.ReadFile(path)
@@ -250,10 +209,10 @@ func createCollisionError(path string) error {
 	return fmt.Errorf("%s appeared before it could be created; existing file was preserved", path)
 }
 
-func requireSameRegularFile(path string, original os.FileInfo, checkMode bool) error {
+func requireSameRegularFile(path string, original os.FileInfo) error {
 	current, err := os.Lstat(path)
 	if err != nil || !current.Mode().IsRegular() || !os.SameFile(original, current) ||
-		(checkMode && current.Mode().Perm() != original.Mode().Perm()) {
+		current.Mode().Perm() != original.Mode().Perm() {
 		return changedFileError(path)
 	}
 	return nil

@@ -10,33 +10,8 @@ import (
 	"time"
 )
 
-func TestReplaceWithResultCarriesPublishedIdentity(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.json")
-	publication, err := ReplaceWithResult(path, []byte("managed configuration"), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !publication.Identity.Valid() || !publication.Identity.Matches(path) {
-		t.Fatal("publication identity does not name the published path")
-	}
-	operator := filepath.Join(filepath.Dir(path), ".operator")
-	if err := os.WriteFile(operator, []byte("managed configuration"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Rename(operator, path); err != nil {
-		t.Fatal(err)
-	}
-	if publication.Identity.Matches(path) {
-		t.Fatal("published identity claimed a later byte-identical replacement")
-	}
-	if _, err := ReplaceWithIdentity(path, []byte("rollback"), []byte("managed configuration"), publication.Identity); err == nil {
-		t.Fatal("rollback accepted a later byte-identical inode")
-	}
-	assertFileContentAndMode(t, path, []byte("managed configuration"), 0o600)
-}
-
 func TestConditionalReplacementRefusesUnconditionalPrimitive(t *testing.T) {
-	for _, api := range []string{"Replace", "ReplaceWithResult", "ReplaceRegular", "ReplaceRegularWithResult", "ReplaceWithIdentity"} {
+	for _, api := range []string{"Replace", "ReplaceRegular"} {
 		t.Run(api, func(t *testing.T) {
 			path, previous := secureFileFixture(t, "config.json", "operator")
 			info, err := os.Stat(path)
@@ -51,24 +26,21 @@ func TestConditionalReplacementRefusesUnconditionalPrimitive(t *testing.T) {
 				}
 				return realRename(staged, target)
 			}
-			var result Publication
 			switch api {
 			case "Replace":
 				err = Replace(path, []byte("candidate"), previous)
-			case "ReplaceWithResult":
-				result, err = ReplaceWithResult(path, []byte("candidate"), previous)
 			case "ReplaceRegular":
 				err = ReplaceRegular(path, []byte("candidate"), previous, info)
-			case "ReplaceRegularWithResult":
-				result, err = ReplaceRegularWithResult(path, []byte("candidate"), previous, info)
-			case "ReplaceWithIdentity":
-				result, err = ReplaceWithIdentity(path, []byte("candidate"), previous, identityFromInfo(info))
 			}
-			if !errors.Is(err, ErrConditionalReplaceUnsupported) || result.Identity.Valid() {
-				t.Fatalf("result = %+v, error = %v, want unsupported refusal without publication", result, err)
+			if !errors.Is(err, ErrConditionalReplaceUnsupported) {
+				t.Fatalf("error = %v, want unsupported refusal without publication", err)
 			}
 			assertFileContentAndMode(t, path, previous, 0o600)
-			if !identityFromInfo(info).Matches(path) {
+			current, err := os.Lstat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !os.SameFile(info, current) {
 				t.Fatal("refusal changed the operator's inode")
 			}
 			entries, err := os.ReadDir(filepath.Dir(path))

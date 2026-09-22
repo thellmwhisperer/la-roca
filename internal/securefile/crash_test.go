@@ -143,9 +143,9 @@ func TestPublicationCrashHelper(t *testing.T) {
 		if stage == "before-refusal" {
 			beforePublication = func(string) { pause() }
 		}
-		result, err := ReplaceWithResult(path, []byte("candidate"), previous)
-		if !errors.Is(err, ErrConditionalReplaceUnsupported) || result.Identity.Valid() {
-			t.Fatalf("replacement = %+v, %v, want unsupported refusal", result, err)
+		err = Replace(path, []byte("candidate"), previous)
+		if !errors.Is(err, ErrConditionalReplaceUnsupported) {
+			t.Fatalf("replacement = %v, want unsupported refusal", err)
 		}
 		if stage == "after-refusal" {
 			pause()
