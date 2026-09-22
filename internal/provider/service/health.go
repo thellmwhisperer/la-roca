@@ -32,8 +32,8 @@ type HealthRequest struct {
 
 // HealthCheck is one check with its verdict, how many rows it Found and a
 // sample of them. The count is the truth; the sample is what makes it
-// actionable. A failing check carries the remedy that clears exactly the rows
-// it counted.
+// actionable. A failing check carries the scoped remedy whose direct targets
+// are the rows it counted.
 type HealthCheck struct {
 	Status  string           `json:"status"`
 	Count   int              `json:"count"`
@@ -70,25 +70,17 @@ type healthCheck struct {
 	name          string
 	summary       string
 	severity      string
-	remedy        func(dbPath string) string
+	remedy        func(dbPath string, rows []map[string]any) string
 	memoryOwned   bool
 	registryOwned bool
 	count         string
 	sample        string
 }
 
-func healthRepairCommand(name string) func(dbPath string) string {
-	return func(dbPath string) string {
+func healthRepairCommand(name string) func(string, []map[string]any) string {
+	return func(dbPath string, _ []map[string]any) string {
 		return "roca doctor repair " + name + " --db-path " + shellQuoted(dbPath)
 	}
-}
-
-// healthLayerRegistryRemedy points at the per-layer command doctor already
-// prints. Registering an unknown layer and migrating its memories into an
-// existing one are both right answers, and only the operator knows which.
-func healthLayerRegistryRemedy(dbPath string) string {
-	return "roca doctor --db-path " + shellQuoted(dbPath) +
-		" prints roca layers add for each unknown layer"
 }
 
 // The v1 checks. There is deliberately no check over `runs`: that table is v2
@@ -139,7 +131,7 @@ var healthChecks = []healthCheck{
 		name:          "runtime_layers_not_in_registry",
 		summary:       "Layers present in the data and absent from the layer registry.",
 		severity:      HealthFail,
-		remedy:        healthLayerRegistryRemedy,
+		remedy:        healthRepairCommand("runtime_layers_not_in_registry"),
 		memoryOwned:   true,
 		registryOwned: true,
 		count: `SELECT COUNT(*) FROM (
@@ -374,9 +366,6 @@ func runHealthCheck(ctx context.Context, reader *sql.DB, check healthCheck,
 		return outcome, nil
 	}
 	outcome.Status = check.severity
-	if check.severity == HealthFail && check.remedy != nil {
-		outcome.Remedy = check.remedy(dbPath)
-	}
 	prefix, arguments := healthQuery(check, registered)
 	rows, err := reader.QueryContext(ctx, prefix+check.sample,
 		append(slices.Clone(arguments), maxRows)...)
@@ -387,6 +376,9 @@ func runHealthCheck(ctx context.Context, reader *sql.DB, check healthCheck,
 	_, outcome.Rows, err = ScanRows(rows, 0, "")
 	if err != nil {
 		return HealthCheck{}, fmt.Errorf("health check %s: %w", check.name, err)
+	}
+	if check.severity == HealthFail && check.remedy != nil {
+		outcome.Remedy = check.remedy(dbPath, outcome.Rows)
 	}
 	return outcome, nil
 }
