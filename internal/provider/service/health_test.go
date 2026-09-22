@@ -622,27 +622,35 @@ func TestHealthNamesNoComponentThisVersionDoesNotHave(t *testing.T) {
 	}
 }
 
-// A test row can be the head a real memory was auto-superseded onto, which is
-// exactly the shape the live database in issue 484 carries. Deleting it has to
-// clear that pointer too: the core schema declares supersedes as a foreign key
-// with foreign_keys ON, so a bare DELETE aborts the whole repair, and where the
-// key is absent it leaves a fresh orphan the operator was never told about.
-func TestDeletingATestRowClearsThePointersIntoIt(t *testing.T) {
+func TestDeletingTestRowsBypassesDeletedPointers(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := serviceWithPaths(t)
 
-	var head int64
+	var predecessor int64
 	if err := svc.DB().SQL().QueryRow(
-		`INSERT INTO memories (layer, content, origin, source_agent)
-		 VALUES ('discovery', 'test-written head', 'agent', 'test-agent')
-		 RETURNING id`).Scan(&head); err != nil {
-		t.Fatalf("seed the test-written head: %v", err)
+		`INSERT INTO memories (layer, content, origin)
+		 VALUES ('discovery', 'real predecessor', 'agent')
+		 RETURNING id`).Scan(&predecessor); err != nil {
+		t.Fatalf("seed the predecessor: %v", err)
+	}
+	var first, second int64
+	if err := svc.DB().SQL().QueryRow(
+		`INSERT INTO memories (layer, content, origin, source_agent, supersedes)
+		 VALUES ('discovery', 'first test row', 'agent', 'test-agent', ?)
+		 RETURNING id`, predecessor).Scan(&first); err != nil {
+		t.Fatalf("seed the first test row: %v", err)
+	}
+	if err := svc.DB().SQL().QueryRow(
+		`INSERT INTO memories (layer, content, origin, source_agent, supersedes)
+		 VALUES ('discovery', 'second test row', 'agent', 'test-agent', ?)
+		 RETURNING id`, first).Scan(&second); err != nil {
+		t.Fatalf("seed the second test row: %v", err)
 	}
 	var keeper int64
 	if err := svc.DB().SQL().QueryRow(
 		`INSERT INTO memories (layer, content, origin, supersedes)
-		 VALUES ('discovery', 'real memory superseding it', 'agent', ?)
-		 RETURNING id`, head).Scan(&keeper); err != nil {
+		 VALUES ('discovery', 'real memory superseding them', 'agent', ?)
+		 RETURNING id`, second).Scan(&keeper); err != nil {
 		t.Fatalf("seed the superseding memory: %v", err)
 	}
 
@@ -650,8 +658,8 @@ func TestDeletingATestRowClearsThePointersIntoIt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("repair test_source_agent_rows: %v", err)
 	}
-	if result.Count != 1 {
-		t.Fatalf("repair deleted %d rows, want the one test row", result.Count)
+	if result.Count != 2 {
+		t.Fatalf("repair deleted %d rows, want both test rows", result.Count)
 	}
 
 	after, err := svc.Health(ctx, service.HealthRequest{})
@@ -666,8 +674,8 @@ func TestDeletingATestRowClearsThePointersIntoIt(t *testing.T) {
 		`SELECT supersedes FROM memories WHERE id = ?`, keeper).Scan(&supersedes); err != nil {
 		t.Fatalf("the superseding memory was deleted with the test row: %v", err)
 	}
-	if supersedes.Valid {
-		t.Fatalf("supersedes = %d, want cleared with the row it named", supersedes.Int64)
+	if !supersedes.Valid || supersedes.Int64 != predecessor {
+		t.Fatalf("supersedes = %+v, want predecessor %d", supersedes, predecessor)
 	}
 }
 

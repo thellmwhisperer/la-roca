@@ -77,7 +77,7 @@ type healthRepairRow struct {
 }
 
 func (s *Service) repairMemoryRows(ctx context.Context, check, action, selectSQL string,
-	selectArgs []any, apply func(id int64, fields map[string]any, remapsPresent bool) ([]healthRepairStatement, error),
+	selectArgs []any, apply func(id int64, fields map[string]any, remapsPresent bool, deletingIDs []int64) ([]healthRepairStatement, error),
 ) (HealthRepairResult, error) {
 	owner, err := s.memoryOwner()
 	if err != nil {
@@ -103,13 +103,21 @@ func (s *Service) repairMemoryRows(ctx context.Context, check, action, selectSQL
 			Scan(&remapsPresent); err != nil {
 			return fmt.Errorf("inspect memory id remaps: %w", err)
 		}
+		deletingIDs := make([]int64, 0, len(scanned))
+		for _, fields := range scanned {
+			id, ok := fields["id"].(int64)
+			if !ok {
+				return fmt.Errorf("a %s row has no integer id", check)
+			}
+			deletingIDs = append(deletingIDs, id)
+		}
 		planned := make([]healthRepairRow, 0, len(scanned))
 		for _, fields := range scanned {
 			id, ok := fields["id"].(int64)
 			if !ok {
 				return fmt.Errorf("a %s row has no integer id", check)
 			}
-			statements, err := apply(id, fields, remapsPresent != 0)
+			statements, err := apply(id, fields, remapsPresent != 0, deletingIDs)
 			if err != nil {
 				return err
 			}
@@ -129,9 +137,32 @@ func (s *Service) repairMemoryRows(ctx context.Context, check, action, selectSQL
 	return result, err
 }
 
-func deleteMemoryRow(id int64, remapsPresent bool) ([]healthRepairStatement, error) {
+func deleteMemoryRow(id int64, remapsPresent bool, deletingIDs []int64) ([]healthRepairStatement, error) {
+	if len(deletingIDs) == 0 {
+		return nil, fmt.Errorf("cannot delete memory %d without a deletion set", id)
+	}
+	placeholders := make([]string, len(deletingIDs))
+	args := []any{id}
+	for i, deletingID := range deletingIDs {
+		placeholders[i] = "?"
+		args = append(args, deletingID)
+	}
+	args = append(args, id)
 	statements := []healthRepairStatement{
-		{sql: `UPDATE memories SET supersedes = NULL WHERE supersedes = ?`, args: []any{id}},
+		{sql: `WITH RECURSIVE chain(id, supersedes) AS (
+				SELECT id, supersedes FROM memories WHERE id = ?
+				UNION
+				SELECT memories.id, memories.supersedes
+				FROM memories JOIN chain ON memories.id = chain.supersedes
+				WHERE chain.supersedes IS NOT NULL
+			)
+			UPDATE memories SET supersedes = (
+				SELECT supersedes FROM chain
+				WHERE supersedes IS NULL
+				   OR (supersedes NOT IN (` + strings.Join(placeholders, ",") + `)
+				       AND EXISTS (SELECT 1 FROM memories survivor WHERE survivor.id = chain.supersedes))
+				LIMIT 1
+			) WHERE supersedes = ?`, args: args},
 	}
 	if remapsPresent {
 		statements = append(statements,
@@ -147,7 +178,7 @@ func (s *Service) repairOrphanSupersedes(ctx context.Context) (HealthRepairResul
 		 WHERE supersedes IS NOT NULL
 		   AND supersedes NOT IN (SELECT id FROM memories)
 		 ORDER BY id`, nil,
-		func(id int64, _ map[string]any, _ bool) ([]healthRepairStatement, error) {
+		func(id int64, _ map[string]any, _ bool, _ []int64) ([]healthRepairStatement, error) {
 			return []healthRepairStatement{
 				{sql: `UPDATE memories SET supersedes = NULL WHERE id = ?`, args: []any{id}},
 			}, nil
@@ -160,8 +191,8 @@ func (s *Service) repairTestMetadataRows(ctx context.Context) (HealthRepairResul
 		 WHERE json_valid(metadata)
 		   AND json_extract(metadata, '$._test') IN (1, 'true', 'True')
 		 ORDER BY id`, nil,
-		func(id int64, _ map[string]any, remapsPresent bool) ([]healthRepairStatement, error) {
-			return deleteMemoryRow(id, remapsPresent)
+		func(id int64, _ map[string]any, remapsPresent bool, deletingIDs []int64) ([]healthRepairStatement, error) {
+			return deleteMemoryRow(id, remapsPresent, deletingIDs)
 		})
 }
 
@@ -170,8 +201,8 @@ func (s *Service) repairTestSourceAgentRows(ctx context.Context) (HealthRepairRe
 		`SELECT id, layer, source_agent FROM memories
 		 WHERE source_agent IN ('test-agent', 'test')
 		 ORDER BY id`, nil,
-		func(id int64, _ map[string]any, remapsPresent bool) ([]healthRepairStatement, error) {
-			return deleteMemoryRow(id, remapsPresent)
+		func(id int64, _ map[string]any, remapsPresent bool, deletingIDs []int64) ([]healthRepairStatement, error) {
+			return deleteMemoryRow(id, remapsPresent, deletingIDs)
 		})
 }
 
@@ -209,7 +240,7 @@ func (s *Service) repairPhysicalAliasLayerRows(ctx context.Context) (HealthRepai
 		 JOIN layers l ON l.name = m.layer
 		 WHERE l.alias_of IS NOT NULL
 		 ORDER BY m.id`, arguments,
-		func(id int64, fields map[string]any, _ bool) ([]healthRepairStatement, error) {
+		func(id int64, fields map[string]any, _ bool, _ []int64) ([]healthRepairStatement, error) {
 			physical, _ := fields["alias_of"].(string)
 			if physical == "" {
 				return nil, fmt.Errorf("physical alias row %d names no destination", id)
