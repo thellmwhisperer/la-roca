@@ -3,6 +3,7 @@
 package acceptance
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -624,10 +625,49 @@ func (m *world) theExecutionLogDurationUnder(limit int) error {
 	if err != nil {
 		return err
 	}
+	output := m.durationOutput
+	if output == nil {
+		output = os.Stdout
+	}
+	fmt.Fprintf(output, "duration_ms=%d (bound %d)\n", ms, limit)
 	if ms >= int64(limit) {
 		return fmt.Errorf("duration_ms=%d, want under %d", ms, limit)
 	}
 	return nil
+}
+
+func TestExecutionLogDurationUnderReportsMeasuredValue(t *testing.T) {
+	tests := []struct {
+		name       string
+		durationMS int64
+		wantError  bool
+		wantOutput string
+	}{
+		{name: "pass", durationMS: 2046, wantOutput: "duration_ms=2046 (bound 3000)\n"},
+		{name: "fail", durationMS: 3046, wantError: true, wantOutput: "duration_ms=3046 (bound 3000)\n"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			home := t.TempDir()
+			logs := filepath.Join(home, ".roca", "logs")
+			if err := os.MkdirAll(logs, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			entry := fmt.Sprintf("{\"command\":\"vector query\",\"duration_ms\":%d}\n", test.durationMS)
+			if err := os.WriteFile(filepath.Join(logs, "executions-test.jsonl"), []byte(entry), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			var output bytes.Buffer
+			m := &world{home: home, last: run{command: "roca vector query"}, durationOutput: &output}
+			err := m.theExecutionLogDurationUnder(3000)
+			if (err != nil) != test.wantError {
+				t.Fatalf("error = %v, wantError = %t", err, test.wantError)
+			}
+			if got := output.String(); got != test.wantOutput {
+				t.Fatalf("output = %q, want %q", got, test.wantOutput)
+			}
+		})
+	}
 }
 
 func (m *world) iCallHealthOverStdio() error {

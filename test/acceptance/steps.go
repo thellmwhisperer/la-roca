@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -35,13 +36,14 @@ type world struct {
 	// in. The refusal scenario installs it so its premise holds even when the
 	// working copy is built from a clean release tag, which is exactly what the
 	// release workflow does.
-	devStamped string
-	home       string
-	last       run
-	previous   run
-	memories   int
-	deletedID  int64
-	replacedID int64
+	devStamped     string
+	home           string
+	last           run
+	previous       run
+	durationOutput io.Writer
+	memories       int
+	deletedID      int64
+	replacedID     int64
 	// everything is every run of the scenario, for the steps that ask about a
 	// whole session's output and not only the last command's.
 	everything []run
