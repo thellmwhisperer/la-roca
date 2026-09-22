@@ -83,9 +83,6 @@ func healthRepairCommand(name string) func(string, []map[string]any) string {
 	}
 }
 
-// healthLayerRegistryRemedy returns the exact per-layer command doctor already
-// prints. Registering an unknown layer and migrating its memories into an
-// existing one are both right answers, and only the operator knows which.
 // The v1 checks. There is deliberately no check over `runs`: that table is v2
 // and this binary creates none, and a diagnosis that named it would be naming a
 // component this version does not have.

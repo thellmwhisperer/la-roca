@@ -49,9 +49,9 @@ func unknownHealthRepair(name string) error {
 }
 
 // RepairHealth applies the scoped repair the named failing health check
-// prints. Only the rows that check names are rewritten or deleted; a delete
-// also repairs the supersedes pointer of the rows that referenced them, which
-// is what lets the row go at all.
+// prints. The diagnosed rows are the direct repair targets. Deleting a memory
+// also rewires incoming supersedes pointers and retires exact-dedup aliases
+// that named it as canonical.
 func (s *Service) RepairHealth(ctx context.Context, name string) (HealthRepairResult, error) {
 	if s.opts.ReadOnly {
 		return HealthRepairResult{}, refuseReadOnly("repair health")
