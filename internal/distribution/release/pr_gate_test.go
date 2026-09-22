@@ -14,7 +14,8 @@ func TestPRGateAcceptanceBodyEdits(t *testing.T) {
 case "$*" in
   *--json\ baseRefName*) printf '%s\n' "$TEST_PR_BASE" ;;
   *--json\ headRefName*) printf '%s\n' "$TEST_PR_HEAD" ;;
-  *--json\ headRepository*) printf '%s\n' "$TEST_PR_HEAD_REPO" ;;
+  *--json\ headRepository,headRepositoryOwner*) printf '%s\n' "$TEST_PR_HEAD_REPO" ;;
+  *--json\ headRepository*) ;;
   *--json\ body*) printf '%s\n' "$TEST_PR_BODY" ;;
   *--json\ author*) printf '%s\n' author ;;
   *--json\ labels*) ;;

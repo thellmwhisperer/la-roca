@@ -279,7 +279,14 @@ gate() {
   local base head head_repo step
   base=$(gh pr view "$n" -R "$repo" --json baseRefName --jq '.baseRefName')
   head=$(gh pr view "$n" -R "$repo" --json headRefName --jq '.headRefName')
-  head_repo=$(gh pr view "$n" -R "$repo" --json headRepository --jq '.headRepository.nameWithOwner // ""')
+  head_repo=$(gh pr view "$n" -R "$repo" --json headRepository,headRepositoryOwner --jq '
+    if (.headRepository.nameWithOwner // "") != "" then
+      .headRepository.nameWithOwner
+    elif (.headRepositoryOwner.login // "") != "" and (.headRepository.name // "") != "" then
+      .headRepositoryOwner.login + "/" + .headRepository.name
+    else
+      ""
+    end')
   if [[ $head_repo == "$repo" ]] && step=$(release_train_step "$base" "$head") && [[ -n $step ]]; then
     pass_gate "recognized release-train step: $step ($head -> $base)"
   fi
