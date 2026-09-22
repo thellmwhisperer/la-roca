@@ -86,16 +86,6 @@ func healthRepairCommand(name string) func(string, []map[string]any) string {
 // healthLayerRegistryRemedy returns the exact per-layer command doctor already
 // prints. Registering an unknown layer and migrating its memories into an
 // existing one are both right answers, and only the operator knows which.
-func healthLayerRegistryRemedy(dbPath string, rows []map[string]any) string {
-	for _, row := range rows {
-		layer, _ := row["layer"].(string)
-		if layer != "" {
-			return "roca layers add " + shellQuoted(layer) + " --db-path " + shellQuoted(dbPath)
-		}
-	}
-	return ""
-}
-
 // The v1 checks. There is deliberately no check over `runs`: that table is v2
 // and this binary creates none, and a diagnosis that named it would be naming a
 // component this version does not have.
@@ -144,7 +134,7 @@ var healthChecks = []healthCheck{
 		name:          "runtime_layers_not_in_registry",
 		summary:       "Layers present in the data and absent from the layer registry.",
 		severity:      HealthFail,
-		remedy:        healthLayerRegistryRemedy,
+		remedy:        healthRepairCommand("runtime_layers_not_in_registry"),
 		memoryOwned:   true,
 		registryOwned: true,
 		count: `SELECT COUNT(*) FROM (
