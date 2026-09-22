@@ -1,6 +1,7 @@
 package artifact_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,53 +12,57 @@ import (
 )
 
 func TestRefreshPreservesTheUserZoneAndGuardsTheSystemZone(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "SKILL.md")
 	// The documentation teaches operators these markers, so one quoted inside
-	// their own lines is content and has to survive every round trip. Reading the
-	// first closing marker instead of the last one made that file unreadable from
-	// then on, with force the only way back.
+	// their own lines is content and must remain readable after a refused refresh.
 	user := "operator line one\n" + artifact.UserEnd + " is what closes my zone\n"
-	write(t, path, artifact.Zoned("shipped-v1\n", user))
+	for _, test := range []struct {
+		name, system                string
+		force, diverged, unsupported bool
+	}{
+		{name: "registered system", system: "shipped-v1\n", unsupported: true},
+		{name: "edited system", system: "operator edited the system\n", diverged: true},
+		{name: "forced edited system", system: "operator edited the system\n", force: true, diverged: true, unsupported: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "SKILL.md")
+			previous := artifact.Zoned(test.system, user)
+			write(t, path, previous)
+			original, err := os.Lstat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
 
-	out, err := artifact.RefreshFile(artifact.FileRequest{
-		Path: path, System: "shipped-v2\n", PreviousSystemSHA256: artifact.Checksum("shipped-v1\n"),
-		Enabled: true,
-	})
-	if err != nil {
-		t.Fatal(err)
+			out, err := artifact.RefreshFile(artifact.FileRequest{
+				Path: path, System: "shipped-v2\n", PreviousSystemSHA256: artifact.Checksum("shipped-v1\n"),
+				Enabled: true, Force: test.force,
+			})
+			// Force overrides the divergence guard, not the publication guarantee.
+			if test.unsupported {
+				if !errors.Is(err, securefile.ErrConditionalReplaceUnsupported) {
+					t.Fatalf("refresh error = %v, want conditional replacement refusal", err)
+				}
+				if out.Backup == "" || read(t, out.Backup) != previous {
+					t.Fatalf("refusal did not report the preserved backup: %+v", out)
+				}
+			} else if err != nil || out.Backup != "" {
+				t.Fatalf("divergence guard = %+v, err %v", out, err)
+			}
+			if out.Changed || !out.Outdated || out.Diverged != test.diverged {
+				t.Fatalf("refused refresh outcome = %+v", out)
+			}
+			if got := read(t, path); got != previous {
+				t.Fatalf("refusal changed the live artifact: %q", got)
+			}
+			current, err := os.Lstat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !os.SameFile(original, current) || original.Mode() != current.Mode() {
+				t.Fatal("refusal changed the live artifact's identity or permissions")
+			}
+			assertZones(t, path, test.system, user)
+		})
 	}
-	if !out.Changed || out.Diverged || out.Backup == "" {
-		t.Fatalf("refresh outcome = %+v", out)
-	}
-	assertZones(t, path, "shipped-v2\n", user)
-	if got := read(t, out.Backup); got != artifact.Zoned("shipped-v1\n", user) {
-		t.Fatalf("backup = %q", got)
-	}
-
-	write(t, path, artifact.Zoned("operator edited the system\n", user))
-	out, err = artifact.RefreshFile(artifact.FileRequest{
-		Path: path, System: "shipped-v3\n", PreviousSystemSHA256: artifact.Checksum("shipped-v2\n"),
-		Enabled: true,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !out.Diverged || out.Changed {
-		t.Fatalf("edited system outcome = %+v", out)
-	}
-	assertZones(t, path, "operator edited the system\n", user)
-
-	out, err = artifact.RefreshFile(artifact.FileRequest{
-		Path: path, System: "shipped-v3\n", PreviousSystemSHA256: artifact.Checksum("shipped-v2\n"),
-		Enabled: true, Force: true,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !out.Changed || out.Diverged {
-		t.Fatalf("forced outcome = %+v", out)
-	}
-	assertZones(t, path, "shipped-v3\n", user)
 }
 
 func TestLegacyAdoptionAndDisabledRefreshAreNonDestructive(t *testing.T) {
