@@ -1,0 +1,9 @@
+schema: 1
+base_branch: integration
+max_code_files: 25
+max_net_lines: 1500
+max_files: 40
+max_behind: 10
+exclude_regex: '^testdata/|_test\.go$|^docs/'
+jev_threshold: 0.6
+jev_model: jev-1.13.0
