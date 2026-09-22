@@ -452,6 +452,6 @@ are private messaging and do not surface in term search.
 
 Store accepts only a layer in the live registry and lists the registered names
 when it refuses one. Add an intentional custom layer with
-`roca layers add NAME`, or repair existing drift with
-`roca layers migrate FROM REGISTERED-TO`. `roca doctor` prints the exact
-registration command when runtime data contains an unknown layer.
+`roca layers add NAME`. For unknown runtime layers, migrations, and legacy
+spellings, follow [the authoritative repair
+contract](https://github.com/thellmwhisperer/la-roca/blob/main/docs/operations.md#memory-layers).
