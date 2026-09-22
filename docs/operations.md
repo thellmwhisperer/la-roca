@@ -198,9 +198,12 @@ rows that check counted: it clears a dangling `supersedes` pointer, registers
 every unknown runtime layer, moves an alias-layer memory onto its physical
 layer, or deletes a test row. Deleting a memory also sets `supersedes` to NULL
 on the rows that pointed at it, because `memories.supersedes` references
-`memories.id`; nothing else is removed. Each repair prints every row it
-touched, follows the same routing as the layer commands above, is refused in
-read-only mode, and rejects an unknown check by listing the repairs that exist.
+`memories.id`; any exact-dedup `memory_id_remaps` aliases that named the
+deleted memory as canonical are retired too. Repair output lists each
+diagnosed memory or layer row, not every supporting row changed to preserve
+referential integrity. Each repair follows the same routing as the layer
+commands above, is refused in read-only mode, and rejects an unknown check by
+listing the repairs that exist.
 The runtime-layer remedy registers all unknown layers in one command; use
 `roca layers migrate` instead when those memories belong in an existing layer.
 
