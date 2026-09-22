@@ -232,8 +232,8 @@ below to query retained records without restoring an ops audit destination.
 CLI and MCP calls share one `executions` JSONL stream. Retention is three
 months. Each file is capped at 5 MiB and the stream keeps at most 200 files.
 The retired `mcp-audit` stream is no longer written or read. Leftover
-`mcp-audit-*.jsonl` files are ignored by `roca doctor` and removed on
-uninstall so a purge does not leave query records. `ingest` and `migrations`
+`mcp-audit-*.jsonl` files are ignored by `roca doctor` and left untouched by
+uninstall. `ingest` and `migrations`
 stay separate housekeeping streams.
 Consumers should glob `<stream>-*.jsonl`; rotated segments have the same prefix.
 An individual record larger than the file cap is dropped under the same

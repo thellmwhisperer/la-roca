@@ -755,9 +755,6 @@ func realDirectory(path string) bool {
 func ownedLogName(name string) bool {
 	for _, stream := range []string{
 		logfile.Executions, logfile.Ingest, logfile.Migrations,
-		// Leftover retired stream. No current build writes it; uninstall still
-		// deletes it so a purge does not leave query records or call them foreign.
-		"mcp-audit",
 	} {
 		prefix := stream + "-"
 		if !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, ".jsonl") {
