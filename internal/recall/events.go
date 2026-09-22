@@ -116,37 +116,37 @@ func decode(document map[string]json.RawMessage) (Event, error) {
 		return Event{}, err
 	}
 	_ = stringField(document, "tool", &event.Tool)
-	if err := stringFieldOptional(document, "query", &event.Query); err != nil {
+	if err := optionalField(document, "query", &event.Query); err != nil {
 		return Event{}, err
 	}
-	if err := stringFieldOptional(document, "session_id", &event.SessionID); err != nil {
+	if err := optionalField(document, "session_id", &event.SessionID); err != nil {
 		return Event{}, err
 	}
-	if err := intField(document, "exchange_id", &event.ExchangeID); err != nil {
+	if err := optionalField(document, "exchange_id", &event.ExchangeID); err != nil {
 		return Event{}, err
 	}
-	if err := intField(document, "raw", &event.Raw); err != nil {
+	if err := optionalField(document, "raw", &event.Raw); err != nil {
 		return Event{}, err
 	}
-	if err := intField(document, "hits", &event.Hits); err != nil {
+	if err := optionalField(document, "hits", &event.Hits); err != nil {
 		return Event{}, err
 	}
-	if err := floatField(document, "top_score", &event.TopScore); err != nil {
+	if err := optionalField(document, "top_score", &event.TopScore); err != nil {
 		return Event{}, err
 	}
-	if err := stringSliceField(document, "ids", &event.IDs); err != nil {
+	if err := optionalField(document, "ids", &event.IDs); err != nil {
 		return Event{}, err
 	}
-	if err := floatSliceField(document, "scores", &event.Scores); err != nil {
+	if err := optionalField(document, "scores", &event.Scores); err != nil {
 		return Event{}, err
 	}
-	if err := stringSliceField(document, "dates", &event.Dates); err != nil {
+	if err := optionalField(document, "dates", &event.Dates); err != nil {
 		return Event{}, err
 	}
-	if err := intField(document, "cands", &event.Cands); err != nil {
+	if err := optionalField(document, "cands", &event.Cands); err != nil {
 		return Event{}, err
 	}
-	if err := intField(document, "elapsed_ms", &event.ElapsedMS); err != nil {
+	if err := optionalField(document, "elapsed_ms", &event.ElapsedMS); err != nil {
 		return Event{}, err
 	}
 	return event, nil
@@ -163,55 +163,7 @@ func stringField(document map[string]json.RawMessage, name string, target *strin
 	return nil
 }
 
-func stringFieldOptional(document map[string]json.RawMessage, name string, target *string) error {
-	raw, ok := document[name]
-	if !ok || string(raw) == "null" {
-		return nil
-	}
-	if err := json.Unmarshal(raw, target); err != nil {
-		return fmt.Errorf("%s: %w", name, err)
-	}
-	return nil
-}
-
-func intField(document map[string]json.RawMessage, name string, target **int64) error {
-	raw, ok := document[name]
-	if !ok || string(raw) == "null" {
-		return nil
-	}
-	var value int64
-	if err := json.Unmarshal(raw, &value); err != nil {
-		return fmt.Errorf("%s: %w", name, err)
-	}
-	*target = &value
-	return nil
-}
-
-func floatField(document map[string]json.RawMessage, name string, target **float64) error {
-	raw, ok := document[name]
-	if !ok || string(raw) == "null" {
-		return nil
-	}
-	var value float64
-	if err := json.Unmarshal(raw, &value); err != nil {
-		return fmt.Errorf("%s: %w", name, err)
-	}
-	*target = &value
-	return nil
-}
-
-func stringSliceField(document map[string]json.RawMessage, name string, target *[]string) error {
-	raw, ok := document[name]
-	if !ok || string(raw) == "null" {
-		return nil
-	}
-	if err := json.Unmarshal(raw, target); err != nil {
-		return fmt.Errorf("%s: %w", name, err)
-	}
-	return nil
-}
-
-func floatSliceField(document map[string]json.RawMessage, name string, target *[]float64) error {
+func optionalField[T any](document map[string]json.RawMessage, name string, target *T) error {
 	raw, ok := document[name]
 	if !ok || string(raw) == "null" {
 		return nil

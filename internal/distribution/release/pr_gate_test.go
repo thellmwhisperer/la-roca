@@ -9,7 +9,6 @@ import (
 )
 
 func TestPRGateAcceptanceBodyEdits(t *testing.T) {
-	bin := t.TempDir()
 	fakeGH := `#!/bin/sh
 case "$*" in
   *--json\ body*) printf '%s\n' "$TEST_PR_BODY" ;;
@@ -20,13 +19,7 @@ case "$*" in
   *) printf 'unexpected gh call: %s\n' "$*" >&2; exit 1 ;;
 esac
 `
-	if err := os.WriteFile(filepath.Join(bin, "gh"), []byte(fakeGH), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("GITHUB_REPOSITORY", "fixture/repo")
-	t.Setenv("PR_NUMBER", "1")
-	t.Setenv("PR_GATE_FORK", "true")
+	setUpPRGate(t, fakeGH)
 	t.Setenv("GITHUB_STEP_SUMMARY", "")
 	body := "## Risk Assessment\nMedium\n"
 	evidence := "\n## Acceptance\n\n```sh\n$ roca --version\nroca fixture\n```\n"
@@ -55,7 +48,6 @@ esac
 }
 
 func TestPRGateHighRiskAcceptanceRequiresOwnerActor(t *testing.T) {
-	bin := t.TempDir()
 	fakeGH := `#!/bin/sh
 case "$*" in
   *--json\ body*) printf '%b\n' '## Risk Assessment\nHigh' ;;
@@ -65,13 +57,7 @@ case "$*" in
   *) printf 'unexpected gh call: %s\n' "$*" >&2; exit 1 ;;
 esac
 `
-	if err := os.WriteFile(filepath.Join(bin, "gh"), []byte(fakeGH), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("GITHUB_REPOSITORY", "fixture/repo")
-	t.Setenv("PR_NUMBER", "1")
-	t.Setenv("PR_GATE_FORK", "true")
+	setUpPRGate(t, fakeGH)
 	t.Setenv("PR_GATE_ACTION", "labeled")
 	t.Setenv("PR_GATE_REVIEWER", "owner")
 	for _, test := range []struct {
@@ -97,7 +83,6 @@ esac
 }
 
 func TestPRGateUsesLatestAcceptanceLabelEvent(t *testing.T) {
-	bin := t.TempDir()
 	fakeGH := `#!/bin/sh
 case "$*" in
   *--json\ body*) printf '%b\n' '## Risk Assessment\nHigh' ;;
@@ -108,13 +93,7 @@ case "$*" in
   *) printf 'unexpected gh call: %s\n' "$*" >&2; exit 1 ;;
 esac
 `
-	if err := os.WriteFile(filepath.Join(bin, "gh"), []byte(fakeGH), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("GITHUB_REPOSITORY", "fixture/repo")
-	t.Setenv("PR_NUMBER", "1")
-	t.Setenv("PR_GATE_FORK", "true")
+	setUpPRGate(t, fakeGH)
 	t.Setenv("PR_GATE_ACTION", "unlabeled")
 	t.Setenv("PR_GATE_REVIEWER", "owner")
 	cmd := exec.Command("bash", "../../../scripts/pr-gate.sh")
@@ -122,4 +101,16 @@ esac
 	if err == nil {
 		t.Fatalf("stale acceptance unexpectedly passed:\n%s", output)
 	}
+}
+
+func setUpPRGate(t *testing.T, fakeGH string) {
+	t.Helper()
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "gh"), []byte(fakeGH), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("GITHUB_REPOSITORY", "fixture/repo")
+	t.Setenv("PR_NUMBER", "1")
+	t.Setenv("PR_GATE_FORK", "true")
 }
