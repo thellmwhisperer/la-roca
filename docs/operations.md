@@ -186,27 +186,28 @@ expose physical storage.
 Register a deliberate custom layer with `roca layers add <name>`. To repair
 existing rows that used the wrong layer, run
 `roca layers migrate <from> <registered-to>`. `roca doctor` reports
-`runtime_layers_not_in_registry` drift and prints the exact `roca layers add`
-command for each unknown runtime layer; migration remains available when the
+`runtime_layers_not_in_registry` drift and prints an exact `roca layers add`
+command for each unknown runtime layer. Migration remains available when the
 right repair is to move those memories into an existing layer instead. Both
 repair commands follow the same selected database and `roca-ops` routing as
-`roca store`; the command printed by doctor includes the matching `--db-path`.
+`roca store`; commands printed by doctor include the matching `--db-path`.
 Every failing `roca health` check carries a remedy naming the database the
 verdict came from. Five of them print
 `roca doctor repair <check> --db-path <db>`, a scoped write over exactly the
 rows that check counted: it clears a dangling `supersedes` pointer, registers
 every unknown runtime layer, moves an alias-layer memory onto its physical
-layer, or deletes a test row. Deleting a memory also sets `supersedes` to NULL
-on the rows that pointed at it, because `memories.supersedes` references
-`memories.id`; any exact-dedup `memory_id_remaps` aliases that named the
-deleted memory as canonical are retired too. Incoming `supersedes` references
-are rewired to the nearest surviving predecessor, or NULL when none remains.
-Repair output lists each diagnosed memory or layer row, not every supporting row
-changed to preserve referential integrity. Each repair follows the same routing as the layer
-commands above, is refused in read-only mode, and rejects an unknown check by
-listing the repairs that exist.
-The runtime-layer remedy registers all unknown layers in one command; use
-`roca layers migrate` instead when those memories belong in an existing layer.
+layer, or deletes a test row. Deleting a memory repairs incoming
+`supersedes` references to the nearest surviving predecessor, or NULL when
+none remains, because `memories.supersedes` references `memories.id`; any
+exact-dedup `memory_id_remaps` aliases that named the deleted memory as
+canonical are retired too. Repair output lists each diagnosed memory or layer
+row, not every supporting row changed to preserve referential integrity. Each
+repair follows the same routing as the layer commands above, is refused in
+read-only mode, and rejects an unknown check by listing the repairs that exist.
+The runtime-layer remedy registers all unknown layers in one command using
+their exact stored spellings, including legacy surrounding whitespace; new
+`roca layers add` input is still trimmed. Use `roca layers migrate` instead
+when those memories belong in an existing layer.
 
 CLI commands and MCP tool calls write one redacted audit record to JSONL under
 the selected data directory's `logs/`, whether they succeed or fail. CLI runs

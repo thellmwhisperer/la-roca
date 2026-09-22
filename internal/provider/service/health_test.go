@@ -221,6 +221,8 @@ func TestRuntimeLayerRemedyRegistersEveryUnknownLayer(t *testing.T) {
 		 VALUES ('unknown-one', 'unknown layer one', 'agent')`)
 	seedMemories(t, svc, 1, `INSERT INTO memories (layer, content, origin)
 		 VALUES ('unknown-two', 'unknown layer two', 'agent')`)
+	seedMemories(t, svc, 1, `INSERT INTO memories (layer, content, origin)
+		 VALUES (' knowledge ', 'legacy whitespace layer', 'agent')`)
 
 	report, err := svc.Health(context.Background(), service.HealthRequest{MaxRows: 1})
 	if err != nil {
@@ -237,8 +239,8 @@ func TestRuntimeLayerRemedyRegistersEveryUnknownLayer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Count != 2 || len(result.Rows) != 2 {
-		t.Fatalf("runtime layer repair = %+v, want two registrations", result)
+	if result.Count != 3 || len(result.Rows) != 3 {
+		t.Fatalf("runtime layer repair = %+v, want three registrations", result)
 	}
 
 	after, err := svc.Health(context.Background(), service.HealthRequest{})
@@ -247,6 +249,14 @@ func TestRuntimeLayerRemedyRegistersEveryUnknownLayer(t *testing.T) {
 	}
 	if after.Checks["runtime_layers_not_in_registry"].Status != service.HealthPass {
 		t.Fatalf("runtime layer health after repair = %+v", after.Checks["runtime_layers_not_in_registry"])
+	}
+	var exactLegacy int
+	if err := svc.DB().SQL().QueryRow(
+		`SELECT COUNT(*) FROM layers WHERE name = ' knowledge '`).Scan(&exactLegacy); err != nil {
+		t.Fatal(err)
+	}
+	if exactLegacy != 1 {
+		t.Fatalf("exact legacy layer registrations = %d, want one", exactLegacy)
 	}
 }
 
