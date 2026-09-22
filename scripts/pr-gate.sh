@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# pr-gate - judge a PR's declared Risk Assessment (issue #457).
+# pr-gate - recognize release controls or judge declared Risk Assessment.
 #
-# Reads the PR body's "Risk Assessment" section and rules:
+# Exact release-train steps are logged and passed under the contract in
+# docs/release-train.md. Every other PR is judged from its "Risk Assessment":
 #   High   -> fail, label risk:high, request owner review. Degraded
 #             enforcement (owner decision 2026-09-20): the PR is not
 #             converted to draft; the failing check blocks the merge. The

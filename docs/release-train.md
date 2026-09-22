@@ -32,8 +32,8 @@ CI runs on every pull request and on pushes to both branches, so the tip of
 
 ## Release-control checks
 
-The `pr-author` check rejects commit trailers and untrusted author or committer
-emails. Its only committer exception is the exact pair: author email
+The `pr-author` check rejects `Co-authored-by` trailers and untrusted author or
+committer emails. Its only committer exception is the exact pair: author email
 `sol@javiermellado.com` (Teseo) and committer email `noreply@github.com`.
 No other author or committer identity is covered.
 

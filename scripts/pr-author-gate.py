@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail a PR commit range that carries Co-authored-by or a non-Teseo email."""
+"""Enforce Teseo authorship, one GitHub committer exception, and no co-authors."""
 
 import argparse
 from pathlib import Path
