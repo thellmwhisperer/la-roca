@@ -88,7 +88,7 @@ func TestFailingHealthChecksNameTheirRemedy(t *testing.T) {
 		{"test_source_agent_rows", "roca doctor repair test_source_agent_rows --db-path " + quoted},
 		{"physical_alias_layer_rows", "roca doctor repair physical_alias_layer_rows --db-path " + quoted},
 		{"runtime_layers_not_in_registry",
-			"roca doctor --db-path " + quoted + " prints roca layers add for each unknown layer"},
+			"roca layers add 'a-layer-nobody-declared' --db-path " + quoted},
 	}
 	for _, testCase := range cases {
 		check, ok := report.Checks[testCase.check]
