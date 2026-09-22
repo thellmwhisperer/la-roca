@@ -57,20 +57,17 @@ func (w *Writer) RecentQueryFailures(now time.Time, window time.Duration,
 	// verdict: the rest of the window is still the operator's best answer, and
 	// it must be counted, sorted and cut like any other reading.
 	var readErr error
-	for _, stream := range []string{Executions, MCPAudit} {
-		paths, err := filepath.Glob(filepath.Join(w.dir, stream+"-*.jsonl"))
-		if err != nil {
-			readErr = errors.Join(readErr, err)
+	paths, err := filepath.Glob(filepath.Join(w.dir, Executions+"-*.jsonl"))
+	if err != nil {
+		readErr = errors.Join(readErr, err)
+	}
+	for _, path := range paths {
+		if !reaches(filepath.Base(path), Executions, summary.Since) {
 			continue
 		}
-		for _, path := range paths {
-			if !reaches(filepath.Base(path), stream, summary.Since) {
-				continue
-			}
-			if err := readQueryFailures(path, summary.Since, &summary); err != nil {
-				summary.Unreadable++
-				readErr = errors.Join(readErr, err)
-			}
+		if err := readQueryFailures(path, summary.Since, &summary); err != nil {
+			summary.Unreadable++
+			readErr = errors.Join(readErr, err)
 		}
 	}
 	sort.Slice(summary.Recent, func(i, j int) bool {
