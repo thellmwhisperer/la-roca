@@ -636,3 +636,50 @@ func TestDeletingATestRowClearsThePointersIntoIt(t *testing.T) {
 		t.Fatalf("supersedes = %d, want cleared with the row it named", supersedes.Int64)
 	}
 }
+
+func TestDeletingTestRowsClearsMemoryIDRemaps(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := serviceWithPaths(t)
+
+	var metadataID, sourceID int64
+	if err := svc.DB().SQL().QueryRow(
+		`INSERT INTO memories (layer, content, origin, metadata)
+		 VALUES ('discovery', 'test metadata canonical', 'agent', '{"_test":true}')
+		 RETURNING id`).Scan(&metadataID); err != nil {
+		t.Fatalf("seed the metadata row: %v", err)
+	}
+	if err := svc.DB().SQL().QueryRow(
+		`INSERT INTO memories (layer, content, origin, source_agent)
+		 VALUES ('discovery', 'test source canonical', 'agent', 'test-agent')
+		 RETURNING id`).Scan(&sourceID); err != nil {
+		t.Fatalf("seed the source-agent row: %v", err)
+	}
+	if _, err := svc.DB().SQL().Exec(`CREATE TABLE memory_id_remaps (
+		old_id INTEGER PRIMARY KEY,
+		canonical_id INTEGER NOT NULL REFERENCES memories(id))`); err != nil {
+		t.Fatalf("create memory remaps: %v", err)
+	}
+	if _, err := svc.DB().SQL().Exec(
+		`INSERT INTO memory_id_remaps (old_id, canonical_id) VALUES (1001, ?), (1002, ?)`,
+		metadataID, sourceID); err != nil {
+		t.Fatalf("seed memory remaps: %v", err)
+	}
+
+	for _, check := range []string{"test_metadata_rows", "test_source_agent_rows"} {
+		result, err := svc.RepairHealth(ctx, check)
+		if err != nil {
+			t.Fatalf("repair %s: %v", check, err)
+		}
+		if result.Count != 1 {
+			t.Fatalf("repair %s deleted %d rows, want one", check, result.Count)
+		}
+	}
+
+	var remaining int
+	if err := svc.DB().SQL().QueryRow(`SELECT COUNT(*) FROM memory_id_remaps`).Scan(&remaining); err != nil {
+		t.Fatalf("count memory remaps: %v", err)
+	}
+	if remaining != 0 {
+		t.Fatalf("memory remaps remaining = %d, want zero", remaining)
+	}
+}
