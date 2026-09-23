@@ -818,24 +818,35 @@ func (m *world) iRunTheE2ESmokeOperatorPath() error {
 	}
 	cmd.Dir = root
 	cmd.Env = append(os.Environ(), "ROCA_BIN="+m.binary)
+	var out, failures strings.Builder
+	cmd.Stdout, cmd.Stderr = &out, &failures
 	started := time.Now()
-	out, runErr := cmd.CombinedOutput()
+	// One operator command: the 60s hang guard, not a performance budget.
+	runErr := runWithHangGuard(cmd, e2eHangGuard)
 	elapsed := time.Since(started)
-	text := string(out)
+	text := out.String()
 	m.last = run{
-		command: "make e2e-smoke", stdout: text, elapsed: elapsed,
+		command: "make e2e-smoke", stdout: text, stderr: failures.String(), elapsed: elapsed,
 	}
 	m.everything = append(m.everything, m.last)
 	reportMeasuredDuration(m.durationWriter(), "make e2e-smoke", elapsed, nil)
-	if strings.Contains(text, "set ROCA_PUBLISHED_BIN") {
+	if errors.Is(runErr, errHangGuardKilled) {
 		m.last.code = 1
-		m.last.stderr = text
+		return hangGuardTimeoutError("make e2e-smoke", elapsed)
+	}
+	if strings.Contains(text+failures.String(), "set ROCA_PUBLISHED_BIN") {
+		m.last.code = 1
+		m.last.stderr = failures.String() + text
 		return fmt.Errorf("published upgrade was skipped")
 	}
 	if runErr != nil {
 		m.last.code = 1
-		m.last.stderr = text
+		m.last.stderr = failures.String() + text
 		return nil
+	}
+	if guard := hangGuardError("make e2e-smoke", elapsed); guard != nil {
+		m.last.code = 1
+		return guard
 	}
 	return nil
 }
