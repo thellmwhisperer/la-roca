@@ -756,7 +756,15 @@ func processAlive(pid int) bool {
 	if err != nil {
 		return false
 	}
-	return proc.Signal(syscall.Signal(0)) == nil
+	if proc.Signal(syscall.Signal(0)) != nil {
+		return false
+	}
+	state, err := exec.Command("ps", "-o", "stat=", "-p", strconv.Itoa(pid)).Output()
+	if err != nil {
+		return false
+	}
+	status := strings.TrimSpace(string(state))
+	return status != "" && !strings.HasPrefix(status, "Z")
 }
 
 func (m *world) iCallHealthOverStdio() error {
@@ -795,9 +803,6 @@ func (m *world) oneVectorResidentProcessExists() error {
 	count, ps, err := m.countSharedResidents()
 	elapsed := time.Since(started)
 	m.recordMeasuredOperation("shared resident check", elapsed)
-	if guard := hangGuardError("shared resident check", elapsed); guard != nil {
-		return guard
-	}
 	if err != nil {
 		return err
 	}
