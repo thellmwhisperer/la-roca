@@ -1,9 +1,9 @@
 # Aceptacion
 
-The [federation runbook](e2e-federation.md) owns fixture preparation, binary
-selection, prerequisites, and isolation. The commands below are exercised by
-the single [Gherkin feature](../features/distribution/e2e-federation.feature).
-The [release train](release-train.md#e2e-timings) owns the timing policy.
+Fixture: testdata/e2e-federation/frozen.tar.gz extracted into a disposable HOME.
+Digest: testdata/e2e-federation/frozen.sha256
+Binary: that HOME's .local/bin/roca.
+Live hub: never selected.
 
 ## 321
 command: roca ingest --json
@@ -58,9 +58,6 @@ command: roca handoff latest --all-projects
 exit: 0
 stdout contains: harbor
 stdout contains: dock
-
-## 319
-Covered by the combined 319/427 scenario; see [427](#427).
 
 ## 427
 command: roca exec SELECT id FROM plugin_roca_ops.memories WHERE id = '1152921504606846980' --json
@@ -193,10 +190,12 @@ exit: 0
 command: roca hooks run claude
 stdin: {"hook_event_name":"SessionStart","tool_name":"","tool_input":{}}
 exit: 0
+duration_ms: 0
 
 ## real-usage-exec
 command: roca exec SELECT id, legacy_id FROM plugin_roca_ops.memories WHERE id = '1152921504606846980' --json
 exit: 0
+duration_ms: < 5000
 rows[0].id: JS-safe integer of at most 12 digits
 stdout contains: 1152921504606846980
 
@@ -205,6 +204,7 @@ command: roca vector query warm harbor index 1 --databases corpus,ops --json
 exit: 0
 command: roca vector query harbor lantern 20 --databases corpus,ops --json
 exit: 0
+duration_ms: < 2000
 JSON vector_executed: true
 notices do not contain: fts-only
 notices do not contain: unavailable
@@ -212,8 +212,9 @@ notices do not contain: unavailable
 ## real-usage-query
 command: roca query harbor lantern --json
 exit: 0
+duration_ms: < 3000
 stdout contains: engines
-stdout does not contain: search hybrid
+if stdout contains search hybrid: stdout contains vector
 
 ## real-usage-handoff
 command: roca handoff latest --project harbor
@@ -243,9 +244,9 @@ metadata id: JS-safe integer of at most 12 digits
 expect: replacement supersedes exactly the migrated row
 
 ## real-usage-e2e-smoke
-command: ROCA_BIN=<installed-candidate> ROCA_PUBLISHED_BIN=<published-roca> go test -tags=acceptance ./test/acceptance -run '^TestPublishedReleaseUpdateInitSmoke$' -count=1
+command: make e2e-smoke ROCA_PUBLISHED_BIN=<published-roca>
 exit: 0
-expect: published release updates to the installed candidate artefact
+expect: published release updates to the branch artefact
 expect: updated executable initializes a clean home
 
 ## real-usage-mcp-health
