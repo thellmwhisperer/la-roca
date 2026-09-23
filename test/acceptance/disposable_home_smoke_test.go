@@ -138,7 +138,7 @@ func TestPublishedReleaseUpdateInitSmoke(t *testing.T) {
 		t.Fatal(err)
 	}
 	home := disposableSmokeHome(t, "roca-published-update-")
-	m := &world{binary: binary, home: home, releaseStamped: published}
+	m := &world{binary: binary, home: home, releaseStamped: published, observeDurations: true}
 	t.Cleanup(m.closeTheChannel)
 	channel := m.theChannel()
 	if err := m.installBinary(); err != nil {

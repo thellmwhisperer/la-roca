@@ -622,12 +622,20 @@ func e2eFederationScenario(sc *godog.Scenario) bool {
 	if sc == nil {
 		return false
 	}
+	names := make([]string, 0, len(sc.Tags))
 	for _, tag := range sc.Tags {
-		if tag.Name == "@e2e-federation" {
+		names = append(names, tag.Name)
+	}
+	return federationInstrumentation(names, sc.Uri)
+}
+
+func federationInstrumentation(tags []string, uri string) bool {
+	for _, tag := range tags {
+		if strings.TrimPrefix(tag, "@") == "e2e-federation" {
 			return true
 		}
 	}
-	return false
+	return strings.Contains(uri, "e2e-federation.feature")
 }
 
 func hangGuardError(command string, elapsed time.Duration) error {
@@ -694,6 +702,37 @@ func (m *world) reportLastDuration() {
 		durationMS = &ms
 	}
 	reportMeasuredDuration(m.durationWriter(), m.last.command, m.last.elapsed, durationMS)
+}
+
+func TestE2EFederationScenarioRecognizesFeature(t *testing.T) {
+	if e2eFederationScenario(nil) {
+		t.Fatal("nil scenario")
+	}
+	if !e2eFederationScenario(&godog.Scenario{Uri: "features/distribution/e2e-federation.feature"}) {
+		t.Fatal("want recognition from the federation feature URI")
+	}
+	if !federationInstrumentation([]string{"@e2e-federation"}, "") {
+		t.Fatal("want recognition from @e2e-federation")
+	}
+	if !federationInstrumentation([]string{"e2e-federation"}, "") {
+		t.Fatal("want recognition from e2e-federation without @")
+	}
+	if federationInstrumentation(nil, "features/distribution/exec-timeout.feature") {
+		t.Fatal("exec-timeout is not federation")
+	}
+}
+
+func TestMeasuredDurationIsRecordedOnPass(t *testing.T) {
+	var output bytes.Buffer
+	ms := int64(2046)
+	reportMeasuredDuration(&output, "roca exec", 2*time.Second, &ms)
+	want := "measured duration: command=\"roca exec\" wall_ms=2000 duration_ms=2046\n"
+	if got := output.String(); got != want {
+		t.Fatalf("output = %q, want %q", got, want)
+	}
+	if err := hangGuardError("roca exec", 2*time.Second); err != nil {
+		t.Fatalf("pass path failed hang guard: %v", err)
+	}
 }
 
 func TestHangGuardFailsWhenElapsedExceeds60Seconds(t *testing.T) {
