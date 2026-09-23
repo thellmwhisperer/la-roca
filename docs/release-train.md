@@ -50,6 +50,25 @@ direction and head name must match; all other PRs continue through the existing
 risk gate. These recognizers do not waive CI,
 the candidate/e2e round, or branch protections.
 
+## E2E timings
+
+E2E acceptance timings are informative trend data, not performance budgets
+or release blockers: "si tarda cinco horas en hacer roca exec, sí quiero que se bloquee la release, pero si tarda 4,1 en vez de 4 cuando 4 es random, me toca la polla".
+
+The frozen federation suite records and prints each command's measured
+duration on every run and machine, including passing runs. The only
+temporal cutoff is a command that exceeds 60 seconds. That cutoff is a
+hang guard, not a performance budget. Functional gates stay blocking:
+exit code, expected engines, no silent degrade to `search hybrid`, and
+ready-index use.
+
+A green merge of the pull request that records this policy is the only
+authorized freeze exception. After that merge, pin the new `integration`
+SHA and run a fresh full `make e2e` on WSL, Mac-mini, and Omarchy with
+installed candidate binaries, all on that same SHA. Do not reuse
+`f2028e7` evidence or open a release pull request before those three
+fresh runs pass.
+
 ## The cycle
 
 1. **Land.** Open a pull request against `integration` and let it merge.

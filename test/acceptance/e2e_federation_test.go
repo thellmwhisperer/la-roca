@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -20,6 +21,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/cucumber/godog"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/bundledplugin"
 )
 
@@ -536,17 +538,6 @@ func (m *world) theVectorQueryExecutedTheReadyIndex() error {
 	return requireVectorExecuted(m.last.stdout)
 }
 
-func (m *world) theExecutionLogDurationIs(want int) error {
-	ms, err := lookupExecutionDuration(m)
-	if err != nil {
-		return err
-	}
-	if ms != int64(want) {
-		return fmt.Errorf("duration_ms=%d, want %d", ms, want)
-	}
-	return nil
-}
-
 func lookupExecutionDuration(m *world) (int64, error) {
 	command := strings.TrimPrefix(m.last.command, "roca ")
 	ms, err := lastExecutionDuration(m.home, command)
@@ -620,31 +611,140 @@ func (m *world) iRunClaudeAuthorshipHook() error {
 	return m.record("roca hooks run claude", cmd)
 }
 
-func (m *world) theExecutionLogDurationUnder(limit int) error {
-	ms, err := lookupExecutionDuration(m)
-	if err != nil {
-		return err
+const e2eHangGuard = 60 * time.Second
+
+var errHangGuardKilled = errors.New("killed by 60-second hang guard")
+
+func e2eFederationScenario(sc *godog.Scenario) bool {
+	if sc == nil {
+		return false
 	}
-	output := m.durationOutput
-	if output == nil {
-		output = os.Stdout
+	for _, tag := range sc.Tags {
+		if tag.Name == "@e2e-federation" {
+			return true
+		}
 	}
-	fmt.Fprintf(output, "duration_ms=%d (bound %d)\n", ms, limit)
-	if ms >= int64(limit) {
-		return fmt.Errorf("duration_ms=%d, want under %d", ms, limit)
-	}
-	return nil
+	return strings.Contains(sc.Uri, "e2e-federation.feature")
 }
 
-func TestExecutionLogDurationUnderReportsMeasuredValue(t *testing.T) {
+func hangGuardError(command string, elapsed time.Duration) error {
+	if elapsed <= e2eHangGuard {
+		return nil
+	}
+	return fmt.Errorf("60-second hang guard: command %q ran %s; this is a hang guard, not a performance budget", command, elapsed)
+}
+
+func runWithHangGuard(command *exec.Cmd, limit time.Duration) error {
+	if err := command.Start(); err != nil {
+		return err
+	}
+	done := make(chan error, 1)
+	go func() { done <- command.Wait() }()
+	timer := time.NewTimer(limit)
+	defer timer.Stop()
+	select {
+	case err := <-done:
+		return err
+	case <-timer.C:
+		if command.Process != nil {
+			_ = command.Process.Kill()
+		}
+		<-done
+		return errHangGuardKilled
+	}
+}
+
+func (m *world) durationWriter() io.Writer {
+	if m.durationOutput != nil {
+		return m.durationOutput
+	}
+	return os.Stdout
+}
+
+func reportMeasuredDuration(w io.Writer, command string, wall time.Duration, durationMS *int64) {
+	if durationMS != nil {
+		fmt.Fprintf(w, "measured duration: command=%q wall_ms=%d duration_ms=%d\n", command, wall.Milliseconds(), *durationMS)
+		return
+	}
+	fmt.Fprintf(w, "measured duration: command=%q wall_ms=%d\n", command, wall.Milliseconds())
+}
+
+func (m *world) reportLastDuration() {
+	m.writeMeasuredDuration(m.last)
+}
+
+func (m *world) writeMeasuredDuration(item run) {
+	if item.command == "" {
+		return
+	}
+	previous := m.last
+	m.last = item
+	ms, err := lookupExecutionDuration(m)
+	m.last = previous
+	var durationPtr *int64
+	if err == nil {
+		durationPtr = &ms
+	}
+	reportMeasuredDuration(m.durationWriter(), item.command, item.elapsed, durationPtr)
+}
+
+func (m *world) printScenarioDurations() {
+	printed := map[string]bool{}
+	for _, item := range m.everything {
+		key := item.command + ":" + item.elapsed.String()
+		if printed[key] {
+			continue
+		}
+		m.writeMeasuredDuration(item)
+		printed[key] = true
+	}
+	if m.last.command != "" {
+		key := m.last.command + ":" + m.last.elapsed.String()
+		if !printed[key] {
+			m.writeMeasuredDuration(m.last)
+		}
+	}
+	if m.plug.elapsed > 0 {
+		reportMeasuredDuration(m.durationWriter(), "mcp call", m.plug.elapsed, nil)
+	}
+}
+
+func (m *world) theMeasuredDurationIsRecorded() error {
+	elapsed := m.last.elapsed
+	command := m.last.command
+	if elapsed == 0 && m.plug.elapsed > 0 {
+		elapsed = m.plug.elapsed
+		if command == "" {
+			command = "mcp call"
+		}
+	}
+	if m.last.command != "" {
+		m.reportLastDuration()
+	} else if command != "" {
+		reportMeasuredDuration(m.durationWriter(), command, elapsed, nil)
+	}
+	if m.last.command == "make e2e-smoke" {
+		return nil
+	}
+	return hangGuardError(command, elapsed)
+}
+
+func TestMeasuredDurationIsRecorded(t *testing.T) {
 	tests := []struct {
 		name       string
 		durationMS int64
+		elapsed    time.Duration
 		wantError  bool
 		wantOutput string
 	}{
-		{name: "pass", durationMS: 2046, wantOutput: "duration_ms=2046 (bound 3000)\n"},
-		{name: "fail", durationMS: 3046, wantError: true, wantOutput: "duration_ms=3046 (bound 3000)\n"},
+		{
+			name: "pass prints measured value", durationMS: 2046, elapsed: 2 * time.Second,
+			wantOutput: "measured duration: command=\"roca vector query\" wall_ms=2000 duration_ms=2046\n",
+		},
+		{
+			name: "zero is printed not asserted", durationMS: 0, elapsed: time.Millisecond,
+			wantOutput: "measured duration: command=\"roca vector query\" wall_ms=1 duration_ms=0\n",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -658,8 +758,11 @@ func TestExecutionLogDurationUnderReportsMeasuredValue(t *testing.T) {
 				t.Fatal(err)
 			}
 			var output bytes.Buffer
-			m := &world{home: home, last: run{command: "roca vector query"}, durationOutput: &output}
-			err := m.theExecutionLogDurationUnder(3000)
+			m := &world{
+				home: home, last: run{command: "roca vector query", elapsed: test.elapsed},
+				durationOutput: &output,
+			}
+			err := m.theMeasuredDurationIsRecorded()
 			if (err != nil) != test.wantError {
 				t.Fatalf("error = %v, wantError = %t", err, test.wantError)
 			}
@@ -667,6 +770,36 @@ func TestExecutionLogDurationUnderReportsMeasuredValue(t *testing.T) {
 				t.Fatalf("output = %q, want %q", got, test.wantOutput)
 			}
 		})
+	}
+}
+
+func TestHangGuardFailsWhenElapsedExceeds60Seconds(t *testing.T) {
+	home := t.TempDir()
+	logs := filepath.Join(home, ".roca", "logs")
+	if err := os.MkdirAll(logs, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(logs, "executions-test.jsonl"), []byte("{\"command\":\"exec\",\"duration_ms\":10}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	m := &world{
+		home: home, last: run{command: "roca exec", elapsed: 61 * time.Second},
+		durationOutput: &output,
+	}
+	err := m.theMeasuredDurationIsRecorded()
+	if err == nil {
+		t.Fatal("expected 60-second hang guard failure")
+	}
+	if !strings.Contains(err.Error(), "60-second hang guard") {
+		t.Fatalf("error = %q, want 60-second hang guard", err)
+	}
+	if !strings.Contains(err.Error(), "not a performance budget") {
+		t.Fatalf("error = %q, want hang guard labeled as not a performance budget", err)
+	}
+	want := "measured duration: command=\"roca exec\" wall_ms=61000 duration_ms=10\n"
+	if got := output.String(); got != want {
+		t.Fatalf("output = %q, want %q", got, want)
 	}
 }
 
@@ -719,9 +852,11 @@ func (m *world) iRunTheE2ESmokeOperatorPath() error {
 	}
 	cmd.Dir = root
 	cmd.Env = append(os.Environ(), "ROCA_BIN="+m.binary)
+	started := time.Now()
 	out, err := cmd.CombinedOutput()
 	text := string(out)
-	m.last = run{command: "make e2e-smoke", stdout: text}
+	m.last = run{command: "make e2e-smoke", stdout: text, elapsed: time.Since(started)}
+	m.everything = append(m.everything, m.last)
 	if strings.Contains(text, "set ROCA_PUBLISHED_BIN") {
 		m.last.code = 1
 		m.last.stderr = text

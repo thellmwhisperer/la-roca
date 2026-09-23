@@ -218,10 +218,25 @@ func (m *world) callTool(name string, arguments map[string]any) error {
 	if err := m.openThePlug(); err != nil {
 		return err
 	}
+	ctx := context.Background()
+	cancel := func() {}
+	if m.observeDurations {
+		ctx, cancel = context.WithTimeout(ctx, e2eHangGuard)
+	}
+	defer cancel()
 	started := time.Now()
-	result, err := m.plug.session.CallTool(context.Background(),
+	result, err := m.plug.session.CallTool(ctx,
 		&mcp.CallToolParams{Name: name, Arguments: arguments})
 	m.plug.elapsed = time.Since(started)
+	if m.observeDurations {
+		reportMeasuredDuration(m.durationWriter(), "mcp "+name, m.plug.elapsed, nil)
+		if guard := hangGuardError("mcp "+name, m.plug.elapsed); guard != nil {
+			return guard
+		}
+		if ctx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("60-second hang guard: command %q ran %s; this is a hang guard, not a performance budget", "mcp "+name, m.plug.elapsed)
+		}
+	}
 	if err != nil {
 		return fmt.Errorf("call %s: %w", name, err)
 	}
