@@ -77,11 +77,12 @@ those pull request and issue bodies:
 Plus one command case per uso-de-la-roca correction source (23 exchange ids),
 expressed as the binary command the agent should have run.
 
-Plus the eight real-usage paths from operator execution logs: hooks at 0 ms,
-exec of an exact frozen id under 5 s, a ready-index vector query under 2 s
-without degradation, query under 3 s without a silent hybrid claim, one current
-handoff per project, MCP handoff store refusal as contract, the
-published-release update and clean init smoke, and MCP `roca_health`.
+Plus the eight real-usage paths from operator execution logs: the authorship
+hook, exec of an exact frozen id, a ready-index vector query without
+degradation, a query without a silent hybrid claim, one current handoff per
+project, MCP handoff store refusal as contract, the published-release update
+and clean init smoke, and MCP `roca_health`. The [release train](release-train.md#e2e-timings)
+owns the timing policy.
 
 ## Fixture rule
 

@@ -3,6 +3,7 @@
 The [federation runbook](e2e-federation.md) owns fixture preparation, binary
 selection, prerequisites, and isolation. The commands below are exercised by
 the single [Gherkin feature](../features/distribution/e2e-federation.feature).
+The [release train](release-train.md#e2e-timings) owns the timing policy.
 
 ## 321
 command: roca ingest --json
@@ -192,13 +193,10 @@ exit: 0
 command: roca hooks run claude
 stdin: {"hook_event_name":"SessionStart","tool_name":"","tool_input":{}}
 exit: 0
-duration_ms: 0
 
 ## real-usage-exec
 command: roca exec SELECT id, legacy_id FROM plugin_roca_ops.memories WHERE id = '1152921504606846980' --json
 exit: 0
-duration_ms: < 5000
-process elapsed time: within 5 seconds
 rows[0].id: JS-safe integer of at most 12 digits
 stdout contains: 1152921504606846980
 
@@ -207,8 +205,6 @@ command: roca vector query warm harbor index 1 --databases corpus,ops --json
 exit: 0
 command: roca vector query harbor lantern 20 --databases corpus,ops --json
 exit: 0
-duration_ms: < 2000
-process elapsed time: within 2 seconds
 JSON vector_executed: true
 notices do not contain: fts-only
 notices do not contain: unavailable
@@ -216,8 +212,6 @@ notices do not contain: unavailable
 ## real-usage-query
 command: roca query harbor lantern --json
 exit: 0
-duration_ms: < 3000
-process elapsed time: within 3 seconds
 stdout contains: engines
 stdout does not contain: search hybrid
 
