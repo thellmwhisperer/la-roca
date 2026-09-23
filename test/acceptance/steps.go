@@ -140,9 +140,6 @@ func registerSteps(ctx *godog.ScenarioContext, binary string) {
 				m.residentSocket, m.residentCleanup = "", nil
 			}
 		}()
-		if m.observeDurations {
-			m.printScenarioDurations()
-		}
 		// A traceback in the operator's face is always a failure, whether the
 		// step asserted it explicitly or not.
 		if trace := hasTraceback(m.last); trace != "" && err == nil {
@@ -208,7 +205,6 @@ func registerSteps(ctx *godog.ScenarioContext, binary string) {
 		return m.theFrozenCodexIdentityHas(sessions, exactSourceSession, splitSiblings, exchanges, tools, orphanTools, failedTools, controlSessions)
 	})
 	ctx.Then(`^the frozen Codex identity is unchanged$`, m.theFrozenCodexIdentityIsUnchanged)
-	ctx.Then(`^the measured duration is recorded$`, m.theMeasuredDurationIsRecorded)
 	ctx.Then(`^the vector query executed the ready index$`, m.theVectorQueryExecutedTheReadyIndex)
 	ctx.Then(`^one vector resident process exists$`, m.oneVectorResidentProcessExists)
 	ctx.Then(`^the readable MCP response contains "([^"]*)"$`, m.theReadableMCPResponseContains)
@@ -481,12 +477,14 @@ func (m *world) record(label string, command *exec.Cmd) error {
 		}
 		return hangGuardTimeoutError(label, m.last.elapsed)
 	}
+	var startErr error
 	if err != nil {
 		var exit *exec.ExitError
 		if !asExitError(err, &exit) {
-			return fmt.Errorf("run %q: %w", label, err)
+			startErr = err
+		} else {
+			m.last.code = exit.ExitCode()
 		}
-		m.last.code = exit.ExitCode()
 	}
 	// Credential checks cover every output of a session, not only the last one.
 	m.everything = append(m.everything, m.last)
@@ -495,6 +493,10 @@ func (m *world) record(label string, command *exec.Cmd) error {
 		if guard := hangGuardError(label, m.last.elapsed); guard != nil {
 			return guard
 		}
+	}
+	if startErr != nil {
+		m.last.code = 1
+		return fmt.Errorf("run %q: %w", label, startErr)
 	}
 	return nil
 }

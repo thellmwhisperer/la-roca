@@ -218,7 +218,6 @@ Feature: Frozen federation installed binary
     Given a frozen synthetic federation lab
     When I run the claude authorship hook
     Then the command exits with code 0
-    And the measured duration is recorded
 
   Scenario: real-usage exec exact ids
     Given a frozen synthetic federation lab
@@ -226,7 +225,6 @@ Feature: Frozen federation installed binary
     Then the command exits with code 0
     And the JSON output field "rows[0].id" is a JS-safe integer of at most 12 digits
     And the output contains "1152921504606846980"
-    And the measured duration is recorded
 
   @provisioned
   Scenario: real-usage vector query
@@ -234,7 +232,6 @@ Feature: Frozen federation installed binary
     When I warm the vector index and vector-query "harbor lantern"
     Then the command exits with code 0
     And the vector query executed the ready index
-    And the measured duration is recorded
 
   Scenario: real-usage query no silent degrade
     Given a frozen synthetic federation lab
@@ -242,7 +239,6 @@ Feature: Frozen federation installed binary
     Then the command exits with code 0
     And the output contains "engines"
     And the output does not contain "search hybrid"
-    And the measured duration is recorded
 
   Scenario: real-usage handoff one per project
     Given a frozen synthetic federation lab

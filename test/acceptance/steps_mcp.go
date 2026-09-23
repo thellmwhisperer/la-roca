@@ -152,8 +152,25 @@ func (m *world) openThePlugAs(name string) error {
 	command.Stderr = os.Stderr
 
 	client := mcp.NewClient(&mcp.Implementation{Name: name, Version: "1"}, nil)
-	session, err := client.Connect(context.Background(),
+	ctx := context.Background()
+	cancel := func() {}
+	if m.observeDurations {
+		ctx, cancel = context.WithTimeout(ctx, e2eHangGuard)
+	}
+	defer cancel()
+	started := time.Now()
+	session, err := client.Connect(ctx,
 		&mcp.CommandTransport{Command: command}, nil)
+	elapsed := time.Since(started)
+	if m.observeDurations {
+		m.recordMeasuredOperation("mcp connect", elapsed)
+		if guard := hangGuardError("mcp connect", elapsed); guard != nil {
+			return guard
+		}
+		if ctx.Err() == context.DeadlineExceeded {
+			return hangGuardTimeoutError("mcp connect", elapsed)
+		}
+	}
 	if err != nil {
 		return fmt.Errorf("open the MCP session: %w", err)
 	}
@@ -229,7 +246,7 @@ func (m *world) callTool(name string, arguments map[string]any) error {
 		&mcp.CallToolParams{Name: name, Arguments: arguments})
 	m.plug.elapsed = time.Since(started)
 	if m.observeDurations {
-		reportMeasuredDuration(m.durationWriter(), "mcp "+name, m.plug.elapsed, nil)
+		m.recordMeasuredOperation("mcp "+name, m.plug.elapsed)
 		if guard := hangGuardError("mcp "+name, m.plug.elapsed); guard != nil {
 			return guard
 		}
