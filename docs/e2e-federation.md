@@ -70,18 +70,18 @@ those pull request and issue bodies:
 - issue 315: three `roca mcp serve` processes share one vector resident
 - issue 317: unqualified `FROM memories` is refused with qualified candidates
 - issue 318: `roca handoff latest --limit 1` and `--all-projects`
-- issue 319: ops memory ids are short JSON numbers
-- issue 427: ops memory ids are short JSON numbers and legacy ids still resolve
+- issue 319 and issue 427: ops memory ids are short JSON numbers and legacy ids still resolve
 - issue 324: Codex source thread keeps its exact session id
 
 Plus one command case per uso-de-la-roca correction source (23 exchange ids),
 expressed as the binary command the agent should have run.
 
-Plus the eight real-usage paths from operator execution logs: hooks at 0 ms,
-exec of an exact frozen id under 5 s, a ready-index vector query under 2 s
-without degradation, query under 3 s without a silent hybrid claim, one current
-handoff per project, MCP handoff store refusal as contract, the
-published-release update and clean init smoke, and MCP `roca_health`.
+Plus the eight real-usage paths from operator execution logs: the authorship
+hook, exec of an exact frozen id, a ready-index vector query without
+degradation, a query without a silent hybrid claim, one current handoff per
+project, MCP handoff store refusal as contract, the published-release update
+and clean init smoke, and MCP `roca_health`. The [release train](release-train.md#e2e-timings)
+owns the timing policy.
 
 ## Fixture rule
 

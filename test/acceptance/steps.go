@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -36,14 +37,15 @@ type world struct {
 	// in. The refusal scenario installs it so its premise holds even when the
 	// working copy is built from a clean release tag, which is exactly what the
 	// release workflow does.
-	devStamped     string
-	home           string
-	last           run
-	previous       run
-	durationOutput io.Writer
-	memories       int
-	deletedID      int64
-	replacedID     int64
+	devStamped       string
+	home             string
+	last             run
+	previous         run
+	durationOutput   io.Writer
+	observeDurations bool
+	memories         int
+	deletedID        int64
+	replacedID       int64
 	// everything is every run of the scenario, for the steps that ask about a
 	// whole session's output and not only the last command's.
 	everything []run
@@ -94,12 +96,13 @@ type run struct {
 func registerSteps(ctx *godog.ScenarioContext, binary string) {
 	m := &world{binary: binary}
 
-	ctx.Before(func(c context.Context, _ *godog.Scenario) (context.Context, error) {
+	ctx.Before(func(c context.Context, sc *godog.Scenario) (context.Context, error) {
 		home, err := os.MkdirTemp("", "roca-acceptance-")
 		if err != nil {
 			return c, err
 		}
 		m.home = home
+		m.observeDurations = e2eFederationScenario(sc)
 		if os.Getenv("ROCA_PLAYGROUND_FEATURES") != "" {
 			if err := installPlaygroundForAcceptance(home); err != nil {
 				return c, err
@@ -202,8 +205,6 @@ func registerSteps(ctx *godog.ScenarioContext, binary string) {
 		return m.theFrozenCodexIdentityHas(sessions, exactSourceSession, splitSiblings, exchanges, tools, orphanTools, failedTools, controlSessions)
 	})
 	ctx.Then(`^the frozen Codex identity is unchanged$`, m.theFrozenCodexIdentityIsUnchanged)
-	ctx.Then(`^the execution log duration_ms is under (\d+)$`, m.theExecutionLogDurationUnder)
-	ctx.Then(`^the execution log duration_ms is 0$`, func() error { return m.theExecutionLogDurationIs(0) })
 	ctx.Then(`^the vector query executed the ready index$`, m.theVectorQueryExecutedTheReadyIndex)
 	ctx.Then(`^one vector resident process exists$`, m.oneVectorResidentProcessExists)
 	ctx.Then(`^the readable MCP response contains "([^"]*)"$`, m.theReadableMCPResponseContains)
@@ -459,19 +460,44 @@ func (m *world) record(label string, command *exec.Cmd) error {
 	var out, failures strings.Builder
 	command.Stdout, command.Stderr = &out, &failures
 	started := time.Now()
-	err := command.Run()
+	var err error
+	if m.observeDurations {
+		err = runWithHangGuard(command, e2eHangGuard)
+	} else {
+		err = command.Run()
+	}
 
 	m.previous = m.last
 	m.last = run{command: label, stdout: out.String(), stderr: failures.String(), elapsed: time.Since(started)}
+	if errors.Is(err, errHangGuardKilled) {
+		m.everything = append(m.everything, m.last)
+		m.reportLastDuration()
+		if guard := hangGuardError(label, m.last.elapsed); guard != nil {
+			return guard
+		}
+		return hangGuardTimeoutError(label, m.last.elapsed)
+	}
+	var startErr error
 	if err != nil {
 		var exit *exec.ExitError
 		if !asExitError(err, &exit) {
-			return fmt.Errorf("run %q: %w", label, err)
+			startErr = err
+		} else {
+			m.last.code = exit.ExitCode()
 		}
-		m.last.code = exit.ExitCode()
 	}
 	// Credential checks cover every output of a session, not only the last one.
 	m.everything = append(m.everything, m.last)
+	if m.observeDurations {
+		m.reportLastDuration()
+		if guard := hangGuardError(label, m.last.elapsed); guard != nil {
+			return guard
+		}
+	}
+	if startErr != nil {
+		m.last.code = 1
+		return fmt.Errorf("run %q: %w", label, startErr)
+	}
 	return nil
 }
 

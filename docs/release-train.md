@@ -50,6 +50,27 @@ direction and head name must match; all other PRs continue through the existing
 risk gate. These recognizers do not waive CI,
 the candidate/e2e round, or branch protections.
 
+## E2E timings
+
+E2E acceptance timings are informative trend data, not performance budgets
+or release blockers: "si tarda cinco horas en hacer roca exec, sí quiero que se bloquee la release, pero si tarda 4,1 en vez de 4 cuando 4 es random, me toca la polla".
+
+The frozen federation suite records and prints each command's measured
+duration on every run and machine, including passing runs. The only
+temporal cutoff is a command that exceeds 60 seconds. That cutoff is a
+hang guard, not a performance budget. Functional gates stay blocking:
+exit code, expected engines, no silent degrade to `search hybrid`, and
+ready-index use.
+
+A green merge of the pull request that records this policy is the only
+authorized freeze exception. After that merge, pin the new `integration`
+SHA and run a fresh full `make e2e` on WSL, Mac-mini, and Omarchy with
+installed candidate binaries, all on that same SHA. Do not reuse
+`f2028e7` evidence or open a release pull request before those three
+fresh runs pass.
+Landing #439 unblocks release train work but does not waive this operator
+round. CI builds and native-engine checks do not substitute for it.
+
 ## The cycle
 
 1. **Land.** Open a pull request against `integration` and let it merge.
@@ -65,7 +86,7 @@ the candidate/e2e round, or branch protections.
    release PR, stop, synchronize `main` into `integration`, pin the new SHA
    and repeat the entire round. Record the passing evidence beside the
    candidate SHA in the release PR. Tickets requiring the real-binary
-   multi-OS matrix also need the evidence described below before release.
+   multi-OS matrix also need evidence for each of the three legs above.
 3. **Release.** Once required CI checks pass, confirm the release PR's base
    is `main`, its head branch is `integration`, and both its head SHA and the
    remote `integration` tip still equal `RELEASE_CANDIDATE`. Merge once with
@@ -88,12 +109,3 @@ the candidate/e2e round, or branch protections.
    request right away, and auto-merge publishes it without waiting for the
    next cycle.
 3. Back-merge `main` into `integration` so the fix rides the train.
-
-## Multi-OS status
-
-The current lab round covers macOS only. The required multi-OS matrix remains
-pending until the same candidate SHA passes the round over real binaries on
-both the macOS lab and the Linux (Omarchy) lab. A macOS-only pass cannot
-satisfy a ticket requiring that matrix. Landing #439 unblocks the release
-train work but does not waive those tickets' multi-OS prerequisite.
-CI builds and native-engine checks do not substitute for this operator round.
