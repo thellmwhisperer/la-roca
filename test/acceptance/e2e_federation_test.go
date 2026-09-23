@@ -23,6 +23,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/cucumber/godog"
+	"github.com/cucumber/messages/go/v34"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/bundledplugin"
 )
 
@@ -622,20 +623,12 @@ func e2eFederationScenario(sc *godog.Scenario) bool {
 	if sc == nil {
 		return false
 	}
-	names := make([]string, 0, len(sc.Tags))
 	for _, tag := range sc.Tags {
-		names = append(names, tag.Name)
-	}
-	return federationInstrumentation(names, sc.Uri)
-}
-
-func federationInstrumentation(tags []string, uri string) bool {
-	for _, tag := range tags {
-		if strings.TrimPrefix(tag, "@") == "e2e-federation" {
+		if tag.Name == "@e2e-federation" {
 			return true
 		}
 	}
-	return strings.Contains(uri, "e2e-federation.feature")
+	return false
 }
 
 func hangGuardError(command string, elapsed time.Duration) error {
@@ -708,17 +701,14 @@ func TestE2EFederationScenarioRecognizesFeature(t *testing.T) {
 	if e2eFederationScenario(nil) {
 		t.Fatal("nil scenario")
 	}
-	if !e2eFederationScenario(&godog.Scenario{Uri: "features/distribution/e2e-federation.feature"}) {
-		t.Fatal("want recognition from the federation feature URI")
-	}
-	if !federationInstrumentation([]string{"@e2e-federation"}, "") {
+	if !e2eFederationScenario(&godog.Scenario{Tags: []*messages.PickleTag{{Name: "@e2e-federation"}}}) {
 		t.Fatal("want recognition from @e2e-federation")
 	}
-	if !federationInstrumentation([]string{"e2e-federation"}, "") {
-		t.Fatal("want recognition from e2e-federation without @")
+	if e2eFederationScenario(&godog.Scenario{Tags: []*messages.PickleTag{{Name: "e2e-federation"}}}) {
+		t.Fatal("unprefixed tag must not enable federation instrumentation")
 	}
-	if federationInstrumentation(nil, "features/distribution/exec-timeout.feature") {
-		t.Fatal("exec-timeout is not federation")
+	if e2eFederationScenario(&godog.Scenario{Uri: "features/distribution/e2e-federation.feature"}) {
+		t.Fatal("feature URI alone must not enable federation instrumentation")
 	}
 }
 
@@ -850,7 +840,7 @@ func (m *world) oneVectorResidentProcessExists() error {
 
 func (m *world) iRunTheE2ESmokeOperatorPath() error {
 	cmd := exec.Command("go", "test", "-tags=acceptance", "./test/acceptance",
-		"-run", "^TestPublishedReleaseUpdateInitSmoke$", "-count=1")
+		"-run", "^TestPublishedReleaseUpdateInitSmoke$", "-count=1", "-v")
 	root, err := acceptanceRoot()
 	if err != nil {
 		return err
@@ -858,7 +848,7 @@ func (m *world) iRunTheE2ESmokeOperatorPath() error {
 	cmd.Dir = root
 	cmd.Env = append(os.Environ(), "ROCA_BIN="+m.binary)
 	var out, failures strings.Builder
-	cmd.Stdout, cmd.Stderr = &out, &failures
+	cmd.Stdout, cmd.Stderr = io.MultiWriter(&out, m.durationWriter()), &failures
 	started := time.Now()
 	runErr := cmd.Run()
 	elapsed := time.Since(started)
