@@ -13,6 +13,7 @@ package acceptance
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -131,7 +132,20 @@ func (m *world) countSharedResidents() (int, string, error) {
 	fake := filepath.Join(m.home, "tmp", "roca-vector")
 	build := exec.Command("go", "build", "-o", fake, "./testdata/fake-vector-resident")
 	build.Dir = filepath.Join(root, "test", "acceptance")
-	if output, err := build.CombinedOutput(); err != nil {
+	if m.observeDurations {
+		var output strings.Builder
+		build.Stdout, build.Stderr = &output, &output
+		started := time.Now()
+		err := runWithHangGuard(build, e2eHangGuard)
+		elapsed := time.Since(started)
+		m.recordMeasuredOperation("go build fake vector resident", elapsed)
+		if errors.Is(err, errHangGuardKilled) {
+			return 0, "", hangGuardTimeoutError("go build fake vector resident", elapsed)
+		}
+		if err != nil {
+			return 0, "", fmt.Errorf("build fake vector resident: %w\n%s", err, output.String())
+		}
+	} else if output, err := build.CombinedOutput(); err != nil {
 		return 0, "", fmt.Errorf("build fake vector resident: %w\n%s", err, output)
 	}
 	evidence, cleanup, err := startThreeSharedServes(m, m.installed, fake, time.Second)
@@ -212,7 +226,26 @@ func startThreeSharedServes(m *world, binary, fake string, idle time.Duration) (
 		command.Env = env
 		command.Stderr = os.Stderr
 		client := mcp.NewClient(&mcp.Implementation{Name: "acceptance", Version: "1"}, nil)
-		session, err := client.Connect(context.Background(), &mcp.CommandTransport{Command: command}, nil)
+		ctx := context.Background()
+		cancel := func() {}
+		if m.observeDurations {
+			ctx, cancel = context.WithTimeout(ctx, e2eHangGuard)
+		}
+		started := time.Now()
+		session, err := client.Connect(ctx, &mcp.CommandTransport{Command: command}, nil)
+		elapsed := time.Since(started)
+		cancel()
+		if m.observeDurations {
+			m.recordMeasuredOperation("mcp serve connect", elapsed)
+			if guard := hangGuardError("mcp serve connect", elapsed); guard != nil {
+				cleanup()
+				return residentEvidence{}, func() {}, guard
+			}
+			if ctx.Err() == context.DeadlineExceeded {
+				cleanup()
+				return residentEvidence{}, func() {}, hangGuardTimeoutError("mcp serve connect", elapsed)
+			}
+		}
 		if err != nil {
 			cleanup()
 			return residentEvidence{}, func() {}, fmt.Errorf("mcp serve %d: %w", i, err)

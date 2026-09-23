@@ -3,6 +3,14 @@ Feature: Frozen federation installed binary
   Commands against an installed roca binary on the frozen synthetic federation.
   The live hub is never selected. The fixture is testdata/e2e-federation/frozen.
 
+  # E2E acceptance timings are informative trend data, not performance
+  # budgets or release blockers: "si tarda cinco horas en hacer roca exec, sí quiero que se bloquee la release, pero si tarda 4,1 en vez de 4 cuando 4 es random, me toca la polla".
+  # Each scenario records and prints its measured duration on every run
+  # and machine, including passing runs. The only temporal cutoff is a
+  # command exceeding 60 seconds; that cutoff is a hang guard, not a
+  # performance budget. Functional gates stay blocking: exit code,
+  # expected engines, no silent degrade to search hybrid, and ready-index use.
+
   Scenario: 321 ingest
     Given a frozen pr321 federation lab
     When I run "roca ingest --json"
@@ -206,21 +214,17 @@ Feature: Frozen federation installed binary
     When I run "roca handoff latest --project harbor"
     Then the command exits with code 0
 
-  Scenario: real-usage hooks 0ms
+  Scenario: real-usage hooks
     Given a frozen synthetic federation lab
     When I run the claude authorship hook
     Then the command exits with code 0
-    And the execution log duration_ms is 0
 
-  # Latency budgets are set from the slowest supported lane (WSL on 16 GB) with margin, not from the hub. Decision by Javi, 22-sep-2026.
   Scenario: real-usage exec exact ids
     Given a frozen synthetic federation lab
     When I exec the SQL "SELECT id, legacy_id FROM plugin_roca_ops.memories WHERE id = '1152921504606846980'" as json
     Then the command exits with code 0
     And the JSON output field "rows[0].id" is a JS-safe integer of at most 12 digits
     And the output contains "1152921504606846980"
-    And the execution log duration_ms is under 5000
-    And the command finished within 5 seconds
 
   @provisioned
   Scenario: real-usage vector query
@@ -228,8 +232,6 @@ Feature: Frozen federation installed binary
     When I warm the vector index and vector-query "harbor lantern"
     Then the command exits with code 0
     And the vector query executed the ready index
-    And the execution log duration_ms is under 3000
-    And the command finished within 3 seconds
 
   Scenario: real-usage query no silent degrade
     Given a frozen synthetic federation lab
@@ -237,8 +239,6 @@ Feature: Frozen federation installed binary
     Then the command exits with code 0
     And the output contains "engines"
     And the output does not contain "search hybrid"
-    And the execution log duration_ms is under 4000
-    And the command finished within 4 seconds
 
   Scenario: real-usage handoff one per project
     Given a frozen synthetic federation lab
