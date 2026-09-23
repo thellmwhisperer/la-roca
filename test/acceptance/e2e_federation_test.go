@@ -17,6 +17,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -631,10 +632,19 @@ func hangGuardError(command string, elapsed time.Duration) error {
 	if elapsed <= e2eHangGuard {
 		return nil
 	}
+	return hangGuardTimeoutError(command, elapsed)
+}
+
+func hangGuardTimeoutError(command string, elapsed time.Duration) error {
 	return fmt.Errorf("60-second hang guard: command %q ran %s; this is a hang guard, not a performance budget", command, elapsed)
 }
 
 func runWithHangGuard(command *exec.Cmd, limit time.Duration) error {
+	if command.SysProcAttr == nil {
+		command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	} else {
+		command.SysProcAttr.Setpgid = true
+	}
 	if err := command.Start(); err != nil {
 		return err
 	}
@@ -647,10 +657,11 @@ func runWithHangGuard(command *exec.Cmd, limit time.Duration) error {
 		return err
 	case <-timer.C:
 		if command.Process != nil {
+			_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
 			_ = command.Process.Kill()
 		}
 		<-done
-		return errHangGuardKilled
+		return fmt.Errorf("%w: this is a hang guard, not a performance budget", errHangGuardKilled)
 	}
 }
 
@@ -722,9 +733,6 @@ func (m *world) theMeasuredDurationIsRecorded() error {
 		m.reportLastDuration()
 	} else if command != "" {
 		reportMeasuredDuration(m.durationWriter(), command, elapsed, nil)
-	}
-	if m.last.command == "make e2e-smoke" {
-		return nil
 	}
 	return hangGuardError(command, elapsed)
 }
@@ -803,6 +811,50 @@ func TestHangGuardFailsWhenElapsedExceeds60Seconds(t *testing.T) {
 	}
 }
 
+func TestHangGuardKillsHungCommand(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("process-group hang guard uses Setpgid")
+	}
+	dir := t.TempDir()
+	childPIDFile := filepath.Join(dir, "child.pid")
+	cmd := exec.Command("sh", "-c", fmt.Sprintf("sleep 30 & echo $! >%s; wait", strconv.Quote(childPIDFile)))
+	err := runWithHangGuard(cmd, 200*time.Millisecond)
+	if err == nil {
+		t.Fatal("expected hang guard timeout")
+	}
+	if !errors.Is(err, errHangGuardKilled) {
+		t.Fatalf("error = %v, want %v", err, errHangGuardKilled)
+	}
+	if !strings.Contains(err.Error(), "60-second hang guard") {
+		t.Fatalf("error = %q, want 60-second hang guard", err)
+	}
+	if !strings.Contains(err.Error(), "not a performance budget") {
+		t.Fatalf("error = %q, want hang guard labeled as not a performance budget", err)
+	}
+	if cmd.Process != nil && processAlive(cmd.Process.Pid) {
+		t.Fatalf("parent pid %d still running", cmd.Process.Pid)
+	}
+	raw, readErr := os.ReadFile(childPIDFile)
+	if readErr != nil {
+		t.Fatalf("child pid file: %v", readErr)
+	}
+	childPID, convErr := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if convErr != nil {
+		t.Fatalf("child pid %q: %v", raw, convErr)
+	}
+	if processAlive(childPID) {
+		t.Fatalf("spawned command pid %d still running", childPID)
+	}
+}
+
+func processAlive(pid int) bool {
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	return proc.Signal(syscall.Signal(0)) == nil
+}
+
 func (m *world) iCallHealthOverStdio() error {
 	return m.callTool("roca_health", map[string]any{"max_rows": 2})
 }
@@ -852,20 +904,34 @@ func (m *world) iRunTheE2ESmokeOperatorPath() error {
 	}
 	cmd.Dir = root
 	cmd.Env = append(os.Environ(), "ROCA_BIN="+m.binary)
+	var out, failures strings.Builder
+	cmd.Stdout, cmd.Stderr = &out, &failures
 	started := time.Now()
-	out, err := cmd.CombinedOutput()
-	text := string(out)
-	m.last = run{command: "make e2e-smoke", stdout: text, elapsed: time.Since(started)}
+	runErr := runWithHangGuard(cmd, e2eHangGuard)
+	text := out.String()
+	m.last = run{
+		command: "make e2e-smoke", stdout: text, stderr: failures.String(),
+		elapsed: time.Since(started),
+	}
 	m.everything = append(m.everything, m.last)
-	if strings.Contains(text, "set ROCA_PUBLISHED_BIN") {
+	m.reportLastDuration()
+	if errors.Is(runErr, errHangGuardKilled) {
 		m.last.code = 1
-		m.last.stderr = text
+		return hangGuardTimeoutError("make e2e-smoke", m.last.elapsed)
+	}
+	if strings.Contains(text+failures.String(), "set ROCA_PUBLISHED_BIN") {
+		m.last.code = 1
+		m.last.stderr = failures.String() + text
 		return fmt.Errorf("published upgrade was skipped")
 	}
-	if err != nil {
+	if runErr != nil {
 		m.last.code = 1
-		m.last.stderr = text
+		m.last.stderr = failures.String() + text
 		return nil
+	}
+	if guard := hangGuardError("make e2e-smoke", m.last.elapsed); guard != nil {
+		m.last.code = 1
+		return guard
 	}
 	return nil
 }

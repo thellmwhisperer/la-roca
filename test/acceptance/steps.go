@@ -479,7 +479,7 @@ func (m *world) record(label string, command *exec.Cmd) error {
 		if guard := hangGuardError(label, m.last.elapsed); guard != nil {
 			return guard
 		}
-		return fmt.Errorf("60-second hang guard: command %q ran %s; this is a hang guard, not a performance budget", label, m.last.elapsed)
+		return hangGuardTimeoutError(label, m.last.elapsed)
 	}
 	if err != nil {
 		var exit *exec.ExitError
