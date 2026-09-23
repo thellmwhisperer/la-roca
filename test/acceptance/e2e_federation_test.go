@@ -702,11 +702,8 @@ func TestHangGuardFailsWhenElapsedExceeds60Seconds(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected 60-second hang guard failure")
 	}
-	if !strings.Contains(err.Error(), "60-second hang guard") {
-		t.Fatalf("error = %q, want 60-second hang guard", err)
-	}
-	if !strings.Contains(err.Error(), "not a performance budget") {
-		t.Fatalf("error = %q, want hang guard labeled as not a performance budget", err)
+	if !strings.Contains(err.Error(), "60-second hang guard") || !strings.Contains(err.Error(), "not a performance budget") {
+		t.Fatalf("error = %q, want a hang guard label distinct from a performance budget", err)
 	}
 	reportMeasuredDuration(&output, "roca exec", 61*time.Second, nil)
 	want := "measured duration: command=\"roca exec\" wall_ms=61000\n"
