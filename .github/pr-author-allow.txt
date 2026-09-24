@@ -1,6 +1,6 @@
 # Public face only. One email per line. Comments and blanks are ignored.
-# The author gate separately permits committer noreply@github.com only when
-# the commit author email is exactly sol@javiermellado.com (Teseo). All other
-# unlisted author/committer emails, including other GitHub noreply addresses,
-# fail closed. Machine-local addresses and other harnesses fail closed.
+# GitHub noreply is omitted on purpose: the PR range is pre-squash branch
+# commits, merge commits do not belong there, and a human noreply is not
+# Teseo. Machine-local addresses (*.mellado.lab, cursoragent@cursor.com)
+# fail closed.
 sol@javiermellado.com

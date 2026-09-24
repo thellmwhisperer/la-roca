@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Enforce Teseo authorship, one GitHub committer exception, and no co-authors."""
+"""Fail a PR commit range that carries Co-authored-by or a non-Teseo email."""
 
 import argparse
 from pathlib import Path
@@ -10,8 +10,6 @@ import sys
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_ALLOW = ROOT / ".github/pr-author-allow.txt"
-TESEO_EMAIL = "sol@javiermellado.com"
-GITHUB_NOREPLY_COMMITTER = "noreply@github.com"
 TRAILER = re.compile(r"(?i)^Co-authored-by:")
 RECORD = "\x1e"
 FIELD = "\x1f"
@@ -57,12 +55,7 @@ def findings(rows, allow):
                 break
         if author.lower() not in allow:
             out.append(f"pr-author: {short}: author email not on allowlist: {author}")
-        committer_email = committer.lower()
-        teseo_github_commit = (
-            author.lower() == TESEO_EMAIL
-            and committer_email == GITHUB_NOREPLY_COMMITTER
-        )
-        if committer_email not in allow and not teseo_github_commit:
+        if committer.lower() not in allow:
             out.append(f"pr-author: {short}: committer email not on allowlist: {committer}")
     return out
 

@@ -44,10 +44,8 @@ the squash commit, so squash no longer concatenates branch trailers. The
 before squash: it fails on any `Co-authored-by` line and on an author or
 committer email outside the trusted base revision of
 `.github/pr-author-allow.txt`. Allowlist changes take effect after they land on
-the base branch; a pull request cannot weaken its own check. The narrow
-committer exception is part of the [release-control
-contract](docs/release-train.md#release-control-checks); no other identity
-gains an exception. `scripts/pr-author-gate.py` owns the check. Run
+the base branch; a pull request cannot weaken its own check. GitHub noreply is
+not on that list. `scripts/pr-author-gate.py` owns the check. Run
 `python3 scripts/pr-author-gate-test.py` for the synthetic pair.
 
 Use the [bug report](.github/ISSUE_TEMPLATE/bug_report.md) or
