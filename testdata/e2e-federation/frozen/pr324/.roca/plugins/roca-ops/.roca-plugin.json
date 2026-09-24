@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "name": "roca-ops",
+  "source": "bundled:roca",
+  "version": "f4eef74",
+  "checksum": "4a29ce48aa0114a8106da397eecdb5d1076a3a0bd8cf93e190b6c8fc07d42613",
+  "kind": "data",
+  "risk": "data-only",
+  "custody": true,
+  "database": "roca-ops.db",
+  "files": {
+    "plugin.json": "d41c3de8d7494417ef73bf15ad721dcb93ca775e92b0978551321b78ffbc4e40",
+    "roca-ops.db": "b7bc30ec34e17bddba052fd3cab2d6159d186b77e7f88b49fd2b524d57a63cc1"
+  }
+}

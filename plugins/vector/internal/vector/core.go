@@ -473,19 +473,13 @@ func (c CoreCLI) ResolveSource(ctx context.Context, kind string, where locator) 
 		}
 		return c.resolveIdentity(ctx, kind, where, statement)
 	case "thinking_blocks":
-		if !where.HasOrdinal || where.Position == "" {
-			statement = `SELECT COALESCE(full_text,'') AS text FROM ` + corpusTable("thinking_blocks") +
-				` WHERE session_id=` + sqlLiteral(where.SessionID) +
-				` AND (exchange_number IS NULL OR position_in_session IS NULL)`
-			return c.resolveIdentity(ctx, kind, where, statement)
+		statement = `SELECT COALESCE(full_text,'') AS text FROM ` + corpusTable("thinking_blocks") +
+			` WHERE session_id=` + sqlLiteral(where.SessionID)
+		if where.HasOrdinal {
+			statement += fmt.Sprintf(` AND exchange_number=%d`, where.Ordinal)
+		} else {
+			statement += ` AND exchange_number IS NULL`
 		}
-		position, err := strconv.ParseFloat(where.Position, 64)
-		if err != nil {
-			return "", fmt.Errorf("decode thinking block position %q: %w", where.Position, err)
-		}
-		statement = fmt.Sprintf(`SELECT COALESCE(full_text,'') AS text FROM %s WHERE session_id=%s AND exchange_number=%d AND position_in_session=%s`,
-			corpusTable("thinking_blocks"), sqlLiteral(where.SessionID), where.Ordinal,
-			strconv.FormatFloat(position, 'g', -1, 64))
 		return c.resolveIdentity(ctx, kind, where, statement)
 	case "memories":
 		switch {

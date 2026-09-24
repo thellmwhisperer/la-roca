@@ -6,7 +6,9 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -35,13 +37,15 @@ type world struct {
 	// in. The refusal scenario installs it so its premise holds even when the
 	// working copy is built from a clean release tag, which is exactly what the
 	// release workflow does.
-	devStamped string
-	home       string
-	last       run
-	previous   run
-	memories   int
-	deletedID  int64
-	replacedID int64
+	devStamped       string
+	home             string
+	last             run
+	previous         run
+	durationOutput   io.Writer
+	observeDurations bool
+	memories         int
+	deletedID        int64
+	replacedID       int64
 	// everything is every run of the scenario, for the steps that ask about a
 	// whole session's output and not only the last command's.
 	everything []run
@@ -92,12 +96,13 @@ type run struct {
 func registerSteps(ctx *godog.ScenarioContext, binary string) {
 	m := &world{binary: binary}
 
-	ctx.Before(func(c context.Context, _ *godog.Scenario) (context.Context, error) {
+	ctx.Before(func(c context.Context, sc *godog.Scenario) (context.Context, error) {
 		home, err := os.MkdirTemp("", "roca-acceptance-")
 		if err != nil {
 			return c, err
 		}
 		m.home = home
+		m.observeDurations = e2eFederationScenario(sc)
 		if os.Getenv("ROCA_PLAYGROUND_FEATURES") != "" {
 			if err := installPlaygroundForAcceptance(home); err != nil {
 				return c, err
@@ -162,8 +167,10 @@ func registerSteps(ctx *godog.ScenarioContext, binary string) {
 	ctx.Given(`^a frozen pr324 federation lab$`, m.aFrozenPR324FederationLab)
 
 	ctx.When(`^I run "([^"]*)"$`, m.iRun)
+	ctx.When(`^I run the installed roca version through PATH$`, m.iRunInstalledRocaVersionThroughPATH)
 	ctx.When(`^I exec the SQL "([^"]*)"$`, m.iExecSQL)
 	ctx.When(`^I exec the SQL "([^"]*)" with max-chars (\d+)$`, m.iExecSQLMaxChars)
+	ctx.When(`^I exec the SQL "([^"]*)" with max-chars (\d+) as json$`, m.iExecSQLMaxCharsJSON)
 	ctx.When(`^I exec the SQL "([^"]*)" as json$`, m.iExecSQLJSON)
 	ctx.When(`^I store a pill with slug ([^ ]+) and content (.+)$`, m.iStorePill)
 	ctx.When(`^I vector-query "([^"]*)"$`, m.iVectorQuery)
@@ -171,6 +178,8 @@ func registerSteps(ctx *godog.ScenarioContext, binary string) {
 	ctx.When(`^I run the claude authorship hook$`, m.iRunClaudeAuthorshipHook)
 	ctx.When(`^I start three mcp serve processes$`, m.iStartThreeMCPServeProcesses)
 	ctx.When(`^I call the health tool over stdio$`, m.iCallHealthOverStdio)
+	ctx.When(`^I store a discovery over MCP superseding historical id "([^"]*)"$`, m.iStoreDiscoverySupersedingHistoricalID)
+	ctx.Then(`^the MCP stored id is a JS-safe integer of at most 12 digits$`, m.theMCPStoredIDIsJSSafe)
 	ctx.When(`^I run the e2e-smoke operator path$`, m.iRunTheE2ESmokeOperatorPath)
 	ctx.When(`^I run "([^"]*)" a second time$`, m.iRun)
 	ctx.When(`^I run "roca exec" with the SQL it returned, in JSON format$`, m.iRunTheSQLItReturned)
@@ -191,12 +200,11 @@ func registerSteps(ctx *godog.ScenarioContext, binary string) {
 	ctx.Then(`^the output contains a digit run of at least (\d+) characters$`, m.outputDigitRunAtLeast)
 	ctx.Then(`^the JSON output field "([^"]*)" is the string "([^"]*)"$`, m.jsonFieldIsString)
 	ctx.Then(`^the JSON output field "([^"]*)" is a JS-safe integer of at most 12 digits$`, m.jsonFieldIsJSSafeInteger)
+	ctx.Then(`^the JSON output field "([^"]*)" has between (\d+) and (\d+) runes$`, m.jsonFieldRuneCountBetween)
 	ctx.Then(`^the frozen Codex identity has (\d+) sessions, (\d+) exact source session, (\d+) split siblings, (\d+) exchanges, (\d+) tools, (\d+) orphan tools, (\d+) failed tool, and (\d+) control session$`, func(sessions, exactSourceSession, splitSiblings, exchanges, tools, orphanTools, failedTools, controlSessions int) error {
 		return m.theFrozenCodexIdentityHas(sessions, exactSourceSession, splitSiblings, exchanges, tools, orphanTools, failedTools, controlSessions)
 	})
 	ctx.Then(`^the frozen Codex identity is unchanged$`, m.theFrozenCodexIdentityIsUnchanged)
-	ctx.Then(`^the execution log duration_ms is under (\d+)$`, m.theExecutionLogDurationUnder)
-	ctx.Then(`^the execution log duration_ms is 0$`, func() error { return m.theExecutionLogDurationIs(0) })
 	ctx.Then(`^the vector query executed the ready index$`, m.theVectorQueryExecutedTheReadyIndex)
 	ctx.Then(`^one vector resident process exists$`, m.oneVectorResidentProcessExists)
 	ctx.Then(`^the readable MCP response contains "([^"]*)"$`, m.theReadableMCPResponseContains)
@@ -452,19 +460,44 @@ func (m *world) record(label string, command *exec.Cmd) error {
 	var out, failures strings.Builder
 	command.Stdout, command.Stderr = &out, &failures
 	started := time.Now()
-	err := command.Run()
+	var err error
+	if m.observeDurations {
+		err = runWithHangGuard(command, e2eHangGuard)
+	} else {
+		err = command.Run()
+	}
 
 	m.previous = m.last
 	m.last = run{command: label, stdout: out.String(), stderr: failures.String(), elapsed: time.Since(started)}
+	if errors.Is(err, errHangGuardKilled) {
+		m.everything = append(m.everything, m.last)
+		m.reportLastDuration()
+		if guard := hangGuardError(label, m.last.elapsed); guard != nil {
+			return guard
+		}
+		return hangGuardTimeoutError(label, m.last.elapsed)
+	}
+	var startErr error
 	if err != nil {
 		var exit *exec.ExitError
 		if !asExitError(err, &exit) {
-			return fmt.Errorf("run %q: %w", label, err)
+			startErr = err
+		} else {
+			m.last.code = exit.ExitCode()
 		}
-		m.last.code = exit.ExitCode()
 	}
 	// Credential checks cover every output of a session, not only the last one.
 	m.everything = append(m.everything, m.last)
+	if m.observeDurations {
+		m.reportLastDuration()
+		if guard := hangGuardError(label, m.last.elapsed); guard != nil {
+			return guard
+		}
+	}
+	if startErr != nil {
+		m.last.code = 1
+		return fmt.Errorf("run %q: %w", label, startErr)
+	}
 	return nil
 }
 

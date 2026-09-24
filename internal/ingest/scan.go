@@ -112,7 +112,7 @@ func Scan(roots Roots) Plan {
 	plan.Warnings = append(plan.Warnings, roots.Warnings...)
 	stampPlan(&plan, roots)
 	for _, remote := range roots.Remotes {
-		extra := scanDeclared(remote)
+		extra := scanConversational(remote)
 		stampPlan(&extra, remote)
 		mergePlan(&plan, extra)
 	}
@@ -156,6 +156,17 @@ func mergePlan(plan *Plan, extra Plan) {
 // source-owned completeness metadata: Claude's project map and memory
 // manifests. Corpus targets remain unopened until after the fingerprint gate.
 func scanDeclared(roots Roots) Plan {
+	return scanRoots(roots, true)
+}
+
+// scanConversational walks one HOME-shaped tree for conversation artefacts
+// only. Memories, memtrace, legacy stores and other operational files stay on
+// the machine that owns them.
+func scanConversational(roots Roots) Plan {
+	return scanRoots(roots, false)
+}
+
+func scanRoots(roots Roots, operational bool) Plan {
 	plan := Plan{
 		Scanned:        map[string]int{},
 		WorkspaceRoots: roots.Workspace.Selected,
@@ -166,8 +177,10 @@ func scanDeclared(roots Roots) Plan {
 		plan.Warnings = append(plan.Warnings, err.Error())
 	}
 	attribution := claudeCwdAttribution(roots)
-	plan.add(scanClaudeMemories(roots, claudeProjects, attribution, &plan), "claude_memory_files")
-	plan.addCodex(scanCodexFiles(roots))
+	if operational {
+		plan.add(scanClaudeMemories(roots, claudeProjects, attribution, &plan), "claude_memory_files")
+		plan.addCodex(scanCodexFiles(roots))
+	}
 	plan.add(scanClaudeSessions(roots, claudeProjects, attribution, &plan), "session_files")
 	plan.add(scanCodexSessions(roots), "codex_session_files")
 	plan.add(existingFile(filepath.Join(roots.CodexRoot, "history.jsonl"), Target{
@@ -188,8 +201,10 @@ func scanDeclared(roots Roots) Plan {
 	}
 	plan.add(piSessions, "pi_session_files")
 	plan.add(scanGrokSessions(roots), "grok_session_files")
-	plan.add(scanGrokMemtrace(roots, &plan), "grok_memtrace_files")
-	plan.add(scanClaudeWebExports(roots), "claude_web_export_files")
+	if operational {
+		plan.add(scanGrokMemtrace(roots, &plan), "grok_memtrace_files")
+	}
+	plan.add(scanClaudeWebExports(roots, operational), "claude_web_export_files")
 	plan.add(scanChatGPTWebExports(roots, &plan), "chatgpt_web_export_files")
 	openCode := existingFile(roots.OpenCodeDB, Target{
 		Kind: parsers.KindOpenCodeDB, SourceAgent: "opencode"})
@@ -210,11 +225,13 @@ func scanDeclared(roots Roots) Plan {
 		Kind: parsers.KindZCodeDB, SourceAgent: "zcode"}), "zcode_databases")
 	plan.add(existingFile(roots.HermesDB, Target{
 		Kind: parsers.KindHermesDB, SourceAgent: "hermes"}), "hermes_databases")
-	plan.add(existingFile(roots.LegacyStoreDB, Target{
-		Kind: parsers.KindLegacyStoreDB, SourceAgent: legacyStoreSource}), "legacy_store_databases")
-	plan.add(scanHermesStore(roots), "hermes_files")
+	if operational {
+		plan.add(existingFile(roots.LegacyStoreDB, Target{
+			Kind: parsers.KindLegacyStoreDB, SourceAgent: legacyStoreSource}), "legacy_store_databases")
+		plan.add(scanHermesStore(roots), "hermes_files")
+	}
 	if roots.Home != "" {
-		addRegisteredParsers(roots, &plan, parsers.Registered())
+		addRegisteredParsers(roots, &plan, parsers.Registered(), operational)
 	}
 	return plan
 }
@@ -234,9 +251,12 @@ func scanOpenCodeTelegramLogs(root string) []string {
 // under them into the same Target the established source-specific scanners
 // emit. Detect runs only after the fingerprint gate, so an unchanged file is
 // still never opened for parsing. Syntax never appears here.
-func addRegisteredParsers(roots Roots, plan *Plan, registered []parsers.Registration) {
+func addRegisteredParsers(roots Roots, plan *Plan, registered []parsers.Registration, operational bool) {
 	for _, contribution := range registered {
 		if contribution.Name == "" || contribution.Parser == nil || len(contribution.Locations) == 0 {
+			continue
+		}
+		if !operational && contribution.Destination&parsers.DestinationCorpus == 0 {
 			continue
 		}
 		source := contribution.SourceAgent
@@ -326,10 +346,11 @@ func DetectAgents(roots Roots) []string {
 	return detected
 }
 
-// scanClaudeWebExports reads the operator-declared export files: the two root
-// conversation and memory arrays, each projects/<uuid>.json entity, and each
-// design_chats/*.json record. users.json and login_history.json stay unread.
-func scanClaudeWebExports(roots Roots) []Target {
+// scanClaudeWebExports reads the operator-declared export files. Local ingest
+// takes conversations, memories, project entities, and design chats.
+// Conversational remote scans omit the memory and project store files.
+// users.json and login_history.json stay unread.
+func scanClaudeWebExports(roots Roots, operational bool) []Target {
 	var targets []Target
 	seen := map[string]bool{}
 	add := func(path string, kind parsers.Kind, name string) {
@@ -343,15 +364,23 @@ func scanClaudeWebExports(roots Roots) []Target {
 		})
 	}
 	for _, root := range roots.ClaudeWebExports {
-		add(filepath.Join(root, "memories.json"), parsers.KindClaudeWebMemories, "memories.json")
+		if operational {
+			add(filepath.Join(root, "memories.json"), parsers.KindClaudeWebMemories, "memories.json")
+		}
 		add(filepath.Join(root, "conversations.json"), parsers.KindClaudeWebConversations, "conversations.json")
-		for _, extra := range []struct {
+		extras := []struct {
 			dir  string
 			kind parsers.Kind
 		}{
-			{"projects", parsers.KindClaudeWebProjects},
 			{"design_chats", parsers.KindClaudeWebDesignChats},
-		} {
+		}
+		if operational {
+			extras = append([]struct {
+				dir  string
+				kind parsers.Kind
+			}{{"projects", parsers.KindClaudeWebProjects}}, extras...)
+		}
+		for _, extra := range extras {
 			entries, err := os.ReadDir(filepath.Join(root, extra.dir))
 			if err != nil {
 				continue

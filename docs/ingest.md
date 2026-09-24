@@ -2,8 +2,9 @@
 
 First-time path: [install and initialize search](lifecycle.md#install).
 
-`roca ingest` incrementally reads supported artefacts from the local HOME and
-any configured remote source roots:
+`roca ingest` incrementally reads the following supported artefacts. The
+[remote source contract](#remote-source-roots) limits which ones configured
+mirrors contribute:
 
 | Runtime | Artefacts |
 |---|---|
@@ -38,8 +39,9 @@ roca ingest /path/to/extracted-export
 The path belongs only to that invocation. A later `roca ingest` with no path,
 including the nightly run, reads live Claude, Codex, Qwen Code, GLM, Cursor,
 Pi, OpenCode, ZCode, Hermes, Grok Build, Cowork, and the pre-federation store
-from the local HOME and every configured remote source root. It fingerprints
-each source file by path and content, so an explicit rerun of the same export
+from the local HOME, plus the sources allowed by the
+[remote source contract](#remote-source-roots) from configured mirrors. It
+fingerprints each source file by path and content, so an explicit rerun of the same export
 is a zero delta and a newer export contributes only message identities that
 have not already landed. A live session file that grows appends the new
 exchanges. It does not rewrite rows that already landed. A genuine rewrite of
@@ -81,12 +83,17 @@ root = "~/.roca-sources/mini"
 
 The root is a HOME-shaped tree (`.claude/`, `.codex/`, `.pi/`, and the rest).
 How the tree arrives (rsync, a shared disk) is the operator's job; ingest only
-reads it. Every session, exchange, thinking block, and tool call from that
-root is stamped `machine = "mini"`. The local HOME uses this machine's
-hostname; on upgrade, existing corpus rows without a machine label receive that
-hostname too. The same project path on two machines stays distinguishable, and
-removing the `[[sources.remote]]` entry stops reading that root without deleting
-rows already written.
+reads it. Remote roots contribute conversations only: memories, memtrace,
+legacy stores, and other operational files stay on the machine that owns them.
+Every session, exchange, thinking block, and tool call from that root is
+stamped `machine = "mini"`. The local HOME uses this machine's hostname; on
+upgrade, existing corpus rows without a machine label receive that hostname
+without rewriting the lexical index. For successfully ingested files whose
+content and parser revision are unchanged, local fingerprints and harvest
+cursors gain the machine tag without being re-parsed; failed ingests are retried.
+The same project path on two machines stays distinguishable, and removing the
+`[[sources.remote]]` entry
+stops reading that root without deleting rows already written.
 
 ## Import an Anthropic data export
 
@@ -367,14 +374,15 @@ payload) is the same overlap: it does not abort the source. Child-table counts
 report only exchanges, thinking blocks, and tool uses actually inserted; an
 overlapping child row that does not land is therefore absent from its inserted
 count rather than reported by a separate overlap counter. Duplicate source
-exchange numbers and thinking positions are disambiguated deterministically so
-each distinct source row can land. `source_surface` is `Legacy store`, while
-`source_agent` stays what the source stored. A tool row whose source exchange
-number is NULL lands as a session-level tool use because its ownership is
-unknown. A row whose present coordinate is unreadable, or names no exchange in
-that session, is discarded when the file is read. That count is source
-projection, not write-time overlap, and it is unchanged when the session itself
-is later skipped as already present.
+exchange numbers are disambiguated deterministically so each distinct exchange
+can land. Thinking rows follow the
+[thinking identity contract](#per-exchange-provenance). `source_surface` is
+`Legacy store`, while `source_agent` stays what the source stored. A tool row whose
+source exchange number is NULL lands as a session-level tool use because its
+ownership is unknown. A row whose present coordinate is unreadable, or names no
+exchange in that session, is discarded when the file is read. That count is
+source projection, not write-time overlap, and it is unchanged when the session
+itself is later skipped as already present.
 
 Memories land in ops and keep the layer, status, `created_at`, source
 coordinates, and supersession relationship the source recorded: a handoff stays
@@ -594,11 +602,19 @@ price the turn, Hermes measures a whole session rather than a turn, the Claude
 web export and cloud Codex companion state none of it, and the ChatGPT
 conversation files name their model and provider without stating usage.
 
-Thinking text stays in `thinking_blocks`, keyed to its session and exchange; it
-is not duplicated onto `exchanges`. Codex reasoning now lands there on the
-exchange that produced it, alongside the other sources' thinking blocks. When a
-historical match has no exchange number, the schema has no key for replayed
-thinking blocks, so they are left out and each one is reported as a discard.
+Thinking text stays in `thinking_blocks`; its identity is the session, exchange,
+and exact text, and it is not duplicated onto `exchanges`.
+`position_in_session` remains the exchange's normalized place in the session,
+but is not identity: incremental ingest refreshes it from the distinct exchange
+numbers when an open session grows instead of inserting another row. Corpus
+schema adoption collapses older copies with that identity, retaining the row
+with the highest ID and its stored position. Existing thinking-ID aliases are
+redirected to that survivor in the same transaction that deletes the copies.
+Codex reasoning lands there on the exchange that produced it, alongside the
+other sources' thinking blocks. When a
+historical match has no exchange number, replay leaves its thinking blocks out
+and reports each one as a discard rather than assigning them to an unknown
+exchange.
 
 The fingerprint of every versioned source includes its parser revision. When a
 release teaches a parser to read more of a source, the next plain `roca ingest`

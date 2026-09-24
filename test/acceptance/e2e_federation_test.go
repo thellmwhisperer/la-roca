@@ -3,11 +3,11 @@
 package acceptance
 
 import (
-	"archive/tar"
-	"compress/gzip"
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -17,20 +17,21 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 	"unicode/utf8"
+
+	"github.com/cucumber/godog"
+	"github.com/cucumber/messages/go/v34"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/bundledplugin"
 )
 
 const (
-	federationCodexID     = "019aba72-aa57-7d93-a12c-b6e65c0dca6b"
-	federationPill        = "uso-de-la-roca"
-	federationDiscoveryID = "1152921504606846980"
-	federationHarborID    = "1152921504606846977"
-	frozenArchiveRel      = "testdata/e2e-federation/frozen.tar.gz"
-	frozenDigestRel       = "testdata/e2e-federation/frozen.sha256"
-	vectorModelSHA        = "a5db3381f2e514d3490a3a31fe70eb1a65e95016c85c6c2c23223b810806594f"
-	hookSessionInput      = `{"hook_event_name":"SessionStart","tool_name":"","tool_input":{}}`
+	frozenSnapshotRel = "testdata/e2e-federation/frozen"
+	frozenDigestRel   = "testdata/e2e-federation/frozen.sha256"
+	vectorModelSHA    = "a5db3381f2e514d3490a3a31fe70eb1a65e95016c85c6c2c23223b810806594f"
+	hookSessionInput  = `{"hook_event_name":"SessionStart","tool_name":"","tool_input":{}}`
 )
 
 func TestFrozenFederationBytesArePinned(t *testing.T) {
@@ -41,83 +42,44 @@ func TestFrozenFederationBytesArePinned(t *testing.T) {
 	if err := verifyFrozenDigest(root); err != nil {
 		t.Fatal(err)
 	}
+	for _, snapshot := range []string{"main", "pill-free", "pr321", "pr324"} {
+		db := filepath.Join(root, frozenSnapshotRel, snapshot, ".roca", "roca.db")
+		if _, err := os.Stat(db); err != nil {
+			t.Fatalf("frozen snapshot %s has no core database: %v", snapshot, err)
+		}
+	}
 }
 
-func TestFrozenFederationInstalledBinary(t *testing.T) {
-	guardLiveHub(t)
-	if err := verifyFrozenDigest(mustAcceptanceRoot(t)); err != nil {
-		t.Fatal(err)
+func TestFrozenFederationMachineLabelsAreSynthetic(t *testing.T) {
+	root := mustAcceptanceRoot(t)
+	for _, snapshot := range []string{"main", "pill-free"} {
+		t.Run(snapshot, func(t *testing.T) {
+			path := filepath.Join(root, frozenSnapshotRel, snapshot, ".roca", "plugins", "roca-corpus", "roca-corpus.db")
+			db, err := bundledplugin.OpenDatabase(path, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			for _, table := range []string{"sessions", "exchanges"} {
+				var total, synthetic int
+				if err := db.QueryRow("SELECT COUNT(*), COUNT(CASE WHEN machine = 'synthetic-e2e' THEN 1 END) FROM "+table).
+					Scan(&total, &synthetic); err != nil {
+					t.Fatal(err)
+				}
+				if total == 0 || synthetic != total {
+					t.Fatalf("%s: %d of %d rows have a synthetic machine label", table, synthetic, total)
+				}
+			}
+			var integrity string
+			if err := db.QueryRow("PRAGMA integrity_check").Scan(&integrity); err != nil || integrity != "ok" {
+				t.Fatalf("frozen corpus integrity = %q: %v", integrity, err)
+			}
+		})
 	}
-	seeded := newFederationLab(t, "main")
-	t.Run("pr-321-codex-history-collision", func(t *testing.T) { casePR321(t) })
-	t.Run("pr-325-pill-delete", func(t *testing.T) { casePR325(t, newFederationLab(t, "pill-free")) })
-	t.Run("pr-326-max-chars", func(t *testing.T) { casePR326(t, seeded) })
-	t.Run("issue-315-shared-resident", func(t *testing.T) { caseIssue315(t, seeded.m.installed) })
-	t.Run("issue-317-unqualified-table", func(t *testing.T) { caseIssue317(t, seeded) })
-	t.Run("issue-318-handoff-limit", func(t *testing.T) { caseIssue318(t, seeded) })
-	t.Run("issue-319-json-ids", func(t *testing.T) { caseIssue319(t, seeded) })
-	t.Run("issue-324-codex-identity", func(t *testing.T) { caseIssue324(t) })
-	t.Run("uso-de-la-roca", func(t *testing.T) {
-		for _, c := range hermeticUsoCases {
-			t.Run(c.id, func(t *testing.T) { runUsage(t, seeded, c) })
-		}
-	})
-	t.Run("real-usage-hooks-fast", func(t *testing.T) { caseHooksNeverBlock(t, seeded) })
-	t.Run("real-usage-exec-exact-ids", func(t *testing.T) { caseExecExactIDs(t, seeded) })
-	t.Run("real-usage-query-no-silent-degrade", func(t *testing.T) { caseQueryNoSilentDegrade(t, seeded) })
-	t.Run("real-usage-handoff-one-per-project", func(t *testing.T) { caseHandoffOnePerProject(t, seeded) })
-	t.Run("real-usage-mcp-handoff-refused", func(t *testing.T) { caseMCPHandoffRefused(t, seeded) })
-	t.Run("issue-427-mcp-legacy-id", func(t *testing.T) { caseMCPHistoricalID(t, seeded) })
-	t.Run("real-usage-mcp-health", func(t *testing.T) { caseMCPHealth(t, seeded) })
 }
 
 type federationLab struct {
-	t *testing.T
 	m *world
-}
-
-func newFederationLab(t *testing.T, snapshot string) *federationLab {
-	t.Helper()
-	built, err := rocaBinary()
-	if err != nil {
-		t.Fatal(err)
-	}
-	home, err := acceptanceTempDir("roca-e2e-federation-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.RemoveAll(home) })
-	operator, err := os.UserHomeDir()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if filepath.Clean(home) == filepath.Clean(operator) {
-		t.Fatal("the disposable home resolved to the operator home")
-	}
-	root, err := acceptanceRoot()
-	if err != nil {
-		t.Fatal(err)
-	}
-	lab := &federationLab{t: t, m: &world{binary: built, home: home}}
-	if err := extractFrozenSnapshot(root, home, snapshot); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(home, ".roca", "roca.db")); err != nil {
-		t.Fatalf("frozen snapshot %s has no core database: %v", snapshot, err)
-	}
-	if err := installFrozenVectorModel(home); err != nil {
-		t.Fatal(err)
-	}
-	if err := lab.installPrefix(); err != nil {
-		t.Fatal(err)
-	}
-	if err := prepareFrozenVectorState(home); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(home, "tmp"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	return lab
 }
 
 func installFrozenVectorModel(home string) error {
@@ -163,102 +125,17 @@ func (lab *federationLab) installPrefix() error {
 	lab.m.installed = target
 	command := exec.Command(target, "--db-path", filepath.Join(lab.m.home, ".roca", "roca.db"),
 		"--json", "_install-bundled-plugins")
-	command.Env = lab.m.environment()
-	if output, err := command.CombinedOutput(); err != nil {
-		return fmt.Errorf("install bundled plugins in frozen home: %w\n%s", err, output)
+	if err := lab.m.record("roca _install-bundled-plugins", command); err != nil {
+		return fmt.Errorf("install bundled plugins in frozen home: %w\n%s", err, lab.m.last.stderr)
+	}
+	if lab.m.last.code != 0 {
+		return fmt.Errorf("install bundled plugins in frozen home: exit %d\n%s", lab.m.last.code, lab.m.last.stderr+lab.m.last.stdout)
 	}
 	vector, err := os.ReadFile(filepath.Join(filepath.Dir(target), "roca-vector"))
 	if err != nil {
 		return err
 	}
 	return os.WriteFile(filepath.Join(binDir, "roca-vector"), vector, 0o755)
-}
-
-func (lab *federationLab) cli(t *testing.T, want int, args ...string) run {
-	t.Helper()
-	label := "roca " + strings.Join(args, " ")
-	if _, err := lab.m.runWith(label, args); err != nil {
-		t.Fatalf("%s: %v", label, err)
-	}
-	if want >= 0 && lab.m.last.code != want {
-		t.Fatalf("%s: exit %d, want %d\nstdout:\n%s\nstderr:\n%s",
-			label, lab.m.last.code, want, lab.m.last.stdout, lab.m.last.stderr)
-	}
-	return lab.m.last
-}
-
-func (lab *federationLab) output() string {
-	return lab.m.last.stdout + lab.m.last.stderr
-}
-
-func casePR321(t *testing.T) {
-	lab := newFederationLab(t, "pr321")
-	out := lab.cli(t, 0, "ingest", "--json")
-	if !strings.Contains(out.stdout, `"errors"`) {
-		t.Fatalf("ingest JSON missed errors:\n%s", out.stdout)
-	}
-	if !strings.Contains(out.stdout, `"errors": 0`) && !strings.Contains(out.stdout, `"errors":0`) {
-		t.Fatalf("ingest errors were not 0:\n%s", out.stdout)
-	}
-	got := lab.cli(t, 0, "exec",
-		"SELECT session_id, exchange_number FROM plugin_roca_corpus.exchanges WHERE session_id = '"+federationCodexID+"' ORDER BY exchange_number",
-		"--json")
-	if !strings.Contains(got.stdout, federationCodexID) {
-		t.Fatalf("offender exchanges missing:\n%s", got.stdout)
-	}
-}
-
-func casePR325(t *testing.T, lab *federationLab) {
-	lab.cli(t, 0, "store", "--layer", "pill", "--content", "Temporary pill for issue 320 acceptance",
-		"--metadata", `{"pill_slug":"tmp-x"}`, "--origin", "agent", "--agent", "codex")
-	listed := lab.cli(t, 0, "pill")
-	if !strings.Contains(listed.stdout, "tmp-x") {
-		t.Fatalf("pill list missed tmp-x:\n%s", listed.stdout)
-	}
-	deleted := lab.cli(t, 0, "pill", "delete", "tmp-x")
-	if !strings.Contains(deleted.stdout, "deleted: 1") {
-		t.Fatalf("delete output:\n%s", deleted.stdout)
-	}
-	after := lab.cli(t, 0, "pill")
-	if strings.Contains(after.stdout, "tmp-x") {
-		t.Fatalf("pill still listed:\n%s", after.stdout)
-	}
-	if !strings.Contains(after.stdout, "no active pills") {
-		t.Fatalf("pill list after delete was not empty:\n%s", after.stdout)
-	}
-	count := lab.cli(t, 0, "exec",
-		"SELECT count(*) FROM plugin_roca_ops.memories WHERE json_extract(metadata,'$.pill_slug')='tmp-x'")
-	if !strings.Contains(count.stdout, "0") {
-		t.Fatalf("count after delete:\n%s", count.stdout)
-	}
-}
-
-func casePR326(t *testing.T, lab *federationLab) {
-	toon := lab.cli(t, 0, "exec",
-		"SELECT content FROM plugin_roca_ops.memories WHERE project='budgets'",
-		"--max-chars", "900")
-	digitRun := longestDigitRun(toon.stdout)
-	if digitRun < 200 {
-		t.Fatalf("TOON still clipped near 155 characters (digit run %d):\n%s", digitRun, toon.stdout)
-	}
-	js := lab.cli(t, 0, "exec",
-		"SELECT content FROM plugin_roca_ops.memories WHERE project='budgets'",
-		"--max-chars", "900", "--json")
-	var envelope struct {
-		Rows []struct {
-			Content string `json:"content"`
-		} `json:"rows"`
-	}
-	if err := json.Unmarshal([]byte(js.stdout), &envelope); err != nil {
-		t.Fatalf("json: %v\n%s", err, js.stdout)
-	}
-	if len(envelope.Rows) != 1 {
-		t.Fatalf("rows=%d\n%s", len(envelope.Rows), js.stdout)
-	}
-	n := utf8.RuneCountInString(envelope.Rows[0].Content)
-	if n < 800 || n > 900 {
-		t.Fatalf("JSON content runes=%d, want 800-900\n%s", n, js.stdout)
-	}
 }
 
 func (m *world) outputDigitRunAtLeast(want int) error {
@@ -302,18 +179,6 @@ func jsonInteger(value any) (int64, error) {
 	}
 }
 
-func requireJSSafeJSONID(t *testing.T, raw json.RawMessage, stdout string) int64 {
-	t.Helper()
-	id, err := strconv.ParseInt(strings.TrimSpace(string(raw)), 10, 64)
-	if err != nil {
-		t.Fatalf("id was not a JSON integer: %v\n%s", err, stdout)
-	}
-	if id < 1 || id >= 1<<53 || len(strconv.FormatInt(id, 10)) > 12 {
-		t.Fatalf("id = %d, want a positive JS-safe integer of at most 12 digits:\n%s", id, stdout)
-	}
-	return id
-}
-
 func (m *world) jsonFieldIsJSSafeInteger(field string) error {
 	document, err := m.json()
 	if err != nil {
@@ -333,68 +198,29 @@ func (m *world) jsonFieldIsJSSafeInteger(field string) error {
 	return nil
 }
 
-func caseIssue315(t *testing.T, installed string) {
-	if runtime.GOOS == "windows" {
-		t.Skip("shared residency is proven on unix sockets")
+func (m *world) jsonFieldRuneCountBetween(field string, low, high int) error {
+	document, err := m.json()
+	if err != nil {
+		return err
 	}
-	fake := buildFakeVectorResident(t)
-	evidence := threeServeResidentPS(t, installed, fake, time.Second)
-	if evidence.count != 1 {
-		t.Fatalf("installed binary residents = %d, want 1\n%s", evidence.count, evidence.ps)
+	value, ok := lookup(document, field)
+	if !ok {
+		return fmt.Errorf("the JSON output has no %q: %v", field, document)
 	}
+	text, ok := value.(string)
+	if !ok {
+		return fmt.Errorf("%s = %v (%T), want a JSON string", field, value, value)
+	}
+	n := utf8.RuneCountInString(text)
+	if n < low || n > high {
+		return fmt.Errorf("%s runes=%d, want %d-%d", field, n, low, high)
+	}
+	return nil
 }
 
-func caseIssue317(t *testing.T, lab *federationLab) {
-	lab.cli(t, 1, "exec", `SELECT content FROM memories WHERE content LIKE '%PROCESO CARWOW%'`)
-	got := lab.output()
-	if !strings.Contains(got, `unqualified table "memories"`) {
-		t.Fatalf("missing unqualified refusal:\n%s", got)
-	}
-	if !strings.Contains(got, "plugin_roca_ops.memories") || !strings.Contains(got, "plugin_roca_corpus.memories") {
-		t.Fatalf("missing qualified candidates:\n%s", got)
-	}
-}
-
-func caseIssue318(t *testing.T, lab *federationLab) {
-	limited := lab.cli(t, 0, "handoff", "latest", "--project", "harbor", "--limit", "1")
-	if !strings.Contains(limited.stdout, "harbor") {
-		t.Fatalf("limit 1 missed harbor:\n%s", limited.stdout)
-	}
-	all := lab.cli(t, 0, "handoff", "latest", "--all-projects")
-	if !strings.Contains(all.stdout, "harbor") || !strings.Contains(all.stdout, "dock") {
-		t.Fatalf("all-projects missed a project:\n%s", all.stdout)
-	}
-}
-
-func caseIssue319(t *testing.T, lab *federationLab) {
-	got := lab.cli(t, 0, "exec", "SELECT id FROM plugin_roca_ops.memories WHERE id = '"+federationDiscoveryID+"'", "--json")
-	var result struct {
-		Rows []struct {
-			ID json.RawMessage `json:"id"`
-		} `json:"rows"`
-	}
-	if err := json.Unmarshal([]byte(got.stdout), &result); err != nil {
-		t.Fatalf("decode ops id response: %v\n%s", err, got.stdout)
-	}
-	if len(result.Rows) != 1 {
-		t.Fatalf("ops id rows = %d, want 1:\n%s", len(result.Rows), got.stdout)
-	}
-	requireJSSafeJSONID(t, result.Rows[0].ID, got.stdout)
-}
-
-func caseIssue324(t *testing.T) {
-	lab := newFederationLab(t, "pr324")
-	lab.cli(t, 0, "ingest", "--json")
-	before := codexIdentitySnapshot(t, lab)
-	want := codexIdentityCounts{sessions: 2, exactSourceSession: 1, splitSiblings: 0, exchanges: 8, tools: 48, orphanTools: 48, failedTools: 1, controlSessions: 1}
-	if before != want {
-		t.Fatalf("Codex identity = %+v, want %+v", before, want)
-	}
-	lab.cli(t, 0, "ingest", "--json")
-	after := codexIdentitySnapshot(t, lab)
-	if after != before {
-		t.Fatalf("repeat ingest changed Codex identity: before=%+v after=%+v", before, after)
-	}
+func (m *world) iExecSQLMaxCharsJSON(statement string, budget int) error {
+	_, err := m.runWith("roca exec --json", []string{"exec", statement, "--max-chars", strconv.Itoa(budget), "--json"})
+	return err
 }
 
 type codexIdentityCounts struct {
@@ -418,16 +244,6 @@ const codexIdentitySQL = `SELECT
  (SELECT COUNT(*) FROM plugin_roca_corpus.tool_uses WHERE had_error = 1 AND error_message = 'synthetic failure') AS failed_tools,
  (SELECT COUNT(*) FROM plugin_roca_corpus.sessions WHERE source_agent = 'codex' AND session_id = 'synthetic-correct-thread') AS control_sessions
  FROM plugin_roca_corpus.sessions`
-
-func codexIdentitySnapshot(t *testing.T, lab *federationLab) codexIdentityCounts {
-	t.Helper()
-	got := lab.cli(t, 0, "exec", codexIdentitySQL, "--json")
-	counts, err := decodeCodexIdentityCounts(got.stdout)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return counts
-}
 
 func (m *world) theFrozenCodexIdentityHas(sessions, exactSourceSession, splitSiblings, exchanges, tools, orphanTools, failedTools, controlSessions int) error {
 	got, err := m.frozenCodexIdentity()
@@ -512,234 +328,6 @@ func decodeCodexIdentityCounts(stdout string) (codexIdentityCounts, error) {
 	return counts, nil
 }
 
-func caseHooksNeverBlock(t *testing.T, lab *federationLab) {
-	cmd := exec.Command(lab.m.installed, "hooks", "run", "claude")
-	cmd.Env = lab.m.environment()
-	cmd.Stdin = strings.NewReader(hookSessionInput)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("hooks run claude: %v\n%s", err, out)
-	}
-	ms, err := lastExecutionDuration(lab.m.home, "hooks run")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ms != 0 {
-		t.Fatalf("hooks run duration_ms=%d, want 0", ms)
-	}
-}
-
-func caseExecExactIDs(t *testing.T, lab *federationLab) {
-	start := time.Now()
-	got := lab.cli(t, 0, "exec",
-		"SELECT id, legacy_id FROM plugin_roca_ops.memories WHERE id = '"+federationDiscoveryID+"'",
-		"--json")
-	if time.Since(start) >= 5*time.Second {
-		t.Fatalf("exec took %s, want under 5s", time.Since(start))
-	}
-	var result struct {
-		Rows []struct {
-			ID       json.RawMessage `json:"id"`
-			LegacyID json.RawMessage `json:"legacy_id"`
-		} `json:"rows"`
-	}
-	if err := json.Unmarshal([]byte(got.stdout), &result); err != nil {
-		t.Fatalf("decode exact-id response: %v\n%s", err, got.stdout)
-	}
-	if len(result.Rows) != 1 {
-		t.Fatalf("exact-id rows = %d, want 1:\n%s", len(result.Rows), got.stdout)
-	}
-	requireJSSafeJSONID(t, result.Rows[0].ID, got.stdout)
-	if strings.TrimSpace(string(result.Rows[0].LegacyID)) != federationDiscoveryID {
-		t.Fatalf("legacy_id = %s, want %s:\n%s", result.Rows[0].LegacyID, federationDiscoveryID, got.stdout)
-	}
-	if !strings.Contains(got.stdout, federationDiscoveryID) {
-		t.Fatalf("historical id missing:\n%s", got.stdout)
-	}
-	ms, err := lastExecutionDuration(lab.m.home, "exec")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ms >= 5000 {
-		t.Fatalf("exec duration_ms=%d, want under 5000", ms)
-	}
-}
-
-func caseVectorQueryBudget(t *testing.T, lab *federationLab) {
-	// The resident pays the native model load once; the operator path being
-	// budgeted is the ready, already-warm index used by subsequent queries.
-	lab.cli(t, 0, "vector", "query", "warm harbor index", "1", "--databases", "corpus,ops", "--json")
-	start := time.Now()
-	got := lab.cli(t, 0, "vector", "query", "harbor lantern", "20", "--databases", "corpus,ops", "--json")
-	if time.Since(start) >= 2*time.Second {
-		t.Fatalf("vector query took %s, want under 2s", time.Since(start))
-	}
-	if err := requireVectorExecuted(got.stdout); err != nil {
-		t.Fatal(err)
-	}
-	ms, err := lastExecutionDuration(lab.m.home, "vector")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ms >= 2000 {
-		t.Fatalf("vector query duration_ms=%d, want under 2000", ms)
-	}
-}
-
-func caseQueryNoSilentDegrade(t *testing.T, lab *federationLab) {
-	start := time.Now()
-	got := lab.cli(t, 0, "query", "harbor lantern", "--json")
-	if time.Since(start) >= 3*time.Second {
-		t.Fatalf("query took %s, want under 3s", time.Since(start))
-	}
-	if !strings.Contains(got.stdout, "engines") {
-		t.Fatalf("query named no engines:\n%s", got.stdout)
-	}
-	if strings.Contains(got.stdout, "search hybrid") && !strings.Contains(got.stdout, "vector") {
-		t.Fatalf("query claimed hybrid without a vector engine:\n%s", got.stdout)
-	}
-	ms, err := lastExecutionDuration(lab.m.home, "query")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ms >= 3000 {
-		t.Fatalf("query duration_ms=%d, want under 3000", ms)
-	}
-}
-
-func caseHandoffOnePerProject(t *testing.T, lab *federationLab) {
-	got := lab.cli(t, 0, "handoff", "latest", "--project", "harbor")
-	if !strings.Contains(got.stdout, "handoffs[1]") {
-		t.Fatalf("want one current harbor handoff:\n%s", got.stdout)
-	}
-	if strings.Contains(got.stdout, "handoffs[2]") {
-		t.Fatalf("more than one harbor handoff:\n%s", got.stdout)
-	}
-	if !strings.Contains(got.stdout, "harbor") {
-		t.Fatalf("harbor missing:\n%s", got.stdout)
-	}
-	lookup := lab.cli(t, 0, "exec", "SELECT id FROM plugin_roca_ops.memories WHERE id = '"+federationHarborID+"'", "--json")
-	var result struct {
-		Rows []struct {
-			ID json.RawMessage `json:"id"`
-		} `json:"rows"`
-	}
-	if err := json.Unmarshal([]byte(lookup.stdout), &result); err != nil {
-		t.Fatalf("decode harbor lookup: %v\n%s", err, lookup.stdout)
-	}
-	if len(result.Rows) != 1 {
-		t.Fatalf("historical harbor id rows = %d, want 1:\n%s", len(result.Rows), lookup.stdout)
-	}
-	requireJSSafeJSONID(t, result.Rows[0].ID, lookup.stdout)
-}
-
-func caseMCPHandoffRefused(t *testing.T, lab *federationLab) {
-	if err := lab.m.openThePlugAs("glm-5.2 (codex/slopslint-detector-a1)"); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(lab.m.closeThePlug)
-	if err := lab.m.iStoreASessionHandoffOverMCP(); err != nil {
-		t.Fatal(err)
-	}
-	if err := lab.m.theResponseIsAToolError(); err != nil {
-		t.Fatal(err)
-	}
-	if err := lab.m.theRefusalNamesTheHandoffWriter(); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func caseMCPHistoricalID(t *testing.T, lab *federationLab) {
-	if err := lab.m.callTool("roca_exec", map[string]any{
-		"sql": "SELECT id, legacy_id FROM plugin_roca_ops.memories WHERE id = '" + federationDiscoveryID + "'",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if lab.m.plug.last.IsError {
-		t.Fatalf("MCP exec rejected historical id: %s", renderedText(lab.m.plug.last))
-	}
-	text := renderedText(lab.m.plug.last)
-	if !strings.Contains(text, federationDiscoveryID) {
-		t.Fatalf("MCP exec dropped historical id %s:\n%s", federationDiscoveryID, text)
-	}
-
-	if err := lab.m.callTool("roca_store", map[string]any{
-		"layer": "discovery", "project": "la-roca-e2e",
-		"content": "MCP historical id replacement", "supersedes": federationDiscoveryID,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if lab.m.plug.last.IsError {
-		t.Fatalf("MCP store rejected historical supersedes: %s", renderedText(lab.m.plug.last))
-	}
-	storedID, err := jsonInteger(lab.m.plug.last.Meta["id"])
-	if err != nil || storedID < 1 || storedID >= 1<<53 || len(strconv.FormatInt(storedID, 10)) > 12 {
-		t.Fatalf("MCP store id = %#v, want a JS-safe JSON integer of at most 12 digits: %v", lab.m.plug.last.Meta["id"], err)
-	}
-	lab.cli(t, 0, "exec", "SELECT COUNT(*) AS n FROM plugin_roca_ops.memories replacement JOIN plugin_roca_ops.memories original ON replacement.supersedes = original.id WHERE replacement.content = 'MCP historical id replacement' AND original.legacy_id = "+federationDiscoveryID, "--json")
-	var result struct {
-		Rows []struct {
-			N int `json:"n"`
-		} `json:"rows"`
-	}
-	if err := json.Unmarshal([]byte(lab.m.last.stdout), &result); err != nil {
-		t.Fatalf("decode MCP replacement proof: %v\n%s", err, lab.m.last.stdout)
-	}
-	if len(result.Rows) != 1 || result.Rows[0].N != 1 {
-		t.Fatalf("MCP historical supersedes did not resolve exactly once: %+v", result.Rows)
-	}
-	lab.m.closeThePlug()
-}
-
-func caseMCPHealth(t *testing.T, lab *federationLab) {
-	if err := lab.m.callTool("roca_health", map[string]any{"max_rows": 2}); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(lab.m.closeThePlug)
-	if err := lab.m.theResponseIsNotAnError(); err != nil {
-		t.Fatal(err)
-	}
-	text := renderedText(lab.m.plug.last)
-	if !strings.Contains(text, "health: pass") {
-		t.Fatalf("roca_health:\n%s", text)
-	}
-}
-
-type usageCase struct {
-	id       string
-	args     []string
-	contains []string
-	code     int
-}
-
-var hermeticUsoCases = []usageCase{
-	{id: "233400", args: []string{"exec", "SELECT content FROM plugin_roca_ops.memories WHERE content LIKE '%harbor lantern%'"}},
-	{id: "233508", args: []string{"query", "harbor lantern", "--json"}, contains: []string{"engines"}},
-	{id: "10387", args: []string{"exec", "SELECT COUNT(*) AS memories FROM plugin_roca_ops.memories"}},
-	{id: "244386", args: []string{"exec", "SELECT layer, COUNT(*) AS n FROM plugin_roca_ops.memories GROUP BY layer"}},
-	{id: "259288", args: []string{"handoff", "latest", "--project", "harbor"}, contains: []string{"harbor"}},
-	{id: "93762", args: []string{"query", "harbor lantern", "--json"}},
-	{id: "19944", args: []string{"handoff", "latest", "--project", "harbor"}},
-	{id: "7734", args: []string{"doctor"}},
-	{id: "5950", args: []string{"exec", "SELECT content FROM plugin_roca_ops.memories LIMIT 1"}},
-	{id: "4269", args: []string{"version"}, contains: []string{"roca"}},
-	{id: "44508", args: []string{"query", "harbor lantern"}},
-	{id: "126485", args: []string{"exec", "SELECT content FROM plugin_roca_ops.memories WHERE layer='discovery'"}},
-	{id: "127663", args: []string{"doctor"}},
-	{id: "296656", args: []string{"doctor"}},
-	{id: "297007", args: []string{"doctor"}},
-	{id: "1658381", args: []string{"doctor"}},
-	{id: "1708690", args: []string{"pill", "show", federationPill}, contains: []string{"vectors first"}},
-	{id: "1733215", args: []string{"handoff", "latest", "--project", "harbor"}},
-}
-
-var vectorUsoCases = []usageCase{
-	{id: "232991", args: []string{"vector", "query", "harbor lantern", "20", "--databases", "corpus,ops", "--json"}},
-	{id: "238277", args: []string{"vector", "query", "harbor lantern", "20", "--databases", "corpus,ops", "--json"}},
-	{id: "5740", args: []string{"vector", "query", "harbor lantern", "20", "--databases", "corpus,ops", "--json"}},
-	{id: "4657", args: []string{"vector", "query", "harbor lantern", "20", "--databases", "corpus,ops", "--json"}},
-	{id: "125372", args: []string{"vector", "query", "I inspected the harbor lantern", "20", "--databases", "corpus,ops", "--json"}},
-}
-
 func requireVectorExecuted(stdout string) error {
 	var answer struct {
 		VectorExecuted bool     `json:"vector_executed"`
@@ -758,54 +346,6 @@ func requireVectorExecuted(stdout string) error {
 		}
 	}
 	return nil
-}
-
-func runVectorUsage(t *testing.T, lab *federationLab, c usageCase) {
-	t.Helper()
-	got := lab.cliAllow(t, c.code, c.args...)
-	if err := requireVectorExecuted(got.stdout); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func runUsage(t *testing.T, lab *federationLab, c usageCase) {
-	t.Helper()
-	if c.id == "4269" {
-		cmd := exec.Command("sh", "-c", "roca version")
-		cmd.Env = []string{
-			"HOME=" + lab.m.home,
-			"PATH=" + filepath.Dir(lab.m.installed),
-			"TMPDIR=" + filepath.Join(lab.m.home, "tmp"),
-			"ROCA_MODELS_ORDER=none",
-		}
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("PATH roca version: %v\n%s", err, out)
-		}
-		if !strings.Contains(string(out), "roca") {
-			t.Fatalf("PATH version:\n%s", out)
-		}
-		return
-	}
-	got := lab.cliAllow(t, c.code, c.args...)
-	for _, want := range c.contains {
-		if !strings.Contains(got.stdout+got.stderr, want) {
-			t.Fatalf("missing %q in\n%s", want, got.stdout+got.stderr)
-		}
-	}
-}
-
-func (lab *federationLab) cliAllow(t *testing.T, want int, args ...string) run {
-	t.Helper()
-	got := lab.cli(t, -1, args...)
-	for i := 0; i < 2 && lab.m.last.code != 0 && strings.Contains(lab.output(), "rerun the command"); i++ {
-		got = lab.cli(t, -1, args...)
-	}
-	if want >= 0 && lab.m.last.code != want {
-		t.Fatalf("%s: exit %d, want %d\nstdout:\n%s\nstderr:\n%s",
-			got.command, lab.m.last.code, want, lab.m.last.stdout, lab.m.last.stderr)
-	}
-	return lab.m.last
 }
 
 func guardLiveHub(t *testing.T) {
@@ -834,94 +374,66 @@ func mustAcceptanceRoot(t *testing.T) string {
 }
 
 func verifyFrozenDigest(root string) error {
-	raw, err := os.ReadFile(filepath.Join(root, frozenArchiveRel))
-	if err != nil {
-		return err
-	}
 	want, err := os.ReadFile(filepath.Join(root, frozenDigestRel))
 	if err != nil {
 		return err
 	}
-	sum := sha256.Sum256(raw)
-	got := hex.EncodeToString(sum[:])
-	if got != strings.TrimSpace(string(want)) {
-		return fmt.Errorf("frozen fixture digest %s, want %s; re-run scripts/freeze-e2e-federation.sh only when the bytes are meant to change",
-			got, strings.TrimSpace(string(want)))
+	seen := map[string]string{}
+	err = filepath.WalkDir(filepath.Join(root, frozenSnapshotRel), func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".db") {
+			return nil
+		}
+		rel, err := filepath.Rel(filepath.Join(root, frozenSnapshotRel), path)
+		if err != nil {
+			return err
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		sum := sha256.Sum256(raw)
+		seen[filepath.ToSlash(rel)] = hex.EncodeToString(sum[:])
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	wantRows := map[string]string{}
+	for _, line := range strings.Split(strings.TrimSpace(string(want)), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			return fmt.Errorf("frozen digest line %q is not '<sha256> <path>'", line)
+		}
+		wantRows[fields[1]] = fields[0]
+	}
+	if len(seen) == 0 {
+		return fmt.Errorf("frozen fixture has no .db files under %s", frozenSnapshotRel)
+	}
+	if len(seen) != len(wantRows) {
+		return fmt.Errorf("frozen .db count %d, digest lists %d", len(seen), len(wantRows))
+	}
+	for rel, digest := range wantRows {
+		got, ok := seen[rel]
+		if !ok {
+			return fmt.Errorf("frozen digest names missing database %s", rel)
+		}
+		if got != digest {
+			return fmt.Errorf("frozen database %s digest %s, want %s; re-run scripts/freeze-e2e-federation.sh only when the bytes are meant to change",
+				rel, got, digest)
+		}
 	}
 	return nil
 }
 
 func extractFrozenSnapshot(root, home, snapshot string) error {
-	file, err := os.Open(filepath.Join(root, frozenArchiveRel))
-	if err != nil {
-		return err
+	src := filepath.Join(root, frozenSnapshotRel, snapshot)
+	if _, err := os.Stat(filepath.Join(src, ".roca", "roca.db")); err != nil {
+		return fmt.Errorf("frozen snapshot %s has no core database: %w", snapshot, err)
 	}
-	defer file.Close()
-	gz, err := gzip.NewReader(file)
-	if err != nil {
-		return err
-	}
-	defer gz.Close()
-	reader := tar.NewReader(gz)
-	prefix := snapshot + "/"
-	found := false
-	for {
-		header, err := reader.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return err
-		}
-		name := strings.TrimPrefix(header.Name, "./")
-		if name == snapshot || name == snapshot+"/" {
-			found = true
-			continue
-		}
-		rel, ok := strings.CutPrefix(name, prefix)
-		if !ok || rel == "" {
-			continue
-		}
-		found = true
-		if err := extractTarEntry(home, rel, header, reader); err != nil {
-			return err
-		}
-	}
-	if !found {
-		return fmt.Errorf("frozen snapshot %s is missing from %s", snapshot, frozenArchiveRel)
-	}
-	return nil
-}
-
-func extractTarEntry(home, rel string, header *tar.Header, reader *tar.Reader) error {
-	rel = filepath.Clean(rel)
-	if rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
-		return fmt.Errorf("refusing archive path %q", rel)
-	}
-	target := filepath.Join(home, rel)
-	if !strings.HasPrefix(target, filepath.Clean(home)+string(os.PathSeparator)) && target != filepath.Clean(home) {
-		return fmt.Errorf("archive path escaped home: %s", rel)
-	}
-	switch header.Typeflag {
-	case tar.TypeDir:
-		return os.MkdirAll(target, 0o700)
-	case tar.TypeReg, tar.TypeRegA:
-		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
-			return err
-		}
-		out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, header.FileInfo().Mode())
-		if err != nil {
-			return err
-		}
-		_, copyErr := io.Copy(out, reader)
-		closeErr := out.Close()
-		if copyErr != nil {
-			return copyErr
-		}
-		return closeErr
-	default:
-		return nil
-	}
+	return copyTree(home, src)
 }
 
 func lastExecutionDuration(home, command string) (int64, error) {
@@ -1030,17 +542,6 @@ func (m *world) theVectorQueryExecutedTheReadyIndex() error {
 	return requireVectorExecuted(m.last.stdout)
 }
 
-func (m *world) theExecutionLogDurationIs(want int) error {
-	ms, err := lookupExecutionDuration(m)
-	if err != nil {
-		return err
-	}
-	if ms != int64(want) {
-		return fmt.Errorf("duration_ms=%d, want %d", ms, want)
-	}
-	return nil
-}
-
 func lookupExecutionDuration(m *world) (int64, error) {
 	command := strings.TrimPrefix(m.last.command, "roca ")
 	ms, err := lastExecutionDuration(m.home, command)
@@ -1114,15 +615,182 @@ func (m *world) iRunClaudeAuthorshipHook() error {
 	return m.record("roca hooks run claude", cmd)
 }
 
-func (m *world) theExecutionLogDurationUnder(limit int) error {
-	ms, err := lookupExecutionDuration(m)
-	if err != nil {
+const e2eHangGuard = 60 * time.Second
+
+var errHangGuardKilled = errors.New("killed by 60-second hang guard")
+
+func e2eFederationScenario(sc *godog.Scenario) bool {
+	if sc == nil {
+		return false
+	}
+	for _, tag := range sc.Tags {
+		if tag.Name == "@e2e-federation" {
+			return true
+		}
+	}
+	return false
+}
+
+func hangGuardError(command string, elapsed time.Duration) error {
+	if elapsed <= e2eHangGuard {
+		return nil
+	}
+	return hangGuardTimeoutError(command, elapsed)
+}
+
+func hangGuardTimeoutError(command string, elapsed time.Duration) error {
+	return fmt.Errorf("60-second hang guard: command %q ran %s; this is a hang guard, not a performance budget", command, elapsed)
+}
+
+func runWithHangGuard(command *exec.Cmd, limit time.Duration) error {
+	if command.SysProcAttr == nil {
+		command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	} else {
+		command.SysProcAttr.Setpgid = true
+	}
+	if err := command.Start(); err != nil {
 		return err
 	}
-	if ms >= int64(limit) {
-		return fmt.Errorf("duration_ms=%d, want under %d", ms, limit)
+	done := make(chan error, 1)
+	go func() { done <- command.Wait() }()
+	timer := time.NewTimer(limit)
+	defer timer.Stop()
+	select {
+	case err := <-done:
+		return err
+	case <-timer.C:
+		if command.Process != nil {
+			_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
+			_ = command.Process.Kill()
+		}
+		<-done
+		return fmt.Errorf("%w: this is a hang guard, not a performance budget", errHangGuardKilled)
 	}
-	return nil
+}
+
+func (m *world) durationWriter() io.Writer {
+	if m.durationOutput != nil {
+		return m.durationOutput
+	}
+	return os.Stdout
+}
+
+func reportMeasuredDuration(w io.Writer, command string, wall time.Duration, durationMS *int64) {
+	if durationMS != nil {
+		fmt.Fprintf(w, "measured duration: command=%q wall_ms=%d duration_ms=%d\n", command, wall.Milliseconds(), *durationMS)
+		return
+	}
+	fmt.Fprintf(w, "measured duration: command=%q wall_ms=%d\n", command, wall.Milliseconds())
+}
+
+func (m *world) recordMeasuredOperation(command string, elapsed time.Duration) {
+	m.everything = append(m.everything, run{command: command, elapsed: elapsed})
+	reportMeasuredDuration(m.durationWriter(), command, elapsed, nil)
+}
+
+func (m *world) reportLastDuration() {
+	ms, err := lookupExecutionDuration(m)
+	var durationMS *int64
+	if err == nil {
+		durationMS = &ms
+	}
+	reportMeasuredDuration(m.durationWriter(), m.last.command, m.last.elapsed, durationMS)
+}
+
+func TestE2EFederationScenarioRecognizesFeature(t *testing.T) {
+	if e2eFederationScenario(nil) {
+		t.Fatal("nil scenario")
+	}
+	if !e2eFederationScenario(&godog.Scenario{Tags: []*messages.PickleTag{{Name: "@e2e-federation"}}}) {
+		t.Fatal("want recognition from @e2e-federation")
+	}
+	if e2eFederationScenario(&godog.Scenario{Tags: []*messages.PickleTag{{Name: "e2e-federation"}}}) {
+		t.Fatal("unprefixed tag must not enable federation instrumentation")
+	}
+	if e2eFederationScenario(&godog.Scenario{Uri: "features/distribution/e2e-federation.feature"}) {
+		t.Fatal("feature URI alone must not enable federation instrumentation")
+	}
+}
+
+func TestMeasuredDurationIsRecordedOnPass(t *testing.T) {
+	var output bytes.Buffer
+	ms := int64(2046)
+	reportMeasuredDuration(&output, "roca exec", 2*time.Second, &ms)
+	want := "measured duration: command=\"roca exec\" wall_ms=2000 duration_ms=2046\n"
+	if got := output.String(); got != want {
+		t.Fatalf("output = %q, want %q", got, want)
+	}
+	if err := hangGuardError("roca exec", 2*time.Second); err != nil {
+		t.Fatalf("pass path failed hang guard: %v", err)
+	}
+}
+
+func TestHangGuardFailsWhenElapsedExceeds60Seconds(t *testing.T) {
+	var output bytes.Buffer
+	err := hangGuardError("roca exec", 61*time.Second)
+	if err == nil {
+		t.Fatal("expected 60-second hang guard failure")
+	}
+	if !strings.Contains(err.Error(), "60-second hang guard") || !strings.Contains(err.Error(), "not a performance budget") {
+		t.Fatalf("error = %q, want a hang guard label distinct from a performance budget", err)
+	}
+	reportMeasuredDuration(&output, "roca exec", 61*time.Second, nil)
+	want := "measured duration: command=\"roca exec\" wall_ms=61000\n"
+	if got := output.String(); got != want {
+		t.Fatalf("output = %q, want %q", got, want)
+	}
+}
+
+func TestHangGuardKillsHungCommand(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("process-group hang guard uses Setpgid")
+	}
+	dir := t.TempDir()
+	childPIDFile := filepath.Join(dir, "child.pid")
+	cmd := exec.Command("sh", "-c", fmt.Sprintf("sleep 30 & echo $! >%s; wait", strconv.Quote(childPIDFile)))
+	err := runWithHangGuard(cmd, 200*time.Millisecond)
+	if err == nil {
+		t.Fatal("expected hang guard timeout")
+	}
+	if !errors.Is(err, errHangGuardKilled) {
+		t.Fatalf("error = %v, want %v", err, errHangGuardKilled)
+	}
+	if !strings.Contains(err.Error(), "60-second hang guard") {
+		t.Fatalf("error = %q, want 60-second hang guard", err)
+	}
+	if !strings.Contains(err.Error(), "not a performance budget") {
+		t.Fatalf("error = %q, want hang guard labeled as not a performance budget", err)
+	}
+	if cmd.Process != nil && processAlive(cmd.Process.Pid) {
+		t.Fatalf("parent pid %d still running", cmd.Process.Pid)
+	}
+	raw, readErr := os.ReadFile(childPIDFile)
+	if readErr != nil {
+		t.Fatalf("child pid file: %v", readErr)
+	}
+	childPID, convErr := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if convErr != nil {
+		t.Fatalf("child pid %q: %v", raw, convErr)
+	}
+	if processAlive(childPID) {
+		t.Fatalf("spawned command pid %d still running", childPID)
+	}
+}
+
+func processAlive(pid int) bool {
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	if proc.Signal(syscall.Signal(0)) != nil {
+		return false
+	}
+	state, err := exec.Command("ps", "-o", "stat=", "-p", strconv.Itoa(pid)).Output()
+	if err != nil {
+		return false
+	}
+	status := strings.TrimSpace(string(state))
+	return status != "" && !strings.HasPrefix(status, "Z")
 }
 
 func (m *world) iCallHealthOverStdio() error {
@@ -1149,44 +817,55 @@ func (m *world) iStartThreeMCPServeProcesses() error {
 }
 
 func (m *world) oneVectorResidentProcessExists() error {
+	started := time.Now()
 	if runtime.GOOS == "windows" {
+		m.recordMeasuredOperation("shared resident check", time.Since(started))
 		return nil
 	}
-	root, err := acceptanceRoot()
+	if m.installed == "" {
+		m.recordMeasuredOperation("shared resident check", time.Since(started))
+		return fmt.Errorf("the installed binary is missing")
+	}
+	count, ps, err := m.countSharedResidents()
+	elapsed := time.Since(started)
+	m.recordMeasuredOperation("shared resident check", elapsed)
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command("go", "test", "-tags=acceptance", "./test/acceptance",
-		"-run", "^TestFrozenFederationInstalledBinary$/issue-315-shared-resident", "-count=1")
-	cmd.Dir = root
-	cmd.Env = append(os.Environ(), "ROCA_BIN="+m.binary)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("shared resident: %v\n%s", err, out)
+	if count != 1 {
+		return fmt.Errorf("installed binary residents = %d, want 1\n%s", count, ps)
 	}
 	return nil
 }
 
 func (m *world) iRunTheE2ESmokeOperatorPath() error {
 	cmd := exec.Command("go", "test", "-tags=acceptance", "./test/acceptance",
-		"-run", "^TestPublishedReleaseUpdateInitSmoke$", "-count=1")
+		"-run", "^TestPublishedReleaseUpdateInitSmoke$", "-count=1", "-v")
 	root, err := acceptanceRoot()
 	if err != nil {
 		return err
 	}
 	cmd.Dir = root
 	cmd.Env = append(os.Environ(), "ROCA_BIN="+m.binary)
-	out, err := cmd.CombinedOutput()
-	text := string(out)
-	m.last = run{command: "make e2e-smoke", stdout: text}
-	if strings.Contains(text, "set ROCA_PUBLISHED_BIN") {
+	var out, failures strings.Builder
+	cmd.Stdout, cmd.Stderr = io.MultiWriter(&out, m.durationWriter()), &failures
+	started := time.Now()
+	runErr := cmd.Run()
+	elapsed := time.Since(started)
+	text := out.String()
+	m.last = run{
+		command: "make e2e-smoke", stdout: text, stderr: failures.String(), elapsed: elapsed,
+	}
+	m.everything = append(m.everything, m.last)
+	reportMeasuredDuration(m.durationWriter(), "make e2e-smoke", elapsed, nil)
+	if strings.Contains(text+failures.String(), "set ROCA_PUBLISHED_BIN") {
 		m.last.code = 1
-		m.last.stderr = text
+		m.last.stderr = failures.String() + text
 		return fmt.Errorf("published upgrade was skipped")
 	}
-	if err != nil {
+	if runErr != nil {
 		m.last.code = 1
-		m.last.stderr = text
+		m.last.stderr = failures.String() + text
 		return nil
 	}
 	return nil
@@ -1231,4 +910,24 @@ func copyTree(dst, src string) error {
 		}
 		return closeErr
 	})
+}
+
+func (m *world) iRunInstalledRocaVersionThroughPATH() error {
+	return m.record("roca version through PATH", exec.Command("sh", "-c",
+		`PATH="$1" exec roca version`, "sh", filepath.Dir(m.installed)))
+}
+
+func (m *world) iStoreDiscoverySupersedingHistoricalID(id string) error {
+	return m.callTool("roca_store", map[string]any{
+		"layer": "discovery", "project": "la-roca-e2e",
+		"content": "MCP historical id replacement", "supersedes": id,
+	})
+}
+
+func (m *world) theMCPStoredIDIsJSSafe() error {
+	id, err := jsonInteger(m.plug.last.Meta["id"])
+	if err != nil || id < 1 || id >= 1<<53 || len(strconv.FormatInt(id, 10)) > 12 {
+		return fmt.Errorf("MCP stored id = %#v, want a positive JS-safe integer of at most 12 digits: %v", m.plug.last.Meta["id"], err)
+	}
+	return nil
 }

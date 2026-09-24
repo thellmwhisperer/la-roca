@@ -186,11 +186,31 @@ expose physical storage.
 Register a deliberate custom layer with `roca layers add <name>`. To repair
 existing rows that used the wrong layer, run
 `roca layers migrate <from> <registered-to>`. `roca doctor` reports
-`runtime_layers_not_in_registry` drift and prints the exact `roca layers add`
-command for each unknown runtime layer; migration remains available when the
-right repair is to move those memories into an existing layer instead. Both
-repair commands follow the same selected database and `roca-ops` routing as
-`roca store`; the command printed by doctor includes the matching `--db-path`.
+`runtime_layers_not_in_registry` drift and prints a `roca layers add` command
+for each unknown runtime layer. Those per-layer commands use the normal
+trimmed-input path; for padded legacy spellings, or to register all unknown
+layers in one pass, use `roca doctor repair runtime_layers_not_in_registry`.
+Migration remains available when the right repair is to move those memories
+into an existing layer. Layer commands follow the same selected database and
+`roca-ops` routing as `roca store`; commands printed by doctor include the
+matching `--db-path`.
+Every failing `roca health` check carries a remedy naming the database the
+verdict came from. Five of them print
+`roca doctor repair <check> --db-path <db>`, whose direct targets are exactly
+the rows that check counted: it clears a dangling `supersedes` pointer,
+registers every unknown runtime layer, moves an alias-layer memory onto its
+physical layer, or deletes a test row. Deleting a memory repairs incoming
+`supersedes` references to the nearest surviving predecessor, or NULL when
+none remains, because `memories.supersedes` references `memories.id`; any
+exact-dedup `memory_id_remaps` aliases that named the deleted memory as
+canonical are retired too. Repair output lists each diagnosed memory or layer
+row, not every supporting row changed to preserve referential integrity. Each
+repair follows the same routing as the layer commands above, is refused in
+read-only mode, and rejects an unknown check by listing the repairs that exist.
+The runtime-layer remedy registers all unknown layers in one command using
+their exact stored spellings, including legacy surrounding whitespace; new
+`roca layers add` input is still trimmed. Use `roca layers migrate` instead
+when those memories belong in an existing layer.
 
 CLI commands and MCP tool calls write one redacted audit record to JSONL under
 the selected data directory's `logs/`, whether they succeed or fail. CLI runs
@@ -211,8 +231,10 @@ below to query retained records without restoring an ops audit destination.
 
 CLI and MCP calls share one `executions` JSONL stream. Retention is three
 months. Each file is capped at 5 MiB and the stream keeps at most 200 files.
-Older `mcp-audit-*.jsonl` files are still read by `roca doctor` and removed on
-uninstall. `ingest` and `migrations` stay separate housekeeping streams.
+The retired `mcp-audit` stream is no longer written or read. Leftover
+`mcp-audit-*.jsonl` files are ignored by `roca doctor` and left untouched by
+uninstall. `ingest` and `migrations`
+stay separate housekeeping streams.
 Consumers should glob `<stream>-*.jsonl`; rotated segments have the same prefix.
 An individual record larger than the file cap is dropped under the same
 non-failing writer contract. Rotation and redaction are unchanged.
@@ -287,8 +309,8 @@ repairs, and failure. Both streams are plain files beside the call audit.
 
 ## Reading query failures
 
-Doctor reads retained `executions` JSONL segments, plus leftover `mcp-audit`
-files from earlier builds.
+Doctor reads retained `executions` JSONL segments, including MCP calls that
+land there with `source` `mcp` and a `tool` field.
 Malformed lines and unreadable files remain visible as gaps in that sample.
 
 Doctor reports the number of failed query calls in the last 24 hours, on either
@@ -309,7 +331,7 @@ only when the hybrid path is required.
 
 `roca doctor` scans the resolved `~/.roca` state tree before opening the
 service. A path owned by a user other than the current operator is an ownership
-failure, not evidence that an index lock is stale. Local human output names the
+failure, not evidence that an index lock is leftover. Local human output names the
 path and owner and prints the exact repair command. `roca doctor --json`
 exposes the same local details under `foreign_owned` as `path`, `owner`, and
 `chown`. If the service itself cannot open the state, human doctor still emits
@@ -410,7 +432,7 @@ logs, day, scratch = sys.argv[1:]
 os.close(os.open(scratch, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
 with sqlite3.connect(scratch) as db:
     db.execute("CREATE TABLE audit (record TEXT NOT NULL CHECK(json_valid(record)))")
-    for stream in ("executions", "mcp-audit"):
+    for stream in ("executions",):
         for path in sorted(pathlib.Path(logs).glob(f"{stream}-{day}*.jsonl")):
             with path.open() as source:
                 for line in source:
@@ -467,10 +489,16 @@ table, the exact and ambiguous groups observed at rest, then the certified
 apply set after session IDs are canonicalized. This makes session-induced child
 duplicates visible instead of hiding them inside a changed aggregate. Row
 counts before and after and same-identity groups whose payloads differ travel
-beside those two views. Divergent groups are evidence for a future key decision
-and are never deleted. The four governed tables are
+beside those two views. Divergent groups are preserved except for the adopted
+thinking-block identity described below. The four governed tables are
 `memories`, `sessions`, `exchanges`, and `thinking_blocks`; session winners are
 resolved first so child payloads are compared using canonical session IDs.
+
+When the corpus has its unique thinking identity index, dedup uses the
+[thinking identity contract](ingest.md#per-exchange-provenance) after resolving
+session aliases. It keeps the highest-ID thinking row even when non-identity
+fields differ, and redirects existing thinking aliases to that survivor.
+Without that index, thinking rows still require an exact-payload match.
 
 An apply is deliberately not inferred from a dry run and is restricted to the
 two federated custody databases. First freeze writes,
@@ -540,7 +568,8 @@ batch receipts. An interrupted run can be invoked again; the
 frozen sources are reused or replaced. When all destination ledgers are
 verified, another run returns without opening frozen snapshots, hashing,
 checking integrity or materializing rows. Backups remain in place.
-Read-only mode refuses migration.
+Read-only mode refuses migration. Preparing bundled destinations also follows
+the [schema-upgrade authorization contract](lifecycle.md#update).
 
 While work remains, stage lines identify DATA-2 snapshot preparation, memory
 import, FTS rebuild and verification, followed by DATA-3 corpus and DATA-4

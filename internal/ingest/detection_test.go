@@ -148,7 +148,7 @@ func TestRegisteredParserLocationsFeedTheIngestPlan(t *testing.T) {
 		Destination: parsers.DestinationCorpus, Parser: syntheticContributionParser{},
 	}
 	plan := Plan{Scanned: map[string]int{}}
-	addRegisteredParsers(Roots{Home: home}, &plan, []parsers.Registration{registered})
+	addRegisteredParsers(Roots{Home: home}, &plan, []parsers.Registration{registered}, true)
 	if len(plan.Targets) != 2 {
 		t.Fatalf("contributed targets = %+v", plan.Targets)
 	}
@@ -219,7 +219,7 @@ func TestContributedLocationsStayInsideTheirDeclaredStore(t *testing.T) {
 			addRegisteredParsers(Roots{Home: home}, &plan, []parsers.Registration{{
 				Name: "nova", SourceAgent: "nova", Locations: testCase.locations,
 				Destination: parsers.DestinationCorpus, Parser: syntheticContributionParser{},
-			}})
+			}}, true)
 			if len(plan.Targets) != 0 {
 				t.Fatalf("contributed targets = %+v", plan.Targets)
 			}
@@ -239,7 +239,7 @@ func TestContributedRelativeLocationWithoutHomeIsReported(t *testing.T) {
 	addRegisteredParsers(Roots{}, &plan, []parsers.Registration{{
 		Name: "nova", SourceAgent: "nova", Locations: []string{".nova/sessions"},
 		Destination: parsers.DestinationCorpus, Parser: syntheticContributionParser{},
-	}})
+	}}, true)
 	if count, ok := plan.Scanned["nova_files"]; !ok || count != 0 {
 		t.Fatalf("nova_files = %d (present %t), want a registered zero", count, ok)
 	}
