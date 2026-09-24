@@ -1,6 +1,0 @@
-# Public face only. One email per line. Comments and blanks are ignored.
-# GitHub noreply is omitted on purpose: the PR range is pre-squash branch
-# commits, merge commits do not belong there, and a human noreply is not
-# Teseo. Machine-local addresses (*.mellado.lab, cursoragent@cursor.com)
-# fail closed.
-sol@javiermellado.com
