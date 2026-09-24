@@ -37,19 +37,6 @@ Commit messages must not include `Co-authored-by` trailers. The public author
 face is Teseo: Javier Mellado <sol@javiermellado.com>. Cursor, machine-local,
 and other harness trailers must not be added.
 
-A local `commit-msg` hook only sees commits written on this machine. It does
-not see GitHub squash-merge. The repository already uses PR_TITLE/PR_BODY for
-the squash commit, so squash no longer concatenates branch trailers. The
-`pr-author` CI job is the layer that still sees the PR range (`base..head`)
-before squash: it fails on any `Co-authored-by` line and on an author or
-committer email outside the trusted base revision of
-`.github/pr-author-allow.txt`. Allowlist changes take effect after they land on
-the base branch; a pull request cannot weaken its own check. The narrow
-committer exception is part of the [release-control
-contract](docs/release-train.md#release-control-checks); no other identity
-gains an exception. `scripts/pr-author-gate.py` owns the check. Run
-`python3 scripts/pr-author-gate-test.py` for the synthetic pair.
-
 Use the [bug report](.github/ISSUE_TEMPLATE/bug_report.md) or
 [feature request](.github/ISSUE_TEMPLATE/feature_request.md) template when opening
 an issue; both include the public-text reminder.

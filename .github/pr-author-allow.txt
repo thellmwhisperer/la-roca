@@ -1,6 +1,0 @@
-# Public face only. One email per line. Comments and blanks are ignored.
-# The author gate separately permits committer noreply@github.com only when
-# the commit author email is exactly sol@javiermellado.com (Teseo). All other
-# unlisted author/committer emails, including other GitHub noreply addresses,
-# fail closed. Machine-local addresses and other harnesses fail closed.
-sol@javiermellado.com
