@@ -37,6 +37,13 @@ func TestDoctorSurfacesRecentQueryFailuresFromBothCallSurfaces(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	leftover := filepath.Join(home, ".roca", logfile.DirName,
+		"mcp-audit-"+now.Format(time.DateOnly)+".jsonl")
+	if err := os.WriteFile(leftover, []byte(
+		`{"timestamp":"`+now.Add(-20*time.Minute).Format(time.RFC3339)+`","source":"mcp","ok":false,"tool":"roca_query","error":"leftover retired stream","error_type":"model_error","correlation_id":"qf_retired_doctor"}`+"\n",
+	), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	var out, errs strings.Builder
 	code, err := execute(contractBuild(), &out, &errs, []string{"doctor"})
 	if err != nil || code != ExitOK {
@@ -50,5 +57,9 @@ func TestDoctorSurfacesRecentQueryFailuresFromBothCallSurfaces(t *testing.T) {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("doctor lacks %q:\n%s", want, out.String())
 		}
+	}
+	if strings.Contains(out.String(), "leftover retired stream") ||
+		strings.Contains(out.String(), "qf_retired_doctor") {
+		t.Fatalf("doctor counted a retired mcp-audit leftover:\n%s", out.String())
 	}
 }

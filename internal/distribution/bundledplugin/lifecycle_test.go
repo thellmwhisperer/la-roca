@@ -79,6 +79,41 @@ func TestEnsureAllRejectsAReadOnlyDatabaseBeforeUpdatingAny(t *testing.T) {
 	assertManifestVersion(t, root, "alpha", "v1")
 }
 
+func TestEnsureRefusesANewerSchemaAgainstAHomeItDidNotInstall(t *testing.T) {
+	root, bin := filepath.Join(t.TempDir(), "plugins"), filepath.Join(t.TempDir(), "bin")
+	if _, err := bundledplugin.Ensure(root, bin, "v1", dataSpecAt("alpha", 1)); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv(bundledplugin.EnvAllowHomeMigrate, "")
+	if _, err := bundledplugin.Ensure(root, bin, "v1", dataSpecAt("alpha", 2)); err == nil {
+		t.Fatal("same-version binary bypassed schema guard")
+	}
+
+	for _, fixture := range []struct {
+		name    string
+		allow   string
+		wantErr string
+		wantVer string
+	}{
+		{name: "refuse", wantErr: "did not install this home", wantVer: "v1"},
+		{name: "override", allow: "1", wantVer: "v2"},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			t.Setenv(bundledplugin.EnvAllowHomeMigrate, fixture.allow)
+			_, err := bundledplugin.Ensure(root, bin, "v2", dataSpecAt("alpha", 2))
+			if fixture.wantErr == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), fixture.wantErr) {
+				t.Fatalf("error = %v", err)
+			}
+			assertManifestVersion(t, root, "alpha", fixture.wantVer)
+		})
+	}
+}
+
 func TestEnsureAllConvergesMixedVersionsOnNextStartup(t *testing.T) {
 	root, bin := filepath.Join(t.TempDir(), "plugins"), filepath.Join(t.TempDir(), "bin")
 	alpha, beta := dataSpec("alpha"), dataSpec("beta")
@@ -105,14 +140,19 @@ func executableSpec(name string, payload []byte) bundledplugin.Spec {
 }
 
 func dataSpec(name string) bundledplugin.Spec {
+	return dataSpecAt(name, 1)
+}
+
+func dataSpecAt(name string, schemaVersion int) bundledplugin.Spec {
 	return bundledplugin.Spec{
 		Name: name, DatabaseFilename: name + ".db", Source: "bundled:roca",
+		SchemaVersion: schemaVersion,
 		Semantic: []byte("version: 1\nattachment: on-demand\n" +
 			"description: Synthetic data bundle.\nquestions:\n  - Which rows exist?\n" +
 			"tables:\n  - name: records\n    description: Synthetic rows.\n    columns: [id]\n"),
 		ApplySchema: func(path string) error {
 			return bundledplugin.ApplySchema(path, name,
-				`CREATE TABLE IF NOT EXISTS records (id INTEGER PRIMARY KEY)`, 1, 0)
+				`CREATE TABLE IF NOT EXISTS records (id INTEGER PRIMARY KEY)`, schemaVersion, 0)
 		},
 	}
 }

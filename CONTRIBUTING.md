@@ -33,6 +33,10 @@ hostnames, private LAN addresses, and session UUIDs. Use `~`, `$TMPDIR`, `<works
 files beneath a `testdata/` directory.
 Existing history is outside this gate's scope.
 
+Commit messages must not include `Co-authored-by` trailers. The public author
+face is Teseo: Javier Mellado <sol@javiermellado.com>. Cursor, machine-local,
+and other harness trailers must not be added.
+
 Use the [bug report](.github/ISSUE_TEMPLATE/bug_report.md) or
 [feature request](.github/ISSUE_TEMPLATE/feature_request.md) template when opening
 an issue; both include the public-text reminder.

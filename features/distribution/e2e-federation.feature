@@ -1,13 +1,24 @@
 @journey @e2e-federation
 Feature: Frozen federation installed binary
   Commands against an installed roca binary on the frozen synthetic federation.
-  The live hub is never selected. The fixture is testdata/e2e-federation/frozen.tar.gz.
+  The live hub is never selected. The fixture is testdata/e2e-federation/frozen.
+
+  # E2E acceptance timings are informative trend data, not performance
+  # budgets or release blockers: "si tarda cinco horas en hacer roca exec, sí quiero que se bloquee la release, pero si tarda 4,1 en vez de 4 cuando 4 es random, me toca la polla".
+  # Each scenario records and prints its measured duration on every run
+  # and machine, including passing runs. The only temporal cutoff is a
+  # command exceeding 60 seconds; that cutoff is a hang guard, not a
+  # performance budget. Functional gates stay blocking: exit code,
+  # expected engines, no silent degrade to search hybrid, and ready-index use.
 
   Scenario: 321 ingest
     Given a frozen pr321 federation lab
     When I run "roca ingest --json"
     Then the command exits with code 0
-    And the output contains "errors"
+    And the JSON output has "errors" equal to "0"
+    When I exec the SQL "SELECT session_id, exchange_number FROM plugin_roca_corpus.exchanges WHERE session_id = '019aba72-aa57-7d93-a12c-b6e65c0dca6b' ORDER BY exchange_number" as json
+    Then the command exits with code 0
+    And the output contains "019aba72-aa57-7d93-a12c-b6e65c0dca6b"
 
   Scenario: 325 pill delete
     Given a pill-free frozen synthetic federation lab
@@ -30,6 +41,9 @@ Feature: Frozen federation installed binary
     When I exec the SQL "SELECT content FROM plugin_roca_ops.memories WHERE project='budgets'" with max-chars 900
     Then the command exits with code 0
     And the output contains a digit run of at least 200 characters
+    When I exec the SQL "SELECT content FROM plugin_roca_ops.memories WHERE project='budgets'" with max-chars 900 as json
+    Then the command exits with code 0
+    And the JSON output field "rows[0].content" has between 800 and 900 runes
 
   Scenario: 315 shared resident
     Given a frozen synthetic federation lab
@@ -54,11 +68,26 @@ Feature: Frozen federation installed binary
     And the output contains "harbor"
     And the output contains "dock"
 
-  Scenario: 427 short numeric ids and legacy lookup
+  Scenario: 319 json ids and 427 short numeric ids and legacy lookup
     Given a frozen synthetic federation lab
     When I exec the SQL "SELECT id FROM plugin_roca_ops.memories WHERE id = '1152921504606846980'" as json
     Then the command exits with code 0
     And the JSON output field "rows[0].id" is a JS-safe integer of at most 12 digits
+    When I call the exec tool with the SQL "SELECT id, legacy_id FROM plugin_roca_ops.memories WHERE id = '1152921504606846980'"
+    Then the response is not an error
+    And the readable MCP response contains "1152921504606846980"
+    When I store a discovery over MCP superseding historical id "1152921504606846980"
+    Then the response is not an error
+    And the MCP stored id is a JS-safe integer of at most 12 digits
+    When I exec the SQL "SELECT COUNT(*) AS n FROM plugin_roca_ops.memories replacement JOIN plugin_roca_ops.memories original ON replacement.supersedes = original.id WHERE replacement.content = 'MCP historical id replacement' AND original.legacy_id = 1152921504606846980" as json
+    Then the command exits with code 0
+    And the JSON output has "rows[0].n" equal to "1"
+
+  Scenario: 4269 installed command on PATH
+    Given a frozen synthetic federation lab
+    When I run the installed roca version through PATH
+    Then the command exits with code 0
+    And the output contains "roca"
 
   Scenario: 324 exact Codex session id
     Given a frozen pr324 federation lab
@@ -85,13 +114,22 @@ Feature: Frozen federation installed binary
 
     Examples:
       | command |
-      | roca query harbor lantern --json |
       | roca exec SELECT COUNT(*) AS memories FROM plugin_roca_ops.memories |
-      | roca handoff latest --project harbor |
       | roca doctor |
       | roca version |
       | roca query harbor lantern |
-      | roca pill show uso-de-la-roca |
+
+  Scenario Outline: uso-de-la-roca correction output <contract>
+    Given a frozen synthetic federation lab
+    When I run "<command>"
+    Then the command exits with code 0
+    And the output contains "<expected>"
+
+    Examples:
+      | contract | command                             | expected      |
+      | 233508   | roca query harbor lantern --json    | engines       |
+      | 259288   | roca handoff latest --project harbor | harbor        |
+      | 1708690  | roca pill show uso-de-la-roca        | vectors first |
 
   Scenario: 233400 exec harbor lantern
     Given a frozen synthetic federation lab
@@ -176,11 +214,10 @@ Feature: Frozen federation installed binary
     When I run "roca handoff latest --project harbor"
     Then the command exits with code 0
 
-  Scenario: real-usage hooks 0ms
+  Scenario: real-usage hooks
     Given a frozen synthetic federation lab
     When I run the claude authorship hook
     Then the command exits with code 0
-    And the execution log duration_ms is 0
 
   Scenario: real-usage exec exact ids
     Given a frozen synthetic federation lab
@@ -188,7 +225,6 @@ Feature: Frozen federation installed binary
     Then the command exits with code 0
     And the JSON output field "rows[0].id" is a JS-safe integer of at most 12 digits
     And the output contains "1152921504606846980"
-    And the execution log duration_ms is under 5000
 
   @provisioned
   Scenario: real-usage vector query
@@ -196,7 +232,6 @@ Feature: Frozen federation installed binary
     When I warm the vector index and vector-query "harbor lantern"
     Then the command exits with code 0
     And the vector query executed the ready index
-    And the execution log duration_ms is under 2000
 
   Scenario: real-usage query no silent degrade
     Given a frozen synthetic federation lab
@@ -204,7 +239,6 @@ Feature: Frozen federation installed binary
     Then the command exits with code 0
     And the output contains "engines"
     And the output does not contain "search hybrid"
-    And the execution log duration_ms is under 3000
 
   Scenario: real-usage handoff one per project
     Given a frozen synthetic federation lab

@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestRenderVectorDoctorSurfacesCompactAndStaleLock(t *testing.T) {
+func TestRenderVectorDoctorSurfacesCompactAndHeldLock(t *testing.T) {
 	var out bytes.Buffer
 	env := &cliEnv{out: &out, errOut: io.Discard}
 	chunks := int64(2)
@@ -16,13 +16,13 @@ func TestRenderVectorDoctorSurfacesCompactAndStaleLock(t *testing.T) {
 		Databases: []vectorDoctorDatabase{
 			{
 				Plugin: "roca-corpus", Database: "corpus", EmbeddedChunks: &chunks,
-				SidecarBytes: &bytes, State: "complete", IndexLock: "stale",
+				SidecarBytes: &bytes, State: "complete", IndexLock: "held",
 				CompactRecommended: true,
 			},
 		},
 		Remedies: []string{
 			"Run `roca vector compact` to reclaim empty embedding pages on roca-corpus/corpus",
-			"stale lock; the next ingest or compact takes it, nothing to do",
+			"index.lock is held on roca-corpus/corpus",
 		},
 	})
 	got := out.String()
@@ -30,9 +30,9 @@ func TestRenderVectorDoctorSurfacesCompactAndStaleLock(t *testing.T) {
 		"vector sidecars:",
 		"roca-corpus/corpus",
 		"compact recommended",
-		"lock stale",
+		"lock held",
 		"Run `roca vector compact`",
-		"stale lock",
+		"index.lock is held",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("doctor vector narration missing %q:\n%s", want, got)

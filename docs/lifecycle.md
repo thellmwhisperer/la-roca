@@ -193,7 +193,17 @@ roca update
 
 Update resolves the selected release, verifies its checksum, runs the staged
 binary's version check, and swaps it into place by rename. The swapped binary
-then refreshes every shipped plugin payload exactly as installation does. Data
+then refreshes every shipped plugin payload exactly as installation does.
+A binary whose bundled plugin schema is newer than the version recorded for
+that plugin in the database's `plugin_schema` refuses that migration unless
+`ROCA_ALLOW_HOME_MIGRATE=1`. This compares schema versions, even when the build
+version is unchanged; it does not track which executable installed the home.
+`roca compact` applies the same guard before changing the corpus database.
+Fresh databases and databases without a recorded plugin identity still allow
+initial adoption. The explicit
+`_install-bundled-plugins` command authorizes schema upgrades for both the
+installer and `roca update`, including updates from older releases. Validate
+branch and test builds only against fixtures or isolated homes. Data
 plugins keep the databases and adjacent vector sidecars they already own;
 `roca-vector` is replaced from the same core release while its manifest-owned
 worker `state/` directory is preserved byte for byte. An unowned or externally
@@ -336,10 +346,12 @@ roca uninstall --purge
 
 Without an explicit data flag, uninstall asks for consent in an interactive
 terminal. `--keep-data` removes the executable and integrations while retaining
-the data directory. `--purge` removes every artefact La Roca owns, including the
-database, configuration, indexes, logs, generated prompt, backups, skills, and
-integration recovery copies, plus the credential files and model catalogue cache
-that older releases left behind. The recovery copies a refresh left beside a
+the data directory. `--purge` removes every artefact La Roca currently owns,
+including the database, configuration, indexes, owned logs, generated prompt,
+backups, skills, and integration recovery copies, plus the credential files and
+model catalogue cache that older releases left behind. See
+[streams and contents](operations.md#streams-and-contents) for the detailed log
+ownership contract. The recovery copies a refresh left beside a
 managed artifact belong to the same family: a regular uninstall names them as
 kept, and a purge takes them with the rest, so the directory holding them can be
 taken back too.

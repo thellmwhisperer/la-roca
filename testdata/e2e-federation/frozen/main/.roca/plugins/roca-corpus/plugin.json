@@ -1,0 +1,319 @@
+{
+  "schema": 1,
+  "name": "roca-corpus",
+  "version": "f4eef74",
+  "binary": "roca",
+  "databases": [
+    {
+      "name": "corpus",
+      "path": "roca-corpus.db",
+      "alias": "plugin_roca_corpus",
+      "attachment": "resident",
+      "custody": true,
+      "retention": "The corpus plugin owns retention for its perennial archive."
+    }
+  ],
+  "semantic": {
+    "databases": [
+      {
+        "database": "corpus",
+        "description": "Immutable perennial harvest from agent transcripts and harvested files.",
+        "questions": [
+          "What did the harvested agent corpus record?",
+          "Which sessions, exchanges, reasoning blocks, tool uses, or files were harvested?"
+        ],
+        "tables": [
+          {
+            "name": "sessions",
+            "description": "Harvested conversation sessions with source, project, timing, title, source metadata, and the machine that produced them.",
+            "questions": [
+              "Which sessions were harvested?",
+              "Which machine produced a session?"
+            ],
+            "columns": [
+              "session_id",
+              "source_agent",
+              "project",
+              "started_at",
+              "ended_at",
+              "duration_minutes",
+              "title",
+              "metadata",
+              "source_surface",
+              "machine"
+            ]
+          },
+          {
+            "name": "memories",
+            "description": "Harvested files with a first-class provenance that distinguishes their route into the archive.",
+            "questions": [
+              "Which files or durable records were harvested?"
+            ],
+            "columns": [
+              "id",
+              "layer",
+              "content",
+              "metadata",
+              "origin",
+              "provenance",
+              "source_agent",
+              "source_model",
+              "source_surface",
+              "source_session",
+              "source_sequence",
+              "project",
+              "status",
+              "supersedes",
+              "created_at"
+            ]
+          },
+          {
+            "name": "exchanges",
+            "description": "Immutable human and agent exchanges with timestamps and source-recorded model usage provenance.",
+            "questions": [
+              "What was said in harvested conversations?"
+            ],
+            "columns": [
+              "id",
+              "session_id",
+              "exchange_number",
+              "is_after_compaction",
+              "human_text",
+              "agent_text",
+              "human_timestamp",
+              "agent_timestamp",
+              "response_latency_ms",
+              "model",
+              "provider",
+              "tokens_in",
+              "tokens_out",
+              "tokens_reasoning",
+              "cost_usd",
+              "machine"
+            ]
+          },
+          {
+            "name": "tool_uses",
+            "description": "Tool calls harvested from sessions and exchanges, including failures and initiative classification; a NULL exchange_number identifies a session-level call.",
+            "questions": [
+              "Which tools were used and which calls failed?"
+            ],
+            "columns": [
+              "id",
+              "session_id",
+              "exchange_number",
+              "tool_name",
+              "tool_params_summary",
+              "had_error",
+              "error_message",
+              "initiative_type",
+              "machine"
+            ]
+          },
+          {
+            "name": "thinking_blocks",
+            "description": "Reasoning blocks harvested from sessions and exchanges.",
+            "questions": [
+              "What reasoning was recorded in the harvested corpus?"
+            ],
+            "columns": [
+              "id",
+              "session_id",
+              "exchange_number",
+              "position_in_session",
+              "depth",
+              "caution_ratio",
+              "word_count",
+              "is_after_compaction",
+              "full_text",
+              "machine"
+            ]
+          },
+          {
+            "name": "memories_fts",
+            "description": "Accent-insensitive full-text index over harvested file content.",
+            "columns": [
+              "content"
+            ]
+          },
+          {
+            "name": "exchanges_fts",
+            "description": "Accent-insensitive full-text index over harvested human and agent exchange text.",
+            "columns": [
+              "human_text",
+              "agent_text"
+            ]
+          },
+          {
+            "name": "thinking_fts",
+            "description": "Accent-insensitive full-text index over harvested reasoning.",
+            "columns": [
+              "full_text"
+            ]
+          },
+          {
+            "name": "sessions_fts",
+            "description": "Accent-insensitive full-text index over harvested session titles and projects.",
+            "columns": [
+              "title",
+              "project"
+            ]
+          },
+          {
+            "name": "legacy_flow_patterns",
+            "description": "Quarantined derived flow patterns retained from the retired core database.",
+            "columns": [
+              "canonical_digest",
+              "payload"
+            ]
+          },
+          {
+            "name": "plugin_schema",
+            "description": "The corpus database schema and index versions; its migration lifecycle lives in plugin_migrations.",
+            "columns": [
+              "singleton",
+              "plugin_name",
+              "schema_version",
+              "index_version",
+              "migration_state",
+              "verification_digest",
+              "prepared_at",
+              "verified_at",
+              "updated_at"
+            ]
+          },
+          {
+            "name": "plugin_migrations",
+            "description": "Lifecycle and verification outcome of every named custody migration this database hosts.",
+            "columns": [
+              "migration",
+              "destination_table",
+              "migration_state",
+              "verification_digest",
+              "prepared_at",
+              "verified_at",
+              "updated_at"
+            ]
+          },
+          {
+            "name": "migration_batches",
+            "description": "Fully committed, checksummed source batches imported into corpus custody.",
+            "columns": [
+              "migration",
+              "batch_id",
+              "destination_table",
+              "source_database",
+              "source_table",
+              "row_count",
+              "canonical_digest",
+              "high_water_mark",
+              "committed_at"
+            ]
+          },
+          {
+            "name": "custody_memberships",
+            "description": "Source identities represented by each physical row in corpus custody.",
+            "columns": [
+              "migration",
+              "source_database",
+              "source_table",
+              "source_key",
+              "destination_table",
+              "destination_key",
+              "canonical_digest",
+              "batch_id"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "vector": {
+    "databases": [
+      {
+        "database": "corpus",
+        "tables": [
+          {
+            "name": "sessions",
+            "id_column": "session_id",
+            "text_columns": [
+              "title",
+              "project"
+            ],
+            "time_columns": [
+              "started_at"
+            ]
+          },
+          {
+            "name": "memories",
+            "id_column": "id",
+            "text_columns": [
+              "content"
+            ],
+            "time_columns": [
+              "created_at"
+            ],
+            "time_join": {
+              "table": "sessions",
+              "local_column": "source_session",
+              "foreign_column": "session_id",
+              "time_columns": [
+                "started_at"
+              ]
+            }
+          },
+          {
+            "name": "exchanges",
+            "id_column": "id",
+            "text_columns": [
+              "human_text",
+              "agent_text"
+            ],
+            "time_columns": [
+              "agent_timestamp",
+              "human_timestamp"
+            ],
+            "time_join": {
+              "table": "sessions",
+              "local_column": "session_id",
+              "foreign_column": "session_id",
+              "time_columns": [
+                "started_at"
+              ]
+            }
+          },
+          {
+            "name": "thinking_blocks",
+            "id_column": "id",
+            "text_columns": [
+              "full_text"
+            ],
+            "time_join": {
+              "table": "sessions",
+              "local_column": "session_id",
+              "foreign_column": "session_id",
+              "time_columns": [
+                "started_at"
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "verbs": [
+    {
+      "name": "ingest",
+      "description": "Import one account export or the configured live agent sources into the corpus.",
+      "capability": "ingest"
+    }
+  ],
+  "capabilities": [
+    {
+      "name": "ingest",
+      "command": [
+        "ingest"
+      ]
+    }
+  ]
+}

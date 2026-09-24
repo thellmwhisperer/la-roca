@@ -52,6 +52,7 @@ type mapping struct {
 type tableSpec struct {
 	name, id, remaps, fts string
 	payload, identity     []string
+	thinkingIdentity      bool
 }
 
 var baseSpecs = []tableSpec{
@@ -63,7 +64,7 @@ var baseSpecs = []tableSpec{
 		identity: []string{"session_id", "exchange_number"}},
 	{name: "thinking_blocks", id: "id", remaps: "thinking_block_id_remaps", fts: "thinking_fts",
 		payload:  []string{"session_id", "exchange_number", "position_in_session", "depth", "caution_ratio", "word_count", "is_after_compaction", "full_text"},
-		identity: []string{"session_id", "exchange_number", "position_in_session"}},
+		identity: []string{"session_id", "exchange_number", "full_text"}},
 }
 
 func Inspect(ctx context.Context, path string) (DatabaseReport, error) {
@@ -203,6 +204,19 @@ func Apply(ctx context.Context, path, expectedManifest, runID, backupPath string
 	if err := persistMappings(ctx, tx, sessionSpec, sessionMaps, runID); err != nil {
 		return DatabaseReport{}, err
 	}
+	thinking := findSpec(specs, "thinking_blocks")
+	if thinking.thinkingIdentity {
+		maps, err := mappingsFor(ctx, tx, thinking, canonicalSessions)
+		if err != nil {
+			return DatabaseReport{}, err
+		}
+		if err := persistMappings(ctx, tx, thinking, maps, runID); err != nil {
+			return DatabaseReport{}, err
+		}
+		if err := deleteMappings(ctx, tx, thinking, maps); err != nil {
+			return DatabaseReport{}, err
+		}
+	}
 	if err := rewriteSessionReferences(ctx, tx, sessionMaps); err != nil {
 		return DatabaseReport{}, err
 	}
@@ -333,6 +347,14 @@ func specs(ctx context.Context, db querier) ([]tableSpec, error) {
 				return nil, err
 			}
 			spec.payload = payloadColumns(ordered, spec.id)
+			if spec.name == "thinking_blocks" {
+				if err := db.QueryRowContext(ctx, `SELECT EXISTS (
+					SELECT 1 FROM pragma_index_list('thinking_blocks')
+					WHERE name = 'idx_thinking_blocks_identity' AND "unique" = 1
+				)`).Scan(&spec.thinkingIdentity); err != nil {
+					return nil, err
+				}
+			}
 			available = append(available, spec)
 		}
 	}
@@ -383,18 +405,23 @@ func mappingsFor(ctx context.Context, db querier, spec tableSpec, sessions map[s
 		}
 	}
 	payload := keyExpression(spec.payload, sessions)
+	identity, winner := payload, "MIN"
+	if spec.thinkingIdentity {
+		identity = keyExpression([]string{"session_id", "IFNULL(exchange_number, -1)", "full_text"}, sessions)
+		winner = "MAX"
+	}
 	order := spec.id
 	query := fmt.Sprintf(`WITH keyed AS (
-		SELECT %s AS record_id, %s AS payload_key FROM %s
+		SELECT %s AS record_id, %s AS payload_key, %s AS identity_key FROM %s
 	), ranked AS (
 		SELECT record_id, payload_key,
-		       MIN(record_id) OVER (PARTITION BY payload_key) AS canonical_id,
-		       COUNT(*) OVER (PARTITION BY payload_key) AS copies
+		       %s(record_id) OVER (PARTITION BY identity_key) AS canonical_id,
+		       COUNT(*) OVER (PARTITION BY identity_key) AS copies
 		FROM keyed
 	)
 	SELECT CAST(record_id AS TEXT), CAST(canonical_id AS TEXT), payload_key
 	FROM ranked WHERE copies > 1 AND record_id <> canonical_id
-	ORDER BY canonical_id, record_id`, order, payload, spec.name)
+	ORDER BY canonical_id, record_id`, order, payload, identity, spec.name, winner)
 	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("map exact %s duplicates: %w", spec.name, err)
@@ -547,6 +574,12 @@ func createAuditTables(ctx context.Context, tx *sql.Tx) error {
 
 func persistMappings(ctx context.Context, tx *sql.Tx, spec tableSpec, maps []mapping, runID string) error {
 	for _, item := range maps {
+		if spec.thinkingIdentity {
+			if _, err := tx.ExecContext(ctx, `UPDATE thinking_block_id_remaps SET canonical_id = ? WHERE canonical_id = ?`,
+				item.canonicalID, item.oldID); err != nil {
+				return fmt.Errorf("flatten thinking remaps to %s: %w", item.canonicalID, err)
+			}
+		}
 		var statement string
 		var args []any
 		if spec.name == "memories" {

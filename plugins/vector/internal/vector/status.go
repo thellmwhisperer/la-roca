@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/thellmwhisperer/la-roca/pkg/opsvector"
 )
 
 const (
@@ -19,11 +21,13 @@ const (
 	StateComplete = "complete"
 	StateEmpty    = "empty"
 	StateOutdated = "outdated"
+	StateInvalid  = "invalid"
 	StateUnknown  = "unknown"
 
-	IndexLockLive   = "live"
-	IndexLockStale  = "stale"
+	IndexLockHeld   = "held"
+	IndexLockUnheld = "unheld"
 	IndexLockAbsent = "absent"
+	IndexLockError  = "error"
 
 	statusBusyTimeoutMS  = 2000
 	statusCountTimeout   = 5 * time.Second
@@ -154,7 +158,6 @@ func inspectDatabaseStatus(ctx context.Context, pluginRoot string, database vect
 	}
 	if !facts.Exists {
 		row.State = StateEmpty
-		row.IndexLock = IndexLockAbsent
 		return row
 	}
 	store, err := openSQLiteBusy(sidecarPath, true, statusBusyTimeoutMS)
@@ -175,6 +178,14 @@ func inspectDatabaseStatus(ctx context.Context, pluginRoot string, database vect
 	}
 	row.State = classifySidecar(facts.Exists, true, workerActive, row.EmbeddedChunks, snapshot.Contract,
 		database.contractFingerprint(), snapshot.Fingerprint, snapshot.SourceMarker, marker)
+	if database.Plugin == "roca-ops" && row.State != StateEmpty && row.State != StateUnknown {
+		stale, staleErr := opsvector.HasStaleLegacyIDs(ctx, sourcePath)
+		if staleErr != nil {
+			row.State = StateUnknown
+		} else if stale {
+			row.State = StateInvalid
+		}
+	}
 	currentFacts, currentFactsErr := sidecarFileFacts(sidecarPath)
 	if currentFactsErr != nil {
 		row.SidecarBytes = nil
@@ -541,20 +552,21 @@ func compactRecommended(chunks, pages *int64) bool {
 
 func inspectIndexLock(sidecarPath string) string {
 	path := sidecarPath + ".index.lock"
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return IndexLockAbsent
-	} else if err != nil {
-		return ""
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return IndexLockAbsent
+		}
+		return IndexLockError
 	}
 	release, busy, err := tryLockExisting(path)
 	if err != nil {
-		return ""
+		return IndexLockError
 	}
 	if busy {
-		return IndexLockLive
+		return IndexLockHeld
 	}
 	_ = release()
-	return IndexLockStale
+	return IndexLockUnheld
 }
 
 func openSQLiteBusy(path string, readOnly bool, busyMS int) (*sql.DB, error) {

@@ -80,12 +80,18 @@ func TestIssue336CLICompactsStaleSidecarWithoutLosingResults(t *testing.T) {
 	}
 	before := status()
 	if valueOrZero(before.EmbeddedChunks) != 1 || before.CandidateChunks != nil ||
-		before.IndexLock != IndexLockStale || !before.CompactRecommended {
+		before.IndexLock != IndexLockUnheld || !before.CompactRecommended {
 		t.Fatalf("sparse sidecar status: %+v", before)
 	}
+	if _, err := os.Stat(index.VectorPath + ".index.lock"); err != nil {
+		t.Fatalf("free lock was removed: %v", err)
+	}
 	text := string(run("status"))
-	if !strings.Contains(text, "roca vector compact") || !strings.Contains(text, "stale lock") {
-		t.Fatalf("missing user remedies: %s", text)
+	if !strings.Contains(text, "roca vector compact") {
+		t.Fatalf("missing compact remedy: %s", text)
+	}
+	if strings.Contains(text, "stale") {
+		t.Fatalf("status still reports stale: %s", text)
 	}
 	query := func(stage string) []Result {
 		t.Helper()

@@ -128,8 +128,10 @@ so they stay below JavaScript's 2^53 safe integer. The version-6 adoption pass
 renumbers historical 2^60 identifiers to 1..N in creation order and stores the
 old value in `legacy_id`. `exec`, `--supersedes`, and MCP still resolve an old
 identifier through `legacy_id` or a retained exact-dedup alias, and `handoff
-latest` continues to list migrated handoffs. SQL TOON quotes integers outside
-the JavaScript safe range.
+latest` continues to list migrated handoffs. See
+[vector status and repair](vector.md#the-one-command-path) for the adjacent ops
+sidecar's adoption of these identifiers. SQL TOON quotes integers outside the
+JavaScript safe range.
 
 Pass the returned ID to CLI `roca store --supersedes` or MCP `roca_store`
 `supersedes`. MCP still accepts a decimal string for a historical identifier.

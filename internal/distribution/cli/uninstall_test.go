@@ -152,7 +152,7 @@ func TestPurgeRemovesAnAuditCreatedAfterTheOwnershipSnapshot(t *testing.T) {
 	report := applyPurge(dataDir, func() lifecycle.Plan {
 		plan := lifecycle.Plan{Owned: ownedPaths(paths), DataDir: dataDir}
 		go func() {
-			done <- writer.AppendExisting(logfile.MCPAudit, logfile.MCPRecord{})
+			done <- writer.AppendExisting(logfile.Executions, logfile.MCPRecord{})
 		}()
 		return plan
 	})
@@ -160,7 +160,7 @@ func TestPurgeRemovesAnAuditCreatedAfterTheOwnershipSnapshot(t *testing.T) {
 	if err := <-done; err == nil || !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("late audit append error = %v, want missing lifecycle lock", err)
 	}
-	if matches, err := filepath.Glob(filepath.Join(dataDir, logfile.DirName, "mcp-audit-*.jsonl")); err != nil || len(matches) != 0 {
+	if matches, err := filepath.Glob(filepath.Join(dataDir, logfile.DirName, "executions-*.jsonl")); err != nil || len(matches) != 0 {
 		t.Fatalf("late product audit survived: %v, err=%v", matches, err)
 	}
 	if _, err := os.Stat(foreign); err != nil {
@@ -385,7 +385,7 @@ func TestPurgeOwnsEveryDatedAndRotatedLogStream(t *testing.T) {
 	tests := map[string]bool{
 		"executions-2026-08-12.jsonl":    true,
 		"executions-2026-08-12-3.jsonl":  true,
-		"mcp-audit-2026-08-12-1.jsonl":   true,
+		"mcp-audit-2026-08-12-1.jsonl":   false,
 		"ingest-2026-08-12.jsonl":        true,
 		"migrations-2026-08-12.jsonl":    true,
 		"migrations-2026-08-12-x.jsonl":  false,

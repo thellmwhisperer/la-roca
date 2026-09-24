@@ -17,7 +17,8 @@ var (
 
 func BundleSpec() bundledplugin.Spec {
 	return bundledplugin.Spec{Name: Name, DatabaseFilename: DatabaseFilename,
-		Source: BundledSource, Manifest: manifest, ApplySchema: ApplySchema}
+		Source: BundledSource, Manifest: manifest, ApplySchema: ApplySchema,
+		SchemaVersion: SchemaVersion}
 }
 
 func Manifest(version string) (plugin.Manifest, error) {

@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-func TestMakeAcceptanceAndE2ESmokePinTheBuiltBinaryOverInheritedROCABin(t *testing.T) {
+func TestMakeTargetsSelectTheirRequiredBinary(t *testing.T) {
 	root, err := acceptanceRoot()
 	if err != nil {
 		t.Fatal(err)
@@ -48,7 +48,12 @@ func TestMakeAcceptanceAndE2ESmokePinTheBuiltBinaryOverInheritedROCABin(t *testi
 
 	for _, target := range []string{"accept", "e2e-smoke", "e2e-federation"} {
 		t.Run(target, func(t *testing.T) {
-			cmd := exec.Command("make", "--no-print-directory", target, "BIN="+relativeBuilt, "VECTOR_BUILD=:", "GO_BUILD=:", "VECTOR_BUNDLE=:")
+			expected, build := "BUILT", ":"
+			if target == "e2e-federation" {
+				expected, build = "STUB", "false"
+			}
+			cmd := exec.Command("make", "--no-print-directory", target, "BIN="+relativeBuilt,
+				"VECTOR_BUILD="+build, "GO_BUILD="+build, "VECTOR_BUNDLE="+build)
 			cmd.Dir = root
 			cmd.Env = append(os.Environ(),
 				"PATH="+fakeTools+string(os.PathListSeparator)+os.Getenv("PATH"),
@@ -57,6 +62,7 @@ func TestMakeAcceptanceAndE2ESmokePinTheBuiltBinaryOverInheritedROCABin(t *testi
 				"ROCA_PUBLISHED_BIN="+built,
 				"ROCA_E2E_VECTOR_MODEL="+built,
 				"ROCA_MAKE_BIN_PIN_PROBE=1",
+				"ROCA_MAKE_BIN_PIN_EXPECTED="+expected,
 			)
 			out, err := cmd.CombinedOutput()
 			if err != nil {
@@ -78,8 +84,8 @@ func TestMakeBinPinProbe(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute selected binary %s: %v\n%s", binary, err, out)
 	}
-	if got := strings.TrimSpace(string(out)); got != "BUILT" {
-		t.Fatalf("selected binary output %q, want BUILT", got)
+	if got, want := strings.TrimSpace(string(out)), os.Getenv("ROCA_MAKE_BIN_PIN_EXPECTED"); got != want {
+		t.Fatalf("selected binary output %q, want %q", got, want)
 	}
 }
 
@@ -115,5 +121,31 @@ func TestMakeE2ERequiresExplicitPublishedBinary(t *testing.T) {
 				t.Fatalf("make %s must require an explicit published binary: %v\n%s", target, err, out)
 			}
 		})
+	}
+}
+
+func TestMakeFederationRequiresInstalledCandidate(t *testing.T) {
+	root, err := acceptanceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	temp, err := acceptanceTempDir("make-candidate-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(temp) })
+	published := filepath.Join(temp, "published")
+	if err := os.WriteFile(published, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, candidate := range []string{"", filepath.Join(temp, "missing")} {
+		cmd := exec.Command("make", "--no-print-directory", "e2e-federation",
+			"ROCA_BIN="+candidate, "ROCA_PUBLISHED_BIN="+published,
+			"ROCA_E2E_VECTOR_MODEL="+published, "VECTOR_BUILD=false", "GO_BUILD=false", "VECTOR_BUNDLE=false")
+		cmd.Dir = root
+		out, err := cmd.CombinedOutput()
+		if err == nil || !strings.Contains(string(out), "set ROCA_BIN to an installed candidate") {
+			t.Fatalf("make must require an installed candidate: %v\n%s", err, out)
+		}
 	}
 }

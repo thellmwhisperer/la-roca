@@ -507,6 +507,7 @@ func TestVerifyRejectsEveryReconciliationMismatch(t *testing.T) {
 }
 
 func TestMergeUpgradesPreReconciliationSessionCustody(t *testing.T) {
+	t.Setenv(bundledplugin.EnvAllowHomeMigrate, "1")
 	directory := t.TempDir()
 	source := createFrozenSource(t, filepath.Join(directory, "source.db"), func(t *testing.T, db *sql.DB) {
 		seedSession(t, db, "upgrade-session", "upgrade session")

@@ -164,6 +164,13 @@ func (s *Service) AddLayer(ctx context.Context, name string) (LayerAddResult, er
 	if name == "" {
 		return LayerAddResult{}, fmt.Errorf("a layer name is required")
 	}
+	return s.addLayerExact(ctx, name)
+}
+
+func (s *Service) addLayerExact(ctx context.Context, name string) (LayerAddResult, error) {
+	if s.opts.ReadOnly {
+		return LayerAddResult{}, refuseReadOnly("add layer")
+	}
 	if _, err := s.EnsureSchema(ctx); err != nil {
 		return LayerAddResult{}, err
 	}
