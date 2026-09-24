@@ -3,7 +3,7 @@
 This file is the project's committed home for project-intrinsic agent knowledge: build, test, release, architecture, and sharp-edge notes that should travel with the code.
 
 - Run the canonical local gate with `make check`; inspect the Gherkin catalogue with `make accept-index`. That gate stops at the root module, so a change under `plugins/<name>/` also owes `make -C plugins/<name> check`. Installed-candidate federation cases live in `make e2e-federation`, which runs `features/distribution/e2e-federation.feature` only ([runbook](e2e-federation.md)).
-- [Required checks](operations.md#required-checks-on-main) owns CI and PR risk-gate requirements. Re-derive CI job names from a completed run when the matrix changes; do not guess labels. [Release train](release-train.md#branch-roles) owns branch protection and its pending PR requirement.
+- [Release train](release-train.md#branch-roles) owns branch protection and its pending PR requirement.
 - [Release train](release-train.md) owns branch roles, the pinned-candidate e2e round, release cadence, and hotfix procedure.
 - Per-domain acceptance lives under `features/<domain>/`; the Godog harness is enabled only by the `acceptance` build tag. A feature carrying a routing tag (`@journey`, `@data-split-oracle`) is excluded from its domain suite and driven by its own harness in `test/acceptance/`.
 - [CONTRIBUTING.md](../CONTRIBUTING.md#build-and-test) owns DATA SPLIT oracle coverage, evidence handling, and the owner-review requirement for golden or harness changes.
