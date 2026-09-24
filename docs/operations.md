@@ -611,18 +611,3 @@ Explicit SQL follows the
 
 [Build and test](../CONTRIBUTING.md#build-and-test) owns the synthetic D2 cost
 regression and published-versus-branch evidence procedure.
-
-## Required checks on main
-
-`main` requires the CI job names from `.github/workflows/ci.yml`. The
-`pr-gate` check (`.github/workflows/pr-gate.yml`) joins them once it is green
-on `main` (owner decision 2026-09-20). pr-gate reads the `Risk Assessment`
-section in the PR body: High fails, labels `risk:high` and needs the owner's
-`risk:accepted` to pass. Editing the PR body or synchronizing a new head removes
-that acceptance before judging the current revision. Medium passes only with an
-Aceptación or Acceptance section in the PR body, containing a
-fenced block with a `$ roca` command followed by output; editing the body reruns
-the check. Low passes. A missing or unparseable risk section
-declares High. Degraded enforcement: the PR is not converted to draft; the
-failing check blocks the merge. Fork PRs receive the verdict without label or
-review-request writes.
