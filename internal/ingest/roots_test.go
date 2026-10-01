@@ -21,6 +21,7 @@ func TestRootsOnMacOS(t *testing.T) {
 		"opencode":        "/Users/op/.local/share/opencode/opencode.db",
 		"opencode bot":    "/Users/op/Library/Application Support/opencode-telegram-bot/logs",
 		"zcode":           "/Users/op/.zcode/cli/db/db.sqlite",
+		"zcode memories":  "/Users/op/.zcode/cli/memories",
 		"pi root":         "/Users/op/.pi",
 		"pi":              "/Users/op/.pi/agent/sessions",
 		"hermes":          "/Users/op/.hermes/state.db",
@@ -28,6 +29,7 @@ func TestRootsOnMacOS(t *testing.T) {
 		"legacy store":    "/Users/op/." + retiredStoreHome() + "/roca.db",
 		"grok":            "/Users/op/.grok/sessions",
 		"grok memtrace":   "/Users/op/.grok/memtrace",
+		"grok memory-v2":  "/Users/op/.grok/memory-v2",
 	}
 	got := map[string]string{
 		"claude projects": roots.ClaudeProjects,
@@ -39,6 +41,7 @@ func TestRootsOnMacOS(t *testing.T) {
 		"opencode":        roots.OpenCodeDB,
 		"opencode bot":    roots.OpenCodeTelegramLogs,
 		"zcode":           roots.ZCodeDB,
+		"zcode memories":  roots.ZCodeMemories,
 		"pi root":         roots.PiRoot,
 		"pi":              roots.PiSessions,
 		"hermes":          roots.HermesDB,
@@ -46,6 +49,7 @@ func TestRootsOnMacOS(t *testing.T) {
 		"legacy store":    roots.LegacyStoreDB,
 		"grok":            roots.GrokSessions,
 		"grok memtrace":   roots.GrokMemtrace,
+		"grok memory-v2":  roots.GrokMemoryV2,
 	}
 	for name, expected := range want {
 		if got[name] != expected {
@@ -119,6 +123,19 @@ func TestZCodeDatabasePathPrecedence(t *testing.T) {
 	}
 }
 
+func TestZCodeMemoriesFollowStorageDirNotTheDatabaseOverride(t *testing.T) {
+	roots := ResolveRoots(Environment{
+		GOOS: "darwin", Home: "/Users/op",
+		Getenv: environmentOf(map[string]string{
+			"ZCODE_STORAGE_DIR": "/Volumes/synthetic/zcode",
+			"ZCODE_DB_PATH":     "/from/the/environment.sqlite",
+		}),
+	}, Settings{ZCodeDB: "/declared/by/the/operator.sqlite"})
+	if roots.ZCodeMemories != "/Volumes/synthetic/zcode/cli/memories" {
+		t.Errorf("ZCode memories = %q", roots.ZCodeMemories)
+	}
+}
+
 func TestGrokSessionsFollowTheEnvironment(t *testing.T) {
 	roots := ResolveRoots(Environment{
 		GOOS: "linux",
@@ -129,6 +146,9 @@ func TestGrokSessionsFollowTheEnvironment(t *testing.T) {
 	}, Settings{})
 	if roots.GrokSessions != "/home/op/data/grok-sessions" {
 		t.Errorf("grok sessions = %q", roots.GrokSessions)
+	}
+	if roots.GrokMemoryV2 != "/home/op/.grok/memory-v2" {
+		t.Errorf("grok memory-v2 = %q, want it to stay under home", roots.GrokMemoryV2)
 	}
 }
 

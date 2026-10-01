@@ -17,10 +17,10 @@ mirrors contribute:
 | GLM | User skill documents and their supporting Markdown files |
 | Cursor | Agent and legacy IDE sessions, prompts, thinking, and tool calls from its local SQLite stores |
 | OpenCode | Sessions and exchanges, distilled from its local database |
-| ZCode | Sessions, messages, reasoning, and tool calls from the local database shared by the desktop app and its embedded CLI |
+| ZCode | Sessions, messages, reasoning, and tool calls from the local database shared by the desktop app and its embedded CLI, plus per-project memory files |
 | Pi | Complete session tree, including nested child runs |
 | Hermes | Sessions and channel, usage and routing intel from its state database, plus curated MEMORY.md blocks |
-| Grok Build | Sessions, from the session update stream and its metadata sidecar |
+| Grok Build | Sessions, from the session update stream and its metadata sidecar, plus curated memory-v2 documents |
 | Legacy store | A pre-federation `roca.db`: conversations into the corpus, memories into ops with their original layers |
 
 Repository `AGENTS.md` and `CLAUDE.md` files are instructions and are never
@@ -492,6 +492,16 @@ and `purge` records), not semantic memory or conversation. The coverage report
 counts their files and records under that exclusion reason without ingesting
 them.
 
+`~/.grok/memory-v2/global/MEMORY.md` and
+`~/.grok/memory-v2/workspaces/<workspace>/MEMORY.md` are curated memory
+documents. Each file is one memory. The workspace directory name is the
+project; the global file's project is `global`. A rewrite of the same path
+updates that row. `memory_state.sqlite` and its sidecars stay excluded as
+process telemetry, under their own reason, and are not conversation content.
+An installed Grok session store whose `memory-v2` directory is missing is a
+named coverage skip, not a silent zero. The session-root override does not
+move this tree.
+
 ## ZCode
 
 This reader is pinned to ZCode 3.10.2 (macOS build 3.10.2.6414),
@@ -523,10 +533,11 @@ model but has no messages. `~/.zcode/cli/rollout/model-io-<session>.jsonl`
 contains raw model request/response telemetry (41 records in the measured
 session) that repeats the durable conversation at a lower-level network
 boundary. `~/.zcode/cli/log/*.jsonl` is operational telemetry.
-`~/.zcode/cli/memories/` existed with no files in the measured store, and
 `~/Library/Application Support/ZCode` contains Electron browser state rather
-than durable conversations. None adds a conversation record absent from the
-primary database, so none is ingested.
+than durable conversations. None of those secondary surfaces adds a conversation
+record absent from the primary database, so none of them is ingested.
+`~/.zcode/cli/memories/projects/<project>/memory/*.md` is a separate curated
+memory family, read as described below.
 
 La Roca opens the primary database through the shared query-only live-SQLite
 boundary and fingerprints its WAL with parser reading `zcode-3.10.2-v1`.
@@ -542,6 +553,16 @@ Reasoning and completed or failed tools stay attached to their message. A
 running assistant message is deferred, while hidden synthetic reminders,
 timeline events, attachment references, and step telemetry are named
 exclusions.
+
+Project memories live at `~/.zcode/cli/memories/projects/<project>/memory/*.md`.
+`ZCODE_STORAGE_DIR` moves that tree with the app; `zcode_db_path` does not.
+Each Markdown file is one memory, parsed like a Claude Code memory file:
+frontmatter `name` and `description` become metadata, the body is the content,
+and a declared `type` or `metadata.type` chooses the layer. The project is the
+folder name under `projects/`, not a path decoded from a session. An unchanged
+file is not reparsed. A changed file updates the same row. When the ZCode
+database is present and that projects directory is missing, the dry-run names
+the absence instead of omitting the family.
 
 ## OpenCode
 

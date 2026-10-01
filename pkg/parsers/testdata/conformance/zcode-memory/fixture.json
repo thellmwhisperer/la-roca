@@ -1,0 +1,22 @@
+{
+  "parser": "zcode_memory",
+  "destination": "store",
+  "source": "chart.data",
+  "meta": {
+    "Path": "/synthetic/home/.zcode/cli/memories/projects/cobalt-harbor/memory/chart.md",
+    "FileName": "chart.md",
+    "Project": "cobalt-harbor",
+    "SourceAgent": "zcode"
+  },
+  "want": {
+    "sessions": [],
+    "memories": [
+      {
+        "layer": "feedback",
+        "content": "Keep the synthetic harbor chart in cobalt ink.",
+        "source_agent": "zcode",
+        "project": "cobalt-harbor"
+      }
+    ]
+  }
+}
