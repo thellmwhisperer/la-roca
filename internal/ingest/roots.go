@@ -100,9 +100,13 @@ type Roots struct {
 	OpenCodeTelegramLogs string
 	// ZCodeDB is ZCode's durable session database below its private storage
 	// root. The desktop app and the embedded CLI share this file.
-	ZCodeDB    string
-	PiRoot     string
-	PiSessions string
+	ZCodeDB string
+	// ZCodeMemories is the curated memory tree beside that database. Project
+	// files live at projects/<project>/memory/*.md. ZCODE_STORAGE_DIR moves it
+	// with the app; a database-only override does not.
+	ZCodeMemories string
+	PiRoot        string
+	PiSessions    string
 	// HermesHome is the Hermes private tree. Memories, named exclusions, and
 	// the default state.db live under it; hermes_db_path can still point the
 	// database elsewhere.
@@ -115,7 +119,11 @@ type Roots struct {
 	GrokSessions string
 	// GrokMemtrace is process-memory telemetry, counted for coverage and excluded
 	// from conversation content.
-	GrokMemtrace      string
+	GrokMemtrace string
+	// GrokMemoryV2 is Grok's curated memory-v2 tree: global/MEMORY.md and
+	// workspaces/<slug>/MEMORY.md. It stays under ~/.grok even when the session
+	// root is overridden. memory_state.sqlite* beside those files is telemetry.
+	GrokMemoryV2      string
 	RunnerDir         string
 	ClaudeWebExports  []string
 	ChatGPTWebExports []string
@@ -223,7 +231,8 @@ func resolveOne(env Environment, settings Settings) Roots {
 			envOpenCodeTelegramLogs, openCodeTelegramLogsDir(env)),
 		ZCodeDB: pick(env, settings.ZCodeDB, envZCodeDB,
 			join(env, zcodeRoot, "cli", "db", "db.sqlite")),
-		PiRoot: piRoot,
+		ZCodeMemories: join(env, zcodeRoot, "cli", "memories"),
+		PiRoot:        piRoot,
 		PiSessions: pick(env, settings.PiSessions, envPiSessions,
 			join(env, piRoot, "agent", "sessions")),
 		HermesHome: hermesHome,
@@ -235,6 +244,7 @@ func resolveOne(env Environment, settings Settings) Roots {
 		GrokSessions: pick(env, settings.GrokSessions, envGrokSessions,
 			join(env, env.Home, ".grok", "sessions")),
 		GrokMemtrace: join(env, env.Home, ".grok", "memtrace"),
+		GrokMemoryV2: join(env, env.Home, ".grok", "memory-v2"),
 		RunnerDir:    expand(env, settings.RunnerDir),
 		Workspace:    ResolveWorkspaceRoots(expandAll(env, settings.WorkspaceRoots)),
 	}

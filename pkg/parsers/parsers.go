@@ -91,6 +91,12 @@ const (
 	// KindGrokSessionMetadata is the summary.json a Grok Build session pairs
 	// with its update stream.
 	KindGrokSessionMetadata Kind = "grok_session_metadata"
+	// KindGrokMemory is one Grok memory-v2 MEMORY.md document. Identity is the
+	// file, so a rewrite updates that row instead of inserting another.
+	KindGrokMemory Kind = "grok_memory"
+	// KindZCodeMemory is one ZCode project memory file. It uses the same
+	// frontmatter shape as a Claude Code memory file.
+	KindZCodeMemory Kind = "zcode_memory"
 )
 
 // FileMeta is what the scan already knows about an artefact: where it came from
