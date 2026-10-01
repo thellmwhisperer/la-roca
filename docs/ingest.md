@@ -494,7 +494,7 @@ them.
 
 `~/.grok/memory-v2/global/MEMORY.md` and
 `~/.grok/memory-v2/workspaces/<workspace>/MEMORY.md` are curated memory
-documents. Each file is one memory. The workspace directory name is the
+documents. Each non-empty file is one memory. The workspace directory name is the
 project; the global file's project is `global`. A rewrite of the same path
 updates that row. `memory_state.sqlite` and its sidecars stay excluded as
 process telemetry, under their own reason, and are not conversation content.
@@ -527,7 +527,7 @@ held 35 `model_usage`, 28 `tool_usage`, and seven `turn_usage` observability
 rows. These aggregates established the synthetic fixture shape; no real
 conversation text, identifier, account value, or attachment entered a fixture.
 
-Five secondary surfaces were checked. `~/.zcode/v2/tasks-index.sqlite` is a
+Other secondary surfaces were checked. `~/.zcode/v2/tasks-index.sqlite` is a
 desktop task index that repeats session title, status, workspace, and selected
 model but has no messages. `~/.zcode/cli/rollout/model-io-<session>.jsonl`
 contains raw model request/response telemetry (41 records in the measured
@@ -536,8 +536,6 @@ boundary. `~/.zcode/cli/log/*.jsonl` is operational telemetry.
 `~/Library/Application Support/ZCode` contains Electron browser state rather
 than durable conversations. None of those secondary surfaces adds a conversation
 record absent from the primary database, so none of them is ingested.
-`~/.zcode/cli/memories/projects/<project>/memory/*.md` is a separate curated
-memory family, read as described below.
 
 La Roca opens the primary database through the shared query-only live-SQLite
 boundary and fingerprints its WAL with parser reading `zcode-3.10.2-v1`.
@@ -556,8 +554,8 @@ exclusions.
 
 Project memories live at `~/.zcode/cli/memories/projects/<project>/memory/*.md`.
 `ZCODE_STORAGE_DIR` moves that tree with the app; `zcode_db_path` does not.
-Each Markdown file is one memory, parsed like a Claude Code memory file:
-frontmatter `name` and `description` become metadata, the body is the content,
+Each Markdown file with a non-empty body is one memory, parsed like a Claude
+Code memory file: frontmatter `name` and `description` become metadata, the body is the content,
 and a declared `type` or `metadata.type` chooses the layer. The project is the
 folder name under `projects/`, not a path decoded from a session. An unchanged
 file is not reparsed. A changed file updates the same row. When the ZCode
@@ -676,6 +674,7 @@ source read from a live database rather than files also prints a `saw` line
 beneath its row — the raw sessions and messages it observed before
 normalization — so the converted counts read against the whole store and not
 only what landed.
+
 The two groups are apart on purpose: `excluded` counts the records this build
 never meant to read, which is most of a runtime log and is not a problem, and
 `discards` counts records it could not read or safely match to an existing turn,
@@ -684,6 +683,12 @@ which is. `roca ingest
 retained records. Totals and the complete collapsed summary remain exact in JSON
 output and the ingest log when a run leaves out more records than that; the log
 retains the same bounded per-record detail.
+
+In `roca ingest --dry-run`, the ZCode and Grok source lines report prospective
+`memories` counts for new or changed memory files that parse to a non-empty
+memory. These are pending work, not inserted rows: dry-run writes nothing and
+the table delta stays zero. Files already ingested with an unchanged
+fingerprint are skipped and contribute no prospective memories.
 
 JSON output also carries `files_seen` and `file_coverage`. The latter groups
 every file under `parsed`, `pending`, `skipped`, `excluded`, or `error` with a
