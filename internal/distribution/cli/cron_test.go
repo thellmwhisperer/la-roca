@@ -199,6 +199,35 @@ func TestDirectSchedulerInvocationNamesTheCronRunRemedy(t *testing.T) {
 	}
 }
 
+func TestVectorDeltaRemedyNamesItsConfiguredTrain(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("ROCA_MODELS_ORDER", "none")
+	t.Setenv(rocacron.ObservedEnv, "")
+	writeConfig(t, home, `[features]
+cron = true
+
+[ride.vector_delta]
+train = "hourly"
+command = "echo operator-vector-delta"
+`)
+	previous := schedulerAncestry
+	schedulerAncestry = func() []authorshipProcess {
+		return []authorshipProcess{{Command: "/usr/sbin/cron"}}
+	}
+	t.Cleanup(func() { schedulerAncestry = previous })
+	env, _, _ := newCronTestEnv()
+	_, err := executeWithEnv(env, []string{"vector", "ingest", "--delta"}, nil)
+	if err == nil || !strings.Contains(err.Error(), "remedy: roca cron run hourly") ||
+		strings.Contains(err.Error(), "nightly") {
+		t.Fatalf("vector delta remedy = %v", err)
+	}
+	_, err = executeWithEnv(env, []string{"ingest"}, nil)
+	if err == nil || !strings.Contains(err.Error(), "remedy: roca cron run nightly") {
+		t.Fatalf("core ingest remedy = %v", err)
+	}
+}
+
 func TestObservedSchedulerInvocationIsNotRefused(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
