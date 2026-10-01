@@ -57,7 +57,7 @@ const MaxLimit = 1000
 // Exact-dedup runs and remaps are owner-gated maintenance evidence. Typed ID
 // resolution can read them, but generated SQL must not treat them as a domain.
 var invisibleTables = []string{
-	"ingest_file_state", "search_state",
+	"ingest_file_state", "search_state", "vector_changes",
 	"plugin_schema", "plugin_migrations", "migration_batches", "custody_memberships",
 	"corpus_source_snapshots", "corpus_source_tables", "corpus_source_rows",
 	"session_versions", "exchange_versions", "tool_use_versions", "thinking_block_versions",
