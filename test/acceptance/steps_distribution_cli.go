@@ -55,6 +55,8 @@ func registerDistributionCLISteps(ctx *godog.ScenarioContext, w *distributionWor
 		w.declareOperatorVectorDelta)
 	ctx.Then(`^the nightly train reports 2 rides and names the operator declaration$`,
 		w.nightlyTrainReportsOperatorVectorDelta)
+	ctx.Then(`^each nightly ride is recorded as a journey$`,
+		w.nightlyRidesAreRecordedAsJourneys)
 }
 
 func (w *distributionWorld) previewDefaultCronTrain() error {
@@ -124,6 +126,23 @@ func (w *distributionWorld) nightlyTrainReportsOperatorVectorDelta() error {
 		!strings.Contains(w.last.stdout, "operator\tvector_delta") ||
 		!strings.Contains(w.last.stdout, "echo operator-vector-delta") {
 		return fmt.Errorf("operator nightly train = %+v", w.last)
+	}
+	return nil
+}
+
+func (w *distributionWorld) nightlyRidesAreRecordedAsJourneys() error {
+	database := filepath.Join(w.home, ".roca", "plugins", "roca-cron", "roca-cron.db")
+	db, err := sql.Open("sqlite", database)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	var journeys int
+	if err := db.QueryRow("SELECT count(*) FROM journeys").Scan(&journeys); err != nil {
+		return err
+	}
+	if journeys != 2 {
+		return fmt.Errorf("nightly journey count = %d, want 2", journeys)
 	}
 	return nil
 }

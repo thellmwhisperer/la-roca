@@ -124,6 +124,10 @@ func executeWithOptions(env *cliEnv, args []string, in io.Reader, plugins bool) 
 	if !doctorInvocation(args) {
 		env.loadCommandFeatures()
 	}
+	if err := refuseUnobservedScheduler(args); err != nil {
+		env.skipExecutionLog = true
+		return ExitError, logfile.Correlate(err)
+	}
 	root := rootCommand(env)
 	if handled, residentErr := env.tryResident(context.Background(), args); handled {
 		command, commandArgs, _, _ := residentCommandArgs(args)
@@ -418,6 +422,58 @@ func vectorIngestInvocation(args []string) bool {
 		return false
 	}
 	for _, argument := range args[1:] {
+		if argument == "ingest" {
+			return true
+		}
+	}
+	return false
+}
+
+// schedulerAncestry is the process chain above this invocation. Tests replace
+// it. Only a cron or crond parent counts as the system scheduler.
+var schedulerAncestry = func() []authorshipProcess {
+	return processAncestry(os.Getppid())
+}
+
+// refuseUnobservedScheduler stops a scheduler that started the ride binary
+// itself. roca cron run marks the children it starts, and those children still
+// do the work while the observer records the journey.
+func refuseUnobservedScheduler(args []string) error {
+	if !rideBinaryInvocation(args) || os.Getenv(rocacron.ObservedEnv) == "1" {
+		return nil
+	}
+	for _, process := range schedulerAncestry() {
+		switch filepath.Base(process.Command) {
+		case "cron", "crond":
+			return fmt.Errorf("cannot record a cron journey from this invocation; remedy: roca cron run nightly")
+		}
+	}
+	return nil
+}
+
+func rideBinaryInvocation(args []string) bool {
+	var positionals []string
+	for index := 0; index < len(args); index++ {
+		argument := args[index]
+		switch {
+		case argument == "--db-path" || argument == "--state-dir" || argument == "--progress-fd":
+			index++
+		case strings.HasPrefix(argument, "-"):
+			continue
+		default:
+			positionals = append(positionals, argument)
+		}
+	}
+	if len(positionals) == 0 {
+		return false
+	}
+	if positionals[0] == "ingest" {
+		return true
+	}
+	if positionals[0] != "vector" {
+		return false
+	}
+	for _, argument := range positionals[1:] {
 		if argument == "ingest" {
 			return true
 		}

@@ -13,3 +13,4 @@ Feature: Cron plugin trains
   Scenario: Operator rides sit outside the plugin payload
     When the operator declares a vector_delta ride outside any plugin payload
     Then the nightly train reports 2 rides and names the operator declaration
+    And each nightly ride is recorded as a journey

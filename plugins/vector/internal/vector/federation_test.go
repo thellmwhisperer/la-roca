@@ -33,6 +33,43 @@ func TestFederationReportsSchedulerStallInsteadOfWorkerCancellation(t *testing.T
 	}
 }
 
+func TestDeltaSealsStatusAfterSourceChangeTimeMoves(t *testing.T) {
+	federation, corpusPath, opsPath, _ := federationFixture(t)
+	inner := federation.Core.readRequest
+	federation.Core.readRequest = func(ctx context.Context, core CoreCLI, request map[string]any, result any) error {
+		for _, path := range []string{corpusPath, opsPath} {
+			if err := os.Chmod(path, 0o600); err != nil {
+				return err
+			}
+		}
+		return inner(ctx, core, request, result)
+	}
+	if _, err := federation.Ingest(context.Background(), ""); err != nil {
+		t.Fatal(err)
+	}
+	report, err := ReportVectorization(context.Background(), StatusRequest{PluginRoot: federation.PluginRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Databases) != 2 {
+		t.Fatalf("status databases = %+v", report.Databases)
+	}
+	sidecars := map[string]string{
+		"roca-corpus/corpus": SidecarPath(corpusPath),
+		"roca-ops/ops":       SidecarPath(opsPath),
+	}
+	for _, row := range report.Databases {
+		owner := row.Plugin + "/" + row.Database
+		if row.State != StateComplete {
+			t.Fatalf("%s state = %s, want complete: %+v", owner, row.State, row)
+		}
+		metadata := sidecarMeta(t, sidecars[owner])
+		if metadata["source_fingerprint"] == "" || metadata["source_marker"] == "" {
+			t.Fatalf("%s seal = %+v", owner, metadata)
+		}
+	}
+}
+
 func TestFederationBuildsOwnedSidecarsAndGarbageCollectsByDelta(t *testing.T) {
 	federation, corpusPath, opsPath, embedder := federationFixture(t)
 	ctx := context.Background()

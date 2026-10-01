@@ -821,11 +821,8 @@ func (f Federation) Ingest(ctx context.Context, sourceKind string) (FederationDe
 		}
 		storedFingerprint, storedMarker := "", ""
 		if sourceKind == "" {
-			after, err := sourceFileMarker(f.databasePath(job.database))
-			if err == nil && after == job.marker {
-				storedFingerprint = job.fingerprint
-				storedMarker = job.marker
-			}
+			storedFingerprint, storedMarker = refreshedSourceSeal(
+				f.databasePath(job.database), job.contract, job.fingerprint, job.marker)
 		}
 		if err := sealSidecar(job.sidecar, job.database.owner(), f.Model, f.BuildVersion,
 			job.contract, storedFingerprint, storedMarker, job.delta); err != nil {
@@ -1705,6 +1702,29 @@ var (
 	errSourceChanged  = errors.New("vector source changed while it was inspected")
 	hashVectorSource  = databaseFingerprint
 )
+
+// refreshedSourceSeal records the generation a finished pass actually observed.
+// Opening the source during the sweep can move its change time while the bytes
+// stay put. A matching fingerprint stores that later marker. When the bytes
+// moved, or the source cannot be re-read, the pre-sweep fingerprint and marker
+// stay, and status can report the sidecar as outdated.
+func refreshedSourceSeal(path, contract, fingerprint, marker string) (string, string) {
+	if fingerprint == "" || marker == "" {
+		return "", ""
+	}
+	after, err := sourceFileMarker(path)
+	if err != nil {
+		return "", ""
+	}
+	if after == marker {
+		return fingerprint, marker
+	}
+	postFingerprint, postMarker, postErr := verifiedDatabaseIdentity(path, contract)
+	if postErr == nil && postFingerprint == fingerprint {
+		return postFingerprint, postMarker
+	}
+	return fingerprint, marker
+}
 
 func verifiedDatabaseIdentity(path, contract string) (string, string, error) {
 	before, err := sourceFileMarker(path)
