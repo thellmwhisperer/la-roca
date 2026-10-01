@@ -89,8 +89,8 @@ Every session, exchange, thinking block, and tool call from that root is
 stamped `machine = "mini"`. The local HOME uses this machine's hostname; on
 upgrade, existing corpus rows without a machine label receive that hostname
 without rewriting the lexical index. For successfully ingested files whose
-content and parser revision are unchanged, local fingerprints and harvest
-cursors gain the machine tag without being re-parsed; failed ingests are retried.
+content and parser revision are unchanged, legacy machine-less fingerprints and
+harvest cursors remain accepted without being re-parsed; failed ingests are retried.
 The same project path on two machines stays distinguishable, and removing the
 `[[sources.remote]]` entry
 stops reading that root without deleting rows already written.
