@@ -1,0 +1,7 @@
+---
+name: synthetic-harbor
+description: how the synthetic harbor is kept
+metadata:
+  type: feedback
+---
+Keep the synthetic harbor chart in cobalt ink.

@@ -351,12 +351,13 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 				})
 			}
 		}
-		fingerprint, err := targetFingerprint(target)
+		fingerprint, err := targetFingerprint(target, state[target.Path])
 		if err != nil {
 			metadata, metadataErr := incrementality.MetadataFingerprint(target.Path)
 			isDatabase := target.Kind == parsers.KindOpenCodeDB || target.Kind == parsers.KindZCodeDB ||
 				target.Kind == parsers.KindHermesDB || target.Kind == parsers.KindLegacyStoreDB
-			if metadataErr == nil && !isDatabase && incrementality.UnchangedMetadata(
+			if metadataErr == nil && !isDatabase && target.Kind != parsers.KindZCodeMemory &&
+				target.Kind != parsers.KindGrokMemory && incrementality.UnchangedMetadata(
 				state, target.Path, metadata, target.Machine) {
 				result.FilesSkipped++
 				result.categorizeFile("skipped", "unchanged fingerprint")
@@ -395,6 +396,12 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 			result.categorizeFile("pending", "new or changed fingerprint")
 			stats.Read++
 			result.Coverage.skip(target.Path, "dry run pending")
+			// A dry run writes nothing, but the source line's memory count is what
+			// an operator uses to see that a memory family was claimed. These files
+			// are one row each, so the prospective count is the parse, not a write.
+			if countsProspectiveMemories(target.Kind) {
+				result.source(source).MemoriesInserted += prospectiveMemoryRows(target)
+			}
 			finishTarget()
 			continue
 		}
@@ -462,6 +469,25 @@ func excludedRecordCount(target Target) int {
 		return target.ExcludedRecords
 	}
 	return 1
+}
+
+func countsProspectiveMemories(kind parsers.Kind) bool {
+	return kind == parsers.KindZCodeMemory || kind == parsers.KindGrokMemory
+}
+
+func prospectiveMemoryRows(target Target) int {
+	content, err := os.ReadFile(target.Path)
+	if err != nil {
+		return 0
+	}
+	records, err := parseKind(target.Kind, content, parsers.FileMeta{
+		Path: target.Path, FileName: target.FileName,
+		Project: target.Project, SourceAgent: target.SourceAgent,
+	})
+	if err != nil {
+		return 0
+	}
+	return len(records.Memories)
 }
 
 func (r *Result) sourceStats(agent string) *SourceStats {
@@ -1388,6 +1414,7 @@ func declaredRoots(roots Roots) map[string]string {
 		"opencode_db":                roots.OpenCodeDB,
 		"opencode_telegram_bot_logs": roots.OpenCodeTelegramLogs,
 		"zcode_db":                   roots.ZCodeDB,
+		"zcode_memories":             roots.ZCodeMemories,
 		"pi_root":                    roots.PiRoot,
 		"pi_sessions":                roots.PiSessions,
 		"hermes_home":                roots.HermesHome,
@@ -1395,6 +1422,7 @@ func declaredRoots(roots Roots) map[string]string {
 		"legacy_store_db":            roots.LegacyStoreDB,
 		"grok_sessions":              roots.GrokSessions,
 		"grok_memtrace":              roots.GrokMemtrace,
+		"grok_memory_v2":             roots.GrokMemoryV2,
 		"claude_export":              strings.Join(roots.ClaudeWebExports, string(os.PathListSeparator)),
 		"chatgpt_export":             strings.Join(roots.ChatGPTWebExports, string(os.PathListSeparator)),
 	}

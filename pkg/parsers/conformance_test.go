@@ -79,6 +79,8 @@ var expectedCanonicalHarnesses = map[Kind]string{
 	KindCursorStore:             "Cursor",
 	KindGrokSession:             "Grok Build",
 	KindGrokSessionMetadata:     "Grok Build",
+	KindGrokMemory:              "Grok Build",
+	KindZCodeMemory:             "ZCode",
 	KindHermesMemory:            "Hermes",
 }
 

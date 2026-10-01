@@ -74,7 +74,10 @@ func readingVersion(kind parsers.Kind) string {
 	return ""
 }
 
-func targetFingerprint(target Target) (string, error) {
+func targetFingerprint(target Target, previous ...incrementality.FileState) (string, error) {
+	if len(previous) != 0 && (target.Kind == parsers.KindZCodeMemory || target.Kind == parsers.KindGrokMemory) {
+		return incrementality.CachedTargetFingerprint(incrementalityTarget(target), previous[0])
+	}
 	return incrementality.TargetFingerprint(incrementalityTarget(target))
 }
 
