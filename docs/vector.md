@@ -441,3 +441,31 @@ operator's own confidence probe; it needs no golden file.
 
 Search craft for agents lives in the `roca-operations` skill. The
 `roca-vector` skill owns index installation, progress, and maintenance.
+
+### Corpus change frontier
+
+Corpus schema 9 records inserts, embedding-relevant updates and deletes in
+`vector_changes`, in the same SQLite transaction as the content. Changes to a
+session title, project or start time also record its dependent sources. File
+watermarks and unrelated metadata do not enter this journal. Each event stores
+an integer sequence, a 32-character history token, table name and source ID;
+an insert adds one event and an update or delete adds at most two per source.
+The journal is retained so independent sidecars can resume from their own
+completed position. An index on `memories.source_session` bounds dependent-source
+lookup to that session.
+
+The vector companion saves its position only after indexing succeeds. With a
+compatible model and declaration, the next delta reads only changed source IDs
+and retains other indexed chunks. `sources_walked` reports actual visited
+sources; `sources` and `chunks` remain the complete index totals. During a journal delta,
+`unchanged` counts only visited chunks. Existing databases without a journal,
+changed declarations, interrupted indexing, replaced journal history and explicit reembedding use a
+full pass. The first pass after upgrading establishes the frontier.
+
+`TestCorpusChangeFrontierAppend` exercises the shared corpus writer against a
+January archive and a September append: 1 source walked, 2 chunks added and 0
+unchanged chunks. The same test requires zero walked sources after watermark
+and unrelated session metadata writes. Recovery tests cover edits, empty text,
+deletions, session context, rolled-back writes, failed embedding and legacy
+sidecars. The nightly accelerator remains an operator configuration override;
+this boundary does not change the bundled CPU default.
