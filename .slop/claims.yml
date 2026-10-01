@@ -96,6 +96,10 @@ claims:
     contract:
       file: features/store/search.feature
       item: "Search matches whole words, never substrings inside other words"
+  data/vector_changes.sql:
+    contract:
+      file: internal/distribution/rocacorpus/frontier_test.go
+      item: "TestCorpusChangeFrontierUpgrade"
   internal/distribution/skill/agents.md:
     contract:
       file: features/distribution/skill.feature

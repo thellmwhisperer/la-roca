@@ -1068,6 +1068,7 @@ func (r *FederationDelta) add(owner string, delta Delta) {
 	r.Removed += delta.Removed
 	r.Unchanged += delta.Unchanged
 	r.Sources += delta.Sources
+	r.SourcesWalked += delta.SourcesWalked
 	r.Chunks += delta.Chunks
 	r.Databases = append(r.Databases, DatabaseDelta{Owner: owner, Counts: delta})
 }
@@ -1083,6 +1084,7 @@ func (f Federation) index(database vectorDatabase, reader DeclaredCorpus, sideca
 }
 
 type DeclaredCorpus struct {
+	frontier   *changeFrontier
 	Core       CoreCLI
 	Database   vectorDatabase
 	PluginRoot string
@@ -1145,6 +1147,9 @@ func (d DeclaredCorpus) WalkSources(ctx context.Context, sourceKind string,
 	}
 	iterators := make([]*declaredTableIterator, 0, len(tables))
 	for _, table := range tables {
+		if d.frontier != nil && d.frontier.changed != nil && len(d.frontier.changed[table.Name]) == 0 {
+			continue
+		}
 		iterator := &declaredTableIterator{corpus: d, table: table, catalog: catalog}
 		if err := iterator.advance(ctx); err != nil {
 			return err
@@ -1542,12 +1547,16 @@ func (d DeclaredCorpus) CountSources(ctx context.Context, sourceKind string) (in
 func (d DeclaredCorpus) sourceQuery(table vectorTable,
 	catalog map[string]map[string]bool) string {
 	contextSQL, join := d.contextSQL(table, catalog)
+	predicate := declaredSourcePredicate("src", table)
+	if d.frontier != nil && d.frontier.changed != nil {
+		predicate += " AND " + d.frontier.predicate(table)
+	}
 	return fmt.Sprintf(`SELECT CAST(src.%s AS TEXT) AS source_id%s%s FROM %s.%s src%s
 		WHERE %s
 		ORDER BY context_time DESC, source_id DESC`,
 		quoteIdentifier(table.IDColumn), declaredColumnSelect("src", table.TextColumns), contextSQL,
 		quoteIdentifier(d.Database.Alias), quoteIdentifier(table.Name), join,
-		declaredSourcePredicate("src", table))
+		predicate)
 }
 
 func (d DeclaredCorpus) contextSQL(table vectorTable,

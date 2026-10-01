@@ -97,12 +97,13 @@ type chunkCounter interface {
 }
 
 type Delta struct {
-	Added     int `json:"added"`
-	Updated   int `json:"updated"`
-	Removed   int `json:"removed"`
-	Unchanged int `json:"unchanged"`
-	Sources   int `json:"sources"`
-	Chunks    int `json:"chunks"`
+	SourcesWalked int `json:"sources_walked"`
+	Added         int `json:"added"`
+	Updated       int `json:"updated"`
+	Removed       int `json:"removed"`
+	Unchanged     int `json:"unchanged"`
+	Sources       int `json:"sources"`
+	Chunks        int `json:"chunks"`
 }
 
 type IngestProgress struct {
@@ -278,7 +279,19 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 			return Delta{}, err
 		}
 	}
-	if counter, ok := i.Corpus.(sourceCounter); ok {
+	var frontier *changeFrontier
+	if declared, ok := i.Corpus.(DeclaredCorpus); ok && sourceKind == "" {
+		frontier, err = declared.readFrontier(ctx, store, i.Model, i.Reembed)
+		if err != nil {
+			return Delta{}, err
+		}
+		declared.frontier = frontier
+		i.Corpus = declared
+	}
+	if _, err := store.ExecContext(ctx, `DELETE FROM meta WHERE key=?`, frontierMetaKey); err != nil {
+		return Delta{}, err
+	}
+	if counter, ok := i.Corpus.(sourceCounter); ok && (frontier == nil || frontier.changed == nil) {
 		if total, countErr := counter.CountSources(ctx, sourceKind); countErr == nil {
 			i.totalHint = total
 		}
@@ -321,6 +334,13 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 		summary := scanSummary{desired: make(map[string]string, len(existingSnapshot)),
 			chunks: make(map[string]desiredChunk, len(existingSnapshot)), markers: map[string]desiredChunk{}}
 		seenSources := map[string]bool{}
+		if frontier != nil && frontier.changed != nil {
+			for key, chunk := range existingSnapshot {
+				if frontier.retains(chunk) {
+					summary.desired[key] = chunk.fingerprint
+				}
+			}
+		}
 		summary.err = i.Corpus.WalkSources(scanCtx, sourceKind, func(source sourceRow) error {
 			i.liveness.progressed()
 			rowKey := source.kind + "\x00" + source.stableID()
@@ -489,8 +509,24 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 			return Delta{}, err
 		}
 	}
+	report.SourcesWalked = summary.sources
 	report.Sources = summary.sources
 	report.Chunks = report.Added + report.Updated + report.Unchanged
+	if frontier != nil {
+		if err := store.QueryRowContext(ctx, `SELECT COUNT(*) FROM chunks`).Scan(&report.Chunks); err != nil {
+			return Delta{}, err
+		}
+		if err := store.QueryRowContext(ctx, `SELECT COUNT(*) FROM (SELECT DISTINCT source_kind,source_id FROM chunks)`).Scan(&report.Sources); err != nil {
+			return Delta{}, err
+		}
+		raw, err := json.Marshal(frontier)
+		if err != nil {
+			return Delta{}, err
+		}
+		if _, err := store.ExecContext(ctx, `INSERT OR REPLACE INTO meta(key,value) VALUES (?,?)`, frontierMetaKey, string(raw)); err != nil {
+			return Delta{}, err
+		}
+	}
 	return report, nil
 }
 
