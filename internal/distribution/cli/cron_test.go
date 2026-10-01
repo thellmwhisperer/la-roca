@@ -88,20 +88,7 @@ func TestCronListAndDryRunRemainAvailableInReadOnlyMode(t *testing.T) {
 }
 
 func TestCronHourlyVectorDeltaRecordsAFailedShellRide(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("unix shell ride")
-	}
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("ROCA_MODELS_ORDER", "none")
-	writeConfig(t, home, `[features]
-cron = true
-
-[ride.vector_delta]
-train = "hourly"
-command = "echo vector-delta-progress >&2; exit 1"
-`)
-	ensureCronInstalled(t, home)
+	setupUnixCronRide(t, `command = "echo vector-delta-progress >&2; exit 1"`)
 	env, output, warnings := newCronTestEnv()
 	code, err := executeWithEnv(env, []string{"cron", "run", "hourly"}, nil)
 	if err != nil || code != ExitError ||
@@ -231,20 +218,7 @@ func TestObservedSchedulerInvocationIsNotRefused(t *testing.T) {
 }
 
 func TestCronRunRecordsAnObservedJourney(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("unix shell ride")
-	}
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("ROCA_MODELS_ORDER", "none")
-	writeConfig(t, home, `[features]
-cron = true
-
-[ride.vector_delta]
-train = "hourly"
-command = 'printf %s "$ROCA_CRON_OBSERVED"'
-`)
-	ensureCronInstalled(t, home)
+	home := setupUnixCronRide(t, `command = 'printf %s "$ROCA_CRON_OBSERVED"'`)
 	env, output, warnings := newCronTestEnv()
 	code, err := executeWithEnv(env, []string{"cron", "run", "hourly"}, nil)
 	if err != nil || code != ExitOK || !strings.Contains(output.String(), "exit=0") {
@@ -267,4 +241,22 @@ command = 'printf %s "$ROCA_CRON_OBSERVED"'
 	if count != 1 || stdout != "1" {
 		t.Fatalf("journeys = %d stdout = %q", count, stdout)
 	}
+}
+
+func setupUnixCronRide(t *testing.T, command string) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("unix shell ride")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("ROCA_MODELS_ORDER", "none")
+	writeConfig(t, home, `[features]
+cron = true
+
+[ride.vector_delta]
+train = "hourly"
+`+command+"\n")
+	ensureCronInstalled(t, home)
+	return home
 }
