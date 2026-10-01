@@ -36,10 +36,10 @@ nobody answered has not consented to a download.
 `vector-registry.json`: plugin, database, declared tables, embedded chunks,
 candidate chunks, sidecar size, last write, state, lock status, and a
 `compact_recommended` flag. Embedded counts report live indexed chunks;
-candidate counts are stored by a completed full indexing pass under the declared
+candidate counts are stored by a completed unrestricted indexing pass under the declared
 chunking policy. Status uses that exact count only while its source generation
 and reader contract still match; it never reads or chunks source text. Legacy,
-partial, and changed sources have unknown candidate counts until a full pass. Either count can be
+partial, and changed sources have unknown candidate counts until that pass completes. Either count can be
 unknown (`null`), never an estimate or invented zero. Sidecar size and last
 write include its SQLite WAL and shared-memory files when present.
 
@@ -311,7 +311,8 @@ the new marker; otherwise it retains the earlier seal so status does not claim
 that the changed source is complete.
 
 `--source` and `--reembed` also bypass the cheap check and perform their sweep.
-When a sweep is needed, existing chunk fingerprints decide
+When source indexing is needed, the bundled corpus can restrict the sweep using
+its [change frontier](#corpus-change-frontier). Existing chunk fingerprints decide
 added, updated, and unchanged work; a desired-versus-stored fingerprint diff
 garbage-collects chunks and embeddings whose source disappeared. Optional
 manifest chunking hints override the kernel defaults without giving plugins
@@ -454,13 +455,18 @@ The journal is retained so independent sidecars can resume from their own
 completed position. An index on `memories.source_session` bounds dependent-source
 lookup to that session.
 
-The vector companion saves its position only after indexing succeeds. With a
-compatible model and declaration, the next delta reads only changed source IDs
+The vector companion saves its position only after indexing succeeds. For the
+bundled corpus, with a compatible model and declaration, the next unrestricted
+delta visits only changed source IDs
 and retains other indexed chunks. `sources_walked` reports actual visited
 sources; `sources` and `chunks` remain the complete index totals. During a journal delta,
 `unchanged` counts only visited chunks. Existing databases without a journal,
-changed declarations, interrupted indexing, replaced journal history and explicit reembedding use a
-full pass. The first pass after upgrading establishes the frontier.
+changed models or declarations, interrupted indexing, replaced journal history
+and explicit reembedding use a full pass. Declarations outside the supported
+corpus tables and columns also use the full walk. `--source` bypasses the frontier
+and sweeps the selected table. The first indexing pass after upgrading
+establishes the frontier. Database and WAL fingerprinting still follows the
+generation checks above; the frontier bounds source visits, not bytes hashed.
 
 `TestCorpusChangeFrontierAppend` exercises the shared corpus writer against a
 January archive and a September append: 1 source walked, 2 chunks added and 0
