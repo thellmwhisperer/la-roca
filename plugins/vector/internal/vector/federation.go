@@ -830,10 +830,10 @@ func (f Federation) Ingest(ctx context.Context, sourceKind string) (FederationDe
 		if sourceKind == "" {
 			storedFingerprint, storedMarker = refreshedSourceSeal(
 				f.databasePath(job.database), job.contract, job.fingerprint, job.marker)
-			if storedMarker == job.marker && beforeReaderClose[job] == job.marker {
+			if storedMarker == job.marker {
 				// The reader close was the only observed source change. A WAL
 				// checkpoint changes file bytes without changing indexed rows.
-				if after, err := sourceFileMarker(f.databasePath(job.database)); err == nil && after != job.marker {
+				if after, err := sourceFileMarker(f.databasePath(job.database)); err == nil && after != beforeReaderClose[job] {
 					storedFingerprint, storedMarker, _ = verifiedDatabaseIdentity(f.databasePath(job.database), job.contract)
 				}
 			}
