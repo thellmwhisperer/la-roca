@@ -3,7 +3,7 @@
   "destination": "store",
   "source": "MEMORY.golden",
   "meta": {
-    "Path": "/synthetic/home/.grok/memory-v2/workspaces/cobalt-harbor/MEMORY.md",
+    "Path": "/synthetic/agent-home/.grok/memory-v2/workspaces/cobalt-harbor/MEMORY.md",
     "FileName": "MEMORY.md",
     "Project": "cobalt-harbor",
     "SourceAgent": "grok"
