@@ -21,10 +21,8 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 )
 
-// TestMigrate100kWSL is the explicit, expensive issue #455 acceptance. Run it
-// with ROCA_BIN=<branch binary> go test -tags=acceptance,migrate_100k
-// ./test/acceptance -run '^TestMigrate100kWSL$' -count=1 -v. All databases and
-// snapshots live under this worktree's ignored .tmp directory.
+// TestMigrate100kWSL is the explicit, expensive issue #455 acceptance.
+// See CONTRIBUTING.md#build-and-test for the WSL invocation and evidence rules.
 func TestMigrate100kWSL(t *testing.T) {
 	for _, interrupted := range []bool{false, true} {
 		name := "uninterrupted"
