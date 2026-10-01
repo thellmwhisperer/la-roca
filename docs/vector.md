@@ -464,8 +464,9 @@ sources; `sources` and `chunks` remain the complete index totals. During a journ
 changed models or declarations, interrupted indexing, replaced journal history
 and explicit reembedding use a full pass. Declarations outside the supported
 corpus tables and columns also use the full walk. `--source` bypasses the frontier
-and sweeps the selected table. The first indexing pass after upgrading
-establishes the frontier. Database and WAL fingerprinting still follows the
+and sweeps the selected table, clearing the saved frontier. The next unrestricted
+pass that indexes sources establishes it with a full walk; an unchanged-generation
+skip does not establish a frontier. Database and WAL fingerprinting still follows the
 generation checks above; the frontier bounds source visits, not bytes hashed.
 
 `TestCorpusChangeFrontierAppend` exercises the shared corpus writer against a
@@ -473,5 +474,5 @@ January archive and a September append: 1 source walked, 2 chunks added and 0
 unchanged chunks. The same test requires zero walked sources after watermark
 and unrelated session metadata writes. Recovery tests cover edits, empty text,
 deletions, session context, rolled-back writes, failed embedding and legacy
-sidecars. The nightly accelerator remains an operator configuration override;
-this boundary does not change the bundled CPU default.
+sidecars. Nightly accelerator selection follows the operator overrides described
+under [The one download](#the-one-download).
