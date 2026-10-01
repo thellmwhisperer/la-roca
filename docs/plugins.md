@@ -1005,8 +1005,8 @@ PATH=/usr/bin:/bin:/home/you/.local/bin
 ```
 
 A crontab entry that starts the ride binary directly, such as `roca ingest` or
-`roca vector ingest --delta`, has no observer to record a journey. When a
-scheduler is an ancestor of that invocation, the command fails and names
+`roca vector ingest --delta`, has no observer to record a journey. When system
+`cron` or `crond` is an ancestor of that invocation, the command fails and names
 `roca cron run` with the train that owns that ride. Core ingest's train is
 `nightly`. An operator ride uses the train declared for it. `roca cron run`
 marks each ride it starts, so the same binaries do the work and the observer
