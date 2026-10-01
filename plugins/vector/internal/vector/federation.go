@@ -811,6 +811,13 @@ func (f Federation) Ingest(ctx context.Context, sourceKind string) (FederationDe
 		cancel()
 	}
 	workers.Wait()
+	beforeReaderClose := make(map[*ingestJob]string, len(jobs))
+	for _, job := range jobs {
+		beforeReaderClose[job], _ = sourceFileMarker(f.databasePath(job.database))
+	}
+	// Closing the reader may checkpoint the source WAL. Seal against the
+	// generation left behind after that close, not the still-open reader.
+	closeReader()
 	var ingestErr error
 	for _, job := range jobs {
 		if job.err != nil {
@@ -823,6 +830,13 @@ func (f Federation) Ingest(ctx context.Context, sourceKind string) (FederationDe
 		if sourceKind == "" {
 			storedFingerprint, storedMarker = refreshedSourceSeal(
 				f.databasePath(job.database), job.contract, job.fingerprint, job.marker)
+			if storedMarker == job.marker && beforeReaderClose[job] == job.marker {
+				// The reader close was the only observed source change. A WAL
+				// checkpoint changes file bytes without changing indexed rows.
+				if after, err := sourceFileMarker(f.databasePath(job.database)); err == nil && after != job.marker {
+					storedFingerprint, storedMarker, _ = verifiedDatabaseIdentity(f.databasePath(job.database), job.contract)
+				}
+			}
 		}
 		if err := sealSidecar(job.sidecar, job.database.owner(), f.Model, f.BuildVersion,
 			job.contract, storedFingerprint, storedMarker, job.delta); err != nil {
