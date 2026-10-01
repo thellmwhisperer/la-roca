@@ -304,11 +304,11 @@ the database and WAL through `pkg/incrementality`; a matching fingerprint can
 still avoid the sweep. `roca vector ingest --delta --verify` bypasses the cheap
 check and hashes the source even when its marker matches. SQLite
 connection-local `data_version` counters are not persisted generation evidence.
-Opening the source during the pass can change its file marker without changing
-its indexed content. The seal verifies the content again and stores the
-generation left after the reader closes, including a WAL checkpoint that
-changes file bytes without changing indexed rows. Status reads `complete` while
-that generation matches, and `outdated` when the source changes afterward.
+Opening and closing the source during a pass can change its file marker. After
+the reader closes, a changed marker triggers another database-and-WAL fingerprint
+check. If the fingerprint still matches the indexed generation, the seal stores
+the new marker; otherwise it retains the earlier seal so status does not claim
+that the changed source is complete.
 
 `--source` and `--reembed` also bypass the cheap check and perform their sweep.
 When a sweep is needed, existing chunk fingerprints decide
