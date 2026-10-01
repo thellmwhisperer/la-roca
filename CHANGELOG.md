@@ -4,8 +4,6 @@
 
 ### Bug Fixes
 
-* **mcp:** retire the leftover `mcp-audit` JSONL stream. MCP calls already land in `executions`; doctor counts those failures and no longer reads leftover `mcp-audit-*.jsonl` ([#483](https://github.com/thellmwhisperer/la-roca/issues/483)). See [streams and contents](docs/operations.md#streams-and-contents).
-
 * **migrate:** remove quadratic custody lookups and avoid repeating unchanged snapshots after interruption ([#455](https://github.com/thellmwhisperer/la-roca/issues/455)); add stage/batch progress and read-only ledger status. See [migration operations](docs/operations.md#explicit-data-split-migration) for output and resume behavior.
 
 * **vector:** reuse the embedding resident across `mcp serve` sessions ([#315](https://github.com/thellmwhisperer/la-roca/issues/315)); see the [MCP lifecycle](docs/mcp.md#1-roca-mcp-serve-the-mcp-over-stdio) for sharing scope and shutdown behavior.
@@ -25,6 +23,21 @@
 Most users need to do nothing: an already signed-in Codex or Claude CLI is detected and used automatically. Existing remote-provider configuration is tolerated and receives a migration proposal when a supported local CLI is available, or a removal proposal when none is available. A provider table that declares its own `command` keeps that command: the proposal removes only the retired authentication keys. Recovery backups made while retiring those providers are credential-redacted rather than byte-exact. If an older installation left files under `~/.roca/credentials`, La Roca no longer reads them; they never disable a working CLI transport and are offered for removal on their own. `roca init` retires nothing behind its model confirmation, and `roca update` no longer refreshes a remote model catalogue.
 
 The bootstrap JSON field `external_credential` is now named `command_transport`; it reports that the selected model runs through a local agent CLI without implying that La Roca owns authentication.
+
+## [1.92.0](https://github.com/thellmwhisperer/la-roca/compare/v1.91.0...v1.92.0) (2026-09-24)
+
+
+### Features
+
+* **release:** align PR gates with the release train ([#504](https://github.com/thellmwhisperer/la-roca/issues/504)) ([dfb49f8](https://github.com/thellmwhisperer/la-roca/commit/dfb49f8a8cb77fd0d4d012154a56ad7f830e37e1))
+* **service:** print an executable remedy for every failing health check ([#489](https://github.com/thellmwhisperer/la-roca/issues/489)) ([d66252c](https://github.com/thellmwhisperer/la-roca/commit/d66252caf44ef7debca11ca208feaf88e8e5164a))
+
+
+### Bug Fixes
+
+* **distribution:** retire the leftover MCP audit stream ([#501](https://github.com/thellmwhisperer/la-roca/issues/501)) ([0e8345d](https://github.com/thellmwhisperer/la-roca/commit/0e8345da03a58010ce5663f6bb7237e61b26ed54))
+* harden data lifecycle and federation diagnostics ([#493](https://github.com/thellmwhisperer/la-roca/issues/493)) ([76dc83f](https://github.com/thellmwhisperer/la-roca/commit/76dc83ff26cfdb22b14468dd865e4896c586c5c0))
+* make health failures repairable and harden federation lifecycle ([#498](https://github.com/thellmwhisperer/la-roca/issues/498)) ([f51a90d](https://github.com/thellmwhisperer/la-roca/commit/f51a90d527a98d19dd833889a4ff7769bcf73e4f))
 
 ## [1.91.0](https://github.com/thellmwhisperer/la-roca/compare/v1.90.1...v1.91.0) (2026-09-21)
 
