@@ -26,6 +26,21 @@ Most users need to do nothing: an already signed-in Codex or Claude CLI is detec
 
 The bootstrap JSON field `external_credential` is now named `command_transport`; it reports that the selected model runs through a local agent CLI without implying that La Roca owns authentication.
 
+## [1.92.0](https://github.com/thellmwhisperer/la-roca/compare/v1.91.0...v1.92.0) (2026-09-24)
+
+
+### Features
+
+* **release:** align PR gates with the release train ([#504](https://github.com/thellmwhisperer/la-roca/issues/504)) ([dfb49f8](https://github.com/thellmwhisperer/la-roca/commit/dfb49f8a8cb77fd0d4d012154a56ad7f830e37e1))
+* **service:** print an executable remedy for every failing health check ([#489](https://github.com/thellmwhisperer/la-roca/issues/489)) ([d66252c](https://github.com/thellmwhisperer/la-roca/commit/d66252caf44ef7debca11ca208feaf88e8e5164a))
+
+
+### Bug Fixes
+
+* **distribution:** retire the leftover MCP audit stream ([#501](https://github.com/thellmwhisperer/la-roca/issues/501)) ([0e8345d](https://github.com/thellmwhisperer/la-roca/commit/0e8345da03a58010ce5663f6bb7237e61b26ed54))
+* harden data lifecycle and federation diagnostics ([#493](https://github.com/thellmwhisperer/la-roca/issues/493)) ([76dc83f](https://github.com/thellmwhisperer/la-roca/commit/76dc83ff26cfdb22b14468dd865e4896c586c5c0))
+* make health failures repairable and harden federation lifecycle ([#498](https://github.com/thellmwhisperer/la-roca/issues/498)) ([f51a90d](https://github.com/thellmwhisperer/la-roca/commit/f51a90d527a98d19dd833889a4ff7769bcf73e4f))
+
 ## [1.91.0](https://github.com/thellmwhisperer/la-roca/compare/v1.90.1...v1.91.0) (2026-09-21)
 
 
