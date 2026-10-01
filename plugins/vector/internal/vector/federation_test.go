@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -35,17 +36,67 @@ func TestFederationReportsSchedulerStallInsteadOfWorkerCancellation(t *testing.T
 
 func TestDeltaSealsStatusAfterSourceChangeTimeMoves(t *testing.T) {
 	federation, corpusPath, opsPath, _ := federationFixture(t)
+	sourcePaths := map[string]string{
+		"roca-corpus/corpus": corpusPath,
+		"roca-ops/ops":       opsPath,
+	}
+	before := make(map[string]string, len(sourcePaths))
+	for _, path := range sourcePaths {
+		marker, err := sourceFileMarker(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		before[path] = marker
+	}
+	var sourceMu sync.Mutex
+	changed := make(map[string]bool, len(sourcePaths))
 	inner := federation.Core.readRequest
 	federation.Core.readRequest = func(ctx context.Context, core CoreCLI, request map[string]any, result any) error {
-		for _, path := range []string{corpusPath, opsPath} {
-			if err := os.Chmod(path, 0o600); err != nil {
+		sourceMu.Lock()
+		defer sourceMu.Unlock()
+		if err := inner(ctx, core, request, result); err != nil {
+			return err
+		}
+		for _, path := range sourcePaths {
+			if changed[path] {
+				continue
+			}
+			changed[path] = true
+			info, err := os.Stat(path)
+			if err != nil {
+				return err
+			}
+			contents, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			replacement := path + ".replacement"
+			if err := os.WriteFile(replacement, contents, info.Mode().Perm()); err != nil {
+				return err
+			}
+			if err := os.Chtimes(replacement, info.ModTime(), info.ModTime()); err != nil {
+				return err
+			}
+			if err := os.Rename(replacement, path); err != nil {
 				return err
 			}
 		}
-		return inner(ctx, core, request, result)
+		return nil
 	}
 	if _, err := federation.Ingest(context.Background(), ""); err != nil {
 		t.Fatal(err)
+	}
+	federation.Core.readRequest = inner
+	after := make(map[string]string, len(sourcePaths))
+	for _, path := range sourcePaths {
+		marker, err := sourceFileMarker(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if marker == before[path] {
+			t.Fatalf("%s source marker did not move", path)
+		}
+		after[path] = marker
 	}
 	report, err := ReportVectorization(context.Background(), StatusRequest{PluginRoot: federation.PluginRoot})
 	if err != nil {
@@ -54,17 +105,14 @@ func TestDeltaSealsStatusAfterSourceChangeTimeMoves(t *testing.T) {
 	if len(report.Databases) != 2 {
 		t.Fatalf("status databases = %+v", report.Databases)
 	}
-	sidecars := map[string]string{
-		"roca-corpus/corpus": SidecarPath(corpusPath),
-		"roca-ops/ops":       SidecarPath(opsPath),
-	}
 	for _, row := range report.Databases {
 		owner := row.Plugin + "/" + row.Database
 		if row.State != StateComplete {
 			t.Fatalf("%s state = %s, want complete: %+v", owner, row.State, row)
 		}
-		metadata := sidecarMeta(t, sidecars[owner])
-		if metadata["source_fingerprint"] == "" || metadata["source_marker"] == "" {
+		path := sourcePaths[owner]
+		metadata := sidecarMeta(t, SidecarPath(path))
+		if metadata["source_fingerprint"] == "" || metadata["source_marker"] != after[path] {
 			t.Fatalf("%s seal = %+v", owner, metadata)
 		}
 	}
