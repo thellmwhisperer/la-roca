@@ -446,7 +446,7 @@ Search craft for agents lives in the `roca-operations` skill. The
 ### Corpus change frontier
 
 Corpus schema 9 records inserts, embedding-relevant updates and deletes in
-`vector_changes`, in the same SQLite transaction as the content. Changes to a
+[`vector_changes`](../data/vector_changes.sql), in the same SQLite transaction as the content. Changes to a
 session title, project or start time also record its dependent sources. File
 watermarks and unrelated metadata do not enter this journal. Each event stores
 an integer sequence, a 32-character history token, table name and source ID;
