@@ -55,8 +55,6 @@ func registerDistributionCLISteps(ctx *godog.ScenarioContext, w *distributionWor
 		w.declareOperatorVectorDelta)
 	ctx.Then(`^the nightly train reports 2 rides and names the operator declaration$`,
 		w.nightlyTrainReportsOperatorVectorDelta)
-	ctx.Then(`^each nightly ride is recorded as a journey$`,
-		w.nightlyRidesAreRecordedAsJourneys)
 }
 
 func (w *distributionWorld) previewDefaultCronTrain() error {
@@ -78,8 +76,14 @@ func (w *distributionWorld) previewDefaultCronTrain() error {
 	}
 	w.state["cron-list"] = w.runAt(w.home, w.installed, "cron", "list")
 	w.last = w.runAt(w.home, w.installed, "cron", "run", "--dry-run")
-	journeys, err := w.cronJourneyCount()
+	database := filepath.Join(w.home, ".roca", "plugins", "roca-cron", "roca-cron.db")
+	db, err := sql.Open("sqlite", database)
 	if err != nil {
+		return err
+	}
+	defer db.Close()
+	var journeys int
+	if err := db.QueryRow("SELECT count(*) FROM journeys").Scan(&journeys); err != nil {
 		return err
 	}
 	w.state["cron-journeys"] = journeys
@@ -122,31 +126,6 @@ func (w *distributionWorld) nightlyTrainReportsOperatorVectorDelta() error {
 		return fmt.Errorf("operator nightly train = %+v", w.last)
 	}
 	return nil
-}
-
-func (w *distributionWorld) nightlyRidesAreRecordedAsJourneys() error {
-	journeys, err := w.cronJourneyCount()
-	if err != nil {
-		return err
-	}
-	if journeys != 2 {
-		return fmt.Errorf("nightly journey count = %d, want 2", journeys)
-	}
-	return nil
-}
-
-func (w *distributionWorld) cronJourneyCount() (int, error) {
-	database := filepath.Join(w.home, ".roca", "plugins", "roca-cron", "roca-cron.db")
-	db, err := sql.Open("sqlite", database)
-	if err != nil {
-		return 0, err
-	}
-	defer db.Close()
-	var journeys int
-	if err := db.QueryRow("SELECT count(*) FROM journeys").Scan(&journeys); err != nil {
-		return 0, err
-	}
-	return journeys, nil
 }
 
 func (w *distributionWorld) cronDryRunIsInert() error {

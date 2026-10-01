@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"database/sql"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -9,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacron"
-	_ "modernc.org/sqlite"
 )
 
 func TestCronListsAndPreviewsTheBundledCoreRide(t *testing.T) {
@@ -88,7 +86,20 @@ func TestCronListAndDryRunRemainAvailableInReadOnlyMode(t *testing.T) {
 }
 
 func TestCronHourlyVectorDeltaRecordsAFailedShellRide(t *testing.T) {
-	setupUnixCronRide(t, `command = "echo vector-delta-progress >&2; exit 1"`)
+	if runtime.GOOS == "windows" {
+		t.Skip("unix shell ride")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("ROCA_MODELS_ORDER", "none")
+	writeConfig(t, home, `[features]
+cron = true
+
+[ride.vector_delta]
+train = "hourly"
+command = "echo vector-delta-progress >&2; exit 1"
+`)
+	ensureCronInstalled(t, home)
 	env, output, warnings := newCronTestEnv()
 	code, err := executeWithEnv(env, []string{"cron", "run", "hourly"}, nil)
 	if err != nil || code != ExitError ||
@@ -136,21 +147,6 @@ func TestCronCommandDoesNotExistUntilItsFeatureIsEnabled(t *testing.T) {
 	}
 }
 
-func TestRideBinaryInvocationMatchesVectorSubcommandPosition(t *testing.T) {
-	for _, test := range []struct {
-		args []string
-		want bool
-	}{
-		{args: []string{"vector", "ingest"}, want: true},
-		{args: []string{"vector", "query", "ingest"}, want: false},
-		{args: []string{"ingest"}, want: true},
-	} {
-		if got := rideBinaryInvocation(test.args); got != test.want {
-			t.Errorf("rideBinaryInvocation(%v) = %t, want %t", test.args, got, test.want)
-		}
-	}
-}
-
 func newCronTestEnv() (*cliEnv, *strings.Builder, *strings.Builder) {
 	output := &strings.Builder{}
 	warnings := &strings.Builder{}
@@ -163,129 +159,4 @@ func ensureCronInstalled(t *testing.T, home string) {
 		filepath.Join(home, ".local", "bin"), "test"); err != nil {
 		t.Fatal(err)
 	}
-}
-
-func TestDirectSchedulerInvocationNamesTheCronRunRemedy(t *testing.T) {
-	for _, parent := range []string{"/usr/sbin/cron", "crond"} {
-		t.Run(parent, func(t *testing.T) {
-			home := t.TempDir()
-			t.Setenv("HOME", home)
-			t.Setenv("ROCA_MODELS_ORDER", "none")
-			t.Setenv(rocacron.ObservedEnv, "")
-			writeConfig(t, home, "[features]\ncron = true\n")
-			previous := schedulerAncestry
-			schedulerAncestry = func() []authorshipProcess {
-				return []authorshipProcess{{Command: parent}}
-			}
-			t.Cleanup(func() { schedulerAncestry = previous })
-			for _, args := range [][]string{
-				{"ingest"},
-				{"vector", "ingest", "--delta"},
-			} {
-				env, output, warnings := newCronTestEnv()
-				code, err := executeWithEnv(env, args, nil)
-				if err == nil || code == ExitOK ||
-					!strings.Contains(err.Error(), "cannot record a cron journey") ||
-					!strings.Contains(err.Error(), "remedy: roca cron run nightly") {
-					t.Fatalf("%v = code %d err %v out=%q errOut=%q",
-						args, code, err, output.String(), warnings.String())
-				}
-			}
-			db := filepath.Join(home, ".roca", "plugins", rocacron.Name, rocacron.DatabaseFilename)
-			if _, err := os.Stat(db); !os.IsNotExist(err) {
-				t.Fatalf("direct scheduler invocation recorded a journey database: %v", err)
-			}
-		})
-	}
-}
-
-func TestVectorDeltaRemedyNamesItsConfiguredTrain(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("ROCA_MODELS_ORDER", "none")
-	t.Setenv(rocacron.ObservedEnv, "")
-	writeConfig(t, home, `[features]
-cron = true
-
-[ride.vector_delta]
-train = "hourly"
-command = "echo operator-vector-delta"
-`)
-	previous := schedulerAncestry
-	schedulerAncestry = func() []authorshipProcess {
-		return []authorshipProcess{{Command: "/usr/sbin/cron"}}
-	}
-	t.Cleanup(func() { schedulerAncestry = previous })
-	env, _, _ := newCronTestEnv()
-	_, err := executeWithEnv(env, []string{"vector", "ingest", "--delta"}, nil)
-	if err == nil || !strings.Contains(err.Error(), "remedy: roca cron run hourly") ||
-		strings.Contains(err.Error(), "nightly") {
-		t.Fatalf("vector delta remedy = %v", err)
-	}
-	_, err = executeWithEnv(env, []string{"ingest"}, nil)
-	if err == nil || !strings.Contains(err.Error(), "remedy: roca cron run nightly") {
-		t.Fatalf("core ingest remedy = %v", err)
-	}
-}
-
-func TestObservedSchedulerInvocationIsNotRefused(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("ROCA_MODELS_ORDER", "none")
-	t.Setenv(rocacron.ObservedEnv, "1")
-	writeConfig(t, home, "[features]\ncron = true\n")
-	previous := schedulerAncestry
-	schedulerAncestry = func() []authorshipProcess {
-		return []authorshipProcess{{Command: "cron"}}
-	}
-	t.Cleanup(func() { schedulerAncestry = previous })
-	env, _, _ := newCronTestEnv()
-	_, err := executeWithEnv(env, []string{"ingest"}, nil)
-	if err != nil && strings.Contains(err.Error(), "cannot record a cron journey") {
-		t.Fatalf("observed ingest was refused: %v", err)
-	}
-}
-
-func TestCronRunRecordsAnObservedJourney(t *testing.T) {
-	home := setupUnixCronRide(t, `command = 'printf %s "$ROCA_CRON_OBSERVED"'`)
-	env, output, warnings := newCronTestEnv()
-	code, err := executeWithEnv(env, []string{"cron", "run", "hourly"}, nil)
-	if err != nil || code != ExitOK || !strings.Contains(output.String(), "exit=0") {
-		t.Fatalf("hourly observed ride = code %d err %v out=%q errOut=%q",
-			code, err, output.String(), warnings.String())
-	}
-	db, err := sql.Open("sqlite", filepath.Join(home, ".roca", "plugins", rocacron.Name, rocacron.DatabaseFilename))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	var count int
-	var stdout string
-	if err := db.QueryRow(`SELECT COUNT(*) FROM journeys`).Scan(&count); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.QueryRow(`SELECT stdout FROM journeys`).Scan(&stdout); err != nil {
-		t.Fatal(err)
-	}
-	if count != 1 || stdout != "1" {
-		t.Fatalf("journeys = %d stdout = %q", count, stdout)
-	}
-}
-
-func setupUnixCronRide(t *testing.T, command string) string {
-	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("unix shell ride")
-	}
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("ROCA_MODELS_ORDER", "none")
-	writeConfig(t, home, `[features]
-cron = true
-
-[ride.vector_delta]
-train = "hourly"
-`+command+"\n")
-	ensureCronInstalled(t, home)
-	return home
 }

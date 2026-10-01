@@ -31,10 +31,6 @@ const (
 	SchemaVersion    = 1
 	IndexVersion     = 0
 
-	// ObservedEnv marks a ride started by roca cron run. The child does the
-	// work and the observer records the journey.
-	ObservedEnv = "ROCA_CRON_OBSERVED"
-
 	GateReady               = "ready"
 	GateAfterIngestOK       = "after_ingest_ok"
 	GateDeferredAfterIngest = "deferred_after_ingest"
@@ -528,18 +524,6 @@ func (e *excerpt) String() string {
 	return redacted
 }
 
-func observedCommandEnv() []string {
-	prefix := ObservedEnv + "="
-	env := make([]string, 0, len(os.Environ())+1)
-	for _, entry := range os.Environ() {
-		if strings.HasPrefix(entry, prefix) {
-			continue
-		}
-		env = append(env, entry)
-	}
-	return append(env, ObservedEnv+"=1")
-}
-
 func runShellCommand(ctx context.Context, command string, out, errOut io.Writer) (int, error) {
 	var child *exec.Cmd
 	if runtime.GOOS == "windows" {
@@ -552,7 +536,6 @@ func runShellCommand(ctx context.Context, command string, out, errOut io.Writer)
 		child = exec.CommandContext(ctx, "/bin/sh", "-c", command)
 	}
 	child.Stdout, child.Stderr = out, errOut
-	child.Env = observedCommandEnv()
 	err := child.Run()
 	if err == nil {
 		return 0, nil

@@ -26,7 +26,6 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
-	pluginstd "github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 	"github.com/thellmwhisperer/la-roca/internal/securefile"
 )
@@ -124,10 +123,6 @@ func executeWithOptions(env *cliEnv, args []string, in io.Reader, plugins bool) 
 	}
 	if !doctorInvocation(args) {
 		env.loadCommandFeatures()
-	}
-	if err := refuseUnobservedScheduler(env, args); err != nil {
-		env.skipExecutionLog = true
-		return ExitError, logfile.Correlate(err)
 	}
 	root := rootCommand(env)
 	if handled, residentErr := env.tryResident(context.Background(), args); handled {
@@ -428,85 +423,6 @@ func vectorIngestInvocation(args []string) bool {
 		}
 	}
 	return false
-}
-
-// schedulerAncestry is the process chain above this invocation. Tests replace
-// it. Only a cron or crond parent counts as the system scheduler.
-var schedulerAncestry = func() []authorshipProcess {
-	return processAncestry(os.Getppid())
-}
-
-// refuseUnobservedScheduler stops a scheduler that started the ride binary
-// itself. roca cron run marks the children it starts, and those children still
-// do the work while the observer records the journey.
-func refuseUnobservedScheduler(env *cliEnv, args []string) error {
-	if !rideBinaryInvocation(args) || os.Getenv(rocacron.ObservedEnv) == "1" {
-		return nil
-	}
-	for _, process := range schedulerAncestry() {
-		switch filepath.Base(process.Command) {
-		case "cron", "crond":
-			return fmt.Errorf("cannot record a cron journey from this invocation; remedy: roca cron run %s",
-				schedulerRemedyTrain(env, args))
-		}
-	}
-	return nil
-}
-
-// schedulerRemedyTrain names the train that actually owns the refused ride.
-// Core ingest stays on the default train. vector_delta uses the operator's
-// declared train when one exists.
-func schedulerRemedyTrain(env *cliEnv, args []string) string {
-	if !vectorRideInvocation(args) || env == nil {
-		return pluginstd.DefaultTrain
-	}
-	paths, err := env.resolvePaths()
-	if err != nil {
-		return pluginstd.DefaultTrain
-	}
-	rides, _, err := pluginstd.DiscoverOperatorRides(
-		paths.Config, filepath.Join(filepath.Dir(paths.DB), config.DirRides))
-	if err != nil {
-		return pluginstd.DefaultTrain
-	}
-	for _, ride := range rides {
-		if ride.Name == "vector_delta" && ride.Train != "" {
-			return ride.Train
-		}
-	}
-	return pluginstd.DefaultTrain
-}
-
-func rideBinaryInvocation(args []string) bool {
-	positionals := ridePositionals(args)
-	if len(positionals) == 0 {
-		return false
-	}
-	if positionals[0] == "ingest" {
-		return true
-	}
-	return vectorRideInvocation(args)
-}
-
-func vectorRideInvocation(args []string) bool {
-	positionals := ridePositionals(args)
-	return len(positionals) > 1 && positionals[0] == "vector" && positionals[1] == "ingest"
-}
-
-func ridePositionals(args []string) []string {
-	var positionals []string
-	for index := 0; index < len(args); index++ {
-		argument := args[index]
-		switch {
-		case argument == "--db-path" || argument == "--state-dir" || argument == "--progress-fd":
-			index++
-		case strings.HasPrefix(argument, "-"):
-			continue
-		default:
-			positionals = append(positionals, argument)
-		}
-	}
-	return positionals
 }
 
 type stderrProbe struct {

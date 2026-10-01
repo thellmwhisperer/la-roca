@@ -1004,14 +1004,6 @@ PATH=/usr/bin:/bin:/home/you/.local/bin
 17 3 * * * /home/you/.local/bin/roca cron run nightly
 ```
 
-A crontab entry that starts the ride binary directly, such as `roca ingest` or
-`roca vector ingest --delta`, has no observer to record a journey. When system
-`cron` or `crond` is an ancestor of that invocation, the command fails and names
-`roca cron run` with the train that owns that ride. Core ingest's train is
-`nightly`. An operator ride uses the train declared for it. `roca cron run`
-marks each ride it starts, so the same binaries do the work and the observer
-records the journey.
-
 `roca-cron` owns its journey database outside corpus and ops so its retention
 policy stays its own. The manifest schema can already describe that database;
 migrating cron to it is a later federation step.
