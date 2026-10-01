@@ -70,7 +70,7 @@ func TestDeltaSealsStatusAfterSourceChangeTimeMoves(t *testing.T) {
 	}
 }
 
-func TestPostCloseSealKeepsIdentityWhenRecheckFails(t *testing.T) {
+func TestRefreshedSourceSealKeepsIndexedIdentityWhenSourceChanges(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "source.db")
 	db := openTestSQLite(t, path)
 	if _, err := db.Exec(`CREATE TABLE articles (id TEXT)`); err != nil {
@@ -83,14 +83,17 @@ func TestPostCloseSealKeepsIdentityWhenRecheckFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(path, []byte("source changed"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	previous := hashVectorSource
 	hashVectorSource = func(string, string) (string, error) {
-		return "", errors.New("source still moving")
+		return "new-fingerprint", nil
 	}
 	t.Cleanup(func() { hashVectorSource = previous })
-	fingerprint, gotMarker := postCloseSeal(path, "contract", "fingerprint", marker, "before-close")
+	fingerprint, gotMarker := refreshedSourceSeal(path, "contract", "fingerprint", marker)
 	if fingerprint != "fingerprint" || gotMarker != marker {
-		t.Fatalf("seal = (%q, %q), want the pre-sweep identity", fingerprint, gotMarker)
+		t.Fatalf("seal = (%q, %q), want the indexed identity", fingerprint, gotMarker)
 	}
 }
 

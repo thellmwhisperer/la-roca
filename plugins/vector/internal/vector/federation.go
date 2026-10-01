@@ -811,10 +811,6 @@ func (f Federation) Ingest(ctx context.Context, sourceKind string) (FederationDe
 		cancel()
 	}
 	workers.Wait()
-	beforeReaderClose := make(map[*ingestJob]string, len(jobs))
-	for _, job := range jobs {
-		beforeReaderClose[job], _ = sourceFileMarker(f.databasePath(job.database))
-	}
 	// Closing the reader may checkpoint the source WAL. Seal against the
 	// generation left behind after that close, not the still-open reader.
 	closeReader()
@@ -828,9 +824,8 @@ func (f Federation) Ingest(ctx context.Context, sourceKind string) (FederationDe
 		}
 		storedFingerprint, storedMarker := "", ""
 		if sourceKind == "" {
-			storedFingerprint, storedMarker = postCloseSeal(
-				f.databasePath(job.database), job.contract, job.fingerprint, job.marker,
-				beforeReaderClose[job])
+			storedFingerprint, storedMarker = refreshedSourceSeal(
+				f.databasePath(job.database), job.contract, job.fingerprint, job.marker)
 		}
 		if err := sealSidecar(job.sidecar, job.database.owner(), f.Model, f.BuildVersion,
 			job.contract, storedFingerprint, storedMarker, job.delta); err != nil {
@@ -1710,31 +1705,6 @@ var (
 	errSourceChanged  = errors.New("vector source changed while it was inspected")
 	hashVectorSource  = databaseFingerprint
 )
-
-// postCloseSeal keeps a finished pass identifiable after the reader closes.
-// A checkpoint can move the source after the sweep. A stable re-read stores
-// that later generation. A re-read that never settles keeps the pre-sweep
-// fingerprint and marker, so status can report the sidecar as outdated.
-func postCloseSeal(path, contract, fingerprint, marker, beforeClose string) (string, string) {
-	storedFingerprint, storedMarker := refreshedSourceSeal(path, contract, fingerprint, marker)
-	if fingerprint == "" || marker == "" || storedMarker != marker {
-		return storedFingerprint, storedMarker
-	}
-	after, err := sourceFileMarker(path)
-	if err != nil || after == beforeClose {
-		return storedFingerprint, storedMarker
-	}
-	for attempt := 0; attempt < 5; attempt++ {
-		if attempt > 0 {
-			time.Sleep(20 * time.Millisecond)
-		}
-		postFingerprint, postMarker, postErr := verifiedDatabaseIdentity(path, contract)
-		if postErr == nil && postFingerprint != "" && postMarker != "" {
-			return postFingerprint, postMarker
-		}
-	}
-	return storedFingerprint, storedMarker
-}
 
 // refreshedSourceSeal records the generation a finished pass actually observed.
 // Opening the source during the sweep can move its change time while the bytes
