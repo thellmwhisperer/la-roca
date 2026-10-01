@@ -22,9 +22,6 @@ func detectZCodeMemory(file File) bool {
 // so a file shaped exactly like a Claude memory still parses.
 func ParseZCodeMemory(content []byte, meta FileMeta) (Records, error) {
 	file := ParseMemoryFile(content)
-	if file.Type == "" {
-		file.Type = zcodeNestedType(content)
-	}
 	if file.Body == "" {
 		return Records{}, nil
 	}
@@ -46,33 +43,4 @@ func zcodeMemoryPath(path string) bool {
 		return i+4 == len(parts)-1
 	}
 	return false
-}
-
-func zcodeNestedType(content []byte) string {
-	match := frontmatter.FindStringSubmatch(string(content))
-	if match == nil {
-		return ""
-	}
-	header := strings.ReplaceAll(match[1], "\r\n", "\n")
-	inMetadata := false
-	for _, line := range strings.Split(header, "\n") {
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		indent := len(line) - len(strings.TrimLeft(line, " \t"))
-		key, value, found := strings.Cut(strings.TrimSpace(line), ":")
-		if !found {
-			inMetadata = false
-			continue
-		}
-		key, value = strings.TrimSpace(key), strings.TrimSpace(value)
-		if indent == 0 {
-			inMetadata = key == "metadata" && value == ""
-			continue
-		}
-		if inMetadata && key == "type" && value != "" {
-			return frontmatterValue(value)
-		}
-	}
-	return ""
 }

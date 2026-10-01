@@ -351,12 +351,13 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 				})
 			}
 		}
-		fingerprint, err := targetFingerprint(target)
+		fingerprint, err := targetFingerprint(target, state[target.Path])
 		if err != nil {
 			metadata, metadataErr := incrementality.MetadataFingerprint(target.Path)
 			isDatabase := target.Kind == parsers.KindOpenCodeDB || target.Kind == parsers.KindZCodeDB ||
 				target.Kind == parsers.KindHermesDB || target.Kind == parsers.KindLegacyStoreDB
-			if metadataErr == nil && !isDatabase && incrementality.UnchangedMetadata(
+			if metadataErr == nil && !isDatabase && target.Kind != parsers.KindZCodeMemory &&
+				target.Kind != parsers.KindGrokMemory && incrementality.UnchangedMetadata(
 				state, target.Path, metadata, target.Machine) {
 				result.FilesSkipped++
 				result.categorizeFile("skipped", "unchanged fingerprint")

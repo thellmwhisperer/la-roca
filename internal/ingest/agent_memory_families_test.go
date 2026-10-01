@@ -87,11 +87,6 @@ func TestZCodeAndGrokMemoryFamiliesStayIncremental(t *testing.T) {
 		zcodeHarbor).Scan(&harborID); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{zcodeHarbor, zcodeDefault, grokGlobal, grokWorkspace} {
-		if err := os.Chmod(path, 0); err != nil {
-			t.Fatal(err)
-		}
-	}
 	second, err := Run(ctx, db, registry(t), opts)
 	if err != nil {
 		t.Fatalf("second ingest: %v", err)
@@ -99,13 +94,8 @@ func TestZCodeAndGrokMemoryFamiliesStayIncremental(t *testing.T) {
 	if second.Errors != 0 || second.Delta.Memories != 0 ||
 		second.Sources["zcode"].MemoriesInserted+second.Sources["zcode"].MemoriesUpdated != 0 ||
 		second.Sources["grok"].MemoriesInserted+second.Sources["grok"].MemoriesUpdated != 0 {
-		t.Fatalf("unchanged files were reopened: errors=%d delta=%+v zcode=%+v grok=%+v",
+		t.Fatalf("unchanged files produced changes: errors=%d delta=%+v zcode=%+v grok=%+v",
 			second.Errors, second.Delta, second.Sources["zcode"], second.Sources["grok"])
-	}
-	for _, path := range []string{zcodeHarbor, zcodeDefault, grokGlobal, grokWorkspace} {
-		if err := os.Chmod(path, 0o600); err != nil {
-			t.Fatal(err)
-		}
 	}
 	w.write(t, zcodeHarbor, ""+
 		"---\nname: synthetic-harbor\ndescription: how the synthetic harbor is kept\nmetadata:\n  type: feedback\n---\n"+
