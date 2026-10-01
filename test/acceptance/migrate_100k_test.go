@@ -26,17 +26,13 @@ import (
 // ./test/acceptance -run '^TestMigrate100kWSL$' -count=1 -v. All databases and
 // snapshots live under this worktree's ignored .tmp directory.
 func TestMigrate100kWSL(t *testing.T) {
-	root, err := acceptanceRoot()
-	if err != nil {
-		t.Fatal(err)
-	}
 	for _, interrupted := range []bool{false, true} {
 		name := "uninterrupted"
 		if interrupted {
 			name = "sigint-resume"
 		}
 		t.Run(name, func(t *testing.T) {
-			base, err := os.MkdirTemp(filepath.Join(root, ".tmp"), "migrate-455-")
+			base, err := acceptanceTempDir("migrate-455-")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -102,6 +98,25 @@ func TestMigrate100kWSL(t *testing.T) {
 				if !interruptedAt || waitErr == nil {
 					t.Fatalf("SIGINT did not interrupt after a committed batch")
 				}
+				db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(ops)+"?mode=ro")
+				if err != nil {
+					t.Fatal(err)
+				}
+				var committedBatches int
+				err = db.QueryRow(`SELECT COUNT(*) FROM migration_batches
+					WHERE migration = 'data2-memory-custody'
+					AND source_database = 'plugin:roca-ops' AND source_table = 'memories'`).Scan(&committedBatches)
+				closeErr := db.Close()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if closeErr != nil {
+					t.Fatal(closeErr)
+				}
+				if committedBatches < 10 || committedBatches >= 400 {
+					t.Fatalf("SIGINT left %d committed batches, want at least 10 and fewer than 400", committedBatches)
+				}
+				t.Logf("SIGINT left %d committed batches", committedBatches)
 				before := snapshotStats(t, filepath.Join(home, ".roca", "backups", "data-split"))
 				args = append(args, "--json")
 				start := time.Now()
@@ -116,8 +131,8 @@ func TestMigrate100kWSL(t *testing.T) {
 					!strings.Contains(progress.String(), "source=plugin:roca-ops batch=") {
 					t.Fatalf("resume failed: %v", err)
 				}
-				if count := strings.Count(progress.String(), "stage=data2-import source=plugin:roca-ops batch="); count != 390 {
-					t.Fatalf("resume printed %d batch lines, want 390", count)
+				if count, want := strings.Count(progress.String(), "stage=data2-import source=plugin:roca-ops batch="), 400-committedBatches; count != want {
+					t.Fatalf("resume printed %d batch lines, want %d", count, want)
 				}
 				after := snapshotStats(t, filepath.Join(home, ".roca", "backups", "data-split"))
 				if !sameSnapshotStats(before, after) {
