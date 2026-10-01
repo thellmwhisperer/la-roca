@@ -149,6 +149,21 @@ func TestCronCommandDoesNotExistUntilItsFeatureIsEnabled(t *testing.T) {
 	}
 }
 
+func TestRideBinaryInvocationMatchesVectorSubcommandPosition(t *testing.T) {
+	for _, test := range []struct {
+		args []string
+		want bool
+	}{
+		{args: []string{"vector", "ingest"}, want: true},
+		{args: []string{"vector", "query", "ingest"}, want: false},
+		{args: []string{"ingest"}, want: true},
+	} {
+		if got := rideBinaryInvocation(test.args); got != test.want {
+			t.Errorf("rideBinaryInvocation(%v) = %t, want %t", test.args, got, test.want)
+		}
+	}
+}
+
 func newCronTestEnv() (*cliEnv, *strings.Builder, *strings.Builder) {
 	output := &strings.Builder{}
 	warnings := &strings.Builder{}

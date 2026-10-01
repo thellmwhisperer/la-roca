@@ -1714,7 +1714,7 @@ func refreshedSourceSeal(path, contract, fingerprint, marker string) (string, st
 	}
 	after, err := sourceFileMarker(path)
 	if err != nil {
-		return "", ""
+		return fingerprint, marker
 	}
 	if after == marker {
 		return fingerprint, marker

@@ -70,6 +70,14 @@ func TestDeltaSealsStatusAfterSourceChangeTimeMoves(t *testing.T) {
 	}
 }
 
+func TestRefreshedSourceSealPreservesIdentityWhenMarkerReadFails(t *testing.T) {
+	fingerprint, marker := refreshedSourceSeal(
+		filepath.Join(t.TempDir(), "missing.db"), "contract", "fingerprint", "marker")
+	if fingerprint != "fingerprint" || marker != "marker" {
+		t.Fatalf("seal = (%q, %q), want pre-sweep identity", fingerprint, marker)
+	}
+}
+
 func TestFederationBuildsOwnedSidecarsAndGarbageCollectsByDelta(t *testing.T) {
 	federation, corpusPath, opsPath, embedder := federationFixture(t)
 	ctx := context.Background()

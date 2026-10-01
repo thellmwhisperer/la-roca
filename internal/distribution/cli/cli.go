@@ -473,12 +473,7 @@ func rideBinaryInvocation(args []string) bool {
 	if positionals[0] != "vector" {
 		return false
 	}
-	for _, argument := range positionals[1:] {
-		if argument == "ingest" {
-			return true
-		}
-	}
-	return false
+	return len(positionals) > 1 && positionals[1] == "ingest"
 }
 
 type stderrProbe struct {
