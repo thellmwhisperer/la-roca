@@ -85,9 +85,11 @@ func TestTheWholeMatrixIsIngested(t *testing.T) {
 	// A file the scan refuses on purpose is an exclusion and not a failure to read
 	// one: the report keeps the two apart so a healthy run reads as healthy. The
 	// Grok runtime records (the system prompt and the compaction history injected
-	// as a synthetic user turn) are the same kind of deliberate exclusion.
-	if result.FilesExcluded != 3 || result.RecordsExcluded != 5 || result.RecordsDiscarded != 0 {
-		t.Errorf("excluded files/records and discards = %d/%d/%d, want 3/5/0: %+v",
+	// as a synthetic user turn) are the same kind of deliberate exclusion. The
+	// fixture has Grok sessions and no memory-v2 directory, so that absence is
+	// the extra named exclusion.
+	if result.FilesExcluded != 4 || result.RecordsExcluded != 6 || result.RecordsDiscarded != 0 {
+		t.Errorf("excluded files/records and discards = %d/%d/%d, want 4/6/0: %+v",
 			result.FilesExcluded, result.RecordsExcluded, result.RecordsDiscarded, result.DiscardSummary)
 	}
 	if got := countRows(t, db.SQL(), "memories WHERE source_agent = 'config'"); got != 0 {

@@ -20,3 +20,6 @@ var SearchSchema string
 //
 //go:embed layers.yaml
 var Layers []byte
+
+//go:embed vector_changes.sql
+var VectorChangesSchema string

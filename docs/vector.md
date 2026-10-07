@@ -36,10 +36,10 @@ nobody answered has not consented to a download.
 `vector-registry.json`: plugin, database, declared tables, embedded chunks,
 candidate chunks, sidecar size, last write, state, lock status, and a
 `compact_recommended` flag. Embedded counts report live indexed chunks;
-candidate counts are stored by a completed full indexing pass under the declared
+candidate counts are stored by a completed unrestricted indexing pass under the declared
 chunking policy. Status uses that exact count only while its source generation
 and reader contract still match; it never reads or chunks source text. Legacy,
-partial, and changed sources have unknown candidate counts until a full pass. Either count can be
+partial, and changed sources have unknown candidate counts until that pass completes. Either count can be
 unknown (`null`), never an estimate or invented zero. Sidecar size and last
 write include its SQLite WAL and shared-memory files when present.
 
@@ -304,8 +304,15 @@ the database and WAL through `pkg/incrementality`; a matching fingerprint can
 still avoid the sweep. `roca vector ingest --delta --verify` bypasses the cheap
 check and hashes the source even when its marker matches. SQLite
 connection-local `data_version` counters are not persisted generation evidence.
+Opening and closing the source during a pass can change its file marker. After
+the reader closes, a changed marker triggers another database-and-WAL fingerprint
+check. If the fingerprint still matches the indexed generation, the seal stores
+the new marker; otherwise it retains the earlier seal so status does not claim
+that the changed source is complete.
+
 `--source` and `--reembed` also bypass the cheap check and perform their sweep.
-When a sweep is needed, existing chunk fingerprints decide
+When source indexing is needed, the bundled corpus can restrict the sweep using
+its [change frontier](#corpus-change-frontier). Existing chunk fingerprints decide
 added, updated, and unchanged work; a desired-versus-stored fingerprint diff
 garbage-collects chunks and embeddings whose source disappeared. Optional
 manifest chunking hints override the kernel defaults without giving plugins
@@ -435,3 +442,37 @@ operator's own confidence probe; it needs no golden file.
 
 Search craft for agents lives in the `roca-operations` skill. The
 `roca-vector` skill owns index installation, progress, and maintenance.
+
+### Corpus change frontier
+
+Corpus schema 9 records inserts, embedding-relevant updates and deletes in
+[`vector_changes`](../data/vector_changes.sql), in the same SQLite transaction as the content. Changes to a
+session title, project or start time also record its dependent sources. File
+watermarks and unrelated metadata do not enter this journal. Each event stores
+an integer sequence, a 32-character history token, table name and source ID;
+an insert adds one event and an update or delete adds at most two per source.
+The journal is retained so independent sidecars can resume from their own
+completed position. An index on `memories.source_session` bounds dependent-source
+lookup to that session.
+
+The vector companion saves its position only after indexing succeeds. For the
+bundled corpus, with a compatible model and declaration, the next unrestricted
+delta visits only changed source IDs
+and retains other indexed chunks. `sources_walked` reports actual visited
+sources; `sources` and `chunks` remain the complete index totals. During a journal delta,
+`unchanged` counts only visited chunks. Existing databases without a journal,
+changed models or declarations, interrupted indexing, replaced journal history
+and explicit reembedding use a full pass. Declarations outside the supported
+corpus tables and columns also use the full walk. `--source` bypasses the frontier
+and sweeps the selected table, clearing the saved frontier. The next unrestricted
+pass that indexes sources establishes it with a full walk; an unchanged-generation
+skip does not establish a frontier. Database and WAL fingerprinting still follows the
+generation checks above; the frontier bounds source visits, not bytes hashed.
+
+`TestCorpusChangeFrontierAppend` exercises the shared corpus writer against a
+January archive and a September append: 1 source walked, 2 chunks added and 0
+unchanged chunks. The same test requires zero walked sources after watermark
+and unrelated session metadata writes. Recovery tests cover edits, empty text,
+deletions, session context, rolled-back writes, failed embedding and legacy
+sidecars. Nightly accelerator selection follows the operator overrides described
+under [The one download](#the-one-download).

@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/thellmwhisperer/la-roca/data"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/bundledplugin"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/plugininstall"
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
@@ -19,7 +20,7 @@ const (
 	// BundledSource is what the installer records for this package, and it is
 	// what discovery reads to know the corpus attach alias is the kernel's own.
 	BundledSource = plugin.BundledSource
-	SchemaVersion = 8
+	SchemaVersion = 9
 	IndexVersion  = 3
 )
 
@@ -52,7 +53,7 @@ func applySchema(ctx context.Context, path string) error {
 	if err != nil {
 		return err
 	}
-	if err := bundledplugin.ApplySchema(path, Name, schema, SchemaVersion, IndexVersion); err != nil {
+	if err := bundledplugin.ApplySchema(path, Name, schema+data.VectorChangesSchema, SchemaVersion, IndexVersion); err != nil {
 		return err
 	}
 	if err := refreshIndexedUpdateTriggers(path); err != nil {

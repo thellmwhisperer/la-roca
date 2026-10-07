@@ -241,6 +241,20 @@ var registry = []Registration{
 	fileParser(KindGrokSessionMetadata, DestinationCorpus, ingestprovenance.GrokBuild, detectGrokSessionMetadata,
 		ParseGrokSessionMetadata),
 	{
+		Name: string(KindGrokMemory), SourceAgent: "grok",
+		CanonicalHarness: ingestprovenance.GrokBuild,
+		HarvestLocations: []string{".grok/memory-v2"},
+		Version:          "grok-memory-v1", Destination: DestinationStore,
+		Parser: parserFunctions{detect: detectGrokMemory, parse: ParseGrokMemory},
+	},
+	{
+		Name: string(KindZCodeMemory), SourceAgent: "zcode",
+		CanonicalHarness: ingestprovenance.ZCode,
+		HarvestLocations: []string{".zcode/cli/memories"},
+		Version:          "zcode-memory-v1", Destination: DestinationStore,
+		Parser: parserFunctions{detect: detectZCodeMemory, parse: ParseZCodeMemory},
+	},
+	{
 		Name: string(KindHermesMemory), SourceAgent: "hermes",
 		CanonicalHarness: ingestprovenance.Hermes,
 		HarvestLocations: []string{".hermes/memories"},

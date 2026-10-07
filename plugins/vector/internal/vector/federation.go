@@ -811,6 +811,9 @@ func (f Federation) Ingest(ctx context.Context, sourceKind string) (FederationDe
 		cancel()
 	}
 	workers.Wait()
+	// Closing the reader may checkpoint the source WAL. Seal against the
+	// generation left behind after that close, not the still-open reader.
+	closeReader()
 	var ingestErr error
 	for _, job := range jobs {
 		if job.err != nil {
@@ -821,11 +824,8 @@ func (f Federation) Ingest(ctx context.Context, sourceKind string) (FederationDe
 		}
 		storedFingerprint, storedMarker := "", ""
 		if sourceKind == "" {
-			after, err := sourceFileMarker(f.databasePath(job.database))
-			if err == nil && after == job.marker {
-				storedFingerprint = job.fingerprint
-				storedMarker = job.marker
-			}
+			storedFingerprint, storedMarker = refreshedSourceSeal(
+				f.databasePath(job.database), job.contract, job.fingerprint, job.marker)
 		}
 		if err := sealSidecar(job.sidecar, job.database.owner(), f.Model, f.BuildVersion,
 			job.contract, storedFingerprint, storedMarker, job.delta); err != nil {
@@ -1068,6 +1068,7 @@ func (r *FederationDelta) add(owner string, delta Delta) {
 	r.Removed += delta.Removed
 	r.Unchanged += delta.Unchanged
 	r.Sources += delta.Sources
+	r.SourcesWalked += delta.SourcesWalked
 	r.Chunks += delta.Chunks
 	r.Databases = append(r.Databases, DatabaseDelta{Owner: owner, Counts: delta})
 }
@@ -1083,6 +1084,7 @@ func (f Federation) index(database vectorDatabase, reader DeclaredCorpus, sideca
 }
 
 type DeclaredCorpus struct {
+	frontier   *changeFrontier
 	Core       CoreCLI
 	Database   vectorDatabase
 	PluginRoot string
@@ -1145,6 +1147,9 @@ func (d DeclaredCorpus) WalkSources(ctx context.Context, sourceKind string,
 	}
 	iterators := make([]*declaredTableIterator, 0, len(tables))
 	for _, table := range tables {
+		if d.frontier != nil && d.frontier.changed != nil && len(d.frontier.changed[table.Name]) == 0 {
+			continue
+		}
 		iterator := &declaredTableIterator{corpus: d, table: table, catalog: catalog}
 		if err := iterator.advance(ctx); err != nil {
 			return err
@@ -1542,12 +1547,16 @@ func (d DeclaredCorpus) CountSources(ctx context.Context, sourceKind string) (in
 func (d DeclaredCorpus) sourceQuery(table vectorTable,
 	catalog map[string]map[string]bool) string {
 	contextSQL, join := d.contextSQL(table, catalog)
+	predicate := declaredSourcePredicate("src", table)
+	if d.frontier != nil && d.frontier.changed != nil {
+		predicate += " AND " + d.frontier.predicate(table)
+	}
 	return fmt.Sprintf(`SELECT CAST(src.%s AS TEXT) AS source_id%s%s FROM %s.%s src%s
 		WHERE %s
 		ORDER BY context_time DESC, source_id DESC`,
 		quoteIdentifier(table.IDColumn), declaredColumnSelect("src", table.TextColumns), contextSQL,
 		quoteIdentifier(d.Database.Alias), quoteIdentifier(table.Name), join,
-		declaredSourcePredicate("src", table))
+		predicate)
 }
 
 func (d DeclaredCorpus) contextSQL(table vectorTable,
@@ -1705,6 +1714,29 @@ var (
 	errSourceChanged  = errors.New("vector source changed while it was inspected")
 	hashVectorSource  = databaseFingerprint
 )
+
+// refreshedSourceSeal records the generation a finished pass actually observed.
+// Opening the source during the sweep can move its change time while the bytes
+// stay put. A matching fingerprint stores that later marker. When the bytes
+// moved, or the source cannot be re-read, the pre-sweep fingerprint and marker
+// stay, and status can report the sidecar as outdated.
+func refreshedSourceSeal(path, contract, fingerprint, marker string) (string, string) {
+	if fingerprint == "" || marker == "" {
+		return "", ""
+	}
+	after, err := sourceFileMarker(path)
+	if err != nil {
+		return fingerprint, marker
+	}
+	if after == marker {
+		return fingerprint, marker
+	}
+	postFingerprint, postMarker, postErr := verifiedDatabaseIdentity(path, contract)
+	if postErr == nil && postFingerprint == fingerprint {
+		return postFingerprint, postMarker
+	}
+	return fingerprint, marker
+}
 
 func verifiedDatabaseIdentity(path, contract string) (string, string, error) {
 	before, err := sourceFileMarker(path)

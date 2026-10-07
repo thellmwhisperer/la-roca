@@ -73,6 +73,13 @@ forbids). Godog acceptance contracts live directly under
 discovered automatically, and `make accept-index` rejects any other layout. The
 acceptance harnesses are compiled only with the `acceptance` build tag.
 
+`TestLegacyWatermarkCompatibility` runs the branch ingest regression in that
+suite. Set `ROCA_DELTA_PUBLISHED_BIN=<pinned-v1.90.0-binary>` to also require the
+published legacy-watermark reproduction. After `make build`, run
+`ROCA_BIN=bin/roca go test -tags=acceptance ./test/acceptance -run '^TestLegacyWatermarkCompatibility$' -v -count=1`
+with that variable set to retain the paired counts. The vector append and
+recovery regressions are described in [Corpus change frontier](docs/vector.md#corpus-change-frontier).
+
 `make accept` (also part of `make check`) and `make split-oracle` run without
 an external playground checkout or network service. Core exercises the optional
 plugin's argv, errors, audit and diagnostic contracts with small local fake
@@ -102,6 +109,20 @@ time separately without instrumentation. It never measures the live federation.
 The ordinary acceptance suite runs the branch regression without requiring a
 published binary; the delivery test command runs the paired target when
 `ROCA_PUBLISHED_BIN` is set.
+
+The issue #455 WSL acceptance is opt-in and excluded from `make check`.
+After building the branch binary, run it on WSL from the repository root:
+
+```sh
+ROCA_BIN="$PWD/bin/roca" go test -tags=acceptance,migrate_100k ./test/acceptance -run '^TestMigrate100kWSL$' -count=1 -v
+```
+
+Set `ROCA_BIN` to the branch executable if built elsewhere. The test uses
+synthetic 100k-memory fixtures under `.tmp/`, checks uninterrupted migration
+and SIGINT resume with unchanged snapshots, and logs progress, timings and
+query plans. Its old-predicate comparison is capped at five seconds, not a
+completed baseline migration. Retain the verbose WSL output for the PR,
+applying the [public-text check](#public-text) before publication.
 
 `make fts-test ROCA_FTS_PUBLISHED_BIN=<pinned-v1.84.0-binary>` builds and runs
 the qualified FTS comparison. Without that environment variable it checks only
