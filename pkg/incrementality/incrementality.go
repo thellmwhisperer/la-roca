@@ -132,6 +132,30 @@ func TargetFingerprint(target Target) (string, error) {
 	return parserAwareFingerprint(machineAwareFingerprint(combined, target.Machine), target.ParserVersion), nil
 }
 
+func CachedTargetFingerprint(target Target, previous FileState) (string, error) {
+	if target.IncludeSQLiteWAL || len(target.CompanionPaths) != 0 {
+		return TargetFingerprint(target)
+	}
+	info, err := os.Stat(target.Path)
+	if err != nil {
+		return "", err
+	}
+	identity := fileChangeIdentity(info)
+	if identity == "" || !info.Mode().IsRegular() {
+		return TargetFingerprint(target)
+	}
+	stamp := fmt.Sprintf(":stat:%d:%d:%s", info.Size(), info.ModTime().UnixNano(), identity)
+	stamp = parserAwareFingerprint(machineAwareFingerprint(stamp, target.Machine), target.ParserVersion)
+	if previous.LastError == "" && strings.HasSuffix(previous.Fingerprint, stamp) {
+		return previous.Fingerprint, nil
+	}
+	fingerprint, err := Fingerprint(target.Path)
+	if err != nil {
+		return "", err
+	}
+	return fingerprint + stamp, nil
+}
+
 func machineAwareFingerprint(fingerprint, machine string) string {
 	if machine == "" {
 		return fingerprint
@@ -211,10 +235,7 @@ func UnchangedMetadata(state map[string]FileState, path, metadata string, machin
 	if len(machine) == 0 || machine[0] == "" {
 		return true
 	}
-	if strings.Contains(known.Fingerprint, ":machine:"+machine[0]) {
-		return true
-	}
-	return !strings.Contains(known.Fingerprint, ":machine:")
+	return strings.Contains(known.Fingerprint, ":machine:"+machine[0])
 }
 
 // RecordState upserts one target's state in the caller's transaction. Keeping

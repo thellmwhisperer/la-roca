@@ -1043,36 +1043,15 @@ func TestFailedMachineLessIngestRetriesBeforePromotion(t *testing.T) {
 	}
 }
 
-func TestMachineLessCursorPromotedWithoutReparsing(t *testing.T) {
-	var parses int
-	original := parseKind
-	parseKind = func(kind parsers.Kind, content []byte, meta parsers.FileMeta) (parsers.Records, error) {
-		parses++
-		return original(kind, content, meta)
-	}
-	t.Cleanup(func() { parseKind = original })
-
-	roots, path := machineCursorFixture(t)
-
-	db, first := runIngest(t, roots)
-	if first.Errors != 0 || parses == 0 {
-		t.Fatalf("first ingest parses=%d errors=%d: %+v", parses, first.Errors, first.ErrorDetails)
-	}
-
-	if _, err := db.SQL().Exec(`UPDATE ingest_file_state
-		SET fingerprint = replace(fingerprint, ?, ''),
-		    metadata = json_remove(metadata, '$.machine')
-		WHERE path = ?`, ":machine:"+roots.Machine, path); err != nil {
-		t.Fatal(err)
-	}
-
-	parses = 0
+func TestMachineLessCursorIsAcceptedWithoutReparsing(t *testing.T) {
+	roots, path, db, parses := legacyMachineCursorState(t)
+	*parses = 0
 	second := runIngestOn(t, db, roots)
 	if second.Errors != 0 {
-		t.Fatalf("promotion ingest errors=%d: %+v", second.Errors, second.ErrorDetails)
+		t.Fatalf("compatibility ingest errors=%d: %+v", second.Errors, second.ErrorDetails)
 	}
-	if parses != 0 {
-		t.Fatalf("parser called %d times on machine-less cursor promotion", parses)
+	if *parses != 0 {
+		t.Fatalf("parser called %d times on machine-less cursor compatibility acceptance", *parses)
 	}
 	if second.FilesRead != 0 {
 		t.Fatalf("files read = %d, want 0", second.FilesRead)
@@ -1083,16 +1062,68 @@ func TestMachineLessCursorPromotedWithoutReparsing(t *testing.T) {
 		path).Scan(&fingerprint, &metadata); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(fingerprint, ":machine:"+roots.Machine) {
-		t.Fatalf("fingerprint not promoted: %q", fingerprint)
+	if strings.Contains(fingerprint, ":machine:"+roots.Machine) {
+		t.Fatalf("legacy fingerprint was rewritten: %q", fingerprint)
 	}
 	var cursor harvestCursorState
 	if err := json.Unmarshal([]byte(metadata), &cursor); err != nil {
 		t.Fatal(err)
 	}
-	if cursor.Machine != roots.Machine {
-		t.Fatalf("cursor machine = %q, want %q", cursor.Machine, roots.Machine)
+	if cursor.Machine != "" {
+		t.Fatalf("legacy cursor machine was rewritten to %q", cursor.Machine)
 	}
+}
+
+func TestChangedContentStillReparsesAfterLegacyWatermark(t *testing.T) {
+	roots, path, db, parses := legacyMachineCursorState(t)
+	before := countRows(t, db.SQL(), "exchanges")
+
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	extra := `{"type":"user","timestamp":"2026-08-01T10:00:02Z","message":{"content":"second question"}}` + "\n" +
+		`{"type":"assistant","timestamp":"2026-08-01T10:00:03Z","message":{"content":[{"type":"text","text":"second answer"}]}}` + "\n"
+	if err := os.WriteFile(path, append(body, extra...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	*parses = 0
+	second := runIngestOn(t, db, roots)
+	if second.Errors != 0 {
+		t.Fatalf("changed ingest errors=%d: %+v", second.Errors, second.ErrorDetails)
+	}
+	if *parses == 0 || second.FilesRead == 0 {
+		t.Fatalf("changed file after legacy watermark was not reparsed: parses=%d read=%d skipped=%d",
+			*parses, second.FilesRead, second.FilesSkipped)
+	}
+	if got := countRows(t, db.SQL(), "exchanges"); got <= before {
+		t.Fatalf("exchanges = %d, want more than %d", got, before)
+	}
+}
+
+func legacyMachineCursorState(t *testing.T) (Roots, string, *store.DB, *int) {
+	t.Helper()
+	parses := 0
+	original := parseKind
+	parseKind = func(kind parsers.Kind, content []byte, meta parsers.FileMeta) (parsers.Records, error) {
+		parses++
+		return original(kind, content, meta)
+	}
+	t.Cleanup(func() { parseKind = original })
+
+	roots, path := machineCursorFixture(t)
+	db, first := runIngest(t, roots)
+	if first.Errors != 0 || parses == 0 {
+		t.Fatalf("first ingest parses=%d errors=%d: %+v", parses, first.Errors, first.ErrorDetails)
+	}
+	if _, err := db.SQL().Exec(`UPDATE ingest_file_state
+		SET fingerprint = replace(fingerprint, ?, ''),
+		    metadata = json_remove(metadata, '$.machine')
+		WHERE path = ?`, ":machine:"+roots.Machine, path); err != nil {
+		t.Fatal(err)
+	}
+	return roots, path, db, &parses
 }
 
 func machineCursorFixture(t *testing.T) (Roots, string) {

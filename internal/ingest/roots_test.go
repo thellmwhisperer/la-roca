@@ -10,24 +10,26 @@ import (
 // Linux or Windows layout is a table case and not a machine nobody has.
 
 func TestRootsOnMacOS(t *testing.T) {
-	roots := ResolveRoots(Environment{GOOS: "darwin", Home: "/Users/op"}, Settings{})
+	roots := ResolveRoots(Environment{GOOS: "darwin", Home: "/synthetic/mac-home"}, Settings{})
 	want := map[string]string{
-		"claude projects": "/Users/op/.claude/projects",
-		"claude config":   "/Users/op/.claude.json",
-		"desktop":         "/Users/op/Library/Application Support/Claude/claude-code-sessions",
-		"cowork":          "/Users/op/Library/Application Support/Claude/local-agent-mode-sessions",
-		"codex":           "/Users/op/.codex",
-		"codex sessions":  "/Users/op/.codex/sessions",
-		"opencode":        "/Users/op/.local/share/opencode/opencode.db",
-		"opencode bot":    "/Users/op/Library/Application Support/opencode-telegram-bot/logs",
-		"zcode":           "/Users/op/.zcode/cli/db/db.sqlite",
-		"pi root":         "/Users/op/.pi",
-		"pi":              "/Users/op/.pi/agent/sessions",
-		"hermes":          "/Users/op/.hermes/state.db",
-		"hermes home":     "/Users/op/.hermes",
-		"legacy store":    "/Users/op/." + retiredStoreHome() + "/roca.db",
-		"grok":            "/Users/op/.grok/sessions",
-		"grok memtrace":   "/Users/op/.grok/memtrace",
+		"claude projects": "/synthetic/mac-home/.claude/projects",
+		"claude config":   "/synthetic/mac-home/.claude.json",
+		"desktop":         "/synthetic/mac-home/Library/Application Support/Claude/claude-code-sessions",
+		"cowork":          "/synthetic/mac-home/Library/Application Support/Claude/local-agent-mode-sessions",
+		"codex":           "/synthetic/mac-home/.codex",
+		"codex sessions":  "/synthetic/mac-home/.codex/sessions",
+		"opencode":        "/synthetic/mac-home/.local/share/opencode/opencode.db",
+		"opencode bot":    "/synthetic/mac-home/Library/Application Support/opencode-telegram-bot/logs",
+		"zcode":           "/synthetic/mac-home/.zcode/cli/db/db.sqlite",
+		"zcode memories":  "/synthetic/mac-home/.zcode/cli/memories",
+		"pi root":         "/synthetic/mac-home/.pi",
+		"pi":              "/synthetic/mac-home/.pi/agent/sessions",
+		"hermes":          "/synthetic/mac-home/.hermes/state.db",
+		"hermes home":     "/synthetic/mac-home/.hermes",
+		"legacy store":    "/synthetic/mac-home/." + retiredStoreHome() + "/roca.db",
+		"grok":            "/synthetic/mac-home/.grok/sessions",
+		"grok memtrace":   "/synthetic/mac-home/.grok/memtrace",
+		"grok memory-v2":  "/synthetic/mac-home/.grok/memory-v2",
 	}
 	got := map[string]string{
 		"claude projects": roots.ClaudeProjects,
@@ -39,6 +41,7 @@ func TestRootsOnMacOS(t *testing.T) {
 		"opencode":        roots.OpenCodeDB,
 		"opencode bot":    roots.OpenCodeTelegramLogs,
 		"zcode":           roots.ZCodeDB,
+		"zcode memories":  roots.ZCodeMemories,
 		"pi root":         roots.PiRoot,
 		"pi":              roots.PiSessions,
 		"hermes":          roots.HermesDB,
@@ -46,6 +49,7 @@ func TestRootsOnMacOS(t *testing.T) {
 		"legacy store":    roots.LegacyStoreDB,
 		"grok":            roots.GrokSessions,
 		"grok memtrace":   roots.GrokMemtrace,
+		"grok memory-v2":  roots.GrokMemoryV2,
 	}
 	for name, expected := range want {
 		if got[name] != expected {
@@ -55,33 +59,33 @@ func TestRootsOnMacOS(t *testing.T) {
 }
 
 func TestRootsOnLinuxFollowTheXDGDirectories(t *testing.T) {
-	roots := ResolveRoots(Environment{GOOS: "linux", Home: "/home/op"}, Settings{})
-	if roots.ClaudeDesktopSessions != "/home/op/.config/Claude/claude-code-sessions" {
+	roots := ResolveRoots(Environment{GOOS: "linux", Home: "/synthetic/linux-home"}, Settings{})
+	if roots.ClaudeDesktopSessions != "/synthetic/linux-home/.config/Claude/claude-code-sessions" {
 		t.Errorf("desktop = %q", roots.ClaudeDesktopSessions)
 	}
-	if roots.OpenCodeDB != "/home/op/.local/share/opencode/opencode.db" {
+	if roots.OpenCodeDB != "/synthetic/linux-home/.local/share/opencode/opencode.db" {
 		t.Errorf("opencode = %q", roots.OpenCodeDB)
 	}
-	if roots.OpenCodeTelegramLogs != "/home/op/.config/opencode-telegram-bot/logs" {
+	if roots.OpenCodeTelegramLogs != "/synthetic/linux-home/.config/opencode-telegram-bot/logs" {
 		t.Errorf("opencode Telegram logs = %q", roots.OpenCodeTelegramLogs)
 	}
 
 	// And they follow the variables when the operator moved them.
 	moved := ResolveRoots(Environment{
 		GOOS: "linux",
-		Home: "/home/op",
+		Home: "/synthetic/linux-home",
 		Getenv: environmentOf(map[string]string{
-			"XDG_CONFIG_HOME": "/home/op/cfg",
-			"XDG_DATA_HOME":   "/home/op/data",
+			"XDG_CONFIG_HOME": "/synthetic/linux-home/cfg",
+			"XDG_DATA_HOME":   "/synthetic/linux-home/data",
 		}),
 	}, Settings{})
-	if moved.ClaudeDesktopSessions != "/home/op/cfg/Claude/claude-code-sessions" {
+	if moved.ClaudeDesktopSessions != "/synthetic/linux-home/cfg/Claude/claude-code-sessions" {
 		t.Errorf("desktop = %q", moved.ClaudeDesktopSessions)
 	}
-	if moved.OpenCodeDB != "/home/op/data/opencode/opencode.db" {
+	if moved.OpenCodeDB != "/synthetic/linux-home/data/opencode/opencode.db" {
 		t.Errorf("opencode = %q", moved.OpenCodeDB)
 	}
-	if moved.OpenCodeTelegramLogs != "/home/op/cfg/opencode-telegram-bot/logs" {
+	if moved.OpenCodeTelegramLogs != "/synthetic/linux-home/cfg/opencode-telegram-bot/logs" {
 		t.Errorf("opencode Telegram logs = %q", moved.OpenCodeTelegramLogs)
 	}
 }
@@ -95,13 +99,13 @@ func TestZCodeDatabasePathPrecedence(t *testing.T) {
 	}{
 		{
 			name: "ZCode storage directory moves the default",
-			env:  map[string]string{"ZCODE_STORAGE_DIR": "/Volumes/synthetic/zcode"},
-			want: "/Volumes/synthetic/zcode/cli/db/db.sqlite",
+			env:  map[string]string{"ZCODE_STORAGE_DIR": "/synthetic/volume/zcode"},
+			want: "/synthetic/volume/zcode/cli/db/db.sqlite",
 		},
 		{
 			name: "declared database wins",
 			env: map[string]string{
-				"ZCODE_STORAGE_DIR": "/Volumes/synthetic/zcode",
+				"ZCODE_STORAGE_DIR": "/synthetic/volume/zcode",
 				"ZCODE_DB_PATH":     "/from/the/environment.sqlite",
 			},
 			settings: Settings{ZCodeDB: "/declared/by/the/operator.sqlite"},
@@ -110,7 +114,7 @@ func TestZCodeDatabasePathPrecedence(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			roots := ResolveRoots(Environment{GOOS: "darwin", Home: "/Users/op",
+			roots := ResolveRoots(Environment{GOOS: "darwin", Home: "/synthetic/mac-home",
 				Getenv: environmentOf(test.env)}, test.settings)
 			if roots.ZCodeDB != test.want {
 				t.Errorf("ZCode database = %q, want %q", roots.ZCodeDB, test.want)
@@ -119,16 +123,32 @@ func TestZCodeDatabasePathPrecedence(t *testing.T) {
 	}
 }
 
+func TestZCodeMemoriesFollowStorageDirNotTheDatabaseOverride(t *testing.T) {
+	roots := ResolveRoots(Environment{
+		GOOS: "darwin", Home: "/synthetic/mac-home",
+		Getenv: environmentOf(map[string]string{
+			"ZCODE_STORAGE_DIR": "/synthetic/volume/zcode",
+			"ZCODE_DB_PATH":     "/from/the/environment.sqlite",
+		}),
+	}, Settings{ZCodeDB: "/declared/by/the/operator.sqlite"})
+	if roots.ZCodeMemories != "/synthetic/volume/zcode/cli/memories" {
+		t.Errorf("ZCode memories = %q", roots.ZCodeMemories)
+	}
+}
+
 func TestGrokSessionsFollowTheEnvironment(t *testing.T) {
 	roots := ResolveRoots(Environment{
 		GOOS: "linux",
-		Home: "/home/op",
+		Home: "/synthetic/linux-home",
 		Getenv: environmentOf(map[string]string{
-			"GROK_SESSIONS_ROOT": "/home/op/data/grok-sessions",
+			"GROK_SESSIONS_ROOT": "/synthetic/linux-home/data/grok-sessions",
 		}),
 	}, Settings{})
-	if roots.GrokSessions != "/home/op/data/grok-sessions" {
+	if roots.GrokSessions != "/synthetic/linux-home/data/grok-sessions" {
 		t.Errorf("grok sessions = %q", roots.GrokSessions)
+	}
+	if roots.GrokMemoryV2 != "/synthetic/linux-home/.grok/memory-v2" {
+		t.Errorf("grok memory-v2 = %q, want it to stay under home", roots.GrokMemoryV2)
 	}
 }
 
@@ -186,7 +206,7 @@ func TestUnderWSLTheAgentRootsStayLinuxAndTheWorkspaceCrossesTheMount(t *testing
 // declares wins over the platform default, and it wins over the environment too.
 func TestWhatTheOperatorDeclaresWinsOverThePlatformDefault(t *testing.T) {
 	roots := ResolveRoots(
-		Environment{GOOS: "darwin", Home: "/Users/op",
+		Environment{GOOS: "darwin", Home: "/synthetic/mac-home",
 			Getenv: environmentOf(map[string]string{"CODEX_ROOT": "/from/the/environment"})},
 		Settings{CodexRoot: "/declared/by/the/operator"})
 	if roots.CodexRoot != "/declared/by/the/operator" {
@@ -198,7 +218,7 @@ func TestWhatTheOperatorDeclaresWinsOverThePlatformDefault(t *testing.T) {
 }
 
 func TestTheEnvironmentWinsOverThePlatformDefault(t *testing.T) {
-	roots := ResolveRoots(Environment{GOOS: "darwin", Home: "/Users/op",
+	roots := ResolveRoots(Environment{GOOS: "darwin", Home: "/synthetic/mac-home",
 		Getenv: environmentOf(map[string]string{
 			"CLAUDE_PROJECTS_ROOT":       "/elsewhere/projects",
 			"HERMES_DB_PATH":             "/elsewhere/state.db",
@@ -216,7 +236,7 @@ func TestTheEnvironmentWinsOverThePlatformDefault(t *testing.T) {
 }
 
 func TestHermesHomeOverrideMovesTheDefaultDatabase(t *testing.T) {
-	roots := ResolveRoots(Environment{GOOS: "darwin", Home: "/Users/op",
+	roots := ResolveRoots(Environment{GOOS: "darwin", Home: "/synthetic/mac-home",
 		Getenv: environmentOf(map[string]string{"HERMES_HOME": "/moved/hermes"})}, Settings{})
 	if roots.HermesHome != "/moved/hermes" {
 		t.Errorf("hermes home = %q", roots.HermesHome)
@@ -227,15 +247,15 @@ func TestHermesHomeOverrideMovesTheDefaultDatabase(t *testing.T) {
 }
 
 func TestATildeInADeclaredRootIsExpandedAgainstTheDeclaredHome(t *testing.T) {
-	roots := ResolveRoots(Environment{GOOS: "linux", Home: "/home/op"},
+	roots := ResolveRoots(Environment{GOOS: "linux", Home: "/synthetic/linux-home"},
 		Settings{PiSessions: "~/sessions/pi"})
-	if roots.PiSessions != "/home/op/sessions/pi" {
+	if roots.PiSessions != "/synthetic/linux-home/sessions/pi" {
 		t.Errorf("pi = %q", roots.PiSessions)
 	}
 }
 
 func TestAnExplicitExportPathIsScopedToOneInvocationAndDetectedByShape(t *testing.T) {
-	base := ResolveRoots(Environment{GOOS: "linux", Home: "/home/op"}, Settings{})
+	base := ResolveRoots(Environment{GOOS: "linux", Home: "/synthetic/linux-home"}, Settings{})
 	if len(base.ClaudeWebExports) != 0 || len(base.ChatGPTWebExports) != 0 {
 		t.Fatalf("live roots contain standing exports: %+v", base)
 	}
@@ -268,7 +288,7 @@ func TestAnExplicitExportPathIsScopedToOneInvocationAndDetectedByShape(t *testin
 // both layouts, because the operator knows which product they exported and the
 // binary does not.
 func TestADirectoryWithNeitherExportShapeIsRefusedNamingBothOfThem(t *testing.T) {
-	base := ResolveRoots(Environment{GOOS: "linux", Home: "/home/op"}, Settings{})
+	base := ResolveRoots(Environment{GOOS: "linux", Home: "/synthetic/linux-home"}, Settings{})
 	for _, test := range []struct{ name, root string }{
 		{"empty directory", t.TempDir()},
 		{"the export's parent", "testdata"},

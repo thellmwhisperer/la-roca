@@ -180,6 +180,8 @@ func scanRoots(roots Roots, operational bool) Plan {
 	if operational {
 		plan.add(scanClaudeMemories(roots, claudeProjects, attribution, &plan), "claude_memory_files")
 		plan.addCodex(scanCodexFiles(roots))
+		plan.add(scanZCodeMemories(roots), "zcode_memory_files")
+		plan.add(scanGrokMemories(roots), "grok_memory_files")
 	}
 	plan.add(scanClaudeSessions(roots, claudeProjects, attribution, &plan), "session_files")
 	plan.add(scanCodexSessions(roots), "codex_session_files")
@@ -331,10 +333,10 @@ func DetectAgents(roots Roots) []string {
 		{"cowork", pathExists(roots.CoworkSessions)},
 		{"codex", pathExists(roots.CodexRoot) || pathExists(roots.CodexSessions) || isFile(roots.CodexStateDB)},
 		{"opencode", isFile(roots.OpenCodeDB)},
-		{"zcode", isFile(roots.ZCodeDB)},
+		{"zcode", isFile(roots.ZCodeDB) || pathExists(filepath.Join(roots.ZCodeMemories, "projects"))},
 		{"pi", pathExists(roots.PiRoot) || pathExists(roots.PiSessions)},
 		{"hermes", isFile(roots.HermesDB) || isFile(filepath.Join(roots.HermesHome, "memories", "MEMORY.md"))},
-		{"grok", pathExists(roots.GrokSessions)},
+		{"grok", pathExists(roots.GrokSessions) || pathExists(roots.GrokMemoryV2)},
 		{legacyStoreSource, isFile(roots.LegacyStoreDB)},
 	}
 	detected := make([]string, 0, len(candidates))
@@ -1034,6 +1036,94 @@ func runnerExclusionGrok(roots Roots, encodedDir string) string {
 		}
 	}
 	return ""
+}
+
+const (
+	zcodeMemoryDirectoryAbsent = "ZCode project memory directory is absent"
+	grokMemoryDirectoryAbsent  = "Grok memory-v2 directory is absent"
+	grokMemoryStateExcluded    = "Grok memory state database is not corpus content"
+)
+
+// scanZCodeMemories reads ~/.zcode/cli/memories/projects/<project>/memory/*.md.
+// The project is the folder name. A machine that already has the ZCode database
+// but no memory directory still reports that absence, so the family is not a
+// silent zero.
+func scanZCodeMemories(roots Roots) []Target {
+	if roots.ZCodeMemories == "" {
+		return nil
+	}
+	projects := filepath.Join(roots.ZCodeMemories, "projects")
+	if !pathExists(projects) {
+		if !isFile(roots.ZCodeDB) {
+			return nil
+		}
+		return []Target{{
+			Path: projects, Kind: parsers.KindZCodeMemory, SourceAgent: "zcode",
+			FileName: "projects", ExclusionReason: zcodeMemoryDirectoryAbsent,
+		}}
+	}
+	var targets []Target
+	for _, project := range subdirectories(projects) {
+		memoryDir := filepath.Join(projects, project, "memory")
+		for _, name := range filesIn(memoryDir) {
+			if !strings.HasSuffix(strings.ToLower(name), ".md") {
+				continue
+			}
+			targets = append(targets, Target{
+				Path: filepath.Join(memoryDir, name), Kind: parsers.KindZCodeMemory,
+				SourceAgent: "zcode", Project: project, FileName: name,
+			})
+		}
+	}
+	return targets
+}
+
+// scanGrokMemories reads the two curated MEMORY.md locations under memory-v2
+// and refuses memory_state.sqlite* beside them. A detected Grok session store
+// with no memory-v2 directory is an exclusion, not an empty scan.
+func scanGrokMemories(roots Roots) []Target {
+	if roots.GrokMemoryV2 == "" {
+		return nil
+	}
+	if !pathExists(roots.GrokMemoryV2) {
+		if !pathExists(roots.GrokSessions) {
+			return nil
+		}
+		return []Target{{
+			Path: roots.GrokMemoryV2, Kind: parsers.KindGrokMemory, SourceAgent: "grok",
+			FileName: "memory-v2", ExclusionReason: grokMemoryDirectoryAbsent,
+		}}
+	}
+	var targets []Target
+	targets = append(targets, existingFile(filepath.Join(roots.GrokMemoryV2, "global", "MEMORY.md"), Target{
+		Kind: parsers.KindGrokMemory, SourceAgent: "grok", Project: "global",
+	})...)
+	workspaces := filepath.Join(roots.GrokMemoryV2, "workspaces")
+	for _, slug := range subdirectories(workspaces) {
+		targets = append(targets, existingFile(filepath.Join(workspaces, slug, "MEMORY.md"), Target{
+			Kind: parsers.KindGrokMemory, SourceAgent: "grok", Project: slug,
+		})...)
+	}
+	targets = append(targets, grokMemoryStateExclusions(roots.GrokMemoryV2)...)
+	return targets
+}
+
+func grokMemoryStateExclusions(root string) []Target {
+	var targets []Target
+	_ = filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil || entry == nil || !entry.Type().IsRegular() {
+			return nil
+		}
+		if !strings.HasPrefix(entry.Name(), "memory_state.sqlite") {
+			return nil
+		}
+		targets = append(targets, Target{
+			Path: path, Kind: parsers.KindGrokMemory, SourceAgent: "grok",
+			FileName: entry.Name(), ExclusionReason: grokMemoryStateExcluded,
+		})
+		return nil
+	})
+	return targets
 }
 
 // scanHermesStore inventories the Hermes home besides state.db. MEMORY.md is

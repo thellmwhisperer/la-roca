@@ -8,9 +8,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// The two memory sources of the matrix that are plain text: Claude memory files
-// and Codex memories and rules.
-
 // codexTypeToLayer maps Codex memory types to semantic layers.
 var codexTypeToLayer = map[string]string{
 	"memory": "feedback",
@@ -72,10 +69,8 @@ func frontmatterValue(value string) string {
 	return decoded
 }
 
-// memoryRecord is the row both of them produce: the same eight fields,
-// differing only in the layer it lands in, who wrote it and what its own
-// metadata declares. The `_cron_source` and `file_path` pair travels inside the
-// metadata as well as beside it, preserving identity across re-ingests.
+// memoryRecord preserves file identity across re-ingests: the `_cron_source`
+// and `file_path` pair travels inside the metadata as well as beside it.
 func memoryRecord(source, layer, body string, meta FileMeta, declared map[string]any) Records {
 	metadata := map[string]any{
 		"_cron_source": source,

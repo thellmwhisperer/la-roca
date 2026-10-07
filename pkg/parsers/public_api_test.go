@@ -48,6 +48,7 @@ func TestPublicContract(t *testing.T) {
 		"cursor_database",
 		"cursor_store",
 		"glm_skill",
+		"grok_memory",
 		"grok_session",
 		"grok_session_metadata",
 		"hermes_memory",
@@ -55,6 +56,7 @@ func TestPublicContract(t *testing.T) {
 		"qwen_code",
 		"session_metadata",
 		"subagent",
+		"zcode_memory",
 	}
 
 	registered := parsers.Registered()
