@@ -173,14 +173,15 @@ func inspectDatabaseStatus(ctx context.Context, pluginRoot string, database vect
 	row.EmbeddedChunks = &snapshot.EmbeddedChunks
 	row.EmbeddingPages = snapshot.EmbeddingPages
 	marker := currentSourceMarker(sourcePath)
-	if snapshot.Contract == database.contractFingerprint() && snapshot.Fingerprint != "" &&
-		marker != nil && snapshot.SourceMarker == *marker && snapshot.CompletedGeneration == *marker {
-		row.CandidateChunks = snapshot.CompletedChunks
-	}
 	row.State = classifySidecar(facts.Exists, true, workerActive, row.EmbeddedChunks, snapshot.Contract,
 		database.contractFingerprint(), snapshot.Fingerprint, snapshot.SourceMarker, marker)
-	if row.State == StateOutdated && row.CandidateChunks == nil {
-		row.CandidateChunks = countSourceCandidates(ctx, sourcePath, database)
+	if row.State == StateComplete && snapshot.Contract == database.contractFingerprint() &&
+		snapshot.Fingerprint != "" && marker != nil && snapshot.SourceMarker == *marker &&
+		snapshot.CompletedGeneration == *marker {
+		row.CandidateChunks = snapshot.CompletedChunks
+	}
+	if row.State == StateOutdated {
+		row.CandidateChunks = countPendingSourceRows(ctx, store, sourcePath, database, snapshot)
 		if row.CandidateChunks == nil {
 			row.Candidates = "not counted"
 		}
@@ -537,12 +538,23 @@ func countEmbeddedChunks(ctx context.Context, tx *sql.Tx) (int64, error) {
 	return n, nil
 }
 
-// countSourceCandidates counts the chunks the next pass would hold, read-only
-// against the source. nil when the count cannot finish inside the status budget.
-func countSourceCandidates(ctx context.Context, sourcePath string, database vectorDatabase) *int64 {
+func countPendingSourceRows(ctx context.Context, sidecar *sql.DB, sourcePath string,
+	database vectorDatabase, snapshot sidecarSnapshot) *int64 {
+	if snapshot.Contract != database.contractFingerprint() || snapshot.SourceMarker == "" ||
+		snapshot.CompletedGeneration != snapshot.SourceMarker {
+		return nil
+	}
 	// Leave room inside statusOverallTimeout.
 	ctx, cancel := boundContext(ctx, 2*time.Second)
 	defer cancel()
+	var sourceTable int
+	if err := sidecar.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='sources'`).Scan(&sourceTable); err != nil || sourceTable == 0 {
+		return nil
+	}
+	var progressIdentity string
+	if err := sidecar.QueryRowContext(ctx, `SELECT value FROM meta WHERE key='progress_identity'`).Scan(&progressIdentity); err != nil || progressIdentity != sourceProgressVersion {
+		return nil
+	}
 	source, err := openSQLiteBusy(sourcePath, true, statusBusyTimeoutMS)
 	if err != nil {
 		return nil
@@ -550,8 +562,26 @@ func countSourceCandidates(ctx context.Context, sourcePath string, database vect
 	defer source.Close()
 	var total int64
 	for _, table := range database.Tables {
+		var primaryKeys, integerPrimaryKey int64
+		if err := source.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info(?) WHERE pk > 0`, table.Name).Scan(&primaryKeys); err != nil || primaryKeys != 1 {
+			return nil
+		}
+		if err := source.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info(?)
+			WHERE name=? AND upper(type)='INTEGER' AND pk=1`, table.Name, table.IDColumn).Scan(&integerPrimaryKey); err != nil || integerPrimaryKey != 1 {
+			return nil
+		}
+		var indexed, numeric int64
+		var highWater sql.NullInt64
+		if err := sidecar.QueryRowContext(ctx, `SELECT COUNT(*),
+			COUNT(CASE WHEN raw_source_id=CAST(CAST(raw_source_id AS INTEGER) AS TEXT) THEN 1 END),
+			MAX(CAST(raw_source_id AS INTEGER)) FROM sources WHERE source_kind=?`, table.Name).
+			Scan(&indexed, &numeric, &highWater); err != nil || indexed == 0 || indexed != numeric || !highWater.Valid {
+			return nil
+		}
+		statement := fmt.Sprintf(`SELECT COUNT(*) FROM %s WHERE %s > ?`,
+			quoteIdentifier(table.Name), quoteIdentifier(table.IDColumn))
 		var count int64
-		if err := source.QueryRowContext(ctx, declaredChunkCountSQL("", table)).Scan(&count); err != nil {
+		if err := source.QueryRowContext(ctx, statement, highWater.Int64).Scan(&count); err != nil {
 			return nil
 		}
 		total += count

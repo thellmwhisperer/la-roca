@@ -201,12 +201,10 @@ func TestCompletedGenerationInvalidation(t *testing.T) {
 			if row.State == StateComplete && change != "legacy-count" {
 				t.Fatalf("stale generation: %+v", row)
 			}
-			// An outdated source is counted afresh; no other stale state may
-			// reuse the sealed count.
 			if row.State == StateOutdated {
-				const expectedCandidates = 4
-				if row.CandidateChunks == nil || *row.CandidateChunks != expectedCandidates {
-					t.Fatalf("outdated candidate chunks = %v, want %d", row.CandidateChunks, expectedCandidates)
+				if row.CandidateChunks != nil || row.Candidates != "not counted" {
+					t.Fatalf("outdated candidate chunks = %v, candidates=%q, want not counted for text IDs",
+						row.CandidateChunks, row.Candidates)
 				}
 			} else if row.CandidateChunks != nil {
 				t.Fatalf("stale generation: %+v", row)

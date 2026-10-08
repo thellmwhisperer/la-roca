@@ -1103,7 +1103,16 @@ func (d DeclaredCorpus) CountChunks(ctx context.Context, sourceKind string) (int
 	}
 	var total int64
 	for _, table := range tables {
-		statement := declaredChunkCountSQL(quoteIdentifier(d.Database.Alias)+".", table)
+		alias := "_vector_count"
+		size, overlap := table.chunking()
+		counts := make([]string, 0, len(table.TextColumns))
+		for _, column := range table.TextColumns {
+			text := fmt.Sprintf("COALESCE(CAST(%s.%s AS TEXT),'')", alias, quoteIdentifier(column))
+			counts = append(counts, chunkCountExpression(text, size, overlap))
+		}
+		statement := fmt.Sprintf(`SELECT COALESCE(SUM(%s),0) AS total FROM %s.%s AS %s WHERE %s`,
+			strings.Join(counts, "+"), quoteIdentifier(d.Database.Alias), quoteIdentifier(table.Name), alias,
+			declaredSourcePredicate(alias, table))
 		rows, err := d.Core.queryIngest(ctx, statement)
 		if err != nil {
 			return 0, fmt.Errorf("count declared chunks %s/%s: %w", d.Database.owner(), table.Name, err)
@@ -1119,21 +1128,6 @@ func (d DeclaredCorpus) CountChunks(ctx context.Context, sourceKind string) (int
 	}
 	return total, nil
 }
-
-// declaredChunkCountSQL counts the chunks one declared table would embed.
-// schema is the quoted attach alias plus a dot, or empty for a direct open.
-func declaredChunkCountSQL(schema string, table vectorTable) string {
-	alias := "_vector_count"
-	size, overlap := table.chunking()
-	counts := make([]string, 0, len(table.TextColumns))
-	for _, column := range table.TextColumns {
-		text := fmt.Sprintf("COALESCE(CAST(%s.%s AS TEXT),'')", alias, quoteIdentifier(column))
-		counts = append(counts, chunkCountExpression(text, size, overlap))
-	}
-	return fmt.Sprintf(`SELECT COALESCE(SUM(%s),0) AS total FROM %s%s AS %s WHERE %s`,
-		strings.Join(counts, "+"), schema, quoteIdentifier(table.Name), alias, declaredSourcePredicate(alias, table))
-}
-
 func (d DeclaredCorpus) WalkSources(ctx context.Context, sourceKind string,
 	visit func(sourceRow) error) error {
 	ctx, closeReader := withCoreReader(ctx)

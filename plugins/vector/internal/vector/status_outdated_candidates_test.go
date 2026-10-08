@@ -5,8 +5,7 @@ import (
 	"testing"
 )
 
-// After a completed delta, one row written to ops leaves exactly one chunk to
-// embed. Status must say how far behind ops is instead of null.
+// After a completed delta, one new ops row is above the indexed high-water ID.
 func TestStatusAfterDeltaCountsCandidatesStillToEmbed(t *testing.T) {
 	f, _, ops, _ := federationFixture(t)
 	ctx := context.Background()
@@ -22,13 +21,13 @@ func TestStatusAfterDeltaCountsCandidatesStillToEmbed(t *testing.T) {
 		if row.Database != "ops" {
 			continue
 		}
-		if row.State != StateOutdated || row.CandidateChunks == nil || row.EmbeddedChunks == nil {
+		if row.State != StateOutdated || row.CandidateChunks == nil {
 			t.Fatalf("ops after a write: state=%s candidate=%v, want outdated with a numeric candidate count",
 				row.State, row.CandidateChunks)
 		}
-		const expectedCandidates = 3 // Three short fixture memories each produce one chunk.
-		if got := *row.CandidateChunks; got != expectedCandidates {
-			t.Fatalf("ops candidate_chunks=%d, want %d", got, expectedCandidates)
+		const expectedPendingRows = 1
+		if got := *row.CandidateChunks; got != expectedPendingRows {
+			t.Fatalf("ops candidate_chunks=%d, want %d pending source row", got, expectedPendingRows)
 		}
 		return
 	}

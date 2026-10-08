@@ -36,14 +36,13 @@ nobody answered has not consented to a download.
 `vector-registry.json`: plugin, database, declared tables, embedded chunks,
 candidate chunks, sidecar size, last write, state, lock status, and a
 `compact_recommended` flag. Embedded counts report live indexed chunks;
-candidate counts are stored by a completed unrestricted indexing pass under the declared
-chunking policy. Status uses that exact count only while its source generation
-and reader contract still match. An `outdated` source is counted afresh,
-read-only, under the current chunking policy, within a two-second budget. When
-that count fails or runs out of time, the row says `candidates: "not counted"`.
-Legacy and partial sources have unknown candidate counts until that pass completes. Either count can be
-unknown (`null`), never an estimate or invented zero. Sidecar size and last
-write include its SQLite WAL and shared-memory files when present.
+candidate counts for a complete source are stored by a completed unrestricted
+indexing pass under the declared chunking policy. For an `outdated` source,
+`candidate_chunks` counts rows with an ID above the sidecar's indexed high-water
+ID, using a primary-key range count without reading source text. If the sidecar
+has no usable high-water ID or the count fails or runs out of time, the row
+says `candidates: "not counted"`. Sidecar size and last write include its
+SQLite WAL and shared-memory files when present.
 
 Lock status (`index_lock` in JSON) is `held` when another process holds the
 flock, `unheld` when the file exists but is free, or `absent`. A lock that
@@ -69,8 +68,7 @@ The states are `building`, `complete`, `empty`, `outdated`, `invalid`, and `unkn
 `complete` requires a sealed source fingerprint, the current declaration,
 and a matching current source-file marker. A missing or unreadable marker
 means `unknown`; the next real indexing pass refreshes the seal. Status does
-not hash source files. For outdated sources, it reads row counts without
-reading source text. For ops, it also checks chunk
+not hash source files or read source text. For ops, it also checks chunk
 identifiers against `memories.legacy_id`; detected stale identifiers make an
 otherwise `building`, `complete`, or `outdated` sidecar `invalid`.
 A changed declaration or stored marker is `outdated`. A missing sidecar,
