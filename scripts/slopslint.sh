@@ -16,7 +16,7 @@ cd "$(dirname "$0")/.."
 
 # The commit is pinned, not main. A gate whose measurement can change under a
 # repository that did not change is not a gate.
-COMMIT="d505e3ae1ea6102320b8071f0069c33f0f548569"
+COMMIT="84c1a343777375ef21c5aa0dfb992a5e23cf2276"
 BUN_VERSION="1.3.5"
 CACHE_DIR=".tmp/slopslint"
 
