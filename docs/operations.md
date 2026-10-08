@@ -148,17 +148,18 @@ names each ownership marker to delete by hand. Claude's two events are probed
 separately, so an unreadable `PreToolUse` never holds the session entry hostage,
 and one unreadable file still produces exactly one warning line.
 
-The implementation is owned by
-[`internal/distribution/cli/hooks_session.go`](../internal/distribution/cli/hooks_session.go)
+The implementation is owned by the
+[`internal/distribution/cli/hooks`](../internal/distribution/cli/hooks) package:
+[`session.go`](../internal/distribution/cli/hooks/session.go)
 (what an install and a withdrawal do per runtime),
-[`hooks_context.go`](../internal/distribution/cli/hooks_context.go) (the fixed
+[`context.go`](../internal/distribution/cli/hooks/context.go) (the fixed
 fragment and the per-harness envelopes),
-[`hooks_runtimes.go`](../internal/distribution/cli/hooks_runtimes.go) (the table
+[`runtimes.go`](../internal/distribution/cli/hooks/runtimes.go) (the table
 of harnesses and their files),
-[`hooks_json.go`](../internal/distribution/cli/hooks_json.go) (Claude, Codex and
-Cursor), [`hooks_script.go`](../internal/distribution/cli/hooks_script.go) (pi
+[`json.go`](../internal/distribution/cli/hooks/json.go) (Claude, Codex and
+Cursor), [`script.go`](../internal/distribution/cli/hooks/script.go) (pi
 and OpenCode) and
-[`hooks_zcode.go`](../internal/distribution/cli/hooks_zcode.go) (ZCode). Claude
+[`zcode.go`](../internal/distribution/cli/hooks/zcode.go) (ZCode). Claude
 Desktop is not part of this installer.
 
 Other harnesses can use the same client-side pattern: intercept the shell tool,

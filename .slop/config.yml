@@ -93,7 +93,7 @@ claims:
   file: .slop/claims.yml
   surfaces:
     commands_and_flags:
-      files: ["internal/distribution/cli/*.go"]
+      files: ["internal/distribution/cli/*.go", "internal/distribution/cli/hooks/*.go"]
       ignore:
         - "**/*_test.go"
         - "internal/distribution/cli/doctor_snapshots.go"

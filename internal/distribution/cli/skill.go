@@ -8,13 +8,13 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/thellmwhisperer/la-roca/internal/artifact"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/agentcfg"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/cli/hooks"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/skill"
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
@@ -27,14 +27,12 @@ var rocaStoreInvocation = regexp.MustCompile(
 // claudeHookInvocation recognizes La Roca's own PreToolUse entry whatever binary
 // path it was installed with, so a reinstall repoints it and an uninstall finds
 // it even after the operator moved the executable.
-const shellCommandExecutablePattern = `(?:'(?:[^']|'"'"')*'|"[^"]*"|\S+)`
-
 var claudeHookInvocation = regexp.MustCompile(
-	`^` + shellCommandExecutablePattern + `[ \t]+hooks[ \t]+run[ \t]+claude$`,
+	`^` + hooks.ShellCommandExecutablePattern + `[ \t]+hooks[ \t]+run[ \t]+claude$`,
 )
 
 func claudeHookCommand(executable string) string {
-	return shellQuote(executable) + " hooks run claude"
+	return hooks.ShellQuote(executable) + " hooks run claude"
 }
 
 // skillCommand installs the agent skills that teach runtimes how to use La
@@ -461,6 +459,28 @@ func hooksCommand(env *cliEnv) *cobra.Command {
 	return command
 }
 
+// hooksEnv hands the hooks package what it needs from this command line.
+func (env *cliEnv) hooksEnv() hooks.Env {
+	return hooks.Env{
+		Out: env.out,
+		OpenSessionContext: func() (*service.Service, error) {
+			svc, _, err := env.openSessionContextService()
+			return svc, err
+		},
+		RegisteredHook: func(runtime, path string) (artifact.Entry, bool, error) {
+			return env.registeredArtifact(artifactKindHook, runtime, path)
+		},
+		RegisterHook: env.registerHook,
+		UnregisterHook: func(runtime, path string) error {
+			return env.unregisterArtifact(artifactKindHook, runtime, path)
+		},
+		InstallClaudeAuthorshipHook:   installClaudeAuthorshipHook,
+		UninstallClaudeAuthorshipHook: uninstallClaudeAuthorshipHook,
+		RefreshClaudeHook:             refreshClaudeHook,
+		ClaudeHookSystem:              claudeHookSystem,
+	}
+}
+
 // hooksEditCommand is the shape both `hooks install` and `hooks uninstall`
 // have: one supported runtime, one settings file, one rendered outcome. An edit
 // that has something to say about a file it left alone returns one warning line,
@@ -472,10 +492,10 @@ func hooksEditCommand(env *cliEnv, use, short, verb string,
 		Short: short,
 		Args:  cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
-			if err := supportedHookRuntime(args[0]); err != nil {
+			if err := hooks.SupportedRuntime(args[0]); err != nil {
 				return err
 			}
-			path, err := hookArtifactPath(args[0])
+			path, err := hooks.ArtifactPath(args[0])
 			if err != nil {
 				return err
 			}
@@ -497,8 +517,8 @@ func hooksInstallCommand(env *cliEnv) *cobra.Command {
 	cmd := hooksEditCommand(env, "install [runtime]",
 		"Install a runtime's La Roca session hooks", "updated",
 		func(runtime, path string) (agentcfg.Outcome, string, error) {
-			return installRuntimeHooks(
-				env, runtime, path, chosenExecutable(executable), force, pills, handoff)
+			return hooks.InstallRuntimeHooks(
+				env.hooksEnv(), runtime, path, chosenExecutable(executable), force, pills, handoff)
 		})
 	cmd.Flags().StringVar(&executable, "executable", "",
 		"the binary the hook launches (default: this executable; override with "+EnvExecutable+")")
@@ -512,7 +532,7 @@ func hooksUninstallCommand(env *cliEnv) *cobra.Command {
 	return hooksEditCommand(env, "uninstall [runtime]",
 		"Withdraw a runtime's La Roca hooks, leaving its other settings in place", "withdrawn",
 		func(runtime, path string) (agentcfg.Outcome, string, error) {
-			return uninstallRuntimeHooks(env, runtime, path)
+			return hooks.UninstallRuntimeHooks(env.hooksEnv(), runtime, path)
 		})
 }
 
@@ -542,13 +562,13 @@ func hooksRunCommand(env *cliEnv) *cobra.Command {
 				return runPillList(cmd.Context(), env, "")
 			case "claude-handoff":
 				return runLatestHandoffs(cmd.Context(), env, latestHandoffOptions{
-					limit: 1, headChars: claudeHandoffHeadChars,
+					limit: 1, headChars: hooks.ClaudeHandoffHeadChars,
 				})
 			case "session":
-				return runSessionHook(cmd.Context(), env, runtime,
-					sessionRequest{pills: pills, handoff: handoff})
+				return hooks.RunSessionHook(cmd.Context(), env.hooksEnv(), runtime,
+					hooks.SessionRequest{Pills: pills, Handoff: handoff})
 			case agentcfg.RuntimeZcode:
-				return runZcodeHandoffHook(cmd.Context(), env)
+				return hooks.RunZcodeHandoffHook(cmd.Context(), env.hooksEnv())
 			default:
 				return fmt.Errorf("unsupported hook %q", args[0])
 			}
@@ -561,18 +581,6 @@ func hooksRunCommand(env *cliEnv) *cobra.Command {
 	return command
 }
 
-func claudeSettingsPath() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("I do not know where your HOME is")
-	}
-	root := os.Getenv("CLAUDE_CONFIG_DIR")
-	if root == "" {
-		root = filepath.Join(home, ".claude")
-	}
-	return filepath.Join(root, "settings.json"), nil
-}
-
 // The hook is intentionally one hard-coded Claude artifact. Its command object
 // is the registered SYSTEM fragment; every neighbouring setting stays USER.
 //
@@ -580,9 +588,9 @@ func claudeSettingsPath() (string, error) {
 // install` declares the server: Claude runs a PreToolUse hook in a
 // non-interactive shell, where a bare `roca` is whatever PATH happens to hold.
 func installClaudeAuthorshipHook(path, executable string) (agentcfg.Outcome, error) {
-	return installClaudeHook(path, executable, claudeHookSpec{
-		event: "PreToolUse", invocation: claudeHookInvocation,
-		command: claudeHookCommand, entry: claudeAuthorshipHookEntry,
+	return hooks.InstallClaudeHook(path, chosenExecutable(executable), hooks.ClaudeHookSpec{
+		Event: "PreToolUse", Invocation: claudeHookInvocation,
+		Command: claudeHookCommand, Entry: claudeAuthorshipHookEntry,
 	})
 }
 
@@ -606,8 +614,8 @@ func claudeAuthorshipCommandHook(command string) map[string]any {
 // wrote. The edit is skipped, the command succeeds, and the returned warning
 // names the file and the entry to take out by hand. The caller prints it once.
 func uninstallClaudeAuthorshipHook(path string) (agentcfg.Outcome, string, error) {
-	return uninstallClaudeHook(path, claudeHookSpec{
-		event: "PreToolUse", invocation: claudeHookInvocation,
+	return hooks.UninstallClaudeHook(path, hooks.ClaudeHookSpec{
+		Event: "PreToolUse", Invocation: claudeHookInvocation,
 	}, foreignClaudeSettingsWarning(path))
 }
 
@@ -625,50 +633,8 @@ func foreignClaudeSettingsWarning(path string) string {
 // the file and hands back the hooks table and its PreToolUse entries. The two
 // edits share this refusal and part company over what it means, so the reader
 // states the shape once and each caller decides whether to stop.
-func claudeHookSettings(previous string) (settings, hooks map[string]any, entries []any, err error) {
-	return claudeEventHookSettings(previous, "PreToolUse")
-}
-
-func claudeSettings(previous string) (map[string]any, error) {
-	settings := map[string]any{}
-	if strings.TrimSpace(previous) == "" {
-		return settings, nil
-	}
-	if err := json.Unmarshal([]byte(previous), &settings); err != nil {
-		return nil, fmt.Errorf("read Claude settings: %w", err)
-	}
-	if settings == nil {
-		return nil, fmt.Errorf("Claude settings must be an object")
-	}
-	return settings, nil
-}
-
-func encodeClaudeSettings(settings map[string]any) (string, error) {
-	encoded, err := json.MarshalIndent(settings, "", "  ")
-	if err != nil {
-		return "", fmt.Errorf("encode Claude settings: %w", err)
-	}
-	return string(append(encoded, '\n')), nil
-}
-
-func commandHooksOf(entry any) []map[string]any {
-	group, ok := entry.(map[string]any)
-	if !ok {
-		return nil
-	}
-	hooks, _ := group["hooks"].([]any)
-	commands := make([]map[string]any, 0, len(hooks))
-	for _, raw := range hooks {
-		if hook, ok := raw.(map[string]any); ok && hook["type"] == "command" {
-			commands = append(commands, hook)
-		}
-	}
-	return commands
-}
-
-func commandOf(hook map[string]any) string {
-	command, _ := hook["command"].(string)
-	return command
+func claudeHookSettings(previous string) (settings, table map[string]any, entries []any, err error) {
+	return hooks.ClaudeEventHookSettings(previous, "PreToolUse")
 }
 
 func runClaudeAuthorshipHook(input []byte) ([]byte, error) {
@@ -722,7 +688,7 @@ func signRocaStoreCommand(command, model string) string {
 		flags += " --agent claude"
 	}
 	if !hasUnquotedFlag(segment, "--model") {
-		flags += " --model " + shellQuote(model)
+		flags += " --model " + hooks.ShellQuote(model)
 	}
 	return command[:location[1]] + flags + command[location[1]:]
 }
@@ -802,8 +768,4 @@ func claudeTranscriptModel(path string) string {
 		}
 	}
 	return model
-}
-
-func shellQuote(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'"
 }

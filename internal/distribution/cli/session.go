@@ -12,12 +12,11 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/axi"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/cli/hooks"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
-
-const claudeHandoffHeadChars = 3000
 
 func pillCommand(env *cliEnv) *cobra.Command {
 	var project string
@@ -224,7 +223,7 @@ func runLatestHandoffsAllProjects(ctx context.Context, env *cliEnv, opts latestH
 	}
 	headChars := opts.headChars
 	if headChars == 0 {
-		headChars = claudeHandoffHeadChars
+		headChars = hooks.ClaudeHandoffHeadChars
 	}
 	var result service.HandoffLab
 	handled, err := env.callResident(ctx, "handoff_all", struct {
@@ -309,7 +308,7 @@ func runLabMenu(ctx context.Context, env *cliEnv) error {
 	menu := axi.LabMenu{}
 	if svc, _, err := env.openSessionContextService(); err == nil {
 		defer svc.Close()
-		if lab, err := svc.LatestHandoffsByProject(ctx, time.Time{}, claudeHandoffHeadChars); err == nil {
+		if lab, err := svc.LatestHandoffsByProject(ctx, time.Time{}, hooks.ClaudeHandoffHeadChars); err == nil {
 			menu.Lab = lab
 		}
 		if project, err := resolveProject(""); err == nil {
