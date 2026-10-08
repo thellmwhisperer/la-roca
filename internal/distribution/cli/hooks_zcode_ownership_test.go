@@ -88,11 +88,7 @@ func TestZcodeHookEditedMarkedWrapperSurvivesInstallAndUninstall(t *testing.T) {
 func TestZcodeHookUninstallKeepsWrapperReferencedByEditedEntry(t *testing.T) {
 	_, config, wrapper := zcodeHookHome(t, "{}\n")
 	requireZcodeHooks(t, "install")
-	document := readZcodeHookDocument(t, config)
-	groups := document["hooks"].(map[string]any)["events"].(map[string]any)["SessionStart"].([]any)
-	groups[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)["timeoutMs"] = 9000
-	writeZcodeHookDocument(t, config, document)
-	entry := string(mustRead(t, config))
+	entry := editZcodeHookTimeout(t, config)
 
 	requireZcodeHooks(t, "uninstall")
 	if got := string(mustRead(t, config)); got != entry {
@@ -132,11 +128,7 @@ func TestZcodeHookInstallUninstallRestoresConfigWithoutHooks(t *testing.T) {
 func TestZcodeHookEditedTimeoutSurvivesReinstallAndUninstall(t *testing.T) {
 	_, config, _ := zcodeHookHome(t, "{}\n")
 	requireZcodeHooks(t, "install")
-	document := readZcodeHookDocument(t, config)
-	groups := document["hooks"].(map[string]any)["events"].(map[string]any)["SessionStart"].([]any)
-	groups[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)["timeoutMs"] = 9000
-	writeZcodeHookDocument(t, config, document)
-	edited := string(mustRead(t, config))
+	edited := editZcodeHookTimeout(t, config)
 
 	for _, action := range []string{"install", "uninstall"} {
 		requireZcodeHooks(t, action)
@@ -144,6 +136,15 @@ func TestZcodeHookEditedTimeoutSurvivesReinstallAndUninstall(t *testing.T) {
 			t.Fatalf("%s touched the operator-edited hook: %s", action, got)
 		}
 	}
+}
+
+func editZcodeHookTimeout(t *testing.T, config string) string {
+	t.Helper()
+	document := readZcodeHookDocument(t, config)
+	groups := document["hooks"].(map[string]any)["events"].(map[string]any)["SessionStart"].([]any)
+	groups[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)["timeoutMs"] = 9000
+	writeZcodeHookDocument(t, config, document)
+	return string(mustRead(t, config))
 }
 
 func TestZcodeHookUninstallKeepsOperatorEmptyGroup(t *testing.T) {
