@@ -916,8 +916,6 @@ func (s *Service) proveWordSearchSurface(ctx context.Context, route PluginRoute,
 // next page's bound compares the way ORDER BY sorted.
 func probeCursor(id any) string {
 	switch id.(type) {
-	case nil:
-		return ""
 	case int64, float64:
 		return fmt.Sprint(id)
 	}
