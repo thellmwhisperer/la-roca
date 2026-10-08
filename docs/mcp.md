@@ -228,6 +228,20 @@ an existing symlink or other non-regular path is refused before backup or
 mutation; and a file that changed underneath us aborts instead of clobbering the
 runtime that owns it.
 
+**ZCode ownership record.** `zcode` keeps a `<file>.roca-owned` sidecar beside
+its config. Each claim records a digest of the normalized JSON value La Roca
+wrote (key order and whitespace do not matter). La Roca treats
+`mcp.servers.roca` as its own only while the current value has that digest.
+Install never adopts an entry it has no claim for. If the value has changed,
+install and uninstall leave it alone, say so, and drop the stale claim.
+Uninstall removes an empty container La Roca created only when it has just
+removed La Roca's valid entry from that container. Sidecars written before
+digests count as valid only while the entry equals what this version writes,
+with `command` compared by basename. An operator value identical to what La
+Roca wrote cannot be told apart from it and is treated as La Roca's. MCP and
+hook installs hold a lock on `<file>.roca-owned.lock` while they edit the
+config and the sidecar.
+
 **One declared boundary.** A `codex` config that writes `mcp_servers` as an
 inline table is refused by name, with the remedy, instead of being edited.
 Corrupting somebody's config is worse than asking them to spell it as a table.
