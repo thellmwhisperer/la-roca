@@ -835,11 +835,7 @@ func (s *Service) proveWordSearch(ctx context.Context) *search.Proof {
 			candidate := proof
 			ready = &candidate
 		}
-		// A broken index outranks a slow one: only the first is worth a rebuild.
-		if !proof.Empty && !proof.Ready && (fault == nil || fault.TimedOut && !proof.TimedOut) {
-			candidate := proof
-			fault = &candidate
-		}
+		fault = preferWordSearchFault(fault, proof)
 	}
 	if fault != nil {
 		return fault
@@ -849,6 +845,14 @@ func (s *Service) proveWordSearch(ctx context.Context) *search.Proof {
 	}
 	empty := search.EmptyProof()
 	return &empty
+}
+
+func preferWordSearchFault(fault *search.Proof, proof search.Proof) *search.Proof {
+	if !proof.TimedOut && (proof.Empty || proof.Ready || fault != nil) {
+		return fault
+	}
+	candidate := proof
+	return &candidate
 }
 
 func (s *Service) proveWordSearchSurface(ctx context.Context, route PluginRoute,
