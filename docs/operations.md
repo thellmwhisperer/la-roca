@@ -97,8 +97,9 @@ never shown a read error where its project context belongs.
 Each harness's own file shape decides what La Roca owns inside it. In Claude's
 and Codex's documents it is the command object; in Cursor's it is the one
 `sessionStart` entry; in ZCode's it is the nested command plus the wrapper it
-names, and parent containers (`hooks`, `hooks.events`) this install created are
-recorded beside the config and pruned on uninstall only when they remain empty.
+names, and parent containers (`hooks`, `hooks.events`,
+`hooks.events.SessionStart`) this install created are recorded beside the config
+and pruned on uninstall only when they remain empty.
 For pi and OpenCode the whole written file is the SYSTEM fragment: it carries an
 ownership line, a file at that path without it is refused rather than replaced,
 and one La Roca wrote and the operator edited is left alone until `roca hooks

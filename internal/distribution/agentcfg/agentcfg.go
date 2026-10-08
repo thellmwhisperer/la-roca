@@ -167,6 +167,9 @@ type Outcome struct {
 	Path    string `json:"path"`
 	Changed bool   `json:"changed"`
 	Backup  string `json:"backup,omitempty"`
+	// OperatorEntry means Roca's key holds a value La Roca has no valid claim
+	// on, so the edit left it alone.
+	OperatorEntry bool `json:"operator_entry,omitempty"`
 }
 
 // Report is one runtime's state, read without touching the file.
@@ -239,25 +242,25 @@ func Install(name, path, executable string) (Outcome, error) {
 	if strings.TrimSpace(executable) == "" {
 		executable = "roca"
 	}
-	if len(r.parents) > 0 {
-		if _, err := loadOwnedMCP(path); err != nil {
-			return Outcome{Runtime: name, Path: path}, err
+	if len(r.parents) == 0 {
+		return Edit(name, path, func(text string) (string, error) {
+			return declare(r, text, executable)
+		}, true)
+	}
+	return editOwned(r, name, path, true, func(text string, owned *ownedContainers) (string, error) {
+		created := missingServerContainers(r, text)
+		next, err := declare(r, text, executable)
+		if err != nil {
+			return "", err
 		}
-	}
-	var created []string
-	outcome, err := Edit(name, path, func(text string) (string, error) {
-		created = missingServerContainers(r, text)
-		return declare(r, text, executable)
-	}, true)
-	if err != nil {
-		return outcome, err
-	}
-	if outcome.Changed && len(created) > 0 {
-		if err := saveOwnedMCP(path, created); err != nil {
-			return outcome, err
+		value, _, err := entryValue(r, next)
+		if owned.Claims == nil {
+			owned.Claims = map[string]string{}
 		}
-	}
-	return outcome, nil
+		owned.MCP = mergeOwned(owned.MCP, created)
+		owned.Claims[entryKey(r)] = valueDigest(value)
+		return next, err
+	})
 }
 
 // Uninstall withdraws Roca's entry and leaves the rest of the file exactly as
@@ -268,25 +271,61 @@ func Uninstall(name, path string) (Outcome, error) {
 	if err != nil {
 		return Outcome{}, err
 	}
-	var created []string
-	if len(r.parents) > 0 {
-		created, err = loadOwnedMCP(path)
-		if err != nil {
-			return Outcome{Runtime: name, Path: path}, err
-		}
+	if len(r.parents) == 0 {
+		return Edit(name, path, func(text string) (string, error) {
+			return withdraw(r, text)
+		}, false)
 	}
+	return editOwned(r, name, path, false, func(text string, owned *ownedContainers) (string, error) {
+		return jsonRemoveCreated(r, text, []string{ServerName}, owned.MCP)
+	})
+}
+
+// editOwned runs one sidecar runtime edit under the ownership lock. transform
+// runs only over an entry La Roca validly claims, or none at all; an entry
+// there without a valid claim is the operator's and the file is left as it
+// is. Install keeps the claims transform records; uninstall drops them all.
+func editOwned(r runtime, name, path string, install bool,
+	transform func(string, *ownedContainers) (string, error)) (Outcome, error) {
+	release, err := LockOwned(path, install)
+	if err != nil {
+		return Outcome{Runtime: name, Path: path}, err
+	}
+	defer release()
+	owned, err := loadOwned(path)
+	if err != nil {
+		return Outcome{Runtime: name, Path: path}, err
+	}
+	operator := false
 	outcome, err := Edit(name, path, func(text string) (string, error) {
-		return withdrawCreated(r, text, created)
-	}, false)
+		value, present, err := entryValue(r, text)
+		if err != nil {
+			return "", err
+		}
+		if !owned.owns(r, entryKey(r), value, present) {
+			// A stale claim is dropped, never refreshed, and takes the
+			// containers it recorded with it.
+			owned.MCP = nil
+			delete(owned.Claims, entryKey(r))
+			if operator = present; operator || !install {
+				return text, nil
+			}
+		}
+		return transform(text, &owned)
+	}, install)
 	if err != nil {
 		return outcome, err
 	}
-	if len(r.parents) > 0 {
-		if err := clearOwnedMCP(path); err != nil {
-			return outcome, err
-		}
+	outcome.OperatorEntry = operator
+	if !install {
+		owned.MCP = nil
+		delete(owned.Claims, entryKey(r))
 	}
-	return outcome, nil
+	return outcome, writeOwned(path, owned)
+}
+
+func entryKey(r runtime) string {
+	return strings.Join(append(append([]string{}, r.parents...), r.serversKey, ServerName), ".")
 }
 
 // Status reads one runtime's configuration without modifying it.
