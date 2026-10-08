@@ -175,6 +175,11 @@ func TestCodexIdentityReferencesAndConflict(t *testing.T) {
 			 VALUES('019aba72-aa57-7d93-a12c-b6e65c0dca61',1,'synthetic reasoning');
 			 INSERT INTO memories(source_session,layer,content,origin)
 			 VALUES('019aba72-aa57-7d93-a12c-b6e65c0dca60','pattern','synthetic memory','agent');`)
+			// Recorded timestamp owners follow a renumbered exchange instead of
+			// labelling whichever exchange later holds their old number.
+			exec(t, db.SQL(), `UPDATE sessions SET metadata=json_set(metadata,'$.timestamp_owners',
+			 json('{"1":{"agent_timestamp":{"source":"codex","status":"observed"}},"2":{"agent_timestamp":{"status":"unknown"}}}'))
+			 WHERE session_id='019aba72-aa57-7d93-a12c-b6e65c0dca61'`)
 			if conflict {
 				exec(t, db.SQL(), `UPDATE sessions SET metadata=json_set(metadata,
 				 '$.codex_rollout_path','/synthetic/different-rollout.jsonl')
@@ -198,11 +203,14 @@ func TestCodexIdentityReferencesAndConflict(t *testing.T) {
 			}
 			for query, want := range map[string]int{
 				"exchanges": 6, "tool_uses": 49, "thinking_blocks": 1, "memories": 1,
-				"exchanges WHERE exchange_number=7 AND human_text='Synthetic prompt 1'":                             1,
-				"thinking_blocks WHERE exchange_number=7":                                                           1,
-				"memories WHERE source_session='019aba72-aa57-7d93-a12c-b6e65c0dca6b'":                              1,
-				"sessions WHERE json_extract(metadata,'$.source_exchange_ids.synthetic-history.exchange_number')=7": 1,
-				"tool_uses WHERE exchange_number=1 AND tool_name='numbered synthetic call'":                         1,
+				"exchanges WHERE exchange_number=7 AND human_text='Synthetic prompt 1'":                              1,
+				"thinking_blocks WHERE exchange_number=7":                                                            1,
+				"memories WHERE source_session='019aba72-aa57-7d93-a12c-b6e65c0dca6b'":                               1,
+				"sessions WHERE json_extract(metadata,'$.source_exchange_ids.synthetic-history.exchange_number')=7":  1,
+				"tool_uses WHERE exchange_number=1 AND tool_name='numbered synthetic call'":                          1,
+				"sessions WHERE json_extract(metadata,'$.timestamp_owners.\"7\".agent_timestamp.status')='observed'": 1,
+				"sessions WHERE json_extract(metadata,'$.timestamp_owners.\"2\".agent_timestamp.status')='unknown'":  1,
+				"sessions WHERE json_extract(metadata,'$.timestamp_owners.\"1\"') IS NOT NULL":                       0,
 			} {
 				if got := countRows(t, db.SQL(), query); got != want {
 					t.Errorf("%s=%d want %d", query, got, want)
