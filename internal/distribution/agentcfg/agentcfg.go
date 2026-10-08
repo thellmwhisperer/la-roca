@@ -258,7 +258,7 @@ func Install(name, path, executable string) (Outcome, error) {
 			owned.Claims = map[string]string{}
 		}
 		owned.MCP = mergeOwned(owned.MCP, created)
-		owned.Claims[entryKey(r)] = valueDigest(value)
+		owned.Claims[entryKey(r)] = ValueDigest(value)
 		return next, err
 	})
 }

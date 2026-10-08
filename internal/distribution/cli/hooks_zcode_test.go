@@ -89,8 +89,8 @@ exit 1
 		t.Fatalf("installer lost neighbouring theme: %s", body)
 	}
 	hooks := document["hooks"].(map[string]any)
-	if hooks["enabled"] != true {
-		t.Fatalf("hooks.enabled = %#v", hooks["enabled"])
+	if hooks["enabled"] != false {
+		t.Fatalf("install changed the operator's hooks.enabled to %#v", hooks["enabled"])
 	}
 	if _, flat := hooks["SessionStart"]; flat {
 		t.Fatal("installer wrote the rejected flat SessionStart shape")
@@ -307,7 +307,7 @@ func TestZcodeHookInstallRollsBackWrapperAfterConfigEditFailure(t *testing.T) {
 			writeZcodeHookExecutable(t, home, "#!/bin/sh\nexit 0\n")
 			writeFile(t, config, "{}\n")
 			wrapper := filepath.Join(home, ".zcode", "hooks", "roca-handoff.sh")
-			before := "#!/bin/sh\nprintf 'operator wrapper\\n'\n"
+			before := "#!/bin/sh\n" + zcodeHookWrapperMarker + "\nprintf 'earlier wrapper\\n'\n"
 			if existing {
 				writeFile(t, wrapper, before)
 				if err := os.Chmod(wrapper, 0o600); err != nil {
