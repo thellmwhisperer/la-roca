@@ -235,7 +235,11 @@ type Session struct {
 	// projection migration. It is safe only when every current exchange has a
 	// unique SourceID mapping; the writer verifies that before deleting anything.
 	PruneUnmappedExchanges bool
-	Exchanges              []Exchange
+	// RecordTimestampOwners asks the writer to record, per exchange, which source
+	// stated each timestamp, or that none did. A source whose rows overlap another
+	// source's sets it, so reconciliation reads ownership instead of guessing it.
+	RecordTimestampOwners bool
+	Exchanges             []Exchange
 	// OrphanedTools are calls the runtime recorded outside every completed
 	// conversational exchange. A non-nil slice from a full parse is an authoritative
 	// session-level projection; an incremental parse appends only its observed tail.
@@ -397,6 +401,10 @@ type ToolUse struct {
 	HadError       bool
 	ErrorMessage   string
 	InitiativeType string
+	// SourceID is the call identity the source itself wrote, such as a Codex
+	// call_id. Empty means the source stated none; it is never derived from the
+	// name, parameters or position of the call.
+	SourceID string
 }
 
 // Memory is one curated text: a memory file, a rule or a skill.

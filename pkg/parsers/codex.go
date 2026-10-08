@@ -134,10 +134,11 @@ type codexTurn struct {
 func ParseCodexSession(content []byte, meta FileMeta) (Records, error) {
 	reader := &codexReader{
 		session: Session{
-			ID:          meta.SessionID,
-			SourceAgent: firstNonEmpty(meta.SourceAgent, "codex"),
-			Project:     meta.Project,
-			Metadata:    map[string]any{},
+			ID:                    meta.SessionID,
+			SourceAgent:           firstNonEmpty(meta.SourceAgent, "codex"),
+			Project:               meta.Project,
+			Metadata:              map[string]any{},
+			RecordTimestampOwners: true,
 		},
 		pending:       map[string]*ToolUse{},
 		orphanPending: map[string]*ToolUse{},
@@ -404,6 +405,7 @@ func (r *codexReader) responseItem(record int, line codexLine, payload codexPayl
 		tool := &ToolUse{
 			Name:          payload.Name,
 			ParamsSummary: Clip(firstNonEmpty(rawText(payload.Arguments), payload.Input), paramsBudget),
+			SourceID:      payload.CallID,
 		}
 		r.signals = append(r.signals, codexSignal{record: record, tool: tool})
 		if r.open != nil {
