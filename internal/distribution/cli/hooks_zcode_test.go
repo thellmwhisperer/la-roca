@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"os"
@@ -89,8 +91,8 @@ exit 1
 		t.Fatalf("installer lost neighbouring theme: %s", body)
 	}
 	hooks := document["hooks"].(map[string]any)
-	if hooks["enabled"] != true {
-		t.Fatalf("hooks.enabled = %#v", hooks["enabled"])
+	if hooks["enabled"] != false {
+		t.Fatalf("install changed the operator's hooks.enabled to %#v", hooks["enabled"])
 	}
 	if _, flat := hooks["SessionStart"]; flat {
 		t.Fatal("installer wrote the rejected flat SessionStart shape")
@@ -268,6 +270,35 @@ func TestZcodeHookInstallRejectsInvalidContainersBeforeWritingWrapper(t *testing
 	}
 }
 
+func TestZcodeHookWriteRefusesWrapperChangedAfterOwnershipCheck(t *testing.T) {
+	home, _, wrapper := zcodeHookHome(t, "")
+	content := zcodeWrapper(filepath.Join(home, "bin", "roca"), sessionRequest{})
+	writeFile(t, wrapper, content)
+	validated, err := readZcodeWrapperState(wrapper)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !zcodeOwnsWrapper(nil, validated.body, content) {
+		t.Fatal("fixture wrapper did not pass legacy ownership check")
+	}
+	operatorEdit := content + "# operator edit\n"
+	writeFile(t, wrapper, operatorEdit)
+
+	backup, err := writeZcodeWrapper(wrapper, content+"# refreshed\n", validated)
+	if err == nil {
+		t.Fatal("wrapper write replaced bytes changed after ownership check")
+	}
+	if backup != "" {
+		t.Fatalf("refused wrapper write left a backup: %s", backup)
+	}
+	if got := string(mustRead(t, wrapper)); got != operatorEdit {
+		t.Fatalf("wrapper write lost the operator edit: %q", got)
+	}
+	if _, err := os.Stat(wrapper + ".roca.bak"); !os.IsNotExist(err) {
+		t.Fatalf("refused wrapper write left a backup file: %v", err)
+	}
+}
+
 func TestZcodeHookOwnershipFailureRetainsWorkingHookWithoutFollowingSymlink(t *testing.T) {
 	home, config := zcodeHookTestPaths(t)
 	writeZcodeHookExecutable(t, home, "#!/bin/sh\nexit 0\n")
@@ -307,12 +338,26 @@ func TestZcodeHookInstallRollsBackWrapperAfterConfigEditFailure(t *testing.T) {
 			writeZcodeHookExecutable(t, home, "#!/bin/sh\nexit 0\n")
 			writeFile(t, config, "{}\n")
 			wrapper := filepath.Join(home, ".zcode", "hooks", "roca-handoff.sh")
-			before := "#!/bin/sh\nprintf 'operator wrapper\\n'\n"
+			before := "#!/bin/sh\n" + zcodeHookWrapperMarker + "\nprintf 'earlier wrapper\\n'\n"
 			if existing {
 				writeFile(t, wrapper, before)
 				if err := os.Chmod(wrapper, 0o600); err != nil {
 					t.Fatal(err)
 				}
+				digest := sha256.Sum256([]byte(before))
+				ownership, err := json.Marshal(map[string]any{
+					"roca": "owned-containers-v1",
+					"claims": map[string]string{
+						"files.zcode-hook-wrapper": "sha256:" + hex.EncodeToString(digest[:]),
+					},
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				writeFile(t, config+".roca-owned", string(ownership)+"\n")
+			}
+			if err := os.WriteFile(config+".roca-owned.lock", nil, 0o600); err != nil {
+				t.Fatal(err)
 			}
 
 			configDir := filepath.Dir(config)

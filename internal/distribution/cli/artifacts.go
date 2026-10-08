@@ -377,7 +377,10 @@ func (env *cliEnv) adoptLegacyArtifacts(paths config.Paths, executable string,
 			if body, err := os.ReadFile(path); err == nil {
 				content := string(body)
 				_, zonedErr := artifact.Parse(content)
-				legacyOwned := embedded.Legacy != "" && strings.HasPrefix(content, embedded.Legacy)
+				// Opt-in seats arrived after the zones, so no pre-zone file there
+				// is ours: only the ownership marker proves one.
+				legacyOwned := embedded.Legacy != "" && skill.SeedsOnDetect(runtime) &&
+					strings.HasPrefix(content, embedded.Legacy)
 				if zonedErr == nil || legacyOwned {
 					registry.Upsert(discoveredFileEntry(artifactKindSkill, runtime, path,
 						content, env.build.Version))
