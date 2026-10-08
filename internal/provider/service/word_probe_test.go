@@ -29,12 +29,18 @@ func indexFingerprint(t *testing.T, path string) string {
 
 // initializedWith is an initialized installation holding the seeded rows, and
 // the fingerprint of its index after the triggers indexed them.
-func initializedWith(t *testing.T, seed string) (testPaths, string) {
+func initialized(t *testing.T) testPaths {
 	t.Helper()
 	paths := freshPaths(t)
 	if _, err := serviceOn(t, paths).Init(t.Context()); err != nil {
 		t.Fatal(err)
 	}
+	return paths
+}
+
+func initializedWith(t *testing.T, seed string) (testPaths, string) {
+	t.Helper()
+	paths := initialized(t)
 	db, err := sql.Open("sqlite", paths.db)
 	if err != nil {
 		t.Fatal(err)
@@ -101,10 +107,7 @@ func TestInitOnAHealthyLargeCorpusProvesWordSearchWithoutRebuilding(t *testing.T
 }
 
 func TestInitKeepsTimeoutWhenAnotherSurfaceHasAFastFault(t *testing.T) {
-	paths := freshPaths(t)
-	if _, err := serviceOn(t, paths).Init(t.Context()); err != nil {
-		t.Fatal(err)
-	}
+	paths := initialized(t)
 	db, err := sql.Open("sqlite", paths.db)
 	if err != nil {
 		t.Fatal(err)
