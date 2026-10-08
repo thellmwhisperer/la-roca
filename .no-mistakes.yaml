@@ -17,3 +17,15 @@ document:
     Keep raw local paths, hostnames, LAN addresses, session identifiers and exact
     corpus counts out of evidence summaries. Do not copy the rejected fixture into
     the PR body; report the paired outcomes using placeholders.
+review:
+  path_instructions:
+    - path: "**"
+      instructions: |
+        Run lint and tests through the commands above (make fmt, vet, slop; make test and the suites).
+        A finding is a defect against the linked issue's acceptance criteria, or one that breaks the
+        repository's test, typecheck or lint commands. Hardening for a case the issue does not name is
+        reported as a note and changes nothing.
+auto_fix:
+  review: 0  # the reviewer only reports; the agent that launched ATM answers every finding (Javi, 5-oct-2026)
+ci:
+  rerun_transient: 1  # a check GitHub cancels without a verdict is re-run once before anyone is asked

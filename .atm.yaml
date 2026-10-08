@@ -1,0 +1,16 @@
+# ATM's configuration for this repository. Every key is required; an empty value is a deliberate "none".
+install: ""
+# Unit and contract tests; the heavier suites run in delivery through no-mistakes.
+test: make test
+typecheck: go vet ./... && go vet -tags=acceptance,migrate_100k ./test/acceptance/
+lint: make fmt && make slop
+test_file: go test -count=1 {dir}
+test_patterns: ["**/*_test.go", "features/**", "test/**", "testdata/**"]
+docs_patterns: ["**/*.md", "docs/**"]
+# The branch goes through no-mistakes with its own screen in this terminal (attach), the same way ATM shows its own.
+# The run starts in the background without --yes: the reviewer only reports and whoever launched the run answers.
+delivery: >-
+  no-mistakes init >/dev/null &&
+  { no-mistakes axi run --intent "$ATM_TITLE" --closes "$ATM_ISSUE" --wait 2h >/dev/null 2>&1 & } &&
+  until no-mistakes axi status 2>/dev/null | grep -q '^  status: running'; do sleep 1; done &&
+  { no-mistakes attach || true; }
