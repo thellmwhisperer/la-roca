@@ -130,6 +130,15 @@ func TestStatusCommandReportsAXIRowsWithoutWaitingForTheModel(t *testing.T) {
 	}
 }
 
+func TestStatusRendererShowsNotCountedCandidateRows(t *testing.T) {
+	rendered := renderVectorization(vector.Vectorization{Databases: []vector.DatabaseVectorization{{
+		Plugin: "roca-ops", Database: "ops", State: vector.StateOutdated, Candidates: "not counted",
+	}}}, nil)
+	if !strings.Contains(rendered, `roca-ops,ops,"",null,not counted,null,null,outdated,unknown,false`) {
+		t.Fatalf("status row did not expose the not-counted candidate value:\n%s", rendered)
+	}
+}
+
 func TestStatusHelpSuggestsInstallOnlyWhenChunksAreMissing(t *testing.T) {
 	chunks := int64(12)
 	zero := int64(0)
