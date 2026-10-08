@@ -431,7 +431,9 @@ func sourceFileMarker(path string) (string, error) {
 	}
 	facts := make([]sourceMarkerFact, 0, len(fileFacts))
 	for index, fact := range fileFacts {
-		if !fact.Exists {
+		// A reader opening a WAL database may leave an empty -wal behind. It holds
+		// no frames, so it must not move the generation a finished pass sealed.
+		if !fact.Exists || (index > 0 && fact.Size == 0) {
 			continue
 		}
 		candidate := path + suffixes[index]
