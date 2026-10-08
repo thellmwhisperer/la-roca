@@ -28,9 +28,12 @@ type Proof struct {
 	Matches int    `json:"matches"`
 	// Capped says the count stopped at the probe's ceiling instead of reaching
 	// the end, so the number read as "at least this many".
-	Capped bool   `json:"capped,omitempty"`
-	Empty  bool   `json:"empty,omitempty"`
-	Reason string `json:"reason,omitempty"`
+	Capped bool `json:"capped,omitempty"`
+	Empty  bool `json:"empty,omitempty"`
+	// TimedOut says the probe ran out of time before the index could answer,
+	// which says nothing about whether the index is broken.
+	TimedOut bool   `json:"timed_out,omitempty"`
+	Reason   string `json:"reason,omitempty"`
 }
 
 // ProofSource is one source table and the FTS table that carries its text.
