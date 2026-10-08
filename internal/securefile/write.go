@@ -40,8 +40,9 @@ func Replace(path string, data, previous []byte) error {
 }
 
 // ReplaceRegular stages a replacement for a previously inspected regular file
-// while preserving its mode. Before renaming, it refuses if the path no longer
-// names that file or its expected bytes changed.
+// while preserving its mode. It refuses if the path no longer names that file
+// or its expected bytes changed, and attempts to restore any edit detected
+// during publication.
 func ReplaceRegular(path string, data, previous []byte, original os.FileInfo) error {
 	if original == nil || !original.Mode().IsRegular() {
 		return fmt.Errorf("refuse to replace non-regular file %s", path)
