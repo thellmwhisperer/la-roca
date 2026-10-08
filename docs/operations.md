@@ -77,6 +77,10 @@ moved, rewritten or removed, on any of the files below.
 | `pi` | `~/.pi/agent/extensions/roca-session.ts` (`PI_CODING_AGENT_DIR`) | the file carries `ROCA_MANAGED_HOOK=session` and a `before_agent_start` handler |
 | `zcode` | `~/.zcode/cli/config.json` plus `~/.zcode/hooks/roca-handoff.sh` (`ZCODE_HOME`) | the nested `hooks.events.SessionStart` names the wrapper, and the wrapper calls `hooks run session --runtime zcode` |
 
+Claude hook installs, removals and update refreshes follow a symlinked
+`settings.json` to its regular-file target and keep the symlink in place. A
+broken symlink or a link to a non-regular target is refused.
+
 What a live session of each harness actually received, and the two things that
 only a live session could find, are recorded in
 [session hooks: evidence](session-hooks-evidence.md).
