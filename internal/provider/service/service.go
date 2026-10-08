@@ -578,6 +578,9 @@ func (s *Service) Init(ctx context.Context) (InitResult, error) {
 		result.WordSearch = s.proveWordSearch(ctx)
 		progress("word search: " + wordSearchProgress(*result.WordSearch))
 		if !result.WordSearch.Ready && !result.WordSearch.Empty {
+			if result.WordSearch.TimedOut {
+				return result, wordSearchTimeoutInitError()
+			}
 			return result, wordSearchInitError()
 		}
 	}
@@ -835,7 +838,10 @@ func (s *Service) proveWordSearch(ctx context.Context) *search.Proof {
 			candidate := proof
 			ready = &candidate
 		}
-		fault = preferWordSearchFault(fault, proof)
+		if proof.TimedOut || (!proof.Empty && !proof.Ready && fault == nil) {
+			candidate := proof
+			fault = &candidate
+		}
 	}
 	if fault != nil {
 		return fault
@@ -845,14 +851,6 @@ func (s *Service) proveWordSearch(ctx context.Context) *search.Proof {
 	}
 	empty := search.EmptyProof()
 	return &empty
-}
-
-func preferWordSearchFault(fault *search.Proof, proof search.Proof) *search.Proof {
-	if !proof.TimedOut && (proof.Empty || proof.Ready || fault != nil) {
-		return fault
-	}
-	candidate := proof
-	return &candidate
 }
 
 func (s *Service) proveWordSearchSurface(ctx context.Context, route PluginRoute,
@@ -992,7 +990,7 @@ func wordSearchInitError() error {
 }
 
 func wordSearchTimeoutInitError() error {
-	return fmt.Errorf("word search could not be proven in time; the index was left as it was; retry with `roca init`")
+	return fmt.Errorf("word search could not be proven in time; the index was left as it was during the probe; retry with `roca init`")
 }
 
 // wordSearchProgress says which of the three states the probe reached in the

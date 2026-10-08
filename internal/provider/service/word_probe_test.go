@@ -74,15 +74,13 @@ func initAgain(t *testing.T, paths testPaths, timeout time.Duration) (service.In
 }
 
 // On a populated, healthy corpus the probe answers in under a second and init
-// leaves the index exactly as it found it. The newest exchanges carry no human
-// text (tool-only turns), so the probe has to page back to find a word: a probe
-// that sorts the whole table pays that scan once per page. Ids that sort late
-// as text too keep a text-ordered probe from finding a word early.
+// leaves the index exactly as it found it. The newest exchanges carry no text,
+// so the probe has to page back to find a word.
 func TestInitOnAHealthyLargeCorpusProvesWordSearchWithoutRebuilding(t *testing.T) {
-	paths, before := initializedWith(t, `INSERT INTO sessions (session_id, title) VALUES ('s', 'harbour');
+	paths, before := initializedWith(t, `INSERT INTO sessions (session_id, title) VALUES ('s', '');
 		WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM n WHERE x < 200000)
 		INSERT INTO exchanges (session_id, exchange_number, human_text, agent_text)
-		SELECT 's', x, CASE WHEN x BETWEEN 100000 AND 149999 THEN 'lighthouse keeper' END, 'answered ' || x FROM n`)
+		SELECT 's', x, CASE WHEN x BETWEEN 100000 AND 149999 THEN 'lighthouse keeper' END, NULL FROM n`)
 
 	result, rebuilt, probe := initAgain(t, paths, time.Second)
 	if probe >= time.Second {
@@ -94,8 +92,96 @@ func TestInitOnAHealthyLargeCorpusProvesWordSearchWithoutRebuilding(t *testing.T
 	if result.WordSearch == nil || !result.WordSearch.Ready {
 		t.Fatalf("word search on 200k exchanges did not prove ready within a second: %+v", result.WordSearch)
 	}
+	if result.WordSearch.Word != "lighthouse" {
+		t.Fatalf("word search proved %q, want a word from the older exchanges", result.WordSearch.Word)
+	}
 	if after := indexFingerprint(t, paths.db); after != before {
 		t.Fatalf("init touched a healthy index:\nbefore %s\nafter  %s", before, after)
+	}
+}
+
+func TestInitKeepsTimeoutWhenAnotherSurfaceHasAFastFault(t *testing.T) {
+	paths := freshPaths(t)
+	if _, err := serviceOn(t, paths).Init(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", paths.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := strings.Repeat(" ", 128<<10) + "harbour"
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(`INSERT INTO sessions (session_id, title) VALUES ('session-fast-fault', 'harbour')`); err != nil {
+		t.Fatal(err)
+	}
+	stmt, err := tx.Prepare(`INSERT INTO memories (layer, content, origin) VALUES ('fact', ?, 'agent')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 500 {
+		if _, err := stmt.Exec(content); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := stmt.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO sessions_fts(sessions_fts) VALUES ('delete-all')`); err != nil {
+		t.Fatal(err)
+	}
+	var title string
+	if err := db.QueryRow(`SELECT title FROM sessions WHERE session_id = 'session-fast-fault'`).Scan(&title); err != nil {
+		t.Fatal(err)
+	}
+	if title != "harbour" {
+		t.Fatalf("session source contains %q, want harbour", title)
+	}
+	var matches int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sessions_fts WHERE sessions_fts MATCH 'harbour'`).Scan(&matches); err != nil {
+		t.Fatal(err)
+	}
+	if matches != 0 {
+		t.Fatalf("sessions fast-fault fixture has %d FTS matches, want zero", matches)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	before := indexFingerprint(t, paths.db)
+
+	var progress []string
+	svc := serviceOn(t, paths, func(o *service.Options) {
+		o.QueryTimeout = 5 * time.Millisecond
+		o.Progress = func(line string) { progress = append(progress, line) }
+	})
+	result, err := svc.Init(t.Context())
+	if err == nil || !strings.Contains(err.Error(), "word search could not be proven in time") {
+		t.Fatalf("init error = %v, want a word-search timeout", err)
+	}
+	if result.WordSearch == nil || !result.WordSearch.TimedOut {
+		t.Fatalf("multi-surface proof = %+v, want timeout precedence", result.WordSearch)
+	}
+	if strings.Contains(strings.Join(progress, "\n"), "rebuilding the full-text index") {
+		t.Fatal("init rebuilt after a surface timed out")
+	}
+	if after := indexFingerprint(t, paths.db); after != before {
+		t.Fatalf("init changed the built index:\nbefore %s\nafter  %s", before, after)
+	}
+	afterDB, err := sql.Open("sqlite", paths.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer afterDB.Close()
+	if err := afterDB.QueryRow(`SELECT COUNT(*) FROM sessions_fts WHERE sessions_fts MATCH 'harbour'`).Scan(&matches); err != nil {
+		t.Fatal(err)
+	}
+	if matches != 0 {
+		t.Fatalf("init rebuilt the sessions index: found %d matches", matches)
 	}
 }
 
