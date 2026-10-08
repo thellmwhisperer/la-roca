@@ -41,8 +41,9 @@ indexing pass under the declared chunking policy. For an `outdated` source,
 `candidate_chunks` counts rows with an ID above the sidecar's indexed high-water
 ID, using a primary-key range count without reading source text. If the sidecar
 has no usable high-water ID or the count fails or runs out of time, the row
-says `candidates: "not counted"`. Sidecar size and last write include its
-SQLite WAL and shared-memory files when present.
+shows `candidate_chunks: "not counted"` in the terminal output. In JSON,
+`candidate_chunks` remains `null` and `candidates` is `"not counted"`. Sidecar
+size and last write include its SQLite WAL and shared-memory files when present.
 
 Lock status (`index_lock` in JSON) is `held` when another process holds the
 flock, `unheld` when the file exists but is free, or `absent`. A lock that
