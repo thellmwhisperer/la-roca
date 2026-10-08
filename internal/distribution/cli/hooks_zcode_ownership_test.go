@@ -63,6 +63,62 @@ func TestZcodeHookInstallRefusesUnmarkedWrapperBeforeWriting(t *testing.T) {
 	}
 }
 
+func TestZcodeHookEditedMarkedWrapperSurvivesInstallAndUninstall(t *testing.T) {
+	_, config, wrapper := zcodeHookHome(t, "{}\n")
+	requireZcodeHooks(t, "install")
+	operator := append(mustRead(t, wrapper), []byte("# operator change\n")...)
+	writeFile(t, wrapper, string(operator))
+	before := string(mustRead(t, config))
+
+	if err := executeZcodeHooks("install"); err == nil {
+		t.Fatal("install overwrote an edited marked wrapper")
+	}
+	if got := string(mustRead(t, wrapper)); got != string(operator) {
+		t.Fatalf("install changed the operator wrapper: %q", got)
+	}
+	if got := string(mustRead(t, config)); got != before {
+		t.Fatalf("refused install changed config: %s", got)
+	}
+	requireZcodeHooks(t, "uninstall")
+	if got := string(mustRead(t, wrapper)); got != string(operator) {
+		t.Fatalf("uninstall changed the operator wrapper: %q", got)
+	}
+}
+
+func TestZcodeHookUninstallKeepsWrapperReferencedByEditedEntry(t *testing.T) {
+	_, config, wrapper := zcodeHookHome(t, "{}\n")
+	requireZcodeHooks(t, "install")
+	document := readZcodeHookDocument(t, config)
+	groups := document["hooks"].(map[string]any)["events"].(map[string]any)["SessionStart"].([]any)
+	groups[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)["timeoutMs"] = 9000
+	writeZcodeHookDocument(t, config, document)
+	entry := string(mustRead(t, config))
+
+	requireZcodeHooks(t, "uninstall")
+	if got := string(mustRead(t, config)); got != entry {
+		t.Fatalf("uninstall changed the operator-edited entry: %s", got)
+	}
+	if _, err := os.Stat(wrapper); err != nil {
+		t.Fatalf("uninstall removed the referenced wrapper: %v", err)
+	}
+}
+
+func TestZcodeHookUninstallKeepsWrapperReferencedByOtherEvent(t *testing.T) {
+	_, config, wrapper := zcodeHookHome(t, "{}\n")
+	requireZcodeHooks(t, "install")
+	document := readZcodeHookDocument(t, config)
+	events := document["hooks"].(map[string]any)["events"].(map[string]any)
+	events["Stop"] = []any{map[string]any{"hooks": []any{
+		map[string]any{"type": "command", "command": wrapper},
+	}}}
+	writeZcodeHookDocument(t, config, document)
+
+	requireZcodeHooks(t, "uninstall")
+	if _, err := os.Stat(wrapper); err != nil {
+		t.Fatalf("uninstall removed the wrapper referenced by another event: %v", err)
+	}
+}
+
 func TestZcodeHookInstallUninstallRestoresConfigWithoutHooks(t *testing.T) {
 	before := "{\n  \"theme\": \"dark\"\n}\n"
 	_, config, _ := zcodeHookHome(t, before)
@@ -99,12 +155,13 @@ func TestZcodeHookUninstallKeepsOperatorEmptyGroup(t *testing.T) {
 }
 
 func TestZcodeHookLegacyClaimOnExactHookIsRocas(t *testing.T) {
-	_, config, wrapper := zcodeHookHome(t, "")
+	home, config, wrapper := zcodeHookHome(t, "")
+	executable := filepath.Join(home, "bin", "roca")
 	writeFile(t, config, `{"theme":"dark","hooks":{"enabled":true,"events":{"SessionStart":[{"hooks":[`+
 		`{"type":"command","command":"`+wrapper+`","timeoutMs":15000}]}]}}}`)
 	writeFile(t, config+".roca-owned",
 		`{"roca":"owned-containers-v1","hooks":["hooks","hooks.events","hooks.events.SessionStart"]}`+"\n")
-	writeFile(t, wrapper, "#!/bin/bash\n"+zcodeHookWrapperMarker+"\nprintf '{}\\n'\n")
+	writeFile(t, wrapper, zcodeWrapper(executable, sessionRequest{}))
 
 	requireZcodeHooks(t, "install")
 	if got := strings.Count(string(mustRead(t, config)), wrapper); got != 1 {
