@@ -270,6 +270,35 @@ func TestZcodeHookInstallRejectsInvalidContainersBeforeWritingWrapper(t *testing
 	}
 }
 
+func TestZcodeHookWriteRefusesWrapperChangedAfterOwnershipCheck(t *testing.T) {
+	home, _, wrapper := zcodeHookHome(t, "")
+	content := zcodeWrapper(filepath.Join(home, "bin", "roca"), sessionRequest{})
+	writeFile(t, wrapper, content)
+	validated, err := readZcodeWrapperState(wrapper)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !zcodeOwnsWrapper(nil, validated.body, content) {
+		t.Fatal("fixture wrapper did not pass legacy ownership check")
+	}
+	operatorEdit := content + "# operator edit\n"
+	writeFile(t, wrapper, operatorEdit)
+
+	backup, err := writeZcodeWrapper(wrapper, content+"# refreshed\n", validated)
+	if err == nil {
+		t.Fatal("wrapper write replaced bytes changed after ownership check")
+	}
+	if backup != "" {
+		t.Fatalf("refused wrapper write left a backup: %s", backup)
+	}
+	if got := string(mustRead(t, wrapper)); got != operatorEdit {
+		t.Fatalf("wrapper write lost the operator edit: %q", got)
+	}
+	if _, err := os.Stat(wrapper + ".roca.bak"); !os.IsNotExist(err) {
+		t.Fatalf("refused wrapper write left a backup file: %v", err)
+	}
+}
+
 func TestZcodeHookOwnershipFailureRetainsWorkingHookWithoutFollowingSymlink(t *testing.T) {
 	home, config := zcodeHookTestPaths(t)
 	writeZcodeHookExecutable(t, home, "#!/bin/sh\nexit 0\n")

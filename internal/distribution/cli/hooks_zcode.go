@@ -97,7 +97,7 @@ func installZcodeSessionHook(configPath, executable string, req sessionRequest) 
 	}, true); err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
-	wrapperBackup, err := writeZcodeWrapper(wrapperPath, wrapperContent)
+	wrapperBackup, err := writeZcodeWrapper(wrapperPath, wrapperContent, wrapperBefore)
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
@@ -460,24 +460,23 @@ func readZcodeWrapperState(path string) (zcodeWrapperState, error) {
 	return zcodeWrapperState{body: body, mode: info.Mode().Perm(), exists: true}, nil
 }
 
-func writeZcodeWrapper(path, content string) (string, error) {
-	previous, err := os.ReadFile(path)
-	if err == nil && string(previous) == content {
-		return "", os.Chmod(path, 0o700)
-	}
-	if err != nil && !os.IsNotExist(err) {
-		return "", fmt.Errorf("read %s: %w", path, err)
-	}
+func writeZcodeWrapper(path, content string, previous zcodeWrapperState) (string, error) {
 	var backup string
-	if err == nil {
-		backup, err = securefile.BackUp(path, previous)
+	if previous.exists && string(previous.body) != content {
+		var err error
+		backup, err = securefile.BackUp(path, previous.body)
 		if err != nil {
 			return "", err
 		}
-		if err := securefile.Replace(path, []byte(content), previous); err != nil {
-			return backup, err
+	}
+	var expected []byte
+	if previous.exists {
+		expected = previous.body
+	}
+	if err := securefile.Replace(path, []byte(content), expected); err != nil {
+		if backup != "" {
+			return "", errors.Join(err, os.Remove(backup))
 		}
-	} else if err := securefile.Write(path, []byte(content), 0o700, 0o700); err != nil {
 		return "", err
 	}
 	return backup, os.Chmod(path, 0o700)
