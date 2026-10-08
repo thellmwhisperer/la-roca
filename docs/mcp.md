@@ -238,9 +238,9 @@ Uninstall removes an empty container La Roca created only when it has just
 removed La Roca's valid entry from that container. Sidecars written before
 digests count as valid only while the entry equals what this version writes,
 with `command` compared by basename. An operator value identical to what La
-Roca wrote cannot be told apart from it and is treated as La Roca's. MCP and
-hook installs hold a lock on `<file>.roca-owned.lock` while they edit the
-config and the sidecar.
+Roca wrote cannot be told apart from it and is treated as La Roca's. ZCode MCP
+and hook installs and uninstalls hold a lock on `<file>.roca-owned.lock` while
+they edit the config and the sidecar.
 
 **One declared boundary.** A `codex` config that writes `mcp_servers` as an
 inline table is refused by name, with the remedy, instead of being edited.
