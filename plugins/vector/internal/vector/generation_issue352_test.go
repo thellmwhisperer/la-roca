@@ -197,7 +197,16 @@ func TestCompletedGenerationInvalidation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if row := report.Databases[0]; row.CandidateChunks != nil || (row.State == StateComplete && change != "legacy-count") {
+			row := report.Databases[0]
+			if row.State == StateComplete && change != "legacy-count" {
+				t.Fatalf("stale generation: %+v", row)
+			}
+			if row.State == StateOutdated {
+				if row.CandidateChunks != nil || row.Candidates != "not counted" {
+					t.Fatalf("outdated candidate chunks = %v, candidates=%q, want not counted for text IDs",
+						row.CandidateChunks, row.Candidates)
+				}
+			} else if row.CandidateChunks != nil {
 				t.Fatalf("stale generation: %+v", row)
 			}
 			if _, err := f.Ingest(ctx, ""); err != nil {

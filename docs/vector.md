@@ -36,12 +36,14 @@ nobody answered has not consented to a download.
 `vector-registry.json`: plugin, database, declared tables, embedded chunks,
 candidate chunks, sidecar size, last write, state, lock status, and a
 `compact_recommended` flag. Embedded counts report live indexed chunks;
-candidate counts are stored by a completed unrestricted indexing pass under the declared
-chunking policy. Status uses that exact count only while its source generation
-and reader contract still match; it never reads or chunks source text. Legacy,
-partial, and changed sources have unknown candidate counts until that pass completes. Either count can be
-unknown (`null`), never an estimate or invented zero. Sidecar size and last
-write include its SQLite WAL and shared-memory files when present.
+candidate counts for a complete source are stored by a completed unrestricted
+indexing pass under the declared chunking policy. For an `outdated` source,
+`candidate_chunks` counts rows with an ID above the sidecar's indexed high-water
+ID, using a primary-key range count without reading source text. If the sidecar
+has no usable high-water ID or the count fails or runs out of time, the row
+shows `candidate_chunks: "not counted"` in the terminal output. In JSON,
+`candidate_chunks` remains `null` and `candidates` is `"not counted"`. Sidecar
+size and last write include its SQLite WAL and shared-memory files when present.
 
 Lock status (`index_lock` in JSON) is `held` when another process holds the
 flock, `unheld` when the file exists but is free, or `absent`. A lock that
