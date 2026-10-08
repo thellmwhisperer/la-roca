@@ -559,7 +559,10 @@ func (s *Service) Init(ctx context.Context) (InitResult, error) {
 	progress("word search: asking the index for a word from your own history")
 	result.WordSearch = s.proveWordSearch(ctx)
 	progress("word search: " + wordSearchProgress(*result.WordSearch))
-	if !result.WordSearch.Ready && !result.WordSearch.Empty && !result.WordSearch.TimedOut {
+	if result.WordSearch.TimedOut {
+		return result, wordSearchTimeoutInitError()
+	}
+	if !result.WordSearch.Ready && !result.WordSearch.Empty {
 		progress("word search: rebuilding the full-text index once")
 		rebuilt, rebuildErr := s.rebuildWordSearch(ctx)
 		if rebuildErr != nil {
@@ -982,6 +985,10 @@ func (s *Service) rebuildWordSearch(ctx context.Context) (search.Report, error) 
 
 func wordSearchInitError() error {
 	return fmt.Errorf("word search is not working after one rebuild; next step: run `roca doctor`")
+}
+
+func wordSearchTimeoutInitError() error {
+	return fmt.Errorf("word search could not be proven in time; the index was left as it was; retry with `roca init`")
 }
 
 // wordSearchProgress says which of the three states the probe reached in the
