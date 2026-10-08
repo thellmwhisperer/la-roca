@@ -60,30 +60,22 @@ func installZcodeSessionHook(configPath, executable string, req sessionRequest) 
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
 	wrapperContent := zcodeWrapper(executable, req)
-	_, claims, err := agentcfg.LoadOwnedHooks(configPath)
+	_, claims, err := loadZcodeHookOwnership(configPath, wrapperPath, wrapperBefore, wrapperContent)
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
-	}
-	if wrapperBefore.exists && !zcodeOwnsWrapper(claims, wrapperBefore.body, wrapperContent) {
-		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "",
-			fmt.Errorf("refuse to overwrite operator-owned zcode hook wrapper %s", wrapperPath)
 	}
 	release, err := agentcfg.LockOwned(configPath, true)
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
 	defer release()
-	containers, claims, err := agentcfg.LoadOwnedHooks(configPath)
-	if err != nil {
-		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
-	}
 	wrapperBefore, err = readZcodeWrapperState(wrapperPath)
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
-	if wrapperBefore.exists && !zcodeOwnsWrapper(claims, wrapperBefore.body, wrapperContent) {
-		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "",
-			fmt.Errorf("refuse to overwrite operator-owned zcode hook wrapper %s", wrapperPath)
+	containers, claims, err := loadZcodeHookOwnership(configPath, wrapperPath, wrapperBefore, wrapperContent)
+	if err != nil {
+		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
 	if _, err := agentcfg.Edit(agentcfg.RuntimeZcode, configPath, func(previous string) (string, error) {
 		settings, err := jsonObject(previous)
@@ -289,6 +281,24 @@ func zcodeOwnsWrapper(claims map[string]string, current []byte, written string) 
 		return digest == agentcfg.BytesDigest(current)
 	}
 	return strings.Contains(string(current), zcodeHookWrapperMarker) && string(current) == written
+}
+
+func ensureZcodeWrapperOwned(path string, before zcodeWrapperState, claims map[string]string, written string) error {
+	if before.exists && !zcodeOwnsWrapper(claims, before.body, written) {
+		return fmt.Errorf("refuse to overwrite operator-owned zcode hook wrapper %s", path)
+	}
+	return nil
+}
+
+func loadZcodeHookOwnership(configPath, wrapperPath string, before zcodeWrapperState, written string) ([]string, map[string]string, error) {
+	containers, claims, err := agentcfg.LoadOwnedHooks(configPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := ensureZcodeWrapperOwned(wrapperPath, before, claims, written); err != nil {
+		return nil, nil, err
+	}
+	return containers, claims, nil
 }
 
 func zcodeHookReferencesWrapper(settings map[string]any, wrapperPath string) bool {
