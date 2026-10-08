@@ -49,6 +49,32 @@ func TestReplaceRegularPreservesConcurrentPermissionChange(t *testing.T) {
 	}
 }
 
+func TestReplaceFromAbsentSnapshotRefusesConcurrentIdenticalWrite(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	proposed := []byte("[features]\nvector = true\n")
+	// The caller saw no file; another writer then created one with the very
+	// bytes this caller proposes. That file is theirs, not our publication.
+	if err := os.WriteFile(path, proposed, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	theirs, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = securefile.Replace(path, proposed, nil)
+	if err == nil || !strings.Contains(err.Error(), "existing file was preserved") {
+		t.Fatalf("Replace error = %v, want preserved-file collision", err)
+	}
+	current, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(theirs, current) {
+		t.Fatal("the concurrent writer's file was replaced")
+	}
+}
+
 func TestConcurrentBackupsNeverOverwriteEachOther(t *testing.T) {
 	const writers = 24
 	path := filepath.Join(t.TempDir(), "artifact.md")
