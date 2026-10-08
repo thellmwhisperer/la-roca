@@ -1111,8 +1111,8 @@ func (d DeclaredCorpus) CountChunks(ctx context.Context, sourceKind string) (int
 			counts = append(counts, chunkCountExpression(text, size, overlap))
 		}
 		statement := fmt.Sprintf(`SELECT COALESCE(SUM(%s),0) AS total FROM %s.%s AS %s WHERE %s`,
-			strings.Join(counts, "+"), quoteIdentifier(d.Database.Alias), quoteIdentifier(table.Name),
-			alias, declaredSourcePredicate(alias, table))
+			strings.Join(counts, "+"), quoteIdentifier(d.Database.Alias), quoteIdentifier(table.Name), alias,
+			declaredSourcePredicate(alias, table))
 		rows, err := d.Core.queryIngest(ctx, statement)
 		if err != nil {
 			return 0, fmt.Errorf("count declared chunks %s/%s: %w", d.Database.owner(), table.Name, err)
@@ -1128,7 +1128,6 @@ func (d DeclaredCorpus) CountChunks(ctx context.Context, sourceKind string) (int
 	}
 	return total, nil
 }
-
 func (d DeclaredCorpus) WalkSources(ctx context.Context, sourceKind string,
 	visit func(sourceRow) error) error {
 	ctx, closeReader := withCoreReader(ctx)
