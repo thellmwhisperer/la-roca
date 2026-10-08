@@ -177,6 +177,14 @@ identity, the writer keeps the richer provenance row and fills missing fields;
 it never overwrites a timestamp already stated. The cloud title fills if the
 session had none, and no project is inferred from the export directory.
 
+Both readers record timing ownership in the session metadata under
+`timestamp_owners`, keyed by exchange number: each of `human_timestamp` and
+`agent_timestamp` is `{"source": "<source_agent>", "status": "observed"}` for
+the source that stated the kept value, or `{"status": "unknown"}` when none
+did. A later reading that conflicts with a stated timestamp leaves both the
+value and its owner unchanged. Rows written before ownership was recorded carry
+no entry; their owner is not reconstructed.
+
 `shared_conversations.json` and attachment files are counted in the ingest
 summary as out-of-scope exclusions and never warned about.
 `conversation_asset_file_names.json`, `chat.html`, and `ads.json` are expected
@@ -240,6 +248,12 @@ instead, those calls remain queryable as session-level `tool_uses` whose
 If a later full reading completes an open span, its tools attach only when the
 matched exchange can be safely enriched. Otherwise, previously stored calls
 remain at session level rather than guessing identity or dropping telemetry.
+For each written call row, session metadata `source_tool_ids` maps its
+`tool_uses.id` to the `call_id` the rollout wrote. Session-level calls are
+reconciled by payload and recorded identity together. A row with no recorded
+identity is never assigned one from its content. Each completed turn keeps the
+`turn_id` its `task_complete` names: session metadata `source_turn_ids` maps
+the exchange number to it. It is recorded, never used to select or key exchanges.
 The remaining identity-based movement is tracked in
 [issue #284](https://github.com/thellmwhisperer/la-roca/issues/284).
 Incremental reads preserve previous session-level calls. A late result for an
