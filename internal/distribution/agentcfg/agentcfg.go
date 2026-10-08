@@ -325,7 +325,21 @@ func Status(name, path string) (Report, error) {
 // guarantees. Two edit paths would create two sets of ways to lose a file.
 func Edit(name, path string, transform func(string) (string, error),
 	createMissing bool) (Outcome, error) {
-	return edit(name, path, transform, nil, createMissing)
+	return edit(name, path, path, transform, nil, createMissing)
+}
+
+// EditLinked is Edit for a configuration an operator may keep as a symlink,
+// say into a dotfiles repository: the regular file the link names is edited and
+// the link stays a link. A link that names nothing, or no regular file, is
+// refused like any other non-regular configuration. The recovery backup stays
+// beside path, where uninstall looks for it.
+func EditLinked(name, path string, transform func(string) (string, error),
+	createMissing bool) (Outcome, error) {
+	target, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		target = path // missing, or a broken link the regular-file check refuses
+	}
+	return edit(name, path, target, transform, nil, createMissing)
 }
 
 // EditWithBackup applies a surgical edit while allowing the recovery copy to
@@ -333,7 +347,7 @@ func Edit(name, path string, transform func(string) (string, error),
 // to make a deliberately non-byte-exact, secret-free backup.
 func EditWithBackup(name, path string, transform, backupTransform func(string) (string, error),
 	createMissing bool) (Outcome, error) {
-	return edit(name, path, transform, backupTransform, createMissing)
+	return edit(name, path, path, transform, backupTransform, createMissing)
 }
 
 // Rewrite transforms an existing file in place without creating a backup or
@@ -357,10 +371,11 @@ func Rewrite(path string, transform func(string) (string, error)) error {
 	return securefile.Replace(path, []byte(next), previous)
 }
 
-func edit(name, path string, transform, backupTransform func(string) (string, error),
+// edit writes target, the file path names, and backs it up beside path.
+func edit(name, path, target string, transform, backupTransform func(string) (string, error),
 	createMissing bool) (Outcome, error) {
 	outcome := Outcome{Runtime: name, Path: path}
-	previous, original, err := readRegularOrMissing(path)
+	previous, original, err := readRegularOrMissing(target)
 	if err != nil {
 		return outcome, err
 	}
@@ -391,13 +406,13 @@ func edit(name, path string, transform, backupTransform func(string) (string, er
 		}
 		outcome.Backup = backup
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return outcome, fmt.Errorf("create the directory of %s: %w", path, err)
+	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+		return outcome, fmt.Errorf("create the directory of %s: %w", target, err)
 	}
 	if original == nil {
-		err = securefile.CreatePreservingParentMode(path, []byte(next), 0o600, 0o700)
+		err = securefile.CreatePreservingParentMode(target, []byte(next), 0o600, 0o700)
 	} else {
-		err = securefile.ReplaceRegular(path, []byte(next), previous, original)
+		err = securefile.ReplaceRegular(target, []byte(next), previous, original)
 	}
 	if err != nil {
 		return outcome, err
