@@ -24,22 +24,16 @@ const (
 	StateInvalid  = "invalid"
 	StateUnknown  = "unknown"
 
-	// CandidatesNotCounted marks an outdated row whose source count failed or ran
-	// out of time, so a null candidate_chunks reads as "looked and could not".
-	CandidatesNotCounted = "not counted"
-
 	IndexLockHeld   = "held"
 	IndexLockUnheld = "unheld"
 	IndexLockAbsent = "absent"
 	IndexLockError  = "error"
 
-	statusBusyTimeoutMS = 2000
-	statusCountTimeout  = 5 * time.Second
-	// Counting an outdated source must leave room inside the overall budget.
-	statusCandidateTimeout = 2 * time.Second
-	statusOverallTimeout   = 8 * time.Second
-	workerActivityFile     = ".worker-status.json"
-	sourceMarkerMetaKey    = "source_marker"
+	statusBusyTimeoutMS  = 2000
+	statusCountTimeout   = 5 * time.Second
+	statusOverallTimeout = 8 * time.Second
+	workerActivityFile   = ".worker-status.json"
+	sourceMarkerMetaKey  = "source_marker"
 )
 
 var (
@@ -188,7 +182,7 @@ func inspectDatabaseStatus(ctx context.Context, pluginRoot string, database vect
 	if row.State == StateOutdated && row.CandidateChunks == nil {
 		row.CandidateChunks = countSourceCandidates(ctx, sourcePath, database)
 		if row.CandidateChunks == nil {
-			row.Candidates = CandidatesNotCounted
+			row.Candidates = "not counted"
 		}
 	}
 	if database.Plugin == "roca-ops" && row.State != StateEmpty && row.State != StateUnknown {
@@ -546,7 +540,8 @@ func countEmbeddedChunks(ctx context.Context, tx *sql.Tx) (int64, error) {
 // countSourceCandidates counts the chunks the next pass would hold, read-only
 // against the source. nil when the count cannot finish inside the status budget.
 func countSourceCandidates(ctx context.Context, sourcePath string, database vectorDatabase) *int64 {
-	ctx, cancel := boundContext(ctx, statusCandidateTimeout)
+	// Leave room inside statusOverallTimeout.
+	ctx, cancel := boundContext(ctx, 2*time.Second)
 	defer cancel()
 	source, err := openSQLiteBusy(sourcePath, true, statusBusyTimeoutMS)
 	if err != nil {
