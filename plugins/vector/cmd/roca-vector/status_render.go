@@ -85,12 +85,16 @@ func renderVectorization(report vector.Vectorization, help []string) string {
 		if lock == "" {
 			lock = "unknown"
 		}
+		candidates := nullableInt(row.CandidateChunks)
+		if candidates == nil && row.Candidates != "" {
+			candidates = row.Candidates
+		}
 		rows = append(rows, map[string]any{
 			"plugin":              row.Plugin,
 			"database":            row.Database,
 			"tables":              strings.Join(row.Tables, " "),
 			"embedded_chunks":     nullableInt(row.EmbeddedChunks),
-			"candidate_chunks":    nullableInt(row.CandidateChunks),
+			"candidate_chunks":    candidates,
 			"sidecar_bytes":       nullableInt(row.SidecarBytes),
 			"last_write":          nullableString(row.LastWrite),
 			"state":               row.State,
