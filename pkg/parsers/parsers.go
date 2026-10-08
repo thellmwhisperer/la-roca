@@ -259,6 +259,10 @@ type Exchange struct {
 	// active branch, OpenCode's message graph). When it is set, the writer keys
 	// on it through the session metadata instead of on Number.
 	SourceID string
+	// SourceTurnID is the turn identity the source itself wrote, such as a Codex
+	// turn_id. It is recorded beside the exchange and never keys or selects it;
+	// empty means the source stated none.
+	SourceTurnID string
 	// Fingerprint is the hash of the source projection, so an exchange that
 	// already landed is not rewritten when it did not change.
 	Fingerprint string

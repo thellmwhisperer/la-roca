@@ -167,8 +167,11 @@ func (w *writer) sessionWithPolicy(ctx context.Context, session parsers.Session,
 	w.machine = session.Machine
 	defer func() { w.machine = previous }()
 	w.toolSources = map[string]any{}
-	owners := map[string]any{}
+	owners, turns := map[string]any{}, map[string]any{}
 	own := func(number int, held [2]string, exchange parsers.Exchange) {
+		if exchange.SourceTurnID != "" {
+			turns[strconv.Itoa(number)] = exchange.SourceTurnID
+		}
 		if !session.RecordTimestampOwners {
 			return
 		}
@@ -471,6 +474,9 @@ func (w *writer) sessionWithPolicy(ctx context.Context, session parsers.Session,
 	}
 	if len(owners) > 0 {
 		metadata["timestamp_owners"] = owners
+	}
+	if len(turns) > 0 {
+		metadata["source_turn_ids"] = turns
 	}
 	if len(w.toolSources) > 0 {
 		metadata["source_tool_ids"] = w.toolSources
