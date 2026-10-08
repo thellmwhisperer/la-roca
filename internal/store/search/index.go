@@ -59,14 +59,10 @@ func Rebuild(ctx context.Context, db *store.DB) (Report, error) {
 	if err := recreateLexicalTables(ctx, db); err != nil {
 		return Report{}, err
 	}
-	built, err := buildLexicalIndex(ctx, db)
-	if err != nil {
-		return Report{}, err
-	}
 	if err := recordTokenizerGeneration(ctx, db); err != nil {
 		return Report{}, err
 	}
-	return Report{LexicalBuilt: built, ElapsedMS: time.Since(started).Milliseconds()}, nil
+	return Report{LexicalBuilt: true, ElapsedMS: time.Since(started).Milliseconds()}, nil
 }
 
 // RebuildSources recreates the declared derived FTS tables without changing
@@ -116,9 +112,9 @@ func RebuildSources(ctx context.Context, db *store.DB, sources []ProofSource) (R
 // by this build. The content tables are never changed: only the four derived FTS
 // tables and their state markers are replaced.
 //
-// A committed rebuilding marker makes an interrupted upgrade resumable. The
-// per-table markers written by buildLexicalIndex then skip every table that had
-// already committed before the interruption.
+// The tables are replaced and filled in one transaction, so an interrupted
+// upgrade leaves the previous index in place. A rebuilding marker left by an
+// older release still resumes through the per-table markers.
 func EnsureTokenizer(ctx context.Context, db *store.DB, progress func(string)) (bool, error) {
 	if err := store.EnsureSearchSchema(ctx, db); err != nil {
 		return false, err
@@ -202,6 +198,11 @@ func tokenizerDefinitionsCurrent(ctx context.Context, db *store.DB) (bool, error
 	return current, nil
 }
 
+// recreateLexicalTables drops, recreates and fills the four FTS tables in one
+// transaction, so an interrupted rebuild leaves the previous index answering
+// instead of an empty one.
+// ponytail: holds the write lock for the whole fill (about half a minute on the
+// real corpus); build aside and rename if that wait matters.
 func recreateLexicalTables(ctx context.Context, db *store.DB) error {
 	return db.Write(ctx, func(tx *sql.Tx) error {
 		for _, table := range lexicalTables {
@@ -217,6 +218,18 @@ func recreateLexicalTables(ctx context.Context, db *store.DB) error {
 			keyLexical, keyLexical+":%",
 		); err != nil {
 			return fmt.Errorf("reset the lexical index state: %w", err)
+		}
+		for _, table := range lexicalTables {
+			if _, err := tx.ExecContext(ctx,
+				fmt.Sprintf("INSERT INTO %s(%s) VALUES ('rebuild')", table, table)); err != nil {
+				return fmt.Errorf("build the lexical index of %s: %w", table, err)
+			}
+			if err := writeState(ctx, tx, tableKey(table), "built"); err != nil {
+				return err
+			}
+		}
+		if err := writeState(ctx, tx, keyLexical, "built"); err != nil {
+			return err
 		}
 		return writeState(ctx, tx, keyTokenizer, tokenizerRebuilding)
 	})

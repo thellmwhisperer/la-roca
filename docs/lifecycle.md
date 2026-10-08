@@ -110,11 +110,13 @@ its source path.
 
 ### Word search before init returns
 
-Init does not return until word search works. After the first ingest it takes a
+Init succeeds only after word search works. After the first ingest it takes a
 word out of a row this machine now holds, asks the full-text index for it, and
 reports the round trip. A machine with no agent history yet says exactly that,
-which is a fact about the machine and not a fault in the index. Only an index
-that fails to answer for text it holds is reported as a fault.
+which is a fact about the machine and not a fault in the index. If a populated
+index does not answer, init rebuilds it once and tries again. If the initial
+proof times out, init returns an error without rebuilding the index; retry with
+`roca init`.
 
 ### The yes, inside the same run
 
@@ -289,8 +291,11 @@ this feature.
 If an existing database uses the legacy search tokenizer, the first writable
 command after the update automatically rebuilds only the derived full-text
 indexes from their source rows. La Roca prints one progress line while this
-runs; source rows are never changed. An interrupted rebuild resumes safely on
-the next writable command, and completed upgrades are not rebuilt again.
+runs; source rows are never changed. The replacement tables and their contents
+commit together, so an interrupted upgrade leaves the previous index in place
+and the next writable command retries it. A rebuilding marker from an older
+release resumes from its per-table markers. Completed upgrades are not rebuilt
+again.
 
 After the swap, update reports how many new capability proposals are open. On
 the first eligible command run with each new version, La Roca offers every open

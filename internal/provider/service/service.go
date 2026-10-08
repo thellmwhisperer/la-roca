@@ -559,6 +559,9 @@ func (s *Service) Init(ctx context.Context) (InitResult, error) {
 	progress("word search: asking the index for a word from your own history")
 	result.WordSearch = s.proveWordSearch(ctx)
 	progress("word search: " + wordSearchProgress(*result.WordSearch))
+	if result.WordSearch.TimedOut {
+		return result, wordSearchTimeoutInitError()
+	}
 	if !result.WordSearch.Ready && !result.WordSearch.Empty {
 		progress("word search: rebuilding the full-text index once")
 		rebuilt, rebuildErr := s.rebuildWordSearch(ctx)
@@ -575,6 +578,9 @@ func (s *Service) Init(ctx context.Context) (InitResult, error) {
 		result.WordSearch = s.proveWordSearch(ctx)
 		progress("word search: " + wordSearchProgress(*result.WordSearch))
 		if !result.WordSearch.Ready && !result.WordSearch.Empty {
+			if result.WordSearch.TimedOut {
+				return result, wordSearchTimeoutInitError()
+			}
 			return result, wordSearchInitError()
 		}
 	}
@@ -832,11 +838,9 @@ func (s *Service) proveWordSearch(ctx context.Context) *search.Proof {
 			candidate := proof
 			ready = &candidate
 		}
-		if !proof.Empty && fault == nil {
-			if !proof.Ready {
-				candidate := proof
-				fault = &candidate
-			}
+		if proof.TimedOut || (!proof.Empty && !proof.Ready && fault == nil) {
+			candidate := proof
+			fault = &candidate
 		}
 	}
 	if fault != nil {
@@ -853,25 +857,27 @@ func (s *Service) proveWordSearchSurface(ctx context.Context, route PluginRoute,
 	surface searchSurface) search.Proof {
 	var ready *search.Proof
 	for _, column := range surface.TextColumns {
+		// The id itself orders and bounds each page, so SQLite walks its index
+		// instead of reading and sorting the whole table once per page.
 		cursor := ""
 		columnReady := false
 		for {
 			bound := ""
 			if cursor != "" {
-				bound = fmt.Sprintf(" WHERE CAST(%s AS TEXT) < %s", quoteIdent(surface.IDColumn), sqlString(cursor))
+				bound = fmt.Sprintf(" WHERE %s < %s", quoteIdent(surface.IDColumn), cursor)
 			}
-			statement := fmt.Sprintf("SELECT CAST(%s AS TEXT) AS probe_id,COALESCE(CAST(%s AS TEXT),'') AS probe_text FROM %s%s ORDER BY CAST(%s AS TEXT) DESC LIMIT 500",
+			statement := fmt.Sprintf("SELECT %s AS probe_id,COALESCE(CAST(%s AS TEXT),'') AS probe_text FROM %s%s ORDER BY %s DESC LIMIT 500",
 				quoteIdent(surface.IDColumn), quoteIdent(column), qualified(surface.Schema, surface.Table),
 				bound, quoteIdent(surface.IDColumn))
 			rows, err := s.runSearchSQL(ctx, route, statement, wordProofFieldBudget)
 			if err != nil {
-				return search.Proof{Reason: err.Error()}
+				return probeFailure("", err)
 			}
 			if len(rows) == 0 {
 				break
 			}
 			for _, row := range rows {
-				cursor = fmt.Sprint(row["probe_id"])
+				cursor = probeCursor(row["probe_id"])
 				word := search.ProbeWord(fmt.Sprint(row["probe_text"]))
 				if word == "" {
 					continue
@@ -882,7 +888,7 @@ func (s *Service) proveWordSearchSurface(ctx context.Context, route PluginRoute,
 					sqlString(match), search.ProofLimit)
 				matches, err := s.runSearchSQL(ctx, route, count, DefaultMaxChars)
 				if err != nil {
-					return search.Proof{Word: word, Reason: err.Error()}
+					return probeFailure(word, err)
 				}
 				Found := 0
 				if len(matches) > 0 {
@@ -909,6 +915,26 @@ func (s *Service) proveWordSearchSurface(ctx context.Context, route PluginRoute,
 		return *ready
 	}
 	return search.EmptyProof()
+}
+
+// probeCursor is the last id of a page as a literal of its own type, so the
+// next page's bound compares the way ORDER BY sorted.
+func probeCursor(id any) string {
+	switch id.(type) {
+	case int64, float64:
+		return fmt.Sprint(id)
+	}
+	return sqlString(fmt.Sprint(id))
+}
+
+// probeFailure keeps a probe that ran out of time apart from an index that did
+// not answer: slowness is no evidence the index is broken.
+func probeFailure(word string, err error) search.Proof {
+	if errors.Is(err, ErrQueryTimeout) {
+		return search.Proof{Word: word, TimedOut: true,
+			Reason: "the word-search probe timed out (" + err.Error() + "); the index was left as it is"}
+	}
+	return search.Proof{Word: word, Reason: err.Error()}
 }
 
 func (s *Service) rebuildWordSearch(ctx context.Context) (search.Report, error) {
@@ -961,6 +987,10 @@ func (s *Service) rebuildWordSearch(ctx context.Context) (search.Report, error) 
 
 func wordSearchInitError() error {
 	return fmt.Errorf("word search is not working after one rebuild; next step: run `roca doctor`")
+}
+
+func wordSearchTimeoutInitError() error {
+	return fmt.Errorf("word search could not be proven in time; the index was left as it was during the probe; retry with `roca init`")
 }
 
 // wordSearchProgress says which of the three states the probe reached in the
