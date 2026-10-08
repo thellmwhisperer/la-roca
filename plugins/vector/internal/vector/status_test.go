@@ -473,7 +473,8 @@ func TestReportVectorizationHidesCandidateCountFromOlderSourceSnapshot(t *testin
 	if row.State != StateOutdated {
 		t.Fatalf("changed source state = %s", row.State)
 	}
-	if row.CandidateChunks != nil {
+	// The sealed snapshot said 1; the source now holds 2 chunks.
+	if row.CandidateChunks == nil || *row.CandidateChunks != 2 {
 		t.Fatalf("older candidate snapshot was reported: %+v", row)
 	}
 }

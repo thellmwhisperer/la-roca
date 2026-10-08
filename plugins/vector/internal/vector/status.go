@@ -29,11 +29,13 @@ const (
 	IndexLockAbsent = "absent"
 	IndexLockError  = "error"
 
-	statusBusyTimeoutMS  = 2000
-	statusCountTimeout   = 5 * time.Second
-	statusOverallTimeout = 8 * time.Second
-	workerActivityFile   = ".worker-status.json"
-	sourceMarkerMetaKey  = "source_marker"
+	statusBusyTimeoutMS = 2000
+	statusCountTimeout  = 5 * time.Second
+	// Counting an outdated source must leave room inside the overall budget.
+	statusCandidateTimeout = 2 * time.Second
+	statusOverallTimeout   = 8 * time.Second
+	workerActivityFile     = ".worker-status.json"
+	sourceMarkerMetaKey    = "source_marker"
 )
 
 var (
@@ -178,6 +180,9 @@ func inspectDatabaseStatus(ctx context.Context, pluginRoot string, database vect
 	}
 	row.State = classifySidecar(facts.Exists, true, workerActive, row.EmbeddedChunks, snapshot.Contract,
 		database.contractFingerprint(), snapshot.Fingerprint, snapshot.SourceMarker, marker)
+	if row.State == StateOutdated && row.CandidateChunks == nil {
+		row.CandidateChunks = countSourceCandidates(ctx, sourcePath, database)
+	}
 	if database.Plugin == "roca-ops" && row.State != StateEmpty && row.State != StateUnknown {
 		stale, staleErr := opsvector.HasStaleLegacyIDs(ctx, sourcePath)
 		if staleErr != nil {
@@ -528,6 +533,27 @@ func countEmbeddedChunks(ctx context.Context, tx *sql.Tx) (int64, error) {
 		return 0, err
 	}
 	return n, nil
+}
+
+// countSourceCandidates counts the chunks the next pass would hold, read-only
+// against the source. nil when the count cannot finish inside the status budget.
+func countSourceCandidates(ctx context.Context, sourcePath string, database vectorDatabase) *int64 {
+	ctx, cancel := boundContext(ctx, statusCandidateTimeout)
+	defer cancel()
+	source, err := openSQLiteBusy(sourcePath, true, statusBusyTimeoutMS)
+	if err != nil {
+		return nil
+	}
+	defer source.Close()
+	var total int64
+	for _, table := range database.Tables {
+		var count int64
+		if err := source.QueryRowContext(ctx, declaredChunkCountSQL("", table)).Scan(&count); err != nil {
+			return nil
+		}
+		total += count
+	}
+	return &total
 }
 
 func embeddingPageCount(ctx context.Context, tx *sql.Tx) *int64 {
