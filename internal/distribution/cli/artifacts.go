@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/thellmwhisperer/la-roca/internal/artifact"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/agentcfg"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/cli/hooks"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/skill"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
@@ -143,11 +144,11 @@ func claudeHookSystem(path string) (string, bool, error) {
 		return "", false, err
 	}
 	for _, raw := range entries {
-		for _, hook := range commandHooksOf(raw) {
-			if !claudeHookInvocation.MatchString(commandOf(hook)) {
+		for _, hook := range hooks.CommandHooksOf(raw) {
+			if !claudeHookInvocation.MatchString(hooks.CommandOf(hook)) {
 				continue
 			}
-			encoded, err := json.Marshal(claudeAuthorshipCommandHook(commandOf(hook)))
+			encoded, err := json.Marshal(claudeAuthorshipCommandHook(hooks.CommandOf(hook)))
 			return string(encoded), true, err
 		}
 	}
@@ -338,16 +339,7 @@ func (env *cliEnv) finishFileRefresh(entry *artifact.Entry, out artifact.FileOut
 	entry.InstalledVersion = env.build.Version
 }
 
-type hookRefreshOutcome struct {
-	Changed, Diverged, Current bool
-	// Missing means the registered entry is no longer in the settings document,
-	// which is a withdrawal by the operator rather than an edit to our fragment.
-	Missing      bool
-	Backup       string
-	SystemSHA256 string
-}
-
-func (env *cliEnv) finishHookRefresh(entry *artifact.Entry, out hookRefreshOutcome,
+func (env *cliEnv) finishHookRefresh(entry *artifact.Entry, out hooks.RefreshOutcome,
 	report *artifactRefreshReport) {
 	if !report.noteRefresh(entry.Path, out.Diverged, out.Missing, false,
 		out.Changed, out.Backup) {
@@ -407,7 +399,7 @@ func (env *cliEnv) adoptLegacyArtifacts(paths config.Paths, executable string,
 				string(body), env.build.Version))
 		}
 	}
-	settings, err := claudeSettingsPath()
+	settings, err := hooks.ClaudeSettingsPath()
 	if err != nil {
 		return err
 	}
@@ -446,12 +438,12 @@ func canonicalClaudeHookSystem(executable string) (string, error) {
 }
 
 func refreshClaudeHook(path, executable, previousChecksum string,
-	enabled, force bool) (hookRefreshOutcome, error) {
+	enabled, force bool) (hooks.RefreshOutcome, error) {
 	desired, err := canonicalClaudeHookSystem(executable)
 	if err != nil {
-		return hookRefreshOutcome{}, err
+		return hooks.RefreshOutcome{}, err
 	}
-	out := hookRefreshOutcome{SystemSHA256: artifact.Checksum(desired)}
+	out := hooks.RefreshOutcome{SystemSHA256: artifact.Checksum(desired)}
 	current, found, err := claudeHookSystem(path)
 	if err != nil {
 		return out, err
@@ -464,7 +456,7 @@ func refreshClaudeHook(path, executable, previousChecksum string,
 		if err := json.Unmarshal([]byte(current), &hook); err != nil {
 			return out, err
 		}
-		currentCommand = commandOf(hook)
+		currentCommand = hooks.CommandOf(hook)
 	}
 	out.Diverged = currentChecksum != previousChecksum
 	out.Missing = !found
@@ -487,15 +479,15 @@ func refreshClaudeHook(path, executable, previousChecksum string,
 		if found {
 			return replaceClaudeHookCommand(previous, currentCommand, claudeHookCommand(executable))
 		}
-		settings, hooks, entries, err := claudeHookSettings(previous)
+		settings, table, entries, err := claudeHookSettings(previous)
 		if err != nil {
 			return "", err
 		}
 		canonical := claudeAuthorshipCommandHook(claudeHookCommand(executable))
 		replaced := false
 		for _, raw := range entries {
-			for _, hook := range commandHooksOf(raw) {
-				if claudeHookInvocation.MatchString(commandOf(hook)) {
+			for _, hook := range hooks.CommandHooksOf(raw) {
+				if claudeHookInvocation.MatchString(hooks.CommandOf(hook)) {
 					for key, value := range canonical {
 						hook[key] = value
 					}
@@ -507,12 +499,12 @@ func refreshClaudeHook(path, executable, previousChecksum string,
 		if !replaced {
 			entries = append(entries, claudeAuthorshipHookEntry(claudeHookCommand(executable)))
 		}
-		if hooks == nil {
-			hooks = map[string]any{}
-			settings["hooks"] = hooks
+		if table == nil {
+			table = map[string]any{}
+			settings["hooks"] = table
 		}
-		hooks["PreToolUse"] = entries
-		return encodeClaudeSettings(settings)
+		table["PreToolUse"] = entries
+		return hooks.EncodeClaudeSettings(settings)
 	}, true)
 	if err != nil {
 		return out, err

@@ -1,4 +1,4 @@
-package cli
+package hooks
 
 import (
 	"encoding/json"
@@ -75,7 +75,7 @@ func jsonHookTree(runtime, event string, settings map[string]any) (hooks map[str
 // lets a reinstall repoint a moved binary in place.
 func hookCommandsOf(entry any, nested bool) []map[string]any {
 	if nested {
-		return commandHooksOf(entry)
+		return CommandHooksOf(entry)
 	}
 	object, ok := entry.(map[string]any)
 	if !ok {
@@ -103,9 +103,9 @@ func jsonHookEntry(spec hookRuntime, command string) map[string]any {
 
 // installJSONSessionHook adds one session entry, or repoints the one already
 // there. Foreign hooks in the same event keep their position and their bytes.
-func installJSONSessionHook(runtime, path, executable string, req sessionRequest) (agentcfg.Outcome, error) {
+func installJSONSessionHook(runtime, path, executable string, req SessionRequest) (agentcfg.Outcome, error) {
 	spec := hookRuntimes[runtime]
-	command := sessionHookCommand(executable, runtime, req)
+	command := SessionHookCommand(executable, runtime, req)
 	matcher := sessionHookInvocation(runtime)
 	return editHookDocument(runtime, path, func(previous string) (string, error) {
 		settings, err := decodeHookDocument(runtime, previous)
@@ -119,7 +119,7 @@ func installJSONSessionHook(runtime, path, executable string, req sessionRequest
 		found := false
 		for _, entry := range entries {
 			for _, hook := range hookCommandsOf(entry, spec.nested) {
-				if !matcher.MatchString(commandOf(hook)) {
+				if !matcher.MatchString(CommandOf(hook)) {
 					continue
 				}
 				found = true
@@ -228,7 +228,7 @@ func withoutJSONHook(entries []any, nested bool, matcher *regexp.Regexp) ([]any,
 		ours := false
 		for _, raw := range group {
 			hook, isHook := raw.(map[string]any)
-			if isHook && hook["type"] == "command" && matcher.MatchString(commandOf(hook)) {
+			if isHook && hook["type"] == "command" && matcher.MatchString(CommandOf(hook)) {
 				ours, withdrawn = true, true
 				continue
 			}

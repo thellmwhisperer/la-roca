@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/thellmwhisperer/la-roca/internal/artifact"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/agentcfg"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/cli/hooks"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/lifecycle"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/plugininstall"
@@ -277,13 +278,13 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 	// Claude's signing hook lives in the same file and fires on every Bash
 	// tool call, so it is withdrawn here too. A problem reading one runtime
 	// never suppresses the withdrawal from the others.
-	for _, runtime := range hookRuntimeNames() {
-		path, err := hookArtifactPath(runtime)
+	for _, runtime := range hooks.RuntimeNames() {
+		path, err := hooks.ArtifactPath(runtime)
 		if err != nil {
 			failed(report, "%s", err)
 			continue
 		}
-		outcome, warning, err := uninstallRuntimeHooks(env, runtime, path)
+		outcome, warning, err := hooks.UninstallRuntimeHooks(env.hooksEnv(), runtime, path)
 		if warning != "" {
 			fmt.Fprintln(env.errOut, warning)
 		}
@@ -293,7 +294,7 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 		}
 	}
 
-	if wrapper, err := zcodeHookWrapperPath(); err == nil && purge {
+	if wrapper, err := hooks.ZcodeWrapperPath(); err == nil && purge {
 		removeRecoveryBackups(report, wrapper)
 	}
 
