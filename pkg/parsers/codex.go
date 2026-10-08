@@ -117,6 +117,8 @@ type codexTurn struct {
 	opened, closed                         int
 	humanText, humanTS, agentText, agentTS string
 	model, effort                          string
+	// turnID is the identity task_complete names for the turn it closes.
+	turnID string
 }
 
 // ParseCodexSession turns a Codex rollout into one session.
@@ -338,6 +340,7 @@ func (r *codexReader) event(record int, line codexLine, payload codexPayload) {
 		turn.closed = record
 		turn.agentText = firstNonEmpty(payload.LastAgentMessage, r.agentSaid)
 		turn.agentTS = validInstant(line.Timestamp)
+		turn.turnID = payload.TurnID
 		r.turns = append(r.turns, turn)
 		r.open = nil
 		r.resetTurnScope()
@@ -496,6 +499,7 @@ func (r *codexReader) exchanges(turns []codexTurn) []Exchange {
 			AgentText:      turn.agentText,
 			HumanTimestamp: turn.humanTS,
 			AgentTimestamp: turn.agentTS,
+			SourceTurnID:   turn.turnID,
 		}
 		var usage UsageTally
 		seen := map[string]bool{}
