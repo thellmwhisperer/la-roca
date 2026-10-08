@@ -24,6 +24,10 @@ const (
 	StateInvalid  = "invalid"
 	StateUnknown  = "unknown"
 
+	// CandidatesNotCounted marks an outdated row whose source count failed or ran
+	// out of time, so a null candidate_chunks reads as "looked and could not".
+	CandidatesNotCounted = "not counted"
+
 	IndexLockHeld   = "held"
 	IndexLockUnheld = "unheld"
 	IndexLockAbsent = "absent"
@@ -68,6 +72,7 @@ type DatabaseVectorization struct {
 	Tables             []string `json:"tables"`
 	EmbeddedChunks     *int64   `json:"embedded_chunks"`
 	CandidateChunks    *int64   `json:"candidate_chunks"`
+	Candidates         string   `json:"candidates,omitempty"`
 	SidecarBytes       *int64   `json:"sidecar_bytes"`
 	LastWrite          *string  `json:"last_write"`
 	State              string   `json:"state"`
@@ -182,6 +187,9 @@ func inspectDatabaseStatus(ctx context.Context, pluginRoot string, database vect
 		database.contractFingerprint(), snapshot.Fingerprint, snapshot.SourceMarker, marker)
 	if row.State == StateOutdated && row.CandidateChunks == nil {
 		row.CandidateChunks = countSourceCandidates(ctx, sourcePath, database)
+		if row.CandidateChunks == nil {
+			row.Candidates = CandidatesNotCounted
+		}
 	}
 	if database.Plugin == "roca-ops" && row.State != StateEmpty && row.State != StateUnknown {
 		stale, staleErr := opsvector.HasStaleLegacyIDs(ctx, sourcePath)
