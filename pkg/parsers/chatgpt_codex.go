@@ -146,7 +146,7 @@ func parseChatGPTCodexConversation(payload chatGPTCodexConversation, record int,
 		ID: payload.ID, SourceAgent: firstNonEmpty(meta.SourceAgent, "codex-cloud"),
 		StartedAt: started, EndedAt: ended, DurationMinutes: minutesBetween(started, ended),
 		Title: strings.TrimSpace(payload.Title), Metadata: metadata,
-		ExchangeKeyScope: "codex_cloud", Exchanges: exchanges,
+		ExchangeKeyScope: "codex_cloud", RecordTimestampOwners: true, Exchanges: exchanges,
 	}}, Discards: discards}
 }
 

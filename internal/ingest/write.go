@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"strconv"
 	"strings"
 	"time"
 
@@ -78,6 +79,10 @@ type writer struct {
 	hermesReservedMemories          *sql.DB
 	preserveSessionThinkingPosition bool
 	machine                         string
+	// toolSources maps each tool row this session write landed or removed to
+	// the call identity its source stated: tool_uses.id -> SourceID, nil once
+	// the row is gone.
+	toolSources map[string]any
 }
 
 // WriteRecords writes one artefact's records and returns what it wrote.
@@ -161,6 +166,20 @@ func (w *writer) sessionWithPolicy(ctx context.Context, session parsers.Session,
 	previous := w.machine
 	w.machine = session.Machine
 	defer func() { w.machine = previous }()
+	w.toolSources = map[string]any{}
+	owners, turns := map[string]any{}, map[string]any{}
+	own := func(number int, held [2]string, exchange parsers.Exchange) {
+		if exchange.SourceTurnID != "" {
+			turns[strconv.Itoa(number)] = exchange.SourceTurnID
+		}
+		if !session.RecordTimestampOwners {
+			return
+		}
+		read := [2]string{exchange.HumanTimestamp, exchange.AgentTimestamp}
+		if entry := timestampOwners(session.SourceAgent, held, read); len(entry) > 0 {
+			owners[strconv.Itoa(number)] = entry
+		}
+	}
 	if session.SourceAgent == "codex" && len(session.Exchanges) == 0 &&
 		len(session.Thinking) == 0 && len(session.OrphanedTools) == 0 {
 		session.OrphanedTools = nil
@@ -246,6 +265,7 @@ func (w *writer) sessionWithPolicy(ctx context.Context, session parsers.Session,
 				if err != nil {
 					return counts, err
 				}
+				own(stored.number, [2]string{}, exchange)
 				matcher.claim(stored, number, exchange)
 				assigned[exchange.SourceID] = exchangeKey{
 					Number: stored.number, Fingerprint: exchange.Fingerprint, Signal: exchange.Signal,
@@ -269,6 +289,7 @@ func (w *writer) sessionWithPolicy(ctx context.Context, session parsers.Session,
 					if err != nil {
 						return counts, err
 					}
+					own(number, [2]string{}, exchange)
 					matcher.claim(stored, number, exchange)
 					counts.ExchangesChanged++
 					counts.ThinkingBlocks += thinking
@@ -323,6 +344,9 @@ func (w *writer) sessionWithPolicy(ctx context.Context, session parsers.Session,
 			thinking, tools, err := w.enrichExchange(ctx, session.ID, matched, exchange, richer)
 			if err != nil {
 				return counts, err
+			}
+			if matched.numberValid {
+				own(matched.number, [2]string{matched.humanTimestamp, matched.agentTimestamp}, exchange)
 			}
 			matcher.claim(matched, number, exchange)
 			counts.ThinkingBlocks += thinking
@@ -381,6 +405,7 @@ func (w *writer) sessionWithPolicy(ctx context.Context, session parsers.Session,
 			continue
 		}
 		matcher.occupy(exchangeID, number, exchange, session.HistoryFallback)
+		own(number, [2]string{}, exchange)
 		if exchange.SourceID != "" {
 			// A later record with another explicit source identity must not be
 			// reconciled onto a row inserted earlier in this same read merely
@@ -446,6 +471,15 @@ func (w *writer) sessionWithPolicy(ctx context.Context, session parsers.Session,
 
 	if len(assigned) > 0 || rewroteAssignments {
 		putExchangeMap(metadata, session.ExchangeKeyScope, assigned)
+	}
+	if len(owners) > 0 {
+		metadata["timestamp_owners"] = owners
+	}
+	if len(turns) > 0 {
+		metadata["source_turn_ids"] = turns
+	}
+	if len(w.toolSources) > 0 {
+		metadata["source_tool_ids"] = w.toolSources
 	}
 	if len(metadata) > 0 {
 		if err := w.patchMetadata(ctx, session.ID, metadata); err != nil {
@@ -1436,6 +1470,23 @@ func (w *writer) enrichExchange(ctx context.Context, sessionID string, stored st
 	return inserted, tools, err
 }
 
+// timestampOwners states who owns each timestamp of one exchange after a write.
+// A timestamp the row already held keeps the owner recorded with it; one the
+// reading supplies is observed by its source; one nobody stated stays unknown.
+func timestampOwners(source string, held, read [2]string) map[string]any {
+	owners := map[string]any{}
+	for index, field := range [2]string{"human_timestamp", "agent_timestamp"} {
+		switch {
+		case held[index] != "":
+		case read[index] != "":
+			owners[field] = map[string]any{"source": source, "status": "observed"}
+		default:
+			owners[field] = map[string]any{"status": "unknown"}
+		}
+	}
+	return owners
+}
+
 func latencyBetween(human, agent string) *int {
 	humanInstant, humanOK := parseTimestampInstant(human)
 	agentInstant, agentOK := parseTimestampInstant(agent)
@@ -1463,7 +1514,7 @@ func (w *writer) insertTools(ctx context.Context, sessionID string, number any,
 	tools []parsers.ToolUse) (int, error) {
 	inserted := 0
 	for _, tool := range tools {
-		_, err := w.tx.ExecContext(ctx, `
+		result, err := w.tx.ExecContext(ctx, `
 			INSERT INTO tool_uses
 			  (session_id, exchange_number, tool_name, tool_params_summary, had_error,
 			   error_message, initiative_type, machine)
@@ -1478,49 +1529,67 @@ func (w *writer) insertTools(ctx context.Context, sessionID string, number any,
 			return inserted, fmt.Errorf("insert a tool use of %s/%v: %w", sessionID, number, err)
 		}
 		inserted++
+		if tool.SourceID != "" && w.toolSources != nil {
+			id, err := result.LastInsertId()
+			if err != nil {
+				return inserted, fmt.Errorf("read the tool use id of %s/%v: %w", sessionID, number, err)
+			}
+			w.toolSources[strconv.FormatInt(id, 10)] = tool.SourceID
+		}
 	}
 	return inserted, nil
 }
 
+// storedOrphanedTools reads the session-level calls with the call identity
+// recorded for each row, and their row ids. A row with no recorded identity
+// reads as one whose source stated none.
 func (w *writer) storedOrphanedTools(ctx context.Context,
-	sessionID string) ([]parsers.ToolUse, error) {
+	sessionID string) ([]parsers.ToolUse, []string, error) {
 	rows, err := w.tx.QueryContext(ctx, `
-		SELECT tool_name, tool_params_summary, had_error, error_message, initiative_type
-		FROM tool_uses WHERE session_id = ? AND exchange_number IS NULL ORDER BY id`, sessionID)
+		SELECT t.id, t.tool_name, t.tool_params_summary, t.had_error, t.error_message,
+		  t.initiative_type, CASE WHEN json_valid(s.metadata)
+		    THEN json_extract(s.metadata, '$.source_tool_ids."' || t.id || '"') END
+		FROM tool_uses t LEFT JOIN sessions s ON s.session_id = t.session_id
+		WHERE t.session_id = ? AND t.exchange_number IS NULL ORDER BY t.id`, sessionID)
 	if err != nil {
-		return nil, fmt.Errorf("read orphaned tools of %s: %w", sessionID, err)
+		return nil, nil, fmt.Errorf("read orphaned tools of %s: %w", sessionID, err)
 	}
 	var stored []parsers.ToolUse
+	var ids []string
 	for rows.Next() {
-		var name string
-		var params, message, initiative sql.NullString
+		var id, name string
+		var params, message, initiative, sourceID sql.NullString
 		var hadError int
-		if err := rows.Scan(&name, &params, &hadError, &message, &initiative); err != nil {
+		if err := rows.Scan(&id, &name, &params, &hadError, &message, &initiative, &sourceID); err != nil {
 			_ = rows.Close()
-			return nil, fmt.Errorf("scan orphaned tools of %s: %w", sessionID, err)
+			return nil, nil, fmt.Errorf("scan orphaned tools of %s: %w", sessionID, err)
 		}
 		stored = append(stored, parsers.ToolUse{
 			Name: name, ParamsSummary: params.String, HadError: hadError != 0,
 			ErrorMessage: message.String, InitiativeType: initiative.String,
+			SourceID: sourceID.String,
 		})
+		ids = append(ids, id)
 	}
 	if err := rows.Err(); err != nil {
 		_ = rows.Close()
-		return nil, fmt.Errorf("iterate orphaned tools of %s: %w", sessionID, err)
+		return nil, nil, fmt.Errorf("iterate orphaned tools of %s: %w", sessionID, err)
 	}
 	if err := rows.Close(); err != nil {
-		return nil, fmt.Errorf("close orphaned tools of %s: %w", sessionID, err)
+		return nil, nil, fmt.Errorf("close orphaned tools of %s: %w", sessionID, err)
 	}
-	return stored, nil
+	return stored, ids, nil
 }
 
 // replaceOrphanedTools writes a full parse's desired session-level projection
 // plus transition calls that exchange reconciliation could not safely attach. A
 // full rollout can grow between reads, so these rows are compared as an ordered
-// list and replaced together instead of accumulating duplicates.
+// list and replaced together instead of accumulating duplicates. The recorded
+// call identity is part of that comparison, so two identical payloads from
+// different calls are never taken for the same row.
 func (w *writer) replaceOrphanedTools(ctx context.Context, sessionID string,
 	tools, unresolved []parsers.ToolUse) (int, error) {
-	stored, err := w.storedOrphanedTools(ctx, sessionID)
+	stored, ids, err := w.storedOrphanedTools(ctx, sessionID)
 	if err != nil {
 		return 0, err
 	}
@@ -1531,6 +1600,11 @@ func (w *writer) replaceOrphanedTools(ctx context.Context, sessionID string,
 	if _, err := w.tx.ExecContext(ctx,
 		`DELETE FROM tool_uses WHERE session_id = ? AND exchange_number IS NULL`, sessionID); err != nil {
 		return 0, fmt.Errorf("replace orphaned tools of %s: %w", sessionID, err)
+	}
+	for index, id := range ids {
+		if stored[index].SourceID != "" {
+			w.toolSources[id] = nil
+		}
 	}
 	return w.insertTools(ctx, sessionID, nil, tools)
 }
