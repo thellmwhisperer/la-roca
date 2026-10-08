@@ -222,6 +222,17 @@ Attachment and file names are retained as per-exchange metadata. La Roca does
 not open their bytes. Entries from `memories.json` enter the `user` layer with
 origin `cron` and source `claude-web`.
 
+## Cowork sessions
+
+Cowork session metadata is read from JSON files under the configured Cowork
+sessions root. When a metadata file has a matching directory named after the
+file without its `.json` suffix and containing `audit.jsonl`, the audit is
+paired with it: the metadata supplies the session identity and title, and the
+audit supplies its turns. The audit is the source for recovered turns that no
+longer appear in the compacted transcript. JSON files inside a
+`local_<id>/` session sandbox are runtime data, not session metadata, and are
+reported as exclusions rather than parse discards.
+
 ## Local memory files and completeness
 
 Claude Code's durable memory content lives in the individual Markdown files
