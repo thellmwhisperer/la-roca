@@ -17,6 +17,7 @@ import (
 const (
 	zcodeHookWrapperMarker = "# Managed by roca hooks install zcode."
 	zcodeHookTimeoutMs     = 15000
+	zcodeWrapperClaim      = "files.zcode-hook-wrapper"
 )
 
 func zcodeRoot() (string, error) {
@@ -58,9 +59,14 @@ func installZcodeSessionHook(configPath, executable string, req sessionRequest) 
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
-	if wrapperBefore.exists && !strings.Contains(string(wrapperBefore.body), zcodeHookWrapperMarker) {
+	wrapperContent := zcodeWrapper(executable, req)
+	_, claims, err := agentcfg.LoadOwnedHooks(configPath)
+	if err != nil {
+		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
+	}
+	if wrapperBefore.exists && !zcodeOwnsWrapper(claims, wrapperBefore.body, wrapperContent) {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "",
-			fmt.Errorf("refuse to overwrite unrecognized zcode hook wrapper %s", wrapperPath)
+			fmt.Errorf("refuse to overwrite operator-owned zcode hook wrapper %s", wrapperPath)
 	}
 	release, err := agentcfg.LockOwned(configPath, true)
 	if err != nil {
@@ -70,6 +76,14 @@ func installZcodeSessionHook(configPath, executable string, req sessionRequest) 
 	containers, claims, err := agentcfg.LoadOwnedHooks(configPath)
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
+	}
+	wrapperBefore, err = readZcodeWrapperState(wrapperPath)
+	if err != nil {
+		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
+	}
+	if wrapperBefore.exists && !zcodeOwnsWrapper(claims, wrapperBefore.body, wrapperContent) {
+		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "",
+			fmt.Errorf("refuse to overwrite operator-owned zcode hook wrapper %s", wrapperPath)
 	}
 	if _, err := agentcfg.Edit(agentcfg.RuntimeZcode, configPath, func(previous string) (string, error) {
 		settings, err := jsonObject(previous)
@@ -83,7 +97,6 @@ func installZcodeSessionHook(configPath, executable string, req sessionRequest) 
 	}, true); err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
-	wrapperContent := zcodeWrapper(executable, req)
 	wrapperBackup, err := writeZcodeWrapper(wrapperPath, wrapperContent)
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
@@ -140,6 +153,9 @@ func installZcodeSessionHook(configPath, executable string, req sessionRequest) 
 	if err := agentcfg.SaveOwnedHooks(configPath, created, claimed); err != nil {
 		return outcome, "", err
 	}
+	if err := agentcfg.SaveOwnedHookFile(configPath, zcodeWrapperClaim, []byte(wrapperContent)); err != nil {
+		return outcome, "", err
+	}
 	if !wrapperBefore.exists || string(wrapperBefore.body) != wrapperContent {
 		outcome.Changed = true
 	}
@@ -161,18 +177,22 @@ func uninstallZcodeHandoffHook(configPath, wrapperPath string) (agentcfg.Outcome
 	}
 	written := zcodeHookEntry(wrapperPath)
 	var warning string
+	wrapperReferenced := false
 	outcome, err := agentcfg.Edit(agentcfg.RuntimeZcode, configPath, func(previous string) (string, error) {
 		settings, err := jsonObject(previous)
 		if err != nil {
+			wrapperReferenced = true
 			warning = fmt.Sprintf("warning: %s is not readable as zcode settings; remove the nested hooks.events.SessionStart command %s by hand",
 				configPath, wrapperPath)
 			return previous, nil
 		}
+		wrapperReferenced = zcodeHookReferencesWrapper(settings, wrapperPath)
 		if settings["hooks"] == nil {
 			return previous, nil
 		}
 		hooks, events, entries, err := zcodeHookTree(settings)
 		if err != nil {
+			wrapperReferenced = true
 			warning = fmt.Sprintf("warning: %s is not readable as zcode settings; remove the nested hooks.events.SessionStart command %s by hand",
 				configPath, wrapperPath)
 			return previous, nil
@@ -220,17 +240,25 @@ func uninstallZcodeHandoffHook(configPath, wrapperPath string) (agentcfg.Outcome
 			delete(hooks, "enabled")
 		}
 		if owns("hooks") && len(hooks) == 0 {
+			wrapperReferenced = zcodeHookReferencesWrapper(settings, wrapperPath)
 			return agentcfg.ReplaceMember(previous, "hooks", nil)
 		}
+		settings["hooks"] = hooks
+		wrapperReferenced = zcodeHookReferencesWrapper(settings, wrapperPath)
 		return agentcfg.ReplaceMember(previous, "hooks", hooks)
 	}, false)
 	if err != nil {
 		return outcome, warning, err
 	}
-	if err := agentcfg.ClearOwnedHooks(configPath); err != nil {
-		return outcome, warning, err
+	if !wrapperReferenced {
+		if err := removeZcodeWrapper(wrapperPath, claims[zcodeWrapperClaim]); err != nil {
+			return outcome, warning, err
+		}
+		if err := agentcfg.ClearOwnedHookFile(configPath, zcodeWrapperClaim); err != nil {
+			return outcome, warning, err
+		}
 	}
-	if err := removeZcodeWrapper(wrapperPath); err != nil {
+	if err := agentcfg.ClearOwnedHooks(configPath); err != nil {
 		return outcome, warning, err
 	}
 	return outcome, warning, nil
@@ -254,6 +282,47 @@ func zcodeOwnsHook(claims map[string]string, hook, written map[string]any) bool 
 		digest = agentcfg.ValueDigest(written)
 	}
 	return digest == agentcfg.ValueDigest(hook)
+}
+
+func zcodeOwnsWrapper(claims map[string]string, current []byte, written string) bool {
+	if digest, ok := claims[zcodeWrapperClaim]; ok {
+		return digest == agentcfg.BytesDigest(current)
+	}
+	return strings.Contains(string(current), zcodeHookWrapperMarker) && string(current) == written
+}
+
+func zcodeHookReferencesWrapper(settings map[string]any, wrapperPath string) bool {
+	hooks, ok := settings["hooks"].(map[string]any)
+	if !ok {
+		return false
+	}
+	events, ok := hooks["events"].(map[string]any)
+	if !ok {
+		return false
+	}
+	for _, rawGroups := range events {
+		groups, ok := rawGroups.([]any)
+		if !ok {
+			continue
+		}
+		for _, rawGroup := range groups {
+			group, ok := rawGroup.(map[string]any)
+			if !ok {
+				continue
+			}
+			entries, ok := group["hooks"].([]any)
+			if !ok {
+				continue
+			}
+			for _, rawEntry := range entries {
+				entry, ok := rawEntry.(map[string]any)
+				if ok && entry["type"] == "command" && commandOf(entry) == wrapperPath {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // zcodeOwnsEnabled answers whether hooks.enabled still holds the value La Roca
@@ -445,7 +514,7 @@ func rollbackZcodeWrapper(path, installed string, previous zcodeWrapperState, ba
 	return nil
 }
 
-func removeZcodeWrapper(path string) error {
+func removeZcodeWrapper(path, digest string) error {
 	body, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return nil
@@ -453,8 +522,8 @@ func removeZcodeWrapper(path string) error {
 	if err != nil {
 		return fmt.Errorf("read %s: %w", path, err)
 	}
-	if !strings.Contains(string(body), zcodeHookWrapperMarker) {
-		return fmt.Errorf("refuse to remove unrecognized zcode hook wrapper %s", path)
+	if digest == "" || digest != agentcfg.BytesDigest(body) {
+		return nil
 	}
 	if err := os.Remove(path); err != nil {
 		return fmt.Errorf("remove %s: %w", path, err)

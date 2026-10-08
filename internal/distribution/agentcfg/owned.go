@@ -53,6 +53,11 @@ func ValueDigest(value any) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
+func BytesDigest(value []byte) string {
+	sum := sha256.Sum256(value)
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
 // owns answers whether the value at key is still the one La Roca wrote. A
 // legacy sidecar (containers, no digest) owns it only while it is what this
 // version writes, the command compared by basename: the absolute path that
@@ -140,6 +145,27 @@ func SaveOwnedHooks(path string, created []string, claims map[string]any) error 
 		}
 		owned.Claims[key] = ValueDigest(value)
 	}
+	return writeOwned(path, owned)
+}
+
+func SaveOwnedHookFile(path, key string, body []byte) error {
+	owned, err := loadOwned(path)
+	if err != nil {
+		return err
+	}
+	if owned.Claims == nil {
+		owned.Claims = map[string]string{}
+	}
+	owned.Claims[key] = BytesDigest(body)
+	return writeOwned(path, owned)
+}
+
+func ClearOwnedHookFile(path, key string) error {
+	owned, err := loadOwned(path)
+	if err != nil {
+		return err
+	}
+	delete(owned.Claims, key)
 	return writeOwned(path, owned)
 }
 
