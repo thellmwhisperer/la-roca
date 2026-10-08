@@ -254,10 +254,16 @@ func TestLegacyAdoptionRequiresProofOfSkillOwnership(t *testing.T) {
 	foreignVector := filepath.Join(home, ".codex", "skills", skill.VectorName, "SKILL.md")
 	legacyRoca := filepath.Join(home, ".codex", "skills", skill.SkillName, "SKILL.md")
 	zonedOperations := filepath.Join(home, ".claude", "skills", skill.OperationsName, "SKILL.md")
+	// ZCode is opt-in and arrived after the zones: its frontmatter name alone
+	// is not proof, only the ownership marker is.
+	namedZcode := filepath.Join(home, ".zcode", "skills", skill.SkillName, "SKILL.md")
+	zonedZcode := filepath.Join(home, ".zcode", "skills", skill.OperationsName, "SKILL.md")
 	writeFile(t, foreignOperations, "---\nname: roca-operations\n---\nforeign\n")
 	writeFile(t, foreignVector, "---\nname: roca-vector\n---\nforeign\n")
 	writeFile(t, legacyRoca, skill.LegacySignature()+"---\nlegacy\n")
 	writeFile(t, zonedOperations, artifact.Zoned(skill.OperationsContent(), ""))
+	writeFile(t, namedZcode, skill.LegacySignature()+"---\noperator skill\n")
+	writeFile(t, zonedZcode, artifact.Zoned(skill.OperationsContent(), ""))
 
 	env := &cliEnv{build: Build{Version: "v2.0.0"}}
 	if _, err := env.refreshManagedArtifacts(filepath.Join(home, "bin", "roca"), false); err != nil {
@@ -267,9 +273,15 @@ func TestLegacyAdoptionRequiresProofOfSkillOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{foreignOperations, foreignVector} {
-		if _, found := registry.Find(artifactKindSkill, "codex", path); found {
-			t.Errorf("unproven skill was registered: %s", path)
+	for _, foreign := range []struct {
+		runtime, path string
+	}{
+		{"codex", foreignOperations},
+		{"codex", foreignVector},
+		{"zcode", namedZcode},
+	} {
+		if _, found := registry.Find(artifactKindSkill, foreign.runtime, foreign.path); found {
+			t.Errorf("unproven skill was registered: %s", foreign.path)
 		}
 	}
 	for _, owned := range []struct {
@@ -277,6 +289,7 @@ func TestLegacyAdoptionRequiresProofOfSkillOwnership(t *testing.T) {
 	}{
 		{"codex", legacyRoca},
 		{"claude", zonedOperations},
+		{"zcode", zonedZcode},
 	} {
 		if _, found := registry.Find(artifactKindSkill, owned.runtime, owned.path); !found {
 			t.Errorf("proven skill was not registered: %s", owned.path)
