@@ -99,7 +99,13 @@ and Codex's documents it is the command object; in Cursor's it is the one
 `sessionStart` entry; in ZCode's it is the nested command plus the wrapper it
 names, and parent containers (`hooks`, `hooks.events`,
 `hooks.events.SessionStart`) this install created are recorded beside the config
-and pruned on uninstall only when they remain empty.
+and pruned on uninstall only when removing La Roca's command left them empty.
+The command and a `hooks.enabled` La Roca had to add are claimed by digest: one
+the operator edited (say its `timeoutMs`) is theirs, so reinstall leaves it as
+it is and uninstall keeps it, and an operator's `hooks.enabled` is never
+changed. A verbatim operator copy of La Roca's command cannot be told apart
+from La Roca's own and is withdrawn with it. An unmarked file at the wrapper
+path is refused before anything is written.
 For pi and OpenCode the whole written file is the SYSTEM fragment: it carries an
 ownership line, a file at that path without it is refused rather than replaced,
 and one La Roca wrote and the operator edited is left alone until `roca hooks

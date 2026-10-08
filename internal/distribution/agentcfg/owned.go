@@ -8,6 +8,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/thellmwhisperer/la-roca/internal/securefile"
 )
@@ -45,7 +46,8 @@ func LockOwned(path string, create bool) (func() error, error) {
 	return securefile.Lock(ownedSidecar(path) + ".lock")
 }
 
-func valueDigest(value any) string {
+// ValueDigest is the claim recorded for one value La Roca wrote.
+func ValueDigest(value any) string {
 	encoded, _ := json.Marshal(value) // map keys sorted, no whitespace
 	sum := sha256.Sum256(encoded)
 	return "sha256:" + hex.EncodeToString(sum[:])
@@ -60,7 +62,7 @@ func (o ownedContainers) owns(r runtime, key string, value any, present bool) bo
 		return false
 	}
 	if digest, ok := o.Claims[key]; ok {
-		return digest == valueDigest(value)
+		return digest == ValueDigest(value)
 	}
 	entry, ok := value.(map[string]any)
 	if len(o.MCP) == 0 || !ok {
@@ -73,7 +75,7 @@ func (o ownedContainers) owns(r runtime, key string, value any, present bool) bo
 	for _, f := range r.entry("roca") {
 		want[f.key] = f.value
 	}
-	return valueDigest(entry) == valueDigest(want)
+	return ValueDigest(entry) == ValueDigest(want)
 }
 
 func loadOwned(path string) (ownedContainers, error) {
@@ -120,12 +122,24 @@ func removeOwned(path string) error {
 	return nil
 }
 
-func SaveOwnedHooks(path string, created []string) error {
+// SaveOwnedHooks records the hook containers an install created and the
+// values it claims, keyed by path; a nil value drops that key's claim.
+func SaveOwnedHooks(path string, created []string, claims map[string]any) error {
 	owned, err := loadOwned(path)
 	if err != nil {
 		return err
 	}
 	owned.Hooks = mergeOwned(owned.Hooks, created)
+	for key, value := range claims {
+		if value == nil {
+			delete(owned.Claims, key)
+			continue
+		}
+		if owned.Claims == nil {
+			owned.Claims = map[string]string{}
+		}
+		owned.Claims[key] = ValueDigest(value)
+	}
 	return writeOwned(path, owned)
 }
 
@@ -148,13 +162,20 @@ func ClearOwnedHooks(path string) error {
 		return err
 	}
 	owned.Hooks = nil
+	for key := range owned.Claims {
+		if strings.HasPrefix(key, "hooks.") {
+			delete(owned.Claims, key)
+		}
+	}
 	return writeOwned(path, owned)
 }
 
-func LoadOwnedHooks(path string) ([]string, error) {
+// LoadOwnedHooks returns the hook containers La Roca created and every claim
+// digest the sidecar holds.
+func LoadOwnedHooks(path string) ([]string, map[string]string, error) {
 	owned, err := loadOwned(path)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return owned.Hooks, nil
+	return owned.Hooks, owned.Claims, nil
 }
