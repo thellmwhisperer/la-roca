@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 )
 
 var (
@@ -16,34 +15,40 @@ var (
 
 // Write replaces path atomically after the new bytes and permissions are durable.
 func Write(path string, data []byte, mode, dirMode os.FileMode) (err error) {
-	return publish(path, data, nil, nil, mode, dirMode, true, false)
+	return publish(path, data, mode, dirMode, true, false)
 }
 
 // CreatePreservingParentMode atomically creates a file without replacing a
 // path that already exists or changing an existing parent directory's mode.
 func CreatePreservingParentMode(path string, data []byte, mode, dirMode os.FileMode) error {
-	return publish(path, data, nil, nil, mode, dirMode, false, true)
+	return publish(path, data, mode, dirMode, false, true)
 }
 
-// Replace atomically replaces an operator-owned file while preserving its mode.
-// When previous is non-nil, a concurrent change makes the replacement fail.
+// Replace atomically replaces an operator-owned file while preserving its mode,
+// only if it still holds previous. A nil previous means the caller saw no file,
+// so any file that appeared since is preserved and the call fails.
 func Replace(path string, data, previous []byte) error {
+	if previous == nil {
+		return publish(path, data, 0o600, 0o700, false, true)
+	}
 	mode := os.FileMode(0o600)
 	if info, err := os.Stat(path); err == nil {
 		mode = info.Mode().Perm()
 	}
-	return publish(path, data, previous, nil, mode, 0o700, false, false)
-
+	_, err := replace(path, data, previous, nil, mode)
+	return err
 }
 
 // ReplaceRegular stages a replacement for a previously inspected regular file
-// while preserving its mode. Before renaming, it refuses if the path no longer
-// names that file or its expected bytes changed.
+// while preserving its mode. It refuses if the path no longer names that file
+// or its expected bytes changed, and attempts to restore any edit detected
+// during publication.
 func ReplaceRegular(path string, data, previous []byte, original os.FileInfo) error {
 	if original == nil || !original.Mode().IsRegular() {
 		return fmt.Errorf("refuse to replace non-regular file %s", path)
 	}
-	return publish(path, data, previous, original, original.Mode().Perm(), 0o700, false, false)
+	_, err := replace(path, data, previous, original, original.Mode().Perm())
+	return err
 }
 
 // BackUp preserves previous bytes beside path without overwriting older copies.
@@ -73,8 +78,7 @@ func BackUp(path string, previous []byte) (string, error) {
 	}
 }
 
-func publish(path string, data, previous []byte, original os.FileInfo, mode, dirMode os.FileMode,
-	restrictDir, createOnly bool) (err error) {
+func publish(path string, data []byte, mode, dirMode os.FileMode, restrictDir, createOnly bool) (err error) {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, dirMode); err != nil {
 		return err
@@ -90,41 +94,12 @@ func publish(path string, data, previous []byte, original os.FileInfo, mode, dir
 	}
 	staged := temporary.Name()
 	defer func() {
-		temporary.Close()
 		if err != nil {
 			os.Remove(staged)
 		}
 	}()
-	if err = temporary.Chmod(mode); err != nil {
+	if _, err = stage(temporary, data, mode); err != nil {
 		return err
-	}
-	if _, err = temporary.Write(data); err != nil {
-		return err
-	}
-	if err = temporary.Sync(); err != nil {
-		return err
-	}
-	if err = temporary.Close(); err != nil {
-		return err
-	}
-	if original != nil {
-		if err = requireSameRegularFile(path, original); err != nil {
-			return err
-		}
-	}
-	if previous != nil || original != nil {
-		current, readErr := os.ReadFile(path)
-		if readErr != nil {
-			return fmt.Errorf("re-read %s: %w", path, readErr)
-		}
-		if string(current) != string(previous) {
-			return changedFileError(path)
-		}
-	}
-	if original != nil {
-		if err = requireSameRegularFile(path, original); err != nil {
-			return err
-		}
 	}
 	if createOnly {
 		if err = renameNoReplaceFile(staged, path); err != nil {
@@ -144,15 +119,7 @@ func publish(path string, data, previous []byte, original os.FileInfo, mode, dir
 			return err
 		}
 	}
-	if runtime.GOOS == "windows" {
-		return nil
-	}
-	directory, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	defer directory.Close()
-	return directory.Sync()
+	return syncDir(dir)
 }
 
 func createCollisionError(path string) error {
