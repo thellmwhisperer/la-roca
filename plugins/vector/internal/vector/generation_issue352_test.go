@@ -204,12 +204,9 @@ func TestCompletedGenerationInvalidation(t *testing.T) {
 			// An outdated source is counted afresh; no other stale state may
 			// reuse the sealed count.
 			if row.State == StateOutdated {
-				want, err := DeclaredCorpus{Core: f.Core, Database: f.databases[0]}.CountChunks(ctx, "")
-				if err != nil {
-					t.Fatal(err)
-				}
-				if row.CandidateChunks == nil || *row.CandidateChunks != want {
-					t.Fatalf("outdated candidate chunks = %v, want %d", row.CandidateChunks, want)
+				const expectedCandidates = 4
+				if row.CandidateChunks == nil || *row.CandidateChunks != expectedCandidates {
+					t.Fatalf("outdated candidate chunks = %v, want %d", row.CandidateChunks, expectedCandidates)
 				}
 			} else if row.CandidateChunks != nil {
 				t.Fatalf("stale generation: %+v", row)
