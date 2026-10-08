@@ -69,7 +69,8 @@ The states are `building`, `complete`, `empty`, `outdated`, `invalid`, and `unkn
 `complete` requires a sealed source fingerprint, the current declaration,
 and a matching current source-file marker. A missing or unreadable marker
 means `unknown`; the next real indexing pass refreshes the seal. Status does
-not hash source files or read source text. For ops, it also checks chunk
+not hash source files. For outdated sources, it reads row counts without
+reading source text. For ops, it also checks chunk
 identifiers against `memories.legacy_id`; detected stale identifiers make an
 otherwise `building`, `complete`, or `outdated` sidecar `invalid`.
 A changed declaration or stored marker is `outdated`. A missing sidecar,
