@@ -105,13 +105,26 @@ func TestATimedOutProbeIsReportedAndDoesNotRebuild(t *testing.T) {
 	paths, before := initializedWith(t,
 		`INSERT INTO memories (layer, content, origin) VALUES ('fact', 'harbour lighthouse', 'agent')`)
 
-	result, rebuilt, _ := initAgain(t, paths, time.Nanosecond)
-	if rebuilt {
-		t.Fatalf("a timed-out probe rebuilt the index: %+v", result.WordSearch)
+	var progress []string
+	svc := serviceOn(t, paths, func(o *service.Options) {
+		o.QueryTimeout = time.Nanosecond
+		o.Progress = func(line string) { progress = append(progress, line) }
+	})
+	result, err := svc.Init(t.Context())
+	if err == nil {
+		t.Fatalf("init succeeded without a word-search proof: %+v", result.WordSearch)
 	}
-	if result.WordSearch == nil || result.WordSearch.Ready ||
+	if !strings.Contains(err.Error(), "word search could not be proven in time") ||
+		!strings.Contains(err.Error(), "index was left as it was") ||
+		!strings.Contains(err.Error(), "retry with `roca init`") {
+		t.Fatalf("the timeout error did not explain the failure and retry: %v", err)
+	}
+	if result.WordSearch == nil || result.WordSearch.Ready || !result.WordSearch.TimedOut ||
 		!strings.Contains(result.WordSearch.Reason, "timed out") {
 		t.Fatalf("the timed-out probe was not reported as such: %+v", result.WordSearch)
+	}
+	if strings.Contains(strings.Join(progress, "\n"), "rebuilding the full-text index") {
+		t.Fatalf("a timed-out probe rebuilt the index: %+v", result.WordSearch)
 	}
 	if after := indexFingerprint(t, paths.db); after != before {
 		t.Fatalf("a timed-out probe touched the index:\nbefore %s\nafter  %s", before, after)
