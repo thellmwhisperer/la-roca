@@ -335,12 +335,9 @@ func Edit(name, path string, transform func(string) (string, error),
 // beside path, where uninstall looks for it.
 func EditLinked(name, path string, transform func(string) (string, error),
 	createMissing bool) (Outcome, error) {
-	target := path
-	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
-		if target, err = filepath.EvalSymlinks(path); err != nil {
-			return Outcome{Runtime: name, Path: path},
-				fmt.Errorf("refuse to edit %s: its symlink does not resolve: %w", path, err)
-		}
+	target, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		target = path // missing, or a broken link the regular-file check refuses
 	}
 	return edit(name, path, target, transform, nil, createMissing)
 }
