@@ -38,8 +38,9 @@ candidate chunks, sidecar size, last write, state, lock status, and a
 `compact_recommended` flag. Embedded counts report live indexed chunks;
 candidate counts are stored by a completed unrestricted indexing pass under the declared
 chunking policy. Status uses that exact count only while its source generation
-and reader contract still match; it never reads or chunks source text. Legacy,
-partial, and changed sources have unknown candidate counts until that pass completes. Either count can be
+and reader contract still match. An `outdated` source is counted afresh,
+read-only, under the current chunking policy, within a two-second budget.
+Legacy and partial sources have unknown candidate counts until that pass completes. Either count can be
 unknown (`null`), never an estimate or invented zero. Sidecar size and last
 write include its SQLite WAL and shared-memory files when present.
 
