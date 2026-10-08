@@ -1,9 +1,13 @@
 package agentcfg
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
+	"path/filepath"
 
 	"github.com/thellmwhisperer/la-roca/internal/securefile"
 )
@@ -12,15 +16,65 @@ import (
 // emptiness. Nested JSON runtimes (zcode) create mcp and hooks objects that
 // may already have been empty when the operator owned them; uninstall prunes
 // only the containers this install created, and only when they are empty again.
+//
+// Claims are the leaf values La Roca wrote, each as the digest of its
+// normalized JSON. A key La Roca has no valid claim on is the operator's.
 const ownedMarker = "owned-containers-v1"
 
 type ownedContainers struct {
-	Marker string   `json:"roca"`
-	MCP    []string `json:"mcp,omitempty"`
-	Hooks  []string `json:"hooks,omitempty"`
+	Marker string            `json:"roca"`
+	MCP    []string          `json:"mcp,omitempty"`
+	Hooks  []string          `json:"hooks,omitempty"`
+	Claims map[string]string `json:"claims,omitempty"`
 }
 
 func ownedSidecar(path string) string { return path + ".roca-owned" }
+
+// LockOwned serializes one config's read-modify-write with its sidecar, so a
+// concurrent MCP and hook install cannot overwrite each other's claims. A
+// missing directory has nothing to race over unless the caller creates it.
+func LockOwned(path string, create bool) (func() error, error) {
+	dir := filepath.Dir(path)
+	if create {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return nil, fmt.Errorf("create the directory of %s: %w", path, err)
+		}
+	} else if _, err := os.Stat(dir); os.IsNotExist(err) {
+		return func() error { return nil }, nil
+	}
+	return securefile.Lock(ownedSidecar(path) + ".lock")
+}
+
+func valueDigest(value any) string {
+	encoded, _ := json.Marshal(value) // map keys sorted, no whitespace
+	sum := sha256.Sum256(encoded)
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+// owns answers whether the value at key is still the one La Roca wrote. A
+// legacy sidecar (containers, no digest) owns it only while it is what this
+// version writes, the command compared by basename: the absolute path that
+// install wrote was never recorded.
+func (o ownedContainers) owns(r runtime, key string, value any, present bool) bool {
+	if !present {
+		return false
+	}
+	if digest, ok := o.Claims[key]; ok {
+		return digest == valueDigest(value)
+	}
+	entry, ok := value.(map[string]any)
+	if len(o.MCP) == 0 || !ok {
+		return false
+	}
+	command, _ := entry["command"].(string)
+	entry = maps.Clone(entry)
+	entry["command"] = filepath.Base(command)
+	want := map[string]any{}
+	for _, f := range r.entry("roca") {
+		want[f.key] = f.value
+	}
+	return valueDigest(entry) == valueDigest(want)
+}
 
 func loadOwned(path string) (ownedContainers, error) {
 	body, err := os.ReadFile(ownedSidecar(path))
@@ -39,7 +93,7 @@ func loadOwned(path string) (ownedContainers, error) {
 
 func writeOwned(path string, owned ownedContainers) error {
 	owned.Marker = ownedMarker
-	if len(owned.MCP) == 0 && len(owned.Hooks) == 0 {
+	if len(owned.MCP) == 0 && len(owned.Hooks) == 0 && len(owned.Claims) == 0 {
 		return removeOwned(path)
 	}
 	body, err := json.MarshalIndent(owned, "", "  ")
@@ -52,7 +106,7 @@ func writeOwned(path string, owned ownedContainers) error {
 	if os.IsNotExist(err) {
 		return securefile.CreatePreservingParentMode(sidecar, body, 0o600, 0o700)
 	}
-	if err != nil {
+	if err != nil || string(previous) == string(body) {
 		return err
 	}
 	return securefile.Replace(sidecar, body, previous)
@@ -64,15 +118,6 @@ func removeOwned(path string) error {
 		return fmt.Errorf("remove %s: %w", sidecar, err)
 	}
 	return nil
-}
-
-func saveOwnedMCP(path string, created []string) error {
-	owned, err := loadOwned(path)
-	if err != nil {
-		return err
-	}
-	owned.MCP = mergeOwned(owned.MCP, created)
-	return writeOwned(path, owned)
 }
 
 func SaveOwnedHooks(path string, created []string) error {
@@ -97,15 +142,6 @@ func mergeOwned(existing, created []string) []string {
 	return merged
 }
 
-func clearOwnedMCP(path string) error {
-	owned, err := loadOwned(path)
-	if err != nil {
-		return err
-	}
-	owned.MCP = nil
-	return writeOwned(path, owned)
-}
-
 func ClearOwnedHooks(path string) error {
 	owned, err := loadOwned(path)
 	if err != nil {
@@ -113,14 +149,6 @@ func ClearOwnedHooks(path string) error {
 	}
 	owned.Hooks = nil
 	return writeOwned(path, owned)
-}
-
-func loadOwnedMCP(path string) ([]string, error) {
-	owned, err := loadOwned(path)
-	if err != nil {
-		return nil, err
-	}
-	return owned.MCP, nil
 }
 
 func LoadOwnedHooks(path string) ([]string, error) {
