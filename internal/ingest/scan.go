@@ -759,11 +759,20 @@ func scanDesktopSessions(roots Roots) []Target {
 
 // scanCoworkSessions pairs each metadata file with the audit transcript that
 // hangs off it. The metadata comes first on purpose: it is what declares the
-// session's identity and title, and the transcript merges over it.
+// session's identity and title, and the transcript merges over it. Every JSON
+// inside a `local_<id>/` session sandbox is the runtime's own, not metadata.
 func scanCoworkSessions(roots Roots) []Target {
 	var targets []Target
 	for _, metadata := range filesUnder(roots.CoworkSessions, ".json", Target{
 		Kind: parsers.KindSessionMetadata, SourceAgent: "cowork"}) {
+		rel, _ := filepath.Rel(roots.CoworkSessions, filepath.Dir(metadata.Path))
+		if slices.ContainsFunc(strings.Split(rel, string(filepath.Separator)), func(dir string) bool {
+			return strings.HasPrefix(dir, "local_")
+		}) {
+			metadata.ExclusionReason = "Cowork session sandbox file is not session metadata"
+			targets = append(targets, metadata)
+			continue
+		}
 		targets = append(targets, metadata)
 		audit := filepath.Join(strings.TrimSuffix(metadata.Path, ".json"), "audit.jsonl")
 		if isFile(audit) {
