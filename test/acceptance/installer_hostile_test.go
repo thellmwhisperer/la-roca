@@ -385,12 +385,18 @@ func environmentWithFakeUname(t *testing.T, operatingSystem, architecture string
 // runTheInstaller runs the real script with a real shell and hands back
 // everything it said. The environment is the caller's plus whatever the case
 // needs, because these are failures of the machine and the machine is what is
-// being varied.
+// being varied. Its curl gets a bounded connect time: WSL2 does not refuse a
+// loopback port with nothing on it promptly, so a dead channel would hang
+// until the OS gave up instead of failing at once.
 func runTheInstaller(t *testing.T, environment []string, arguments ...string) (string, error) {
 	t.Helper()
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, ".curlrc"), []byte("connect-timeout = 2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	command := exec.Command("sh", append([]string{theInstallerPath()}, arguments...)...)
 	command.Env = append(os.Environ(), environment...)
-	command.Env = append(command.Env, "HOME="+t.TempDir())
+	command.Env = append(command.Env, "HOME="+home, "CURL_HOME="+home)
 	output, err := command.CombinedOutput()
 	return string(output), err
 }
