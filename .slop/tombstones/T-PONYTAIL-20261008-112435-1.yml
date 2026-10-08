@@ -1,0 +1,18 @@
+schema: 1
+id: T-PONYTAIL-20261008-112435-1
+status: accepted
+category: alien_code
+title: "Cut the exported CandidatesNotCounted constant and its 2-line doc comment, which had one caller. The \"not counted\" string literal now sits at the single place it is assigned."
+created_at: 2026-10-08
+incident:
+  pattern: "Cut the exported CandidatesNotCounted constant and its 2-line doc comment, which had one caller. The \"not counted\" string literal now sits at the single place it is assigned."
+  what_went_wrong: "An ATM run wrote it and ATM's ponytail pass cut it before delivery."
+  root_cause: "The coding agent wrote more than the issue needed."
+  rule_established: "Cut by the ponytail pass; it does not come back."
+  evidence:
+    - family: speculative_feature
+      example: "Cut the exported CandidatesNotCounted constant and its 2-line doc comment, which had one caller. The \"not counted\" string literal now sits at the single place it is assigned."
+      artifact: "plugins/vector/internal/vector/status.go"
+match:
+  family: speculative_feature
+  artifact: "plugins/vector/internal/vector/status.go"
