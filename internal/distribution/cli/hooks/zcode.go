@@ -1,4 +1,4 @@
-package cli
+package hooks
 
 import (
 	"context"
@@ -11,13 +11,14 @@ import (
 	"strings"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/agentcfg"
+	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 	"github.com/thellmwhisperer/la-roca/internal/securefile"
 )
 
 const (
-	zcodeHookWrapperMarker = "# Managed by roca hooks install zcode."
-	zcodeHookTimeoutMs     = 15000
-	zcodeWrapperClaim      = "files.zcode-hook-wrapper"
+	ZcodeWrapperMarker = "# Managed by roca hooks install zcode."
+	zcodeHookTimeoutMs = 15000
+	zcodeWrapperClaim  = "files.zcode-hook-wrapper"
 )
 
 func zcodeRoot() (string, error) {
@@ -31,7 +32,7 @@ func zcodeRoot() (string, error) {
 	return filepath.Join(home, ".zcode"), nil
 }
 
-func zcodeHookWrapperPath() (string, error) {
+func ZcodeWrapperPath() (string, error) {
 	root, err := zcodeRoot()
 	if err != nil {
 		return "", err
@@ -50,16 +51,16 @@ func hookConfigPath() (string, error) {
 // installZcodeSessionHook writes ZCode's wrapper and its nested SessionStart
 // entry. ZCode discards plain-text hook stdout, so the wrapper is what
 // guarantees valid JSON even when the binary behind it fails.
-func installZcodeSessionHook(configPath, executable string, req sessionRequest) (agentcfg.Outcome, string, error) {
-	wrapperPath, err := zcodeHookWrapperPath()
+func installZcodeSessionHook(configPath, executable string, req SessionRequest) (agentcfg.Outcome, string, error) {
+	wrapperPath, err := ZcodeWrapperPath()
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
-	wrapperBefore, err := readZcodeWrapperState(wrapperPath)
+	wrapperBefore, err := ReadZcodeWrapperState(wrapperPath)
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
-	wrapperContent := zcodeWrapper(executable, req)
+	wrapperContent := ZcodeWrapper(executable, req)
 	_, claims, err := loadZcodeHookOwnership(configPath, wrapperPath, wrapperBefore, wrapperContent)
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
@@ -69,7 +70,7 @@ func installZcodeSessionHook(configPath, executable string, req sessionRequest) 
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
 	defer release()
-	wrapperBefore, err = readZcodeWrapperState(wrapperPath)
+	wrapperBefore, err = ReadZcodeWrapperState(wrapperPath)
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
@@ -89,7 +90,7 @@ func installZcodeSessionHook(configPath, executable string, req sessionRequest) 
 	}, true); err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
-	wrapperBackup, err := writeZcodeWrapper(wrapperPath, wrapperContent, wrapperBefore)
+	wrapperBackup, err := WriteZcodeWrapper(wrapperPath, wrapperContent, wrapperBefore)
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
@@ -118,8 +119,8 @@ func installZcodeSessionHook(configPath, executable string, req sessionRequest) 
 		claimed[zcodeHookClaim] = nil
 		found := false
 		for _, raw := range entries {
-			for _, hook := range commandHooksOf(raw) {
-				if commandOf(hook) != wrapperPath {
+			for _, hook := range CommandHooksOf(raw) {
+				if CommandOf(hook) != wrapperPath {
 					continue
 				}
 				if !found && zcodeOwnsHook(claims, hook, written) {
@@ -201,7 +202,7 @@ func uninstallZcodeHandoffHook(configPath, wrapperPath string) (agentcfg.Outcome
 			kept := make([]any, 0, len(groupHooks))
 			for _, candidate := range groupHooks {
 				hook, ok := candidate.(map[string]any)
-				if !withdrawn && ok && hook["type"] == "command" && commandOf(hook) == wrapperPath &&
+				if !withdrawn && ok && hook["type"] == "command" && CommandOf(hook) == wrapperPath &&
 					zcodeOwnsHook(claims, hook, written) {
 					withdrawn = true
 					continue
@@ -276,21 +277,21 @@ func zcodeOwnsHook(claims map[string]string, hook, written map[string]any) bool 
 	return digest == agentcfg.ValueDigest(hook)
 }
 
-func zcodeOwnsWrapper(claims map[string]string, current []byte, written string) bool {
+func ZcodeOwnsWrapper(claims map[string]string, current []byte, written string) bool {
 	if digest, ok := claims[zcodeWrapperClaim]; ok {
 		return digest == agentcfg.BytesDigest(current)
 	}
-	return strings.Contains(string(current), zcodeHookWrapperMarker) && string(current) == written
+	return strings.Contains(string(current), ZcodeWrapperMarker) && string(current) == written
 }
 
-func ensureZcodeWrapperOwned(path string, before zcodeWrapperState, claims map[string]string, written string) error {
-	if before.exists && !zcodeOwnsWrapper(claims, before.body, written) {
+func ensureZcodeWrapperOwned(path string, before ZcodeWrapperState, claims map[string]string, written string) error {
+	if before.exists && !ZcodeOwnsWrapper(claims, before.body, written) {
 		return fmt.Errorf("refuse to overwrite operator-owned zcode hook wrapper %s", path)
 	}
 	return nil
 }
 
-func loadZcodeHookOwnership(configPath, wrapperPath string, before zcodeWrapperState, written string) ([]string, map[string]string, error) {
+func loadZcodeHookOwnership(configPath, wrapperPath string, before ZcodeWrapperState, written string) ([]string, map[string]string, error) {
 	containers, claims, err := agentcfg.LoadOwnedHooks(configPath)
 	if err != nil {
 		return nil, nil, err
@@ -326,7 +327,7 @@ func zcodeHookReferencesWrapper(settings map[string]any, wrapperPath string) boo
 			}
 			for _, rawEntry := range entries {
 				entry, ok := rawEntry.(map[string]any)
-				if ok && entry["type"] == "command" && commandOf(entry) == wrapperPath {
+				if ok && entry["type"] == "command" && CommandOf(entry) == wrapperPath {
 					return true
 				}
 			}
@@ -437,11 +438,11 @@ func jsonObject(previous string) (map[string]any, error) {
 	return readJSONDocument("zcode settings", previous)
 }
 
-func zcodeWrapper(executable string, req sessionRequest) string {
+func ZcodeWrapper(executable string, req SessionRequest) string {
 	return `#!/bin/bash
-` + zcodeHookWrapperMarker + `
+` + ZcodeWrapperMarker + `
 set -euo pipefail
-if OUTPUT=$(` + sessionHookCommand(executable, agentcfg.RuntimeZcode, req) + ` 2>/dev/null) && [ -n "$OUTPUT" ]; then
+if OUTPUT=$(` + SessionHookCommand(executable, agentcfg.RuntimeZcode, req) + ` 2>/dev/null) && [ -n "$OUTPUT" ]; then
   printf '%s\n' "$OUTPUT"
 else
   printf '{}\n'
@@ -449,28 +450,28 @@ fi
 `
 }
 
-type zcodeWrapperState struct {
+type ZcodeWrapperState struct {
 	body   []byte
 	mode   os.FileMode
 	exists bool
 }
 
-func readZcodeWrapperState(path string) (zcodeWrapperState, error) {
+func ReadZcodeWrapperState(path string) (ZcodeWrapperState, error) {
 	body, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		return zcodeWrapperState{}, nil
+		return ZcodeWrapperState{}, nil
 	}
 	if err != nil {
-		return zcodeWrapperState{}, fmt.Errorf("read %s: %w", path, err)
+		return ZcodeWrapperState{}, fmt.Errorf("read %s: %w", path, err)
 	}
 	info, err := os.Stat(path)
 	if err != nil {
-		return zcodeWrapperState{}, fmt.Errorf("inspect %s: %w", path, err)
+		return ZcodeWrapperState{}, fmt.Errorf("inspect %s: %w", path, err)
 	}
-	return zcodeWrapperState{body: body, mode: info.Mode().Perm(), exists: true}, nil
+	return ZcodeWrapperState{body: body, mode: info.Mode().Perm(), exists: true}, nil
 }
 
-func writeZcodeWrapper(path, content string, previous zcodeWrapperState) (string, error) {
+func WriteZcodeWrapper(path, content string, previous ZcodeWrapperState) (string, error) {
 	var backup string
 	if previous.exists && string(previous.body) != content {
 		var err error
@@ -492,7 +493,7 @@ func writeZcodeWrapper(path, content string, previous zcodeWrapperState) (string
 	return backup, os.Chmod(path, 0o700)
 }
 
-func rollbackZcodeWrapper(path, installed string, previous zcodeWrapperState, backup string) error {
+func rollbackZcodeWrapper(path, installed string, previous ZcodeWrapperState, backup string) error {
 	current, err := os.ReadFile(path)
 	if os.IsNotExist(err) && !previous.exists {
 		return nil
@@ -540,7 +541,7 @@ func removeZcodeWrapper(path, digest string) error {
 	return nil
 }
 
-func zcodeHookJSON(context string) []byte {
+func ZcodeHookJSON(context string) []byte {
 	if strings.TrimSpace(context) == "" {
 		return []byte("{}\n")
 	}
@@ -551,21 +552,21 @@ func zcodeHookJSON(context string) []byte {
 	return append(encoded, '\n')
 }
 
-// runZcodeHandoffHook answers the wrappers written before session hooks became
+// RunZcodeHandoffHook answers the wrappers written before session hooks became
 // the same feature on every harness. Those wrappers are on operators' disks and
 // still call `hooks run zcode`; reinstalling replaces them.
-func runZcodeHandoffHook(ctx context.Context, env *cliEnv) error {
-	fmt.Fprint(env.out, string(zcodeHookJSON(zcodeHandoffContext(ctx, env))))
+func RunZcodeHandoffHook(ctx context.Context, env Env) error {
+	fmt.Fprint(env.Out, string(ZcodeHookJSON(zcodeHandoffContext(ctx, env))))
 	return nil
 }
 
-func zcodeHandoffContext(ctx context.Context, env *cliEnv) string {
-	svc, _, err := env.openSessionContextService()
+func zcodeHandoffContext(ctx context.Context, env Env) string {
+	svc, err := env.OpenSessionContext()
 	if err != nil {
 		return ""
 	}
 	defer svc.Close()
-	project, err := resolveProject("")
+	project, err := service.ResolveSessionProject("")
 	if err != nil {
 		return ""
 	}

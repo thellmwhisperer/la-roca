@@ -1,4 +1,4 @@
-package cli
+package hooks
 
 import (
 	"fmt"
@@ -45,7 +45,7 @@ type hookRuntime struct {
 var hookRuntimes = map[string]hookRuntime{
 	agentcfg.RuntimeClaude: {
 		transport: transportJSONHooks, event: claudeSessionStartEvent, nested: true,
-		locate: claudeSettingsPath,
+		locate: ClaudeSettingsPath,
 	},
 	agentcfg.RuntimeCodex: {
 		transport: transportJSONHooks, event: "SessionStart", nested: true,
@@ -67,7 +67,7 @@ var hookRuntimes = map[string]hookRuntime{
 	},
 }
 
-func hookRuntimeNames() []string {
+func RuntimeNames() []string {
 	names := make([]string, 0, len(hookRuntimes))
 	for name := range hookRuntimes {
 		names = append(names, name)
@@ -76,21 +76,30 @@ func hookRuntimeNames() []string {
 	return names
 }
 
-func supportedHookRuntime(name string) error {
+func SupportedRuntime(name string) error {
 	if _, ok := hookRuntimes[name]; ok {
 		return nil
 	}
 	return fmt.Errorf("unsupported hook runtime %q (want %s)",
-		name, strings.Join(hookRuntimeNames(), ", "))
+		name, strings.Join(RuntimeNames(), ", "))
 }
 
-// sessionHookCommand is the command line an installed hook launches. It names
+// ShellCommandExecutablePattern matches the executable at the head of a hook
+// command whichever way it was quoted, so La Roca recognizes its own entries
+// after the operator moved the binary.
+const ShellCommandExecutablePattern = `(?:'(?:[^']|'"'"')*'|"[^"]*"|\S+)`
+
+func ShellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'"
+}
+
+// SessionHookCommand is the command line an installed hook launches. It names
 // this executable's absolute path for the same reason every other installer
 // does: a harness runs its hooks in a non-interactive shell where a bare `roca`
 // is whatever PATH happens to hold.
-func sessionHookCommand(executable, runtime string, req sessionRequest) string {
+func SessionHookCommand(executable, runtime string, req SessionRequest) string {
 	parts := append([]string{
-		shellQuote(executable), "hooks", "run", "session", "--runtime", runtime,
+		ShellQuote(executable), "hooks", "run", "session", "--runtime", runtime,
 	}, req.flags()...)
 	return strings.Join(parts, " ")
 }
@@ -100,19 +109,19 @@ func sessionHookCommand(executable, runtime string, req sessionRequest) string {
 // it instead of adding a second one and an uninstall finds it after a move.
 func sessionHookInvocation(runtime string) *regexp.Regexp {
 	return regexp.MustCompile(
-		`^` + shellCommandExecutablePattern +
+		`^` + ShellCommandExecutablePattern +
 			`[ \t]+hooks[ \t]+run[ \t]+session[ \t]+--runtime[ \t]+` + regexp.QuoteMeta(runtime) +
 			`(?:[ \t]+--pills)?(?:[ \t]+--handoff)?[ \t]*$`)
 }
 
-// hookArtifactPath is the file one runtime's session hook is written into. It
+// ArtifactPath is the file one runtime's session hook is written into. It
 // is not the file `roca mcp install` edits: a harness that declares MCP servers
 // in one document routinely declares its hooks in another.
-func hookArtifactPath(runtime string) (string, error) {
+func ArtifactPath(runtime string) (string, error) {
 	entry, ok := hookRuntimes[runtime]
 	if !ok {
 		return "", fmt.Errorf("unsupported hook runtime %q (want %s)",
-			runtime, strings.Join(hookRuntimeNames(), ", "))
+			runtime, strings.Join(RuntimeNames(), ", "))
 	}
 	return entry.locate()
 }
@@ -137,6 +146,18 @@ func runtimeRoot(dirVar string, fallback ...string) (string, error) {
 		return agentcfg.Expand(declared, home), nil
 	}
 	return filepath.Join(append([]string{home}, fallback...)...), nil
+}
+
+func ClaudeSettingsPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("I do not know where your HOME is")
+	}
+	root := os.Getenv("CLAUDE_CONFIG_DIR")
+	if root == "" {
+		root = filepath.Join(home, ".claude")
+	}
+	return filepath.Join(root, "settings.json"), nil
 }
 
 func codexHooksPath() (string, error) {
