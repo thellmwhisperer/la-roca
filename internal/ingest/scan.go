@@ -765,17 +765,12 @@ func scanCoworkSessions(roots Roots) []Target {
 	var targets []Target
 	for _, metadata := range filesUnder(roots.CoworkSessions, ".json", Target{
 		Kind: parsers.KindSessionMetadata, SourceAgent: "cowork"}) {
-		rel, _ := filepath.Rel(roots.CoworkSessions, filepath.Dir(metadata.Path))
-		if slices.ContainsFunc(strings.Split(rel, string(filepath.Separator)), func(dir string) bool {
-			return strings.HasPrefix(dir, "local_")
-		}) {
+		if rel, _ := filepath.Rel(roots.CoworkSessions, filepath.Dir(metadata.Path)); strings.Contains("/"+filepath.ToSlash(rel), "/local_") {
 			metadata.ExclusionReason = "Cowork session sandbox file is not session metadata"
-			targets = append(targets, metadata)
-			continue
 		}
 		targets = append(targets, metadata)
 		audit := filepath.Join(strings.TrimSuffix(metadata.Path, ".json"), "audit.jsonl")
-		if isFile(audit) {
+		if metadata.ExclusionReason == "" && isFile(audit) {
 			targets = append(targets, Target{
 				Path:        audit,
 				Kind:        parsers.KindCoworkAudit,
