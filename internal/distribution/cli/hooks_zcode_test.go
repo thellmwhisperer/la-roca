@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"os"
@@ -313,6 +315,20 @@ func TestZcodeHookInstallRollsBackWrapperAfterConfigEditFailure(t *testing.T) {
 				if err := os.Chmod(wrapper, 0o600); err != nil {
 					t.Fatal(err)
 				}
+				digest := sha256.Sum256([]byte(before))
+				ownership, err := json.Marshal(map[string]any{
+					"roca": "owned-containers-v1",
+					"claims": map[string]string{
+						"files.zcode-hook-wrapper": "sha256:" + hex.EncodeToString(digest[:]),
+					},
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				writeFile(t, config+".roca-owned", string(ownership)+"\n")
+			}
+			if err := os.WriteFile(config+".roca-owned.lock", nil, 0o600); err != nil {
+				t.Fatal(err)
 			}
 
 			configDir := filepath.Dir(config)
