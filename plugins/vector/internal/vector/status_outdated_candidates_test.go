@@ -26,8 +26,9 @@ func TestStatusAfterDeltaCountsCandidatesStillToEmbed(t *testing.T) {
 			t.Fatalf("ops after a write: state=%s candidate=%v, want outdated with a numeric candidate count",
 				row.State, row.CandidateChunks)
 		}
-		if pending := *row.CandidateChunks; pending != 1 && pending != *row.EmbeddedChunks+1 {
-			t.Fatalf("ops candidate_chunks=%d embedded=%d, want one chunk still to embed", pending, *row.EmbeddedChunks)
+		const expectedCandidates = 3 // Three short fixture memories each produce one chunk.
+		if got := *row.CandidateChunks; got != expectedCandidates {
+			t.Fatalf("ops candidate_chunks=%d, want %d", got, expectedCandidates)
 		}
 		return
 	}
