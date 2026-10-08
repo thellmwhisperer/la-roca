@@ -53,7 +53,7 @@ func installClaudeHook(path, executable string, spec claudeHookSpec) (agentcfg.O
 			fmt.Errorf("resolve the running executable %q to an absolute path", declared)
 	}
 	command := spec.command(declared)
-	return agentcfg.Edit("claude", path, func(previous string) (string, error) {
+	return agentcfg.EditLinked("claude", path, func(previous string) (string, error) {
 		settings, hooks, entries, err := claudeEventHookSettings(previous, spec.event)
 		if err != nil {
 			return "", err
@@ -82,7 +82,7 @@ func uninstallClaudeSessionHook(path, kind string) (agentcfg.Outcome, string, er
 
 func uninstallClaudeHook(path string, spec claudeHookSpec, unreadableWarning string) (agentcfg.Outcome, string, error) {
 	var warning string
-	outcome, err := agentcfg.Edit("claude", path, func(previous string) (string, error) {
+	outcome, err := agentcfg.EditLinked("claude", path, func(previous string) (string, error) {
 		settings, hooks, entries, err := claudeEventHookSettings(previous, spec.event)
 		if err != nil {
 			warning = unreadableWarning
