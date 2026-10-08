@@ -107,7 +107,7 @@ func installJSONSessionHook(runtime, path, executable string, req sessionRequest
 	spec := hookRuntimes[runtime]
 	command := sessionHookCommand(executable, runtime, req)
 	matcher := sessionHookInvocation(runtime)
-	return agentcfg.Edit(runtime, path, func(previous string) (string, error) {
+	return editHookDocument(runtime, path, func(previous string) (string, error) {
 		settings, err := decodeHookDocument(runtime, previous)
 		if err != nil {
 			return "", err
@@ -138,6 +138,16 @@ func installJSONSessionHook(runtime, path, executable string, req sessionRequest
 	}, true)
 }
 
+// editHookDocument follows a symlinked Claude settings file to the file it
+// names; every other runtime's hook document is edited only as a regular file.
+func editHookDocument(runtime, path string, transform func(string) (string, error),
+	createMissing bool) (agentcfg.Outcome, error) {
+	if runtime == agentcfg.RuntimeClaude {
+		return agentcfg.EditLinked(runtime, path, transform, createMissing)
+	}
+	return agentcfg.Edit(runtime, path, transform, createMissing)
+}
+
 // withDocumentDefaults adds the top-level members a harness requires beside its
 // hooks, such as Cursor's schema version, and never overwrites one the operator
 // already declared.
@@ -161,7 +171,7 @@ func uninstallJSONSessionHook(runtime, path string) (agentcfg.Outcome, string, e
 	spec := hookRuntimes[runtime]
 	matcher := sessionHookInvocation(runtime)
 	var warning string
-	outcome, err := agentcfg.Edit(runtime, path, func(previous string) (string, error) {
+	outcome, err := editHookDocument(runtime, path, func(previous string) (string, error) {
 		settings, err := decodeHookDocument(runtime, previous)
 		if err != nil {
 			warning = foreignHookDocumentWarning(runtime, path, spec.event)

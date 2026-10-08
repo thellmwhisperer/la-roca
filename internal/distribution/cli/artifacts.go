@@ -480,7 +480,7 @@ func refreshClaudeHook(path, executable, previousChecksum string,
 	if !enabled {
 		return out, nil
 	}
-	changed, err := agentcfg.Edit("claude", path, func(previous string) (string, error) {
+	changed, err := agentcfg.EditLinked("claude", path, func(previous string) (string, error) {
 		if found {
 			return replaceClaudeHookCommand(previous, currentCommand, claudeHookCommand(executable))
 		}
