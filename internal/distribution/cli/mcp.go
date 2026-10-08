@@ -58,6 +58,11 @@ func mcpInstallCommand(env *cliEnv) *cobra.Command {
 					"runtimes": []agentcfg.Outcome{outcome}, "executable": declared,
 				})
 			}
+			if outcome.OperatorEntry {
+				env.print("%s: MCP server %q in %s is the operator's; left it alone",
+					outcome.Runtime, agentcfg.ServerName, outcome.Path)
+				return nil
+			}
 			if outcome.Changed {
 				env.print("%s: wrote MCP server %q to %s", outcome.Runtime,
 					agentcfg.ServerName, outcome.Path)
@@ -162,6 +167,9 @@ func (env *cliEnv) renderOutcomes(outcomes []agentcfg.Outcome, verb string) erro
 		done := "unchanged"
 		if outcome.Changed {
 			done = verb
+		}
+		if outcome.OperatorEntry {
+			done = "left the operator's " + agentcfg.ServerName + " entry alone in"
 		}
 		backup := ""
 		if outcome.Backup != "" {

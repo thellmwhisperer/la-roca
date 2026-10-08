@@ -53,6 +53,11 @@ func installZcodeSessionHook(configPath, executable string, req sessionRequest) 
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
+	release, err := agentcfg.LockOwned(configPath, true)
+	if err != nil {
+		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
+	}
+	defer release()
 	if _, err := agentcfg.LoadOwnedHooks(configPath); err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
 	}
@@ -129,6 +134,11 @@ func installZcodeSessionHook(configPath, executable string, req sessionRequest) 
 }
 
 func uninstallZcodeHandoffHook(configPath, wrapperPath string) (agentcfg.Outcome, string, error) {
+	release, err := agentcfg.LockOwned(configPath, false)
+	if err != nil {
+		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
+	}
+	defer release()
 	created, err := agentcfg.LoadOwnedHooks(configPath)
 	if err != nil {
 		return agentcfg.Outcome{Runtime: agentcfg.RuntimeZcode, Path: configPath}, "", err
@@ -226,7 +236,7 @@ func zcodeHooksOnlyEnabled(hooks map[string]any) bool {
 func zcodeMissingHookContainers(settings map[string]any) []string {
 	rawHooks, hasHooks := settings["hooks"]
 	if !hasHooks {
-		return []string{"hooks"}
+		return []string{"hooks", "hooks.events", "hooks.events.SessionStart"}
 	}
 	hooks, ok := rawHooks.(map[string]any)
 	if !ok {

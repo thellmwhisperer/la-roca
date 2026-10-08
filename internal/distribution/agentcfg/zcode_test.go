@@ -197,12 +197,23 @@ func TestZcodeReinstallPreservesMCPContainerOwnership(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	writeFile(t, path, "{}\n")
 	requireZcodeInstall(t, path)
-	writeFile(t, path, "{\"mcp\":{}}\n")
-	requireZcodeInstall(t, path)
+	if _, err := agentcfg.Install(agentcfg.RuntimeZcode, path, "/elsewhere/roca"); err != nil {
+		t.Fatal(err)
+	}
 	requireZcodeUninstall(t, path)
 	document := readZcodeDocument(t, path)
 	if _, ok := document["mcp"]; ok {
 		t.Fatalf("reinstall lost ownership of the product-created mcp container: %#v", document)
+	}
+
+	// A file the operator replaced is theirs, containers included.
+	writeFile(t, path, "{}\n")
+	requireZcodeInstall(t, path)
+	writeFile(t, path, "{\"mcp\":{}}\n")
+	requireZcodeInstall(t, path)
+	requireZcodeUninstall(t, path)
+	if _, ok := readZcodeDocument(t, path)["mcp"]; !ok {
+		t.Fatal("uninstall pruned the mcp container the operator wrote")
 	}
 }
 
