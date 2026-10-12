@@ -23,7 +23,7 @@ func TestLiveRetrievalQuality(t *testing.T) {
 		query string
 		text  string
 	}{
-		{"What was the latest vehicle fault and which repairs were ordered?", "The synthetic patient is monitoring a worn brake pad; the latest service ordered a rotor replacement and a coolant flush."},
+		{"What was the latest vehicle fault and which repairs were ordered?", "The synthetic car is tracking a worn brake pad; the latest service ordered a rotor replacement and a coolant flush."},
 		{"How was the failed software release recovered?", "The synthetic deployment was restored by rolling back the canary, pinning the prior image digest, and replaying the database migration backup."},
 		{"What must be prepared for the quarterly tax filing?", "The synthetic company must reconcile purchase receipts, sales invoices, and the VAT control account before sending the quarter to its accountant."},
 		{"Which tree limbs should be removed during the cold season?", "The synthetic orchard plan marks crossing branches, one water sprout, and the damaged limb above the graft union for winter pruning."},
