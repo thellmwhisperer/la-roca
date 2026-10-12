@@ -11,13 +11,13 @@ func TestSelectRareTermsDropsCommonTokensAndKeepsTheRarest(t *testing.T) {
 	got := search.SelectRareTerms([]search.TermStat{
 		{Term: "the", Docs: 80},
 		{Term: "a", Docs: 70},
-		{Term: "salud", Docs: 1},
-		{Term: "mental", Docs: 1},
+		{Term: "huerto", Docs: 1},
+		{Term: "urbano", Docs: 1},
 		{Term: "and", Docs: 60},
 		{Term: "of", Docs: 55},
 	}, 100, 0.02, 5)
-	if len(got) != 2 || got[0] != "mental" || got[1] != "salud" {
-		t.Fatalf("rare terms = %v, want mental salud", got)
+	if len(got) != 2 || got[0] != "huerto" || got[1] != "urbano" {
+		t.Fatalf("rare terms = %v, want huerto urbano", got)
 	}
 }
 
