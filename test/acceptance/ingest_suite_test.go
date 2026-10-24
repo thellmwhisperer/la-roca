@@ -33,4 +33,5 @@ func registerIngestDomainSteps(ctx *godog.ScenarioContext, binary string) {
 	registerIngestReportSteps(ctx, w)
 	registerIngestProvenanceSteps(ctx, w)
 	registerIngestAgentMemorySteps(ctx, w)
+	registerIngestDuplicateSteps(ctx, w)
 }
