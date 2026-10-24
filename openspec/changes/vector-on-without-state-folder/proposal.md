@@ -9,7 +9,7 @@ and every rerun prints the same line. `roca vector status` meanwhile tells the
 operator to run `roca vector install`, the command that fails.
 
 Init with vector search off installs `roca-corpus` and `roca-ops` but no
-`roca-vector` plugin folder, so the companion's state folder does not exist. The
+`roca-vector` plugin folder, so the companion's state folder is absent. The
 companion's state lock (`LockStateUsage` in
 `plugins/vector/internal/vector/runtime.go`) reads a missing managed state folder
 as "an update moved it while I waited", and asks for a rerun. Nothing on that

@@ -10,7 +10,7 @@ folder that never existed.
 #### Scenario: The first vector query after turning vector search on answers
 
 - **WHEN** a home was initialized by `roca init --json --db-path ~/.roca/roca.db`
-  with vector search off, so `~/.roca/plugins/roca-vector` does not exist, the
+  with vector search off, so `~/.roca/plugins/roca-vector` is absent, the
   operator sets `vector = true` under `[features]` in `~/.roca/config.toml`, and
   runs `roca vector query "what did we decide" 5`
 - **THEN** the command exits 0, prints a `notice:` line for `corpus` and for `ops`
