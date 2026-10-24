@@ -86,6 +86,7 @@ type installWorld struct {
 }
 
 func registerInstallSteps(ctx *godog.ScenarioContext, m *world) {
+	registerPluginStagingSteps(ctx, m)
 	ctx.Given(`^a clean HOME with no trace of Roca$`, m.aCleanHome)
 	ctx.Given(`^La Roca is installed but not initialized$`, m.installedNotInitialized)
 	ctx.Given(`^La Roca is installed and initialized with data$`, m.installedWithData)
