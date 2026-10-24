@@ -215,7 +215,12 @@ place. If bundled placement or verification fails, the previous core remains
 active. Each bundled plugin refresh first removes that plugin's
 `.<name>-bundle-*` and `.<name>-schema-preflight-*` staging folders left by an
 interrupted run once they are older than one hour and their `.held` lock is
-free; a fresh or still-held folder is left in place. If leftover exact-payload session clones would prevent corpus place
+free; a fresh or still-held folder is left in place, and a folder whose
+contents were written within the last hour counts as fresh. A leftover that cannot be
+removed never fails the refresh or the command that triggered it. `roca doctor`
+runs the same sweep (listing only in read-only mode) and reports each leftover
+still present, with its path, surviving bytes and cause, under `plugin_staging`
+in `--json`. If leftover exact-payload session clones would prevent corpus place
 from refreshing an existing `idx_sessions_exact_payload`, that prior same-named
 index stays, new nullable columns still land, and exact-payload uniqueness
 remains pending until the [dedup maintenance flow](operations.md#exact-duplicate-maintenance)
