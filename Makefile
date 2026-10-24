@@ -154,6 +154,17 @@ fmt:
 vet:
 	go vet -tags acceptance ./...
 
+# ATM's checks: each command line in .atm.yaml runs one of these targets.
+.PHONY: typecheck lint test-file
+typecheck:
+	go vet ./...
+	go vet -tags=acceptance,migrate_100k ./test/acceptance/
+
+lint: fmt slop
+
+test-file:
+	CGO_ENABLED=0 go -C $(DIR) test -count=1 .
+
 .PHONY: clean
 clean:
 	rm -rf bin
