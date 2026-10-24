@@ -31,6 +31,7 @@ global_ignore:
   # node_modules: 31 vendored READMEs counted as orphaned public markdown.
   - "**/.opencode/**"
   - "**/.claude/**"
+  - "**/.agents/**"
   - "bin/**"
   - "dist/**"
   - "features/**"
