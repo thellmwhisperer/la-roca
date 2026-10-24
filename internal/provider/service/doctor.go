@@ -124,6 +124,7 @@ func (s *Service) Doctor(ctx context.Context) (DoctorReport, error) {
 		PromptPath:   promptPath,
 		PromptExists: promptErr == nil && promptInfo.Mode().IsRegular(),
 		Query:        queryDoctor(s.QuerySettings()),
+		Warnings:     s.duplicateSessions(ctx),
 	}
 	unregistered, err := s.unregisteredLayers(ctx)
 	if err != nil {
@@ -222,6 +223,33 @@ func (s *Service) bedrock(ctx context.Context) (*Bedrock, error) {
 		return nil, fmt.Errorf("read corpus bedrock: %w", err)
 	}
 	return &result, nil
+}
+
+// duplicateSessions reports historical sibling sessions: ids that differ only
+// in the last character with the same start and title. A shared stem alone is
+// not enough, two distinct conversations can share 35 characters. It only
+// reads; the copies differ in text, so which one to keep is the operator's call.
+func (s *Service) duplicateSessions(ctx context.Context) []string {
+	listing := `SELECT substr(session_id, 1, 35) AS stem, started_at, title, COUNT(*) AS copies, ` +
+		`group_concat(session_id, ' ') AS session_ids FROM plugin_roca_corpus.sessions ` +
+		`WHERE length(session_id) = 36 GROUP BY stem, started_at, title HAVING copies > 1`
+	var groups, extra int
+	// A corpus that cannot be read already failed bedrock; no corpus has no duplicates.
+	connection, attached, err := s.openQueryConnection(ctx)
+	if err == nil {
+		defer closeQueryConnection(connection, attached)
+		err = connection.QueryRowContext(ctx,
+			"SELECT COUNT(*), COALESCE(SUM(copies - 1), 0) FROM ("+listing+")").Scan(&groups, &extra)
+	}
+	if err != nil || extra == 0 {
+		return nil
+	}
+	count := func(n int, noun string) string {
+		return fmt.Sprintf("%d %s%s", n, noun, strings.Repeat("s", min(n-1, 1)))
+	}
+	return []string{fmt.Sprintf("duplicate sessions: %s in %s share the id stem, started_at and title; "+
+		"nothing was changed. List them: roca exec \"%s\" --db-path %s",
+		count(extra, "extra row"), count(groups, "group"), listing, shellQuoted(s.db.Path()))}
 }
 
 func (s *Service) memoryCount(ctx context.Context) int {
