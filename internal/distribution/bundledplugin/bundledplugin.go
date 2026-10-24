@@ -133,9 +133,7 @@ func prepare(root, binDir, version string, spec Spec, validateUnchanged bool) (p
 	if root == "" || binDir == "" {
 		return preparedBundle{}, fmt.Errorf("plugin root and executable directory are required")
 	}
-	if _, err := SweepStaging(root, spec.Name, true); err != nil {
-		return preparedBundle{}, err
-	}
+	_, _ = SweepStaging(root, spec.Name, true)
 	if strings.TrimSpace(version) == "" {
 		version = "dev"
 	}
@@ -621,17 +619,19 @@ func resultFromManifest(directory string, manifest plugininstall.Manifest) plugi
 }
 
 // StagingFolder describes a temporary bundle or schema preflight, never an
-// installed plugin. Age is measured from the directory's modification time.
+// installed plugin.
 type StagingFolder struct {
-	Path    string
-	Size    int64
-	Age     time.Duration
-	Held    bool
-	Removed bool
+	Path    string        `json:"path"`
+	Size    int64         `json:"bytes"`
+	Age     time.Duration `json:"-"`
+	Held    bool          `json:"-"`
+	Removed bool          `json:"-"`
+	Cause   string        `json:"cause"`
 }
 
 // SweepStaging lists one plugin's staging folders and, when remove is true,
 // removes only those older than one hour whose .held lock is free.
+// Folder failures are recorded in Cause; only a plugin root read failure is returned.
 func SweepStaging(root, pluginName string, remove bool) ([]StagingFolder, error) {
 	entries, err := os.ReadDir(root)
 	if os.IsNotExist(err) {
@@ -647,36 +647,56 @@ func SweepStaging(root, pluginName string, remove bool) ([]StagingFolder, error)
 			continue
 		}
 		folder := StagingFolder{Path: filepath.Join(root, entry.Name())}
-		err := filepath.Walk(folder.Path, func(path string, info os.FileInfo, err error) error {
-			if err == nil {
-				if path == folder.Path {
-					folder.Age = time.Since(info.ModTime())
-				}
-				if !info.IsDir() {
-					folder.Size += info.Size()
-				}
-			}
-			return err
-		})
-		var release func() error
+		info, err := os.Lstat(folder.Path)
+		directories := map[string]time.Time{}
 		if err == nil {
-			release, err = securefile.TryLock(filepath.Join(folder.Path, ".held"))
-			folder.Held = errors.Is(err, securefile.ErrHeld)
-			if folder.Held {
-				err = nil
-			} else if os.IsNotExist(err) {
-				_, err = os.Stat(folder.Path)
-			}
+			modified := info.ModTime()
+			folder.Age = time.Since(modified)
+			_ = filepath.Walk(folder.Path, func(path string, info os.FileInfo, inspectErr error) error {
+				err = errors.Join(err, inspectErr)
+				if info != nil {
+					if info.ModTime().After(modified) {
+						modified = info.ModTime()
+						folder.Age = time.Since(modified)
+					}
+					if info.IsDir() {
+						directories[path] = info.ModTime()
+					} else {
+						folder.Size += info.Size()
+					}
+				}
+				return nil
+			})
 		}
+		release, lockErr := securefile.TryLock(filepath.Join(folder.Path, ".held"))
+		folder.Held = errors.Is(lockErr, securefile.ErrHeld)
+		if folder.Held {
+			lockErr = nil
+		} else if os.IsNotExist(lockErr) {
+			_, lockErr = os.Stat(folder.Path)
+		}
+		err = errors.Join(err, lockErr)
 		if err == nil && remove && folder.Age > time.Hour && !folder.Held {
 			err = os.RemoveAll(folder.Path)
 			folder.Removed = err == nil
+			if err != nil {
+				for path, modified := range directories {
+					_ = os.Chtimes(path, modified, modified)
+				}
+				folder.Size = 0
+				_ = filepath.Walk(folder.Path, func(_ string, info os.FileInfo, _ error) error {
+					if info != nil && !info.IsDir() {
+						folder.Size += info.Size()
+					}
+					return nil
+				})
+			}
 		}
 		if release != nil {
 			_ = release()
 		}
 		if err != nil {
-			return folders, err
+			folder.Cause = err.Error()
 		}
 		folders = append(folders, folder)
 	}

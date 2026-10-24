@@ -118,5 +118,84 @@ Feature: The full installation cycle
     Examples:
       | location       |
       | plugin root    |
-      | lock file      |
       | stage creation |
+
+  @fast @acceptance @plugin-staging
+  Scenario: Staging sweep never blocks a query on an unremovable leftover
+    Given an initialized home for the staging sweep
+    And an old "unremovable" plugin staging folder
+    When I run "roca exec 'SELECT count(*) FROM plugin_roca_ops.memories'"
+    Then the command exits with code 0
+    And the staging query prints the memory count
+
+  @fast @acceptance @plugin-staging
+  Scenario: Staging sweep never blocks installation on an unremovable leftover
+    Given an initialized home for the staging sweep
+    And an old "unremovable" plugin staging folder
+    When I run "roca _install-bundled-plugins --json"
+    Then the command exits with code 0
+    And the old staging folder still exists
+
+  @fast @acceptance @plugin-staging
+  Scenario: Staging sweep never blocks installation on an invalid lock file
+    Given the plugin staging filesystem fails at "lock file"
+    When I run "roca _install-bundled-plugins --json"
+    Then the command exits with code 0
+
+  @fast @acceptance @plugin-staging
+  Scenario: Staging sweep keeps an old folder whose contents were just written
+    Given an initialized home for the staging sweep
+    And an old plugin staging folder holding a file written a moment ago
+    When I run "roca _install-bundled-plugins --json"
+    Then the command exits with code 0
+    And the old staging folder still exists
+    When I run "roca doctor --json"
+    Then the command exits with code 0
+    And doctor lists no plugin staging folder
+
+  @fast @acceptance @plugin-staging
+  Scenario: Staging sweep reports an unremovable leftover in doctor JSON
+    Given an initialized home for the staging sweep
+    And an old "unremovable" plugin staging folder
+    When I run "roca doctor --json"
+    Then the command exits with code 0
+    And doctor lists the old staging folder with 5 bytes and cause "permission denied"
+
+  @fast @acceptance @plugin-staging
+  Scenario: Staging sweep preserves a leftover diagnosis after partial deletion
+    Given an initialized home for the staging sweep
+    And an old "unremovable" plugin staging folder
+    And the old staging folder has an unlocked lock file
+    When I run "roca _install-bundled-plugins --json"
+    Then the command exits with code 0
+    When I run "roca doctor --json"
+    Then the command exits with code 0
+    And doctor lists the old staging folder with 5 bytes and cause "permission denied"
+    When I run "roca doctor --json"
+    Then the command exits with code 0
+    And doctor lists the old staging folder with 5 bytes and cause "permission denied"
+
+  @fast @acceptance @plugin-staging
+  Scenario: Staging sweep reports an unremovable leftover in doctor text
+    Given an initialized home for the staging sweep
+    And an old "unremovable" plugin staging folder
+    When I run "roca doctor"
+    Then the command exits with code 0
+    And doctor prints the old staging folder and "permission denied" on one line
+
+  @fast @acceptance @plugin-staging
+  Scenario: Staging sweep reports a removable leftover without deleting it in read-only doctor
+    Given an initialized home for the staging sweep
+    And an old "removable" plugin staging folder
+    And staging commands use read-only mode
+    When I run "roca doctor --json"
+    Then the command exits with code 0
+    And doctor lists the old staging folder with 5 bytes and cause "read-only"
+    And the old staging folder still exists
+
+  @fast @acceptance @plugin-staging
+  Scenario: Staging sweep reports no leftover in doctor text
+    Given an initialized home for the staging sweep
+    When I run "roca doctor"
+    Then the command exits with code 0
+    And the output contains "plugin staging: none leftover"
