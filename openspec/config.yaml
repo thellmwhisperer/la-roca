@@ -9,7 +9,7 @@ context: |
 rules:
   proposal:
     - "Why ends with `Proof:` and a run id, a log line or the command that reproduces the problem. No proof, no change."
-    - "Why says, per requirement, who asked for it: Javi's literal sentence with its date and La Roca decision id, or `proposal`."
+    - "Why says, per requirement, who asked for it: the issue number, or `proposal`. Never internal identifiers, private names, chat quotes or memory ids."
     - "Impact names the acceptance scenarios that run the change (features/<domain>/*.feature, run by `make accept`), or the ones to write, and what is not touched."
   specs:
     - "Every scenario is something a real `roca` command shows or writes, checkable by the acceptance suite."
