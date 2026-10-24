@@ -27,8 +27,8 @@ func TestReportVectorizationReadsSidecarFactsAndNeverInventZero(t *testing.T) {
 		Plugin: "roca-ops", Database: "ops", Path: "roca-ops.db", Alias: "ops",
 		Tables: []vectorTable{{Name: "memories", IDColumn: "id", TextColumns: []string{"content"}}},
 	}
-	client-b := vectorDatabase{
-		Plugin: "roca-client-b", Database: "client-b", Path: "roca-client-b.db", Alias: "client-b",
+	clientB := vectorDatabase{
+		Plugin: "roca-client-b", Database: "clientb", Path: "roca-client-b.db", Alias: "clientb",
 		Tables: []vectorTable{{Name: "messages", IDColumn: "id", TextColumns: []string{"body"}}},
 	}
 	notesPlugin := vectorDatabase{
@@ -42,7 +42,7 @@ func TestReportVectorizationReadsSidecarFactsAndNeverInventZero(t *testing.T) {
 			{Name: "exchanges", IDColumn: "id", TextColumns: []string{"human_text"}},
 		},
 	}
-	writeRegistry(t, root, vectorRegistry{Schema: 2, Databases: []vectorDatabase{parser, corpus, notesPlugin, client-b, ops}})
+	writeRegistry(t, root, vectorRegistry{Schema: 2, Databases: []vectorDatabase{parser, corpus, notesPlugin, clientB, ops}})
 
 	writeSourceRows(t, filepath.Join(root, corpus.Plugin, corpus.Path),
 		`CREATE TABLE notes(id TEXT PRIMARY KEY, body TEXT);
@@ -67,10 +67,10 @@ func TestReportVectorizationReadsSidecarFactsAndNeverInventZero(t *testing.T) {
 	}
 	writeSidecarWithChunks(t, SidecarPath(filepath.Join(root, notesPlugin.Plugin, notesPlugin.Path)),
 		notesPlugin.owner(), 2, map[string]string{"contract": "stale-contract"})
-	if err := os.MkdirAll(filepath.Join(root, client-b.Plugin), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, clientB.Plugin), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(SidecarPath(filepath.Join(root, client-b.Plugin, client-b.Path)), []byte("not sqlite"), 0o600); err != nil {
+	if err := os.WriteFile(SidecarPath(filepath.Join(root, clientB.Plugin, clientB.Path)), []byte("not sqlite"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -162,7 +162,7 @@ func TestReportVectorizationReadsSidecarFactsAndNeverInventZero(t *testing.T) {
 		t.Fatalf("outdated sidecar still has readable chunks = %v", notesRow.EmbeddedChunks)
 	}
 
-	clientBRow := got["roca-client-b/client-b"]
+	clientBRow := got["roca-client-b/clientb"]
 	if clientBRow.State != StateUnknown {
 		t.Fatalf("unreadable sidecar state = %q, want unknown", clientBRow.State)
 	}

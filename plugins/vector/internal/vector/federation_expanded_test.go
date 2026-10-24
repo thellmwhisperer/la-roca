@@ -22,7 +22,7 @@ func (e *liftEmbedder) Embed(_ context.Context, _ string, input []string) ([][]f
 	for i, text := range input {
 		lower := strings.ToLower(text)
 		switch {
-		case strings.Contains(lower, "qué se habló") || strings.Contains(lower, "hablamos de salud"):
+		case strings.Contains(lower, "qué se habló") || strings.Contains(lower, "hablamos de huerto"):
 			out[i] = []float32{1, 0, 0, 0, 0, 0, 0, 0}
 		case strings.HasSuffix(lower, "huerto urbano") && !strings.Contains(lower, "habl"):
 			out[i] = normalize8(0.18, 0.983, 0, 0, 0, 0, 0, 0)

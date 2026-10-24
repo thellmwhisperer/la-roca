@@ -300,7 +300,7 @@ func TestSearchLongQuestionDoesNotPromoteGenericFTSNoise(t *testing.T) {
 	svc := seededHybridService(t, nil)
 	question := "what are the thoughts of the team about the way we should look at the huerto urbano of the day"
 	result := mustHybridSearch(t, svc, question, false)
-	if !containsTerm(result.Terms, "salud") && !containsTerm(result.Terms, "mental") {
+	if !containsTerm(result.Terms, "huerto") && !containsTerm(result.Terms, "urbano") {
 		t.Fatalf("rarity selection dropped the rare terms: %v", result.Terms)
 	}
 	if containsTerm(result.Terms, "the") || containsTerm(result.Terms, "of") ||
