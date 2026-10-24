@@ -273,3 +273,59 @@ func TestResidentDropsFailedVectorClient(t *testing.T) {
 		t.Fatal("failed vector client remains cached")
 	}
 }
+
+func TestResidentSocketIsNeverVisibleWithBroaderPermissionsThan0600(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix resident transport")
+	}
+	svc, socket := openResidentTestService(t, service.Options{})
+	stop := make(chan struct{})
+	seen := make(chan os.FileMode, 1)
+	polled := make(chan struct{})
+	go func() {
+		defer close(polled)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			if info, err := os.Lstat(socket); err == nil && info.Mode()&os.ModeSocket != 0 && info.Mode().Perm() != 0o600 {
+				select {
+				case seen <- info.Mode():
+				default:
+				}
+			}
+		}
+	}()
+	for i := 0; i < 200; i++ {
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() { done <- Run(ctx, svc, mcpplug.Build{}) }()
+		for {
+			conn, err := transport.Dial(transport.Options{Socket: socket})
+			if err == nil {
+				conn.Close()
+				break
+			}
+			if !errors.Is(err, transport.ErrUnavailable) {
+				cancel()
+				t.Fatalf("start %d: dial = %v", i, err)
+			}
+		}
+		cancel()
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Lstat(socket); !os.IsNotExist(err) {
+			t.Fatalf("start %d: socket left behind after stop: %v", i, err)
+		}
+	}
+	close(stop)
+	<-polled
+	select {
+	case mode := <-seen:
+		t.Fatalf("resident socket was visible as %v during startup", mode)
+	default:
+	}
+}
