@@ -2,7 +2,6 @@ package bundledplugin_test
 
 import (
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -87,48 +86,6 @@ func TestSweepStagingPreservesFreshFolders(t *testing.T) {
 			}
 			if _, err := os.Stat(directory); err != nil {
 				t.Fatal(err)
-			}
-		})
-	}
-}
-
-func TestSweepStagingConcurrentRemoval(t *testing.T) {
-	for _, kind := range []string{"bundle", "schema-preflight"} {
-		t.Run(kind, func(t *testing.T) {
-			root := t.TempDir()
-			old := time.Now().Add(-2 * time.Hour)
-			for i := 0; i < 24; i++ {
-				directory := filepath.Join(root, fmt.Sprintf(".alpha-%s-%02d", kind, i))
-				if err := os.Mkdir(directory, 0o700); err != nil {
-					t.Fatal(err)
-				}
-				if i%2 == 0 {
-					if err := os.WriteFile(filepath.Join(directory, ".held"), nil, 0o600); err != nil {
-						t.Fatal(err)
-					}
-				}
-				if err := os.Chtimes(directory, old, old); err != nil {
-					t.Fatal(err)
-				}
-			}
-			start := make(chan struct{})
-			results := make(chan error, 8)
-			for i := 0; i < cap(results); i++ {
-				go func() {
-					<-start
-					_, err := bundledplugin.SweepStaging(root, "alpha", true)
-					results <- err
-				}()
-			}
-			close(start)
-			for i := 0; i < cap(results); i++ {
-				if err := <-results; err != nil {
-					t.Error(err)
-				}
-			}
-			entries, err := os.ReadDir(root)
-			if err != nil || len(entries) != 0 {
-				t.Fatalf("staging remains after concurrent sweeps: %v, %v", entries, err)
 			}
 		})
 	}

@@ -675,9 +675,6 @@ func SweepStaging(root, pluginName string, remove bool) ([]StagingFolder, error)
 		if release != nil {
 			_ = release()
 		}
-		if os.IsNotExist(err) {
-			continue
-		}
 		if err != nil {
 			return folders, err
 		}
