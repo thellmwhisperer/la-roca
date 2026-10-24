@@ -36,6 +36,11 @@ and the folder's modification time two hours back. The same `roca exec` and
   one hour old, not held, and still present after its own sweep: path, size in
   bytes and the cause (the removal error, or that read-only mode does not remove).
   It shows the same list in `--json` as `plugin_staging`.
+- A staging folder's age is the newest modification time across the folder and
+  everything inside it, so content written within the last hour keeps an old
+  folder fresh. After a failed removal the sweep restores the modification times
+  it walked (best effort) and counts the surviving bytes again, so the next run
+  still sees the folder as old and reports its real size.
 
 ## Capabilities
 
@@ -55,10 +60,10 @@ None.
   sweep result), `internal/distribution/cli/models.go` (doctor report and its
   rendering), and the `install.feature` example that expected a non-zero exit
   for a `.held` that is a directory.
-- Acceptance scenarios to write, in `features/distribution/doctor.feature` or
-  `features/distribution/install.feature`, run by `make accept` against the real
-  `roca`: the six scenarios of `specs/plugin-staging/spec.md`.
-- Not touched: `roca clean` and any new command (decision 8156); the one-hour and
-  `.held` rules of the sweep; the read-only snapshot report of doctor; the
+- Acceptance scenarios, in `features/distribution/install.feature` (tag
+  `@plugin-staging`), run by `make accept` against the real `roca`: the
+  scenarios of `specs/plugin-staging/spec.md` that this change adds.
+- Not touched: `roca clean` and any new command (decision 8156); the one-hour
+  threshold and the `.held` rule of the sweep; the read-only snapshot report of doctor; the
   ownership report of doctor; `roca doctor --report`; plugin databases, vector
   sidecars, their WAL/SHM/journal files, backups, logs and configuration.

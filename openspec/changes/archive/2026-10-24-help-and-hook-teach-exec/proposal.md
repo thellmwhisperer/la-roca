@@ -29,8 +29,9 @@ text injected into a fresh agent session on 24-oct-2026 still carries the
   description.
 - The session hook replaces the stale sentence with the current behaviour: an unqualified
   table name is refused with the qualified candidates.
-- The session hook adds one line, generated from the same catalog as the skill, with each
+- The session hook adds one line, built from the databases `roca exec` attaches, with each
   attached alias and its table names; columns stay in the skill.
+- A `roca vector` call the companion does not take says how to turn vector search on.
 
 ## Capabilities
 
@@ -47,8 +48,9 @@ None.
 
 - Code: the root command's help (where `exec` and `vector` are registered or hidden),
   `internal/distribution/cli/hooks/context.go` (`sessionCraft`, `SessionHookBody`), and
-  the catalog the skill generator already reads.
-- Acceptance scenarios to write, run by `make accept` against the real `roca`:
+  the database inventory `roca exec` routes through (`internal/distribution/cli/skill.go`).
+- Acceptance scenarios in `features/distribution/cli.feature`, run by `make accept`
+  against the real `roca`:
   `roca --help` shows both commands; `roca hooks run session --runtime <r>` on a home with
   the bundled plugins prints the alias line matching the attached databases and no
   "0 rows without a warning" text.
