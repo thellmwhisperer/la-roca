@@ -287,6 +287,9 @@ func (r *oracleRunner) environment(readOnly bool) []string {
 		"PATH=" + filepath.Join(r.home, "bin"),
 		"TMPDIR=" + filepath.Join(r.home, "tmp"),
 	}
+	if directory := os.Getenv("GOCOVERDIR"); directory != "" {
+		env = append(env, "GOCOVERDIR="+directory)
+	}
 	if readOnly {
 		env = append(env, "ROCA_READ_ONLY=1")
 	}

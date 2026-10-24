@@ -89,6 +89,9 @@ func (w *ingestAcceptanceWorld) runCommand(args ...string) (ingestRun, error) {
 		"PATH=/usr/bin:/bin:/usr/sbin:/sbin",
 		"TMPDIR=" + filepath.Join(w.home, "tmp"),
 	}
+	if directory := os.Getenv("GOCOVERDIR"); directory != "" {
+		cmd.Env = append(cmd.Env, "GOCOVERDIR="+directory)
+	}
 	var stdout, stderr strings.Builder
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err := cmd.Run()

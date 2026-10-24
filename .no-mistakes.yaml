@@ -5,7 +5,8 @@ commands:
     if [ -n "${ROCA_PUBLISHED_BIN:-}" ]; then make migrate-test; fi &&
     if [ -n "${ROCA_SNAPSHOT_PUBLISHED_BIN:-}" ]; then make snapshot-evidence; fi &&
     if [ -n "${ROCA_CODEX_PUBLISHED_BIN:-}" ]; then make codex-identity-test; fi &&
-    if [ -n "${ROCA_D6_MODEL:-}" ]; then make model-verification-test; fi
+    if [ -n "${ROCA_D6_MODEL:-}" ]; then make model-verification-test; fi &&
+    make e2e-cover
 document:
   instructions: |
     Follow CONTRIBUTING.md#public-text. Before writing the proposed PR body,

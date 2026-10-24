@@ -17,6 +17,9 @@ LDFLAGS := -s -w \
 # engine on macOS and Linux; Windows keeps the previous path until its own
 # native lane exists.
 GO_BUILD := CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)"
+ifneq ($(GOCOVERDIR),)
+GO_BUILD += -cover -coverpkg=./...
+endif
 VECTOR_BUILD := $(MAKE) -C plugins/vector build VERSION=$(VERSION) COMMIT=$(COMMIT) DATE=$(DATE)
 VECTOR_TMP := $(abspath .tmp)
 VECTOR_BUNDLE := go run ./cmd/bundle-vector
@@ -87,6 +90,16 @@ ROCA_E2E_VECTOR_MODEL ?= $(HOME)/.roca/models/nomic-embed-text-v2-moe/a5db3381f2
 accept: build accept-index ## The godog acceptance suites against the real binary
 	ROCA_BIN=$(BIN) ROCA_PLAYGROUND_INTEGRATION= ROCA_PLAYGROUND_FEATURES= ROCA_PUBLISHED_BIN= ROCA_AUDIT_PUBLISHED_BIN= go test -tags=acceptance ./test/acceptance -count=1
 
+.PHONY: e2e-cover
+e2e-cover: ## Require end-to-end execution of every changed Go line inside coverage blocks
+	@set -eu; \
+		mkdir -p .tmp; \
+		GOCOVERDIR="$$(mktemp -d "$(CURDIR)/.tmp/e2e-cover.XXXXXX")"; \
+		export GOCOVERDIR; \
+		printf 'e2e-cover: GOCOVERDIR=%s\n' "$$GOCOVERDIR"; \
+		$(MAKE) accept; \
+		./scripts/cover-diff.sh
+
 e2e-smoke: build ## Real binary in a disposable home: init, ingest, query, plugin install and update
 	@test -x "$(ROCA_PUBLISHED_BIN)" || { echo "set ROCA_PUBLISHED_BIN to an installed published release" >&2; exit 1; }
 	ROCA_BIN=$(BIN) ROCA_PLAYGROUND_INTEGRATION= ROCA_PLAYGROUND_FEATURES= ROCA_PUBLISHED_BIN="$(ROCA_PUBLISHED_BIN)" go test -tags=acceptance ./test/acceptance -run '^(TestPublishedReleaseUpdateInitSmoke|TestRealBinaryDisposableHomeSmoke)$$' -count=1
@@ -114,7 +127,7 @@ accept-index: ## List and verify the per-domain acceptance scenarios
 		done
 
 .PHONY: check
-check: build fmt vet test accept slop ## What CI requires before merging
+check: build fmt vet test e2e-cover slop ## What CI requires before merging
 
 # UPGRADE_HOME selects a single frozen version; empty runs every one of them,
 # which is what a contributor wants locally and what CI splits across runners.
