@@ -17,7 +17,9 @@ live `roca` process is still using.
 
 Who asked: proposal, from issue #550; decision 8151 (24-oct-2026, project la-roca)
 orders it rewritten as this change, carrying the piece that #551 (`roca clean`)
-builds on.
+builds on. Decision 8153 (same day) keeps the preflight free-space check that 8151
+listed out of this change: there is no proof of a home running out of disk, and its
+failure branch cannot be reached by an end-to-end scenario without a product test hook.
 
 Proof: one home after the 1.87.x upgrade (same day as #432 and #461) held one
 `.roca-corpus-schema-preflight-*` folder with a full-size `roca-corpus.db` and a
@@ -30,11 +32,14 @@ home whose corpus needs a schema advance, kill it during the preflight, then
 ## What Changes
 
 - Every staging folder the bundled installer creates holds an exclusive advisory
-  lock on a `.held` file inside it for as long as its creator uses it.
+  lock on a `.held` file inside it for as long as its creator uses it; the creator
+  removes the folder before it releases the lock.
 - At the start of preparing each bundled plugin, the installer removes every
   `.<plugin>-schema-preflight-*` and `.<plugin>-bundle-*` folder in the plugin root
-  whose `.held` lock it can take without waiting. A folder whose lock is held by
-  another process stays.
+  that is more than one hour old and whose `.held` lock it can take without waiting.
+  A folder whose lock is held by another process stays. The age rule closes the
+  moment between creating a folder and taking its lock, when another process could
+  otherwise see it unlocked.
 - `internal/securefile` gains a non-blocking variant of `Lock` that reports
   "held by someone else" instead of waiting.
 - The sweep is one exported function of `bundledplugin` that returns what it found,
@@ -57,10 +62,10 @@ None.
   `materialize`, `preflightInstalledSchema`, the new sweep function),
   `internal/securefile/lock_unix.go` and `lock_windows.go` (non-blocking lock).
 - Acceptance scenarios to write, in `features/distribution/install.feature`, run by
-  `make accept` through `roca _install-bundled-plugins --json`: a leftover preflight
-  folder and bundle folders are gone after the install; a staging folder whose
-  `.held` lock the test process holds survives it.
+  `make accept` through `roca _install-bundled-plugins --json`: old leftover preflight
+  and bundle folders are gone after the install; a folder whose `.held` lock the test
+  process holds survives it; a folder created a moment ago survives it.
 - Not touched: the full-size `VACUUM INTO` copy itself and any free-space check
-  (no proof yet of a home running out of space; the observed harm is the leftover);
+  (decision 8153);
   `roca doctor` and any new command (#551); plugin databases, vector sidecars, their
   WAL/SHM/journal files, backups, logs and configuration; the schema advance rules.
