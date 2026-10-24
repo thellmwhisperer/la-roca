@@ -18,8 +18,9 @@ the `.held` file inside it (a folder with no `.held` file counts as not held).
 
 #### Scenario: A second install finds nothing to remove
 
-- **WHEN** `roca _install-bundled-plugins --json` runs twice in a row on a home with no
-  other `roca` process running
+- **WHEN** the plugin root holds no staging folder before the first run and no other
+  `roca` process is running, and `roca _install-bundled-plugins --json` runs twice in a
+  row
 - **THEN** after each run the plugin root holds no `.*-schema-preflight-*` and no
   `.*-bundle-*` folder
 
