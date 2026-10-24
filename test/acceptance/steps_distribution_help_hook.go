@@ -70,6 +70,11 @@ func (w *distributionWorld) runCodexSessionHook(label string, withoutDatabase bo
 			return err
 		}
 	}
+	return w.storeCodexSessionHook("codex session hook")
+}
+
+// storeCodexSessionHook runs the codex session hook and keeps its context.
+func (w *distributionWorld) storeCodexSessionHook(what string) error {
 	run := w.runAt(w.home, w.installed, "hooks", "run", "session", "--runtime", "codex")
 	var envelope struct {
 		HookSpecificOutput struct {
@@ -77,7 +82,7 @@ func (w *distributionWorld) runCodexSessionHook(label string, withoutDatabase bo
 		} `json:"hookSpecificOutput"`
 	}
 	if run.code != 0 || json.Unmarshal([]byte(run.stdout), &envelope) != nil {
-		return fmt.Errorf("codex session hook = %+v", run)
+		return fmt.Errorf("%s = %+v", what, run)
 	}
 	w.state["hook-body"] = envelope.HookSpecificOutput.AdditionalContext
 	return nil
@@ -222,17 +227,7 @@ func (w *distributionWorld) runCodexSessionHookWithDisabledPlugin() error {
 	if run := w.runAt(w.home, w.installed, "exec", statement); run.code == 0 {
 		return fmt.Errorf("roca exec attached first-receipts with plugins disabled: %+v", run)
 	}
-	run := w.runAt(w.home, w.installed, "hooks", "run", "session", "--runtime", "codex")
-	var envelope struct {
-		HookSpecificOutput struct {
-			AdditionalContext string `json:"additionalContext"`
-		} `json:"hookSpecificOutput"`
-	}
-	if run.code != 0 || json.Unmarshal([]byte(run.stdout), &envelope) != nil {
-		return fmt.Errorf("codex session hook with plugins disabled: %+v", run)
-	}
-	w.state["hook-body"] = envelope.HookSpecificOutput.AdditionalContext
-	return nil
+	return w.storeCodexSessionHook("codex session hook with plugins disabled")
 }
 
 func (w *distributionWorld) hookOmitsDisabledPlugin() error {
