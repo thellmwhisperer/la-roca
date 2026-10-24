@@ -11,7 +11,7 @@ import (
 
 func TestRootMenuShowsExactlyThePublicCommands(t *testing.T) {
 	want := []string{
-		"doctor", "explore", "handoff", "hooks", "ingest", "init", "layers", "migrate", "model", "pill", "playground", "plugin", "plugins", "query", "remote", "store", "uninstall", "update",
+		"doctor", "exec", "explore", "handoff", "hooks", "ingest", "init", "layers", "migrate", "model", "pill", "playground", "plugin", "plugins", "query", "remote", "store", "uninstall", "update", "vector",
 	}
 	root := rootCommand(&cliEnv{})
 	root.InitDefaultHelpCmd()
@@ -63,7 +63,7 @@ func TestCronAppearsInTheMenuOnlyWhenEnabled(t *testing.T) {
 
 func TestHiddenCommandsStillHaveHelp(t *testing.T) {
 	for _, name := range []string{
-		"exec", "health", "index", "login", "mcp", "models", "schema", "skill", "version",
+		"health", "index", "login", "mcp", "models", "schema", "skill", "version",
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := rootCommand(&cliEnv{})

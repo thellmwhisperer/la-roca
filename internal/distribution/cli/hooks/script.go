@@ -1,4 +1,4 @@
-package cli
+package hooks
 
 import (
 	"encoding/json"
@@ -20,16 +20,16 @@ import (
 // exactly as it is. The whole file is the SYSTEM fragment; there is no USER zone
 // inside it, which is why an operator's edits are left alone until `--force`.
 
-// rocaScriptMarker is the ownership line every script this product writes
+// ScriptMarker is the ownership line every script this product writes
 // carries. A file in the same directory without it was written by someone else
 // and is never replaced or removed.
-const rocaScriptMarker = "ROCA_MANAGED_HOOK=session"
+const ScriptMarker = "ROCA_MANAGED_HOOK=session"
 
 const scriptHookTimeoutMs = 15000
 
 // sessionScript renders the extension or plugin for one runtime, wired to the
 // exact binary and flags the install was asked for.
-func sessionScript(runtime, executable string, req sessionRequest) string {
+func sessionScript(runtime, executable string, req SessionRequest) string {
 	quoted := make([]string, 0, 6)
 	for _, arg := range append([]string{
 		"hooks", "run", "session", "--runtime", runtime,
@@ -43,7 +43,7 @@ func sessionScript(runtime, executable string, req sessionRequest) string {
 // managed by `+"`roca hooks install %s`"+`; reinstalling overwrites this file.
 // Add your own extensions beside this file instead of editing it.
 // %s
-`, runtime, rocaScriptMarker)
+`, runtime, ScriptMarker)
 	reader := fmt.Sprintf(`import { execFile } from "node:child_process";
 
 const ROCA = %s;
@@ -114,10 +114,10 @@ export default function (pi) {
 // wrote the script and then failed its own bookkeeping would leave a working
 // hook behind a non-zero exit, which is the one outcome an operator cannot act
 // on.
-func installSessionScript(env *cliEnv, runtime, path, executable string,
-	req sessionRequest, force bool) (agentcfg.Outcome, string, error) {
+func installSessionScript(env Env, runtime, path, executable string,
+	req SessionRequest, force bool) (agentcfg.Outcome, string, error) {
 	outcome := agentcfg.Outcome{Runtime: runtime, Path: path}
-	entry, registered, err := env.registeredArtifact(artifactKindHook, runtime, path)
+	entry, registered, err := env.RegisteredHook(runtime, path)
 	if err != nil {
 		return outcome, "", err
 	}
@@ -127,11 +127,11 @@ func installSessionScript(env *cliEnv, runtime, path, executable string,
 	case os.IsNotExist(err):
 	case err != nil:
 		return outcome, "", fmt.Errorf("read %s: %w", path, err)
-	case !strings.Contains(string(previous), rocaScriptMarker):
+	case !strings.Contains(string(previous), ScriptMarker):
 		return outcome, "", fmt.Errorf(
 			"refuse to replace %s, which La Roca did not write", path)
 	case string(previous) == desired:
-		return outcome, "", env.registerHook(path, runtime, desired)
+		return outcome, "", env.RegisterHook(path, runtime, desired)
 	case !force && (!registered || entry.SystemSHA256 != artifact.Checksum(string(previous))):
 		// The whole script is the SYSTEM fragment, so a file that no longer
 		// says what the install recorded is the operator's edit, and a file no
@@ -155,22 +155,22 @@ func installSessionScript(env *cliEnv, runtime, path, executable string,
 		return outcome, "", err
 	}
 	outcome.Changed = true
-	return outcome, "", env.registerHook(path, runtime, desired)
+	return outcome, "", env.RegisterHook(path, runtime, desired)
 }
 
 // uninstallSessionScript removes the file this product wrote and nothing else.
 // A file that is not there is not an error, and one without the ownership line
 // is left where it is with a warning naming it.
-func uninstallSessionScript(env *cliEnv, runtime, path string) (agentcfg.Outcome, string, error) {
+func uninstallSessionScript(env Env, runtime, path string) (agentcfg.Outcome, string, error) {
 	outcome := agentcfg.Outcome{Runtime: runtime, Path: path}
 	body, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		return outcome, "", env.unregisterArtifact(artifactKindHook, runtime, path)
+		return outcome, "", env.UnregisterHook(runtime, path)
 	}
 	if err != nil {
 		return outcome, "", fmt.Errorf("read %s: %w", path, err)
 	}
-	if !strings.Contains(string(body), rocaScriptMarker) {
+	if !strings.Contains(string(body), ScriptMarker) {
 		return outcome, fmt.Sprintf("warning: %s was not written by La Roca, "+
 			"so nothing there was changed", path), nil
 	}
@@ -178,5 +178,5 @@ func uninstallSessionScript(env *cliEnv, runtime, path string) (agentcfg.Outcome
 		return outcome, "", fmt.Errorf("remove %s: %w", path, err)
 	}
 	outcome.Changed = true
-	return outcome, "", env.unregisterArtifact(artifactKindHook, runtime, path)
+	return outcome, "", env.UnregisterHook(runtime, path)
 }

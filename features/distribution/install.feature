@@ -60,3 +60,142 @@ Feature: The full installation cycle
     Then the command exits with a code other than 0
     And the output names the file it refuses to overwrite
     And that file keeps its original content
+
+  @fast @acceptance @plugin-staging
+  Scenario: Plugin staging leftovers are swept on installation
+    Given abandoned bundled plugin staging folders
+    When I run "roca _install-bundled-plugins --json"
+    Then the command exits with code 0
+    And no bundled plugin staging folders remain
+
+  @fast @acceptance @plugin-staging
+  Scenario Outline: A just-created plugin staging folder survives installation
+    Given a just-created "<kind>" staging folder without a lock
+    When I run "roca _install-bundled-plugins --json"
+    Then the command exits with code 0
+    And the just-created staging folder still exists
+
+    Examples:
+      | kind             |
+      | bundle           |
+      | schema-preflight |
+
+  @fast @acceptance @plugin-staging
+  Scenario: Plugin staging stays empty after repeated installations
+    When I run "roca _install-bundled-plugins --json"
+    Then the command exits with code 0
+    And no bundled plugin staging folders remain
+    When I run "roca _install-bundled-plugins --json"
+    Then the command exits with code 0
+    And no bundled plugin staging folders remain
+
+  @fast @acceptance @plugin-staging
+  Scenario: Plugin staging held by another process is preserved without waiting
+    Given a bundled plugin staging folder locked by the test process
+    When I install bundled plugins while the staging lock is held
+    Then the command exits with code 0
+    And the held staging folder and lock file still exist
+    When the test process releases the staging lock
+    And I run "roca _install-bundled-plugins --json"
+    Then the command exits with code 0
+    And no bundled plugin staging folders remain
+
+  @fast @acceptance @plugin-staging
+  Scenario: Plugin staging cleanup preserves installed plugin data
+    Given installed plugin databases and their sidecar files
+    And abandoned bundled plugin staging folders
+    When I run "roca _install-bundled-plugins --json"
+    Then the command exits with code 0
+    And no bundled plugin staging folders remain
+    And every installed plugin directory and data file still exists
+
+  @fast @acceptance @plugin-staging
+  Scenario Outline: Plugin staging filesystem failures are reported safely
+    Given the plugin staging filesystem fails at "<location>"
+    When I run "roca _install-bundled-plugins --json"
+    Then the command exits with a code other than 0
+
+    Examples:
+      | location       |
+      | plugin root    |
+      | stage creation |
+
+  @fast @acceptance @plugin-staging
+  Scenario: Staging sweep never blocks a query on an unremovable leftover
+    Given an initialized home for the staging sweep
+    And an old "unremovable" plugin staging folder
+    When I run "roca exec 'SELECT count(*) FROM plugin_roca_ops.memories'"
+    Then the command exits with code 0
+    And the staging query prints the memory count
+
+  @fast @acceptance @plugin-staging
+  Scenario: Staging sweep never blocks installation on an unremovable leftover
+    Given an initialized home for the staging sweep
+    And an old "unremovable" plugin staging folder
+    When I run "roca _install-bundled-plugins --json"
+    Then the command exits with code 0
+    And the old staging folder still exists
+
+  @fast @acceptance @plugin-staging
+  Scenario: Staging sweep never blocks installation on an invalid lock file
+    Given the plugin staging filesystem fails at "lock file"
+    When I run "roca _install-bundled-plugins --json"
+    Then the command exits with code 0
+
+  @fast @acceptance @plugin-staging
+  Scenario: Staging sweep keeps an old folder whose contents were just written
+    Given an initialized home for the staging sweep
+    And an old plugin staging folder holding a file written a moment ago
+    When I run "roca _install-bundled-plugins --json"
+    Then the command exits with code 0
+    And the old staging folder still exists
+    When I run "roca doctor --json"
+    Then the command exits with code 0
+    And doctor lists no plugin staging folder
+
+  @fast @acceptance @plugin-staging
+  Scenario: Staging sweep reports an unremovable leftover in doctor JSON
+    Given an initialized home for the staging sweep
+    And an old "unremovable" plugin staging folder
+    When I run "roca doctor --json"
+    Then the command exits with code 0
+    And doctor lists the old staging folder with 5 bytes and cause "permission denied"
+
+  @fast @acceptance @plugin-staging
+  Scenario: Staging sweep preserves a leftover diagnosis after partial deletion
+    Given an initialized home for the staging sweep
+    And an old "unremovable" plugin staging folder
+    And the old staging folder has an unlocked lock file
+    When I run "roca _install-bundled-plugins --json"
+    Then the command exits with code 0
+    When I run "roca doctor --json"
+    Then the command exits with code 0
+    And doctor lists the old staging folder with 5 bytes and cause "permission denied"
+    When I run "roca doctor --json"
+    Then the command exits with code 0
+    And doctor lists the old staging folder with 5 bytes and cause "permission denied"
+
+  @fast @acceptance @plugin-staging
+  Scenario: Staging sweep reports an unremovable leftover in doctor text
+    Given an initialized home for the staging sweep
+    And an old "unremovable" plugin staging folder
+    When I run "roca doctor"
+    Then the command exits with code 0
+    And doctor prints the old staging folder and "permission denied" on one line
+
+  @fast @acceptance @plugin-staging
+  Scenario: Staging sweep reports a removable leftover without deleting it in read-only doctor
+    Given an initialized home for the staging sweep
+    And an old "removable" plugin staging folder
+    And staging commands use read-only mode
+    When I run "roca doctor --json"
+    Then the command exits with code 0
+    And doctor lists the old staging folder with 5 bytes and cause "read-only"
+    And the old staging folder still exists
+
+  @fast @acceptance @plugin-staging
+  Scenario: Staging sweep reports no leftover in doctor text
+    Given an initialized home for the staging sweep
+    When I run "roca doctor"
+    Then the command exits with code 0
+    And the output contains "plugin staging: none leftover"

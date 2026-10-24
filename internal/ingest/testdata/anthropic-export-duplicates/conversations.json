@@ -1,0 +1,64 @@
+[
+  {
+    "uuid": "60000000-0000-4000-8000-000000000010",
+    "name": "Synthetic greenhouse vents",
+    "summary": "A fictional copy of one conversation.",
+    "created_at": "2025-05-06T10:00:00.000Z",
+    "updated_at": "2025-05-06T10:00:02.000Z",
+    "chat_messages": [
+      {
+        "uuid": "70000000-0000-4000-8000-000000000001",
+        "text": "Which vent opens first?",
+        "content": [],
+        "sender": "human",
+        "created_at": "2025-05-06T10:00:01.000Z",
+        "updated_at": "2025-05-06T10:00:01.000Z",
+        "attachments": [],
+        "files": [],
+        "parent_message_uuid": null
+      },
+      {
+        "uuid": "70000000-0000-4000-8000-000000000002",
+        "text": "The north vent opens first.",
+        "content": [],
+        "sender": "assistant",
+        "created_at": "2025-05-06T10:00:02.000Z",
+        "updated_at": "2025-05-06T10:00:02.000Z",
+        "attachments": [],
+        "files": [],
+        "parent_message_uuid": "70000000-0000-4000-8000-000000000001"
+      }
+    ]
+  },
+  {
+    "uuid": "60000000-0000-4000-8000-000000000011",
+    "name": "Synthetic greenhouse vents",
+    "summary": "A fictional copy of one conversation.",
+    "created_at": "2025-05-06T10:00:00.000Z",
+    "updated_at": "2025-05-06T10:00:02.000Z",
+    "chat_messages": [
+      {
+        "uuid": "70000000-0000-4000-8000-000000000003",
+        "text": "Which vent opens first?",
+        "content": [],
+        "sender": "human",
+        "created_at": "2025-05-06T10:00:01.000Z",
+        "updated_at": "2025-05-06T10:00:01.000Z",
+        "attachments": [],
+        "files": [],
+        "parent_message_uuid": null
+      },
+      {
+        "uuid": "70000000-0000-4000-8000-000000000004",
+        "text": "The north vent opens first, then the south one.",
+        "content": [],
+        "sender": "assistant",
+        "created_at": "2025-05-06T10:00:02.000Z",
+        "updated_at": "2025-05-06T10:00:02.000Z",
+        "attachments": [],
+        "files": [],
+        "parent_message_uuid": "70000000-0000-4000-8000-000000000003"
+      }
+    ]
+  }
+]

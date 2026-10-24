@@ -42,7 +42,10 @@ func Run(ctx context.Context, svc *service.Service, build mcpplug.Build) error {
 	if err := os.Remove(socket); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("replace resident socket: %w", err)
 	}
+	// The socket is born 0600, so a client dialing during startup never sees it with group or other bits.
+	old := setUmask(0o177)
 	listener, err := net.Listen("unix", socket)
+	setUmask(old)
 	if err != nil {
 		return fmt.Errorf("listen for resident clients: %w", err)
 	}

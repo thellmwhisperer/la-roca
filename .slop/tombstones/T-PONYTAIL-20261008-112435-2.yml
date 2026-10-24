@@ -1,0 +1,18 @@
+schema: 1
+id: T-PONYTAIL-20261008-112435-2
+status: accepted
+category: alien_code
+title: "Cut the statusCandidateTimeout constant, which had one use. Its long name made gofmt realign the whole const block. countSourceCandidates now passes 2*time.Second inline with a one-line comment, so the const block is back to its original form."
+created_at: 2026-10-08
+incident:
+  pattern: "Cut the statusCandidateTimeout constant, which had one use. Its long name made gofmt realign the whole const block. countSourceCandidates now passes 2*time.Second inline with a one-line comment, so the const block is back to its original form."
+  what_went_wrong: "An ATM run wrote it and ATM's ponytail pass cut it before delivery."
+  root_cause: "The coding agent wrote more than the issue needed."
+  rule_established: "Cut by the ponytail pass; it does not come back."
+  evidence:
+    - family: format_churn
+      example: "Cut the statusCandidateTimeout constant, which had one use. Its long name made gofmt realign the whole const block. countSourceCandidates now passes 2*time.Second inline with a one-line comment, so the const block is back to its original form."
+      artifact: "plugins/vector/internal/vector/status.go"
+match:
+  family: format_churn
+  artifact: "plugins/vector/internal/vector/status.go"

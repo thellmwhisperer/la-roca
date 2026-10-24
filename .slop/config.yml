@@ -31,6 +31,9 @@ global_ignore:
   # node_modules: 31 vendored READMEs counted as orphaned public markdown.
   - "**/.opencode/**"
   - "**/.claude/**"
+  - "**/.agents/**"
+  # OpenSpec change and spec markdown is process material, not public docs.
+  - "openspec/**"
   - "bin/**"
   - "dist/**"
   - "features/**"
@@ -93,7 +96,7 @@ claims:
   file: .slop/claims.yml
   surfaces:
     commands_and_flags:
-      files: ["internal/distribution/cli/*.go"]
+      files: ["internal/distribution/cli/*.go", "internal/distribution/cli/hooks/*.go"]
       ignore:
         - "**/*_test.go"
         - "internal/distribution/cli/doctor_snapshots.go"

@@ -62,6 +62,7 @@ type world struct {
 	// readOnly is the operator's switch, applied to every command and every
 	// session of this scenario.
 	readOnly            bool
+	stagingCleanup      func() error
 	codexIdentityBefore *codexIdentityCounts
 	// agentConfig and settings are the two files an integration touches: the
 	// runtime's MCP configuration and its lifecycle settings. Both keep the
@@ -151,6 +152,11 @@ func registerSteps(ctx *godog.ScenarioContext, binary string) {
 		m.closeThePlug()
 		m.closeModels()
 		m.closeTheChannel()
+		if m.stagingCleanup != nil {
+			if err := m.stagingCleanup(); err != nil {
+				return c, err
+			}
+		}
 		os.RemoveAll(m.home)
 		return c, nil
 	})
@@ -516,6 +522,9 @@ func (m *world) environment() []string {
 		"PATH=" + path,
 		"TMPDIR=" + filepath.Join(m.home, "tmp"),
 	}, m.modelEnvironment()...)
+	if directory := os.Getenv("GOCOVERDIR"); directory != "" {
+		environment = append(environment, "GOCOVERDIR="+directory)
+	}
 	if m.readOnly {
 		environment = append(environment, "ROCA_READ_ONLY=1")
 	}

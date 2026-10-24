@@ -1,6 +1,12 @@
 package securefile
 
-import "os"
+import (
+	"errors"
+	"os"
+)
+
+// ErrHeld means another lock holder prevented a non-blocking acquisition.
+var ErrHeld = errors.New("lock is held")
 
 func validateExistingLock(path string, file *os.File, release func() error) error {
 	held, err := file.Stat()

@@ -1,7 +1,5 @@
 # Tombstones
 
-Empty, and that is the good state.
-
 A tombstone is a permanent, reviewable record of duplication this repository
 decided to keep. It **consumes** a finding: an accepted clone stops counting
 against the ceiling, so the ceiling keeps measuring live debt only. It never

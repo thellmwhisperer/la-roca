@@ -297,7 +297,7 @@ func rootCommand(env *cliEnv) *cobra.Command {
 	commands := []*cobra.Command{
 		versionCommand(env), initCommand(env), migrateCommand(env), playgroundPluginCommand(env, "explore"), schemaCommand(env),
 		indexCommand(env), doctorCommand(env), dedupCommand(env), compactCommand(env), memoryCommand(env), layersCommand(env),
-		healthCommand(env), databaseScopeCommand(env), vectorReaderCommand(env),
+		healthCommand(env), databaseScopeCommand(env), vectorReaderCommand(env), vectorCommand(),
 		mcpCommand(env), skillCommand(env), hooksCommand(env),
 		playgroundPluginCommand(env, "login"), playgroundPluginCommand(env, "model"),
 		updateCommand(env), uninstallCommand(env),
@@ -344,10 +344,25 @@ func rootCommand(env *cliEnv) *cobra.Command {
 
 func publicCommand(name string) bool {
 	switch name {
-	case "init", "migrate", "query", "playground", "explore", "store", "pill", "handoff", "ingest", "model", "doctor", "update", "uninstall", "plugin", "plugins", "hooks", "cron", "layers", "remote":
+	case "init", "migrate", "exec", "vector", "query", "playground", "explore", "store", "pill", "handoff", "ingest", "model", "doctor", "update", "uninstall", "plugin", "plugins", "hooks", "cron", "layers", "remote":
 		return true
 	default:
 		return false
+	}
+}
+
+// vectorCommand seats the roca-vector companion in the command list.
+// dispatchPlugin hands it every `roca vector` call it may take; this body
+// only answers the calls it did not.
+func vectorCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:                "vector",
+		Short:              "Optional local vector search for La Roca",
+		DisableFlagParsing: true,
+		RunE: func(*cobra.Command, []string) error {
+			return logfile.Typed(errors.New("vector search is off or not installed: set `vector = true` "+
+				"under [features] in config.toml, then run `roca vector install`"), logfile.ErrorInvalidUsage)
+		},
 	}
 }
 
@@ -360,7 +375,7 @@ type pathPlugin struct {
 }
 
 func dispatchPlugin(env *cliEnv, root *cobra.Command, args []string, features config.FeaturesConfig) (bool, int, error) {
-	if len(args) == 0 || strings.HasPrefix(args[0], "-") || builtIn(root, args[0]) {
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") || (builtIn(root, args[0]) && args[0] != "vector") {
 		return false, 0, nil
 	}
 	if args[0] == "vector" && !features.Vector && !vectorLifecycleCommand(args[1:]) {

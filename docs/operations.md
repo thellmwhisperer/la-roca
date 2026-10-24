@@ -51,8 +51,9 @@ whose binary moved instead of adding a second one.
 same hook on every supported harness: `claude`, `codex`, `cursor`, `opencode`,
 `pi` and `zcode`. On session start it injects a fixed SYSTEM fragment — vectors
 first, `roca exec` with the semantic catalog, `roca query` as last resort, and
-never sqlite3 or python over the `.db` files — so a fresh session on any harness
-knows how to search before it starts guessing. `--pills` adds the active pills
+never sqlite3 or python over the `.db` files — plus one line naming each alias
+`roca exec` attaches under the current features and its tables, so a fresh
+session on any harness knows how to search before it starts guessing. `--pills` adds the active pills
 for the working directory's project; `--handoff` adds that project's latest
 handoff. Both are opt-in and neither is installed by init or update. The handoff
 runner selects at most one handoff using the
@@ -77,6 +78,10 @@ moved, rewritten or removed, on any of the files below.
 | `pi` | `~/.pi/agent/extensions/roca-session.ts` (`PI_CODING_AGENT_DIR`) | the file carries `ROCA_MANAGED_HOOK=session` and a `before_agent_start` handler |
 | `zcode` | `~/.zcode/cli/config.json` plus `~/.zcode/hooks/roca-handoff.sh` (`ZCODE_HOME`) | the nested `hooks.events.SessionStart` names the wrapper, and the wrapper calls `hooks run session --runtime zcode` |
 
+Claude hook installs, removals and update refreshes follow a symlinked
+`settings.json` to its regular-file target and keep the symlink in place. A
+broken symlink or a link to a non-regular target is refused.
+
 What a live session of each harness actually received, and the two things that
 only a live session could find, are recorded in
 [session hooks: evidence](session-hooks-evidence.md).
@@ -93,8 +98,20 @@ never shown a read error where its project context belongs.
 Each harness's own file shape decides what La Roca owns inside it. In Claude's
 and Codex's documents it is the command object; in Cursor's it is the one
 `sessionStart` entry; in ZCode's it is the nested command plus the wrapper it
-names, and parent containers (`hooks`, `hooks.events`) this install created are
-recorded beside the config and pruned on uninstall only when they remain empty.
+names, and parent containers (`hooks`, `hooks.events`,
+`hooks.events.SessionStart`) this install created are recorded beside the config
+and pruned on uninstall only when removing La Roca's command left them empty.
+The command and a `hooks.enabled` La Roca had to add are claimed by digest: an
+operator-edited command (say its `timeoutMs`) is theirs, so reinstall and
+uninstall leave it as it is, and an operator's `hooks.enabled` is never
+changed. A verbatim operator copy of La Roca's command cannot be told apart
+from La Roca's own and is withdrawn with it. The wrapper is claimed by the
+digest of its bytes. Install refuses an existing wrapper that does not match
+that claim, even if it still has the ownership marker. A legacy sidecar without
+a wrapper digest accepts only the byte-for-byte wrapper this version writes.
+Uninstall removes the wrapper only when its bytes still match the claim and no
+hook entry in the config refers to it. An unmarked file at the wrapper path is
+refused before anything is written.
 For pi and OpenCode the whole written file is the SYSTEM fragment: it carries an
 ownership line, a file at that path without it is refused rather than replaced,
 and one La Roca wrote and the operator edited is left alone until `roca hooks
@@ -132,17 +149,18 @@ names each ownership marker to delete by hand. Claude's two events are probed
 separately, so an unreadable `PreToolUse` never holds the session entry hostage,
 and one unreadable file still produces exactly one warning line.
 
-The implementation is owned by
-[`internal/distribution/cli/hooks_session.go`](../internal/distribution/cli/hooks_session.go)
+The implementation is owned by the
+[`internal/distribution/cli/hooks`](../internal/distribution/cli/hooks) package:
+[`session.go`](../internal/distribution/cli/hooks/session.go)
 (what an install and a withdrawal do per runtime),
-[`hooks_context.go`](../internal/distribution/cli/hooks_context.go) (the fixed
+[`context.go`](../internal/distribution/cli/hooks/context.go) (the fixed
 fragment and the per-harness envelopes),
-[`hooks_runtimes.go`](../internal/distribution/cli/hooks_runtimes.go) (the table
+[`runtimes.go`](../internal/distribution/cli/hooks/runtimes.go) (the table
 of harnesses and their files),
-[`hooks_json.go`](../internal/distribution/cli/hooks_json.go) (Claude, Codex and
-Cursor), [`hooks_script.go`](../internal/distribution/cli/hooks_script.go) (pi
+[`json.go`](../internal/distribution/cli/hooks/json.go) (Claude, Codex and
+Cursor), [`script.go`](../internal/distribution/cli/hooks/script.go) (pi
 and OpenCode) and
-[`hooks_zcode.go`](../internal/distribution/cli/hooks_zcode.go) (ZCode). Claude
+[`zcode.go`](../internal/distribution/cli/hooks/zcode.go) (ZCode). Claude
 Desktop is not part of this installer.
 
 Other harnesses can use the same client-side pattern: intercept the shell tool,
@@ -522,6 +540,13 @@ status, supersedes, expiry, or non-equivalent authorship is not a duplicate.
 MCP retries expand the system-stamped source agent to the aliases described
 under [Memory authorship](#memory-authorship). CLI retries match the stored
 agent exactly, so distinct harness names stay distinct authors.
+
+Historical sibling sessions are not exact duplicates: their 36-character IDs
+differ only in the last character, they share `started_at` and title, and their
+text can differ. `roca doctor` warns with the extra-row and group counts and
+prints a `roca exec` SELECT, carrying the diagnosed `--db-path`, that lists
+them. Doctor only reads and leaves them in place; which copy to keep is the
+operator's call.
 
 ## Data directory
 

@@ -117,6 +117,8 @@ type codexTurn struct {
 	opened, closed                         int
 	humanText, humanTS, agentText, agentTS string
 	model, effort                          string
+	// turnID is the identity task_complete names for the turn it closes.
+	turnID string
 }
 
 // ParseCodexSession turns a Codex rollout into one session.
@@ -134,10 +136,11 @@ type codexTurn struct {
 func ParseCodexSession(content []byte, meta FileMeta) (Records, error) {
 	reader := &codexReader{
 		session: Session{
-			ID:          meta.SessionID,
-			SourceAgent: firstNonEmpty(meta.SourceAgent, "codex"),
-			Project:     meta.Project,
-			Metadata:    map[string]any{},
+			ID:                    meta.SessionID,
+			SourceAgent:           firstNonEmpty(meta.SourceAgent, "codex"),
+			Project:               meta.Project,
+			Metadata:              map[string]any{},
+			RecordTimestampOwners: true,
 		},
 		pending:       map[string]*ToolUse{},
 		orphanPending: map[string]*ToolUse{},
@@ -337,6 +340,7 @@ func (r *codexReader) event(record int, line codexLine, payload codexPayload) {
 		turn.closed = record
 		turn.agentText = firstNonEmpty(payload.LastAgentMessage, r.agentSaid)
 		turn.agentTS = validInstant(line.Timestamp)
+		turn.turnID = payload.TurnID
 		r.turns = append(r.turns, turn)
 		r.open = nil
 		r.resetTurnScope()
@@ -404,6 +408,7 @@ func (r *codexReader) responseItem(record int, line codexLine, payload codexPayl
 		tool := &ToolUse{
 			Name:          payload.Name,
 			ParamsSummary: Clip(firstNonEmpty(rawText(payload.Arguments), payload.Input), paramsBudget),
+			SourceID:      payload.CallID,
 		}
 		r.signals = append(r.signals, codexSignal{record: record, tool: tool})
 		if r.open != nil {
@@ -494,6 +499,7 @@ func (r *codexReader) exchanges(turns []codexTurn) []Exchange {
 			AgentText:      turn.agentText,
 			HumanTimestamp: turn.humanTS,
 			AgentTimestamp: turn.agentTS,
+			SourceTurnID:   turn.turnID,
 		}
 		var usage UsageTally
 		seen := map[string]bool{}

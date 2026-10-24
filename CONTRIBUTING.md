@@ -66,9 +66,16 @@ make playground-test
 make dist
 ```
 
-`make check` runs formatting, vet, unit tests, the acceptance tests, and the
+`make check` runs formatting, vet, unit tests, `make e2e-cover`, and the
 slop gate (duplication, orphans, claims, and removed adjacent-feature
-forbids). Godog acceptance contracts live directly under
+forbids). `make e2e-cover` runs the acceptance tests against a coverage-instrumented
+`roca`, then `scripts/cover-diff.sh` requires every changed Go line spanned by a
+coverage block to have executed in a real binary process. Delete unexecuted lines,
+or write the acceptance scenario that reaches them from a real `roca` command.
+The base is `COVER_BASE` when set, otherwise the merge base with
+`origin/integration`; coverage data remains in the printed `GOCOVERDIR` for
+`go tool covdata percent -i="$GOCOVERDIR"`. This measures changed lines, not a
+repository-wide percentage. Godog acceptance contracts live directly under
 `features/{store,ingest,provider,distribution}/`; every feature there is
 discovered automatically, and `make accept-index` rejects any other layout. The
 acceptance harnesses are compiled only with the `acceptance` build tag.

@@ -44,52 +44,52 @@ func withdraw(r runtime, text string) (string, error) {
 	return editors[r.kind].remove(r, text, []string{ServerName})
 }
 
-func withdrawCreated(r runtime, text string, created []string) (string, error) {
-	if (r.kind == kindJSON || r.kind == kindJSONC) && len(r.parents) > 0 {
-		return jsonRemoveCreated(r, text, []string{ServerName}, created)
-	}
-	return withdraw(r, text)
-}
-
 // installed answers what an operator wants to know at a glance: is Roca
 // declared here, and which binary is this agent about to launch.
 func installed(r runtime, text string) (string, bool, error) {
+	value, _, err := entryValue(r, text)
+	entry, ok := value.(map[string]any)
+	if err != nil || !ok {
+		return "", false, err
+	}
+	arguments, _ := entry["args"].([]any)
+	return commandLine(entry["command"], arguments), true, nil
+}
+
+// entryValue is the decoded value at Roca's key, and whether it is there.
+func entryValue(r runtime, text string) (any, bool, error) {
 	if strings.TrimSpace(text) == "" {
-		return "", false, nil
+		return nil, false, nil
 	}
 	document, err := editors[r.kind].decode(r, text)
 	if err != nil {
-		return "", false, err
+		return nil, false, err
 	}
 	container := document
 	for _, parent := range r.parents {
 		raw, present := container[parent]
 		if !present {
-			return "", false, nil
+			return nil, false, nil
 		}
 		next, ok := raw.(map[string]any)
 		if !ok {
-			return "", false, fmt.Errorf("%s must be an object", parent)
+			return nil, false, fmt.Errorf("%s must be an object", parent)
 		}
 		container = next
 	}
 	rawServers, present := container[r.serversKey]
 	if !present {
-		return "", false, nil
+		return nil, false, nil
 	}
 	servers, ok := rawServers.(map[string]any)
 	if !ok {
 		if len(r.parents) > 0 {
-			return "", false, fmt.Errorf("%s must be an object", r.serversKey)
+			return nil, false, fmt.Errorf("%s must be an object", r.serversKey)
 		}
-		return "", false, nil
+		return nil, false, nil
 	}
-	entry, ok := servers[ServerName].(map[string]any)
-	if !ok {
-		return "", false, nil
-	}
-	arguments, _ := entry["args"].([]any)
-	return commandLine(entry["command"], arguments), true, nil
+	value, present := servers[ServerName]
+	return value, present, nil
 }
 
 // commandLine is the line the entry launches, in the two spellings the runtimes

@@ -131,6 +131,19 @@ else is adjacent until proven core.
 The [adjacent-feature registry](.slop/dragons/README.md) owns dragon records,
 removal rules, and cost-check guidance.
 
+### Specs and issues
+
+- This project follows OpenSpec. Every change starts as an OpenSpec change in
+  `openspec/changes/`, written with the OpenSpec skills and valid under
+  `openspec validate --strict`. `openspec/specs/` says how La Roca behaves
+  today; `openspec/config.yaml` holds the rules for each artifact.
+- The issue comes from the change. Its body opens with `Type:` and
+  `Where: binario|lanzador`, then `## Why` ending in Proof, `## Scenarios`
+  copied from the spec's WHEN/THEN, `## Done when` naming the acceptance
+  scenarios (`features/<domain>/*.feature`, run by `make accept`) that execute
+  them, and `## Not touched` from Impact. An issue never grows.
+- After the merge, the change is archived into `openspec/specs/`.
+
 ## Maintaining this file
 
 Keep this file for knowledge useful to almost every future agent session in this project.

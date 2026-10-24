@@ -1,4 +1,4 @@
-package cli
+package hooks
 
 import (
 	"encoding/json"
@@ -75,7 +75,7 @@ func jsonHookTree(runtime, event string, settings map[string]any) (hooks map[str
 // lets a reinstall repoint a moved binary in place.
 func hookCommandsOf(entry any, nested bool) []map[string]any {
 	if nested {
-		return commandHooksOf(entry)
+		return CommandHooksOf(entry)
 	}
 	object, ok := entry.(map[string]any)
 	if !ok {
@@ -103,11 +103,11 @@ func jsonHookEntry(spec hookRuntime, command string) map[string]any {
 
 // installJSONSessionHook adds one session entry, or repoints the one already
 // there. Foreign hooks in the same event keep their position and their bytes.
-func installJSONSessionHook(runtime, path, executable string, req sessionRequest) (agentcfg.Outcome, error) {
+func installJSONSessionHook(runtime, path, executable string, req SessionRequest) (agentcfg.Outcome, error) {
 	spec := hookRuntimes[runtime]
-	command := sessionHookCommand(executable, runtime, req)
+	command := SessionHookCommand(executable, runtime, req)
 	matcher := sessionHookInvocation(runtime)
-	return agentcfg.Edit(runtime, path, func(previous string) (string, error) {
+	return editHookDocument(runtime, path, func(previous string) (string, error) {
 		settings, err := decodeHookDocument(runtime, previous)
 		if err != nil {
 			return "", err
@@ -119,7 +119,7 @@ func installJSONSessionHook(runtime, path, executable string, req sessionRequest
 		found := false
 		for _, entry := range entries {
 			for _, hook := range hookCommandsOf(entry, spec.nested) {
-				if !matcher.MatchString(commandOf(hook)) {
+				if !matcher.MatchString(CommandOf(hook)) {
 					continue
 				}
 				found = true
@@ -136,6 +136,16 @@ func installJSONSessionHook(runtime, path, executable string, req sessionRequest
 		}
 		return withDocumentDefaults(next, spec, settings)
 	}, true)
+}
+
+// editHookDocument follows a symlinked Claude settings file to the file it
+// names; every other runtime's hook document is edited only as a regular file.
+func editHookDocument(runtime, path string, transform func(string) (string, error),
+	createMissing bool) (agentcfg.Outcome, error) {
+	if runtime == agentcfg.RuntimeClaude {
+		return agentcfg.EditLinked(runtime, path, transform, createMissing)
+	}
+	return agentcfg.Edit(runtime, path, transform, createMissing)
 }
 
 // withDocumentDefaults adds the top-level members a harness requires beside its
@@ -161,7 +171,7 @@ func uninstallJSONSessionHook(runtime, path string) (agentcfg.Outcome, string, e
 	spec := hookRuntimes[runtime]
 	matcher := sessionHookInvocation(runtime)
 	var warning string
-	outcome, err := agentcfg.Edit(runtime, path, func(previous string) (string, error) {
+	outcome, err := editHookDocument(runtime, path, func(previous string) (string, error) {
 		settings, err := decodeHookDocument(runtime, previous)
 		if err != nil {
 			warning = foreignHookDocumentWarning(runtime, path, spec.event)
@@ -218,7 +228,7 @@ func withoutJSONHook(entries []any, nested bool, matcher *regexp.Regexp) ([]any,
 		ours := false
 		for _, raw := range group {
 			hook, isHook := raw.(map[string]any)
-			if isHook && hook["type"] == "command" && matcher.MatchString(commandOf(hook)) {
+			if isHook && hook["type"] == "command" && matcher.MatchString(CommandOf(hook)) {
 				ours, withdrawn = true, true
 				continue
 			}

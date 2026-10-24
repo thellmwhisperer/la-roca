@@ -10,15 +10,18 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/migrationledger"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/plugininstall"
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
+	"github.com/thellmwhisperer/la-roca/internal/securefile"
 )
 
 type Spec struct {
@@ -130,6 +133,7 @@ func prepare(root, binDir, version string, spec Spec, validateUnchanged bool) (p
 	if root == "" || binDir == "" {
 		return preparedBundle{}, fmt.Errorf("plugin root and executable directory are required")
 	}
+	_, _ = SweepStaging(root, spec.Name, true)
 	if strings.TrimSpace(version) == "" {
 		version = "dev"
 	}
@@ -313,11 +317,11 @@ func allowHomeMigrate() bool {
 }
 
 func preflightInstalledSchema(root, target string, spec Spec) error {
-	directory, err := os.MkdirTemp(root, "."+spec.Name+"-schema-preflight-")
+	directory, cleanup, err := lockedStage(root, "."+spec.Name+"-schema-preflight-")
+	defer cleanup()
 	if err != nil {
 		return fmt.Errorf("stage bundled %s schema preflight: %w", spec.Name, err)
 	}
-	defer os.RemoveAll(directory)
 	source := filepath.Join(target, spec.DatabaseFilename)
 	if err := probeInstalledDatabase(source, spec.Name); err != nil {
 		return err
@@ -507,11 +511,11 @@ func materialize(root, version string, spec Spec) (plugininstall.Candidate, func
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return plugininstall.Candidate{}, func() {}, fmt.Errorf("create plugin directory: %w", err)
 	}
-	directory, err := os.MkdirTemp(root, "."+spec.Name+"-bundle-")
+	directory, cleanup, err := lockedStage(root, "."+spec.Name+"-bundle-")
 	if err != nil {
+		cleanup()
 		return plugininstall.Candidate{}, func() {}, fmt.Errorf("stage bundled plugin: %w", err)
 	}
-	cleanup := func() { _ = os.RemoveAll(directory) }
 	fail := func(err error) (plugininstall.Candidate, func(), error) {
 		cleanup()
 		return plugininstall.Candidate{}, func() {}, err
@@ -612,4 +616,104 @@ func resultFromManifest(directory string, manifest plugininstall.Manifest) plugi
 		Name: manifest.Name, Version: manifest.Version, Checksum: manifest.Checksum,
 		Risk: manifest.Risk, Directory: directory, Executable: manifest.Executable,
 	}
+}
+
+// StagingFolder describes a temporary bundle or schema preflight, never an
+// installed plugin.
+type StagingFolder struct {
+	Path    string        `json:"path"`
+	Size    int64         `json:"bytes"`
+	Age     time.Duration `json:"-"`
+	Held    bool          `json:"-"`
+	Removed bool          `json:"-"`
+	Cause   string        `json:"cause"`
+}
+
+// SweepStaging lists one plugin's staging folders and, when remove is true,
+// removes only those older than one hour whose .held lock is free.
+// Folder failures are recorded in Cause; only a plugin root read failure is returned.
+func SweepStaging(root, pluginName string, remove bool) ([]StagingFolder, error) {
+	entries, err := os.ReadDir(root)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var folders []StagingFolder
+	for _, entry := range entries {
+		if !entry.IsDir() || !(strings.HasPrefix(entry.Name(), "."+pluginName+"-schema-preflight-") ||
+			strings.HasPrefix(entry.Name(), "."+pluginName+"-bundle-")) {
+			continue
+		}
+		folder := StagingFolder{Path: filepath.Join(root, entry.Name())}
+		info, err := os.Lstat(folder.Path)
+		directories := map[string]time.Time{}
+		if err == nil {
+			modified := info.ModTime()
+			folder.Age = time.Since(modified)
+			_ = filepath.Walk(folder.Path, func(path string, info os.FileInfo, inspectErr error) error {
+				err = errors.Join(err, inspectErr)
+				if info != nil {
+					if info.ModTime().After(modified) {
+						modified = info.ModTime()
+						folder.Age = time.Since(modified)
+					}
+					if info.IsDir() {
+						directories[path] = info.ModTime()
+					} else {
+						folder.Size += info.Size()
+					}
+				}
+				return nil
+			})
+		}
+		release, lockErr := securefile.TryLock(filepath.Join(folder.Path, ".held"))
+		folder.Held = errors.Is(lockErr, securefile.ErrHeld)
+		if folder.Held {
+			lockErr = nil
+		} else if os.IsNotExist(lockErr) {
+			_, lockErr = os.Stat(folder.Path)
+		}
+		err = errors.Join(err, lockErr)
+		if err == nil && remove && folder.Age > time.Hour && !folder.Held {
+			err = os.RemoveAll(folder.Path)
+			folder.Removed = err == nil
+			if err != nil {
+				for path, modified := range directories {
+					_ = os.Chtimes(path, modified, modified)
+				}
+				folder.Size = 0
+				_ = filepath.Walk(folder.Path, func(_ string, info os.FileInfo, _ error) error {
+					if info != nil && !info.IsDir() {
+						folder.Size += info.Size()
+					}
+					return nil
+				})
+			}
+		}
+		if release != nil {
+			_ = release()
+		}
+		if err != nil {
+			folder.Cause = err.Error()
+		}
+		folders = append(folders, folder)
+	}
+	return folders, nil
+}
+
+func lockedStage(root, prefix string) (string, func(), error) {
+	directory, err := os.MkdirTemp(root, prefix)
+	var release func() error
+	if err == nil {
+		release, err = securefile.Lock(filepath.Join(directory, ".held"))
+	}
+	cleanup := func() {
+		_ = os.RemoveAll(directory)
+		if release != nil {
+			_ = release()
+		}
+	}
+	return directory, cleanup, err
 }

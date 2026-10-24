@@ -49,3 +49,27 @@ Feature: Distribution command line
   Scenario: Playground without its optional plugin prints the install hint
     When the operator asks playground without its plugin
     Then the command names the playground installation command
+
+  Scenario: Help lists exec and vector
+    When the operator asks for command-line help
+    Then the command list has an "exec" line and a "vector" line, each with a description
+    And a vector call the companion does not take names how to turn vector search on
+
+  Scenario: The session hook says an unqualified table is refused
+    When the operator runs the codex session hook
+    Then the hook does not say an unqualified table returns 0 rows and says it is refused with the qualified candidates
+
+  Scenario: The session hook names each attached alias and its tables
+    When the operator runs the codex session hook
+    Then the hook carries one alias line naming plugin_roca_corpus with sessions and exchanges and plugin_roca_ops with memories
+    And every alias the hook names is attached to roca exec
+
+  Scenario: The session hook without a database still carries the craft
+    When the operator runs the codex session hook without a database
+    Then the hook carries the craft text and no alias line
+
+  Scenario: The session hook excludes an installed optional plugin when plugins are disabled
+    When the operator runs the codex session hook with first-receipts installed and features.plugins=false
+    Then the hook names no alias of first-receipts
+    And the hook carries one alias line naming plugin_roca_corpus with sessions and exchanges and plugin_roca_ops with memories
+    And every alias the hook names is attached to roca exec

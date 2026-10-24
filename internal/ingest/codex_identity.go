@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strconv"
 )
 
 // reconcileCodexSessionIDs repairs inherited stem siblings before watermarks can
@@ -172,6 +173,22 @@ func moveCodexExchangeNumbers(ctx context.Context, tx *sql.Tx, oldID, id string,
 				return err
 			}
 		}
+	}
+	for _, field := range []string{"timestamp_owners", "source_turn_ids"} {
+		byNumber, ok := incoming[field].(map[string]any)
+		if !ok {
+			continue
+		}
+		moved := map[string]any{}
+		for key, value := range byNumber {
+			if old, err := strconv.Atoi(key); err == nil {
+				if number, ok := remapped[old]; ok {
+					key = strconv.Itoa(number)
+				}
+			}
+			moved[key] = value
+		}
+		incoming[field] = moved
 	}
 	ids, _ := incoming["source_exchange_ids"].(map[string]any)
 	for key, value := range ids {
