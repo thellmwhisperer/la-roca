@@ -13,7 +13,12 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/thellmwhisperer/la-roca/internal/distribution/bundledplugin"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacron"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocavector"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/supportreport"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
@@ -29,10 +34,11 @@ const (
 
 type doctorReport struct {
 	service.DoctorReport
-	QueryFailures     logfile.QueryFailureSummary `json:"query_failures"`
-	Vector            *vectorDoctorReport         `json:"vector,omitempty"`
-	ReadOnlySnapshots leftoverSnapshots           `json:"read_only_snapshots"`
-	ForeignOwned      []stateOwnership            `json:"foreign_owned,omitempty"`
+	QueryFailures     logfile.QueryFailureSummary   `json:"query_failures"`
+	Vector            *vectorDoctorReport           `json:"vector,omitempty"`
+	ReadOnlySnapshots leftoverSnapshots             `json:"read_only_snapshots"`
+	ForeignOwned      []stateOwnership              `json:"foreign_owned,omitempty"`
+	PluginStaging     []bundledplugin.StagingFolder `json:"plugin_staging"`
 }
 
 type stateOwnership struct {
@@ -83,13 +89,20 @@ func doctorCommand(env *cliEnv) *cobra.Command {
 				answer := doctorReport{DoctorReport: report, QueryFailures: failures,
 					Vector:            env.collectVectorDoctor(cmd.Context()),
 					ReadOnlySnapshots: collectSnapshotDoctor(),
-					ForeignOwned:      foreignOwned}
+					ForeignOwned:      foreignOwned,
+					PluginStaging:     env.collectPluginStaging()}
 				if env.json {
 					return env.printJSON(answer)
 				}
 				renderDoctor(env, report)
 				renderVectorDoctor(env, answer.Vector)
 				renderSnapshotDoctor(env, answer.ReadOnlySnapshots)
+				if len(answer.PluginStaging) == 0 {
+					env.print("plugin staging: none leftover")
+				}
+				for _, folder := range answer.PluginStaging {
+					env.print("plugin staging: %s · %d bytes · %s", folder.Path, folder.Size, folder.Cause)
+				}
 				renderForeignOwnedState(env, answer.ForeignOwned)
 				renderQueryFailures(env, failures)
 				if err := env.offerSnapshotCleanup(cmd, answer.ReadOnlySnapshots); err != nil {
@@ -134,6 +147,25 @@ func doctorCommand(env *cliEnv) *cobra.Command {
 		"emit a privacy-safe support snapshot for pasting into a chat or issue")
 	cmd.AddCommand(doctorRepairCommand(env))
 	return cmd
+}
+
+func (env *cliEnv) collectPluginStaging() []bundledplugin.StagingFolder {
+	home, _ := os.UserHomeDir()
+	root := filepath.Join(home, config.DirOwn, "plugins")
+	remove := !env.forceReadOnly && !config.ReadOnly(os.Getenv(config.EnvReadOnly))
+	leftovers := []bundledplugin.StagingFolder{}
+	for _, name := range []string{rocaops.Name, rocacorpus.Name, rocacron.Name, rocavector.Name} {
+		folders, _ := bundledplugin.SweepStaging(root, name, remove)
+		for _, folder := range folders {
+			if folder.Age > time.Hour && !folder.Held && !folder.Removed {
+				if !remove && folder.Cause == "" {
+					folder.Cause = "read-only mode"
+				}
+				leftovers = append(leftovers, folder)
+			}
+		}
+	}
+	return leftovers
 }
 
 type doctorSupportReport struct {

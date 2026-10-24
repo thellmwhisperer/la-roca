@@ -133,9 +133,7 @@ func prepare(root, binDir, version string, spec Spec, validateUnchanged bool) (p
 	if root == "" || binDir == "" {
 		return preparedBundle{}, fmt.Errorf("plugin root and executable directory are required")
 	}
-	if _, err := SweepStaging(root, spec.Name, true); err != nil {
-		return preparedBundle{}, err
-	}
+	_, _ = SweepStaging(root, spec.Name, true)
 	if strings.TrimSpace(version) == "" {
 		version = "dev"
 	}
@@ -623,15 +621,17 @@ func resultFromManifest(directory string, manifest plugininstall.Manifest) plugi
 // StagingFolder describes a temporary bundle or schema preflight, never an
 // installed plugin. Age is measured from the directory's modification time.
 type StagingFolder struct {
-	Path    string
-	Size    int64
-	Age     time.Duration
-	Held    bool
-	Removed bool
+	Path    string        `json:"path"`
+	Size    int64         `json:"bytes"`
+	Age     time.Duration `json:"-"`
+	Held    bool          `json:"-"`
+	Removed bool          `json:"-"`
+	Cause   string        `json:"cause"`
 }
 
 // SweepStaging lists one plugin's staging folders and, when remove is true,
 // removes only those older than one hour whose .held lock is free.
+// Folder failures are recorded in Cause; only a plugin root read failure is returned.
 func SweepStaging(root, pluginName string, remove bool) ([]StagingFolder, error) {
 	entries, err := os.ReadDir(root)
 	if os.IsNotExist(err) {
@@ -676,7 +676,7 @@ func SweepStaging(root, pluginName string, remove bool) ([]StagingFolder, error)
 			_ = release()
 		}
 		if err != nil {
-			return folders, err
+			folder.Cause = err.Error()
 		}
 		folders = append(folders, folder)
 	}

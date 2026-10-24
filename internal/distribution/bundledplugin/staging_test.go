@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +12,76 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/bundledplugin"
 	"github.com/thellmwhisperer/la-roca/internal/securefile"
 )
+
+func TestSweepStagingRecordsFolderFailuresAndContinues(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("requires Unix permissions without root privileges")
+	}
+	for _, failure := range []string{"inspection", "lock", "removal"} {
+		t.Run(failure, func(t *testing.T) {
+			root := t.TempDir()
+			stuck := filepath.Join(root, ".alpha-bundle-a-stuck")
+			good := filepath.Join(root, ".alpha-bundle-z-removable")
+			sub := filepath.Join(stuck, "sub")
+			for _, path := range []string{sub, good} {
+				if err := os.MkdirAll(path, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.WriteFile(filepath.Join(sub, "payload"), []byte("12345"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if err := os.Chmod(sub, 0o700); err != nil {
+					t.Error(err)
+				}
+			})
+			switch failure {
+			case "inspection", "removal":
+				mode := os.FileMode(0o500)
+				if failure == "inspection" {
+					mode = 0
+				}
+				if err := os.Chmod(sub, mode); err != nil {
+					t.Fatal(err)
+				}
+			case "lock":
+				if err := os.Mkdir(filepath.Join(stuck, ".held"), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			old := time.Now().Add(-2 * time.Hour)
+			for _, path := range []string{stuck, good} {
+				if err := os.Chtimes(path, old, old); err != nil {
+					t.Fatal(err)
+				}
+			}
+			folders, err := bundledplugin.SweepStaging(root, "alpha", true)
+			if err != nil || len(folders) != 2 {
+				t.Fatalf("sweep = %+v, %v", folders, err)
+			}
+			if folders[0].Path != stuck || folders[0].Cause == "" || folders[0].Removed {
+				t.Fatalf("failure not recorded: %+v", folders[0])
+			}
+			if failure == "removal" && (folders[0].Size != 5 || !strings.Contains(folders[0].Cause, "permission denied")) {
+				t.Fatalf("removal diagnosis = %+v", folders[0])
+			}
+			if folders[1].Path != good || !folders[1].Removed || folders[1].Cause != "" {
+				t.Fatalf("sweep did not continue: %+v", folders[1])
+			}
+		})
+	}
+}
+
+func TestSweepStagingReturnsPluginRootFailure(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(root, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bundledplugin.SweepStaging(root, "alpha", true); err == nil {
+		t.Fatal("plugin root failure was ignored")
+	}
+}
 
 func TestSweepStagingListsSizeAgeAndLocksBeforeRemoval(t *testing.T) {
 	root := t.TempDir()

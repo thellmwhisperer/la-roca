@@ -34,17 +34,24 @@ func TestPluginStagingAcceptance(t *testing.T) {
 				return c, err
 			})
 			ctx.After(func(c context.Context, _ *godog.Scenario, _ error) (context.Context, error) {
+				if m.stagingCleanup != nil {
+					if err := m.stagingCleanup(); err != nil {
+						return c, err
+					}
+				}
 				return c, os.RemoveAll(m.home)
 			})
 			ctx.Given(`^a clean HOME with no trace of Roca$`, func() error { return nil })
 			ctx.When(`^I run "([^"]*)"$`, m.iRun)
 			ctx.Then(`^the command exits with code (\d+)$`, m.itExitsWithCode)
 			ctx.Then(`^the command exits with a code other than 0$`, m.itExitsWithNonZeroCode)
+			ctx.Then(`^the output contains "([^"]*)"$`, m.outputContains)
 			registerPluginStagingSteps(ctx, m)
 		})
 }
 
 func registerPluginStagingSteps(ctx *godog.ScenarioContext, m *world) {
+	registerStagingSweepSteps(ctx, m)
 	var release func() error
 	var preserved []string
 	var fresh string
