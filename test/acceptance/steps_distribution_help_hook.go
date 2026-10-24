@@ -3,6 +3,8 @@
 package acceptance
 
 import (
+	"crypto/sha256"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -32,6 +34,9 @@ func registerDistributionHelpHookSteps(ctx *godog.ScenarioContext, w *distributi
 		w.hookNamesBundledAliases)
 	ctx.Then(`^every alias the hook names is attached to roca exec$`, w.hookAliasesAreAttached)
 	ctx.Then(`^the hook carries the craft text and no alias line$`, w.hookCarriesOnlyTheCraft)
+	ctx.When(`^the operator runs the codex session hook with first-receipts installed and features.plugins=false$`,
+		w.runCodexSessionHookWithDisabledPlugin)
+	ctx.Then(`^the hook names no alias of first-receipts$`, w.hookOmitsDisabledPlugin)
 }
 
 func (w *distributionWorld) helpListsCommands(first, second string) error {
@@ -149,6 +154,94 @@ func (w *distributionWorld) hookCarriesOnlyTheCraft() error {
 		!strings.Contains(body, "an unqualified table name is refused with the qualified candidates") ||
 		strings.Contains(body, sessionAliasPrefix) {
 		return fmt.Errorf("hook body without a database:\n%s", body)
+	}
+	return nil
+}
+
+func (w *distributionWorld) runCodexSessionHookWithDisabledPlugin() error {
+	if err := w.prepare("session-hook-disabled-plugin"); err != nil {
+		return err
+	}
+	source := filepath.Join(w.root, "first-receipts")
+	if err := os.MkdirAll(source, 0o700); err != nil {
+		return err
+	}
+	db, err := sql.Open("sqlite", filepath.Join(source, "receipts.db"))
+	if err != nil {
+		return err
+	}
+	_, execErr := db.Exec(`CREATE TABLE receipts (id INTEGER PRIMARY KEY, title TEXT, amount_cents INTEGER);
+		INSERT INTO receipts (title, amount_cents) VALUES ('coffee', 420)`)
+	closeErr := db.Close()
+	if execErr != nil {
+		return execErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	manifest := `{
+  "schema": 1, "name": "first-receipts", "version": "1.0.0", "binary": "roca",
+  "databases": [{
+    "name": "records", "path": "receipts.db", "alias": "first_receipts",
+    "attachment": "on-demand", "retention": "Keep receipts until the operator removes them."
+  }],
+  "semantic": {"databases": [{
+    "database": "records", "description": "Purchase receipts and their totals.",
+    "questions": ["Which receipts were recorded?"],
+    "tables": [{"name": "receipts", "description": "One row per purchase receipt.",
+      "columns": ["id", "title", "amount_cents"]}]
+  }]}
+}`
+	if err := writeFixture(filepath.Join(source, "plugin.json"), manifest); err != nil {
+		return err
+	}
+	var checksums strings.Builder
+	for _, name := range []string{"plugin.json", "receipts.db"} {
+		body, err := os.ReadFile(filepath.Join(source, name))
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(&checksums, "%x  %s\n", sha256.Sum256(body), name)
+	}
+	if err := writeFixture(filepath.Join(source, "checksums.txt"), checksums.String()); err != nil {
+		return err
+	}
+	installed := w.runAt(w.home, w.installed, "plugin", "install", source, "--yes")
+	if installed.code != 0 {
+		return fmt.Errorf("install first-receipts: %+v", installed)
+	}
+	statement := "SELECT title, amount_cents FROM first_receipts.receipts"
+	if run := w.runAt(w.home, w.installed, "exec", statement); run.code != 0 ||
+		!strings.Contains(run.stdout, "coffee") {
+		return fmt.Errorf("first-receipts with plugins enabled: %+v", run)
+	}
+	config := strings.Replace(distributionPreparedConfig, "plugins = true", "plugins = false", 1)
+	if err := writeFixture(filepath.Join(w.home, ".roca", "config.toml"), config); err != nil {
+		return err
+	}
+	if run := w.runAt(w.home, w.installed, "exec", statement); run.code == 0 {
+		return fmt.Errorf("roca exec attached first-receipts with plugins disabled: %+v", run)
+	}
+	run := w.runAt(w.home, w.installed, "hooks", "run", "session", "--runtime", "codex")
+	var envelope struct {
+		HookSpecificOutput struct {
+			AdditionalContext string `json:"additionalContext"`
+		} `json:"hookSpecificOutput"`
+	}
+	if run.code != 0 || json.Unmarshal([]byte(run.stdout), &envelope) != nil {
+		return fmt.Errorf("codex session hook with plugins disabled: %+v", run)
+	}
+	w.state["hook-body"] = envelope.HookSpecificOutput.AdditionalContext
+	return nil
+}
+
+func (w *distributionWorld) hookOmitsDisabledPlugin() error {
+	aliases, err := w.hookAliasLine()
+	if err != nil {
+		return err
+	}
+	if _, found := aliases["first_receipts"]; found {
+		return fmt.Errorf("hook names disabled first-receipts alias: %v", aliases)
 	}
 	return nil
 }

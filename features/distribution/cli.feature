@@ -67,3 +67,9 @@ Feature: Distribution command line
   Scenario: The session hook without a database still carries the craft
     When the operator runs the codex session hook without a database
     Then the hook carries the craft text and no alias line
+
+  Scenario: The session hook excludes an installed optional plugin when plugins are disabled
+    When the operator runs the codex session hook with first-receipts installed and features.plugins=false
+    Then the hook names no alias of first-receipts
+    And the hook carries one alias line naming plugin_roca_corpus with sessions and exchanges and plugin_roca_ops with memories
+    And every alias the hook names is attached to roca exec

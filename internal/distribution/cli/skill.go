@@ -468,8 +468,16 @@ func (env *cliEnv) hooksEnv() hooks.Env {
 			return svc, err
 		},
 		Catalog: func() ([]plugin.Database, error) {
-			_, databases, _, err := env.discoverPluginContracts()
-			return databases, err
+			scoped := *env
+			scoped.forceReadOnly = true
+			svc, _, err := scoped.openService()
+			if err != nil {
+				return nil, err
+			}
+			defer svc.Close()
+			route := svc.InventoryRoute(context.Background())
+			defer route.CloseOnDemand()
+			return route.Databases, nil
 		},
 		RegisteredHook: func(runtime, path string) (artifact.Entry, bool, error) {
 			return env.registeredArtifact(artifactKindHook, runtime, path)

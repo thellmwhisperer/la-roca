@@ -91,16 +91,7 @@ func sessionSection[T any](ctx context.Context, env Env,
 	return strings.TrimRight(render(result), "\n")
 }
 
-// aliasLine names each attach alias and its tables from the catalog the
-// roca-semantica skill is generated from, so a session that skips the skill
-// still qualifies its tables. No database, no line.
 func aliasLine(env Env) string {
-	svc, err := env.OpenSessionContext()
-	if err != nil {
-		return ""
-	}
-	svc.Close()
-	// A catalog that cannot be read is nil, which renders no aliases.
 	databases, _ := env.Catalog()
 	aliases := make([]string, len(databases))
 	for i, database := range databases {
