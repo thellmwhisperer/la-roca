@@ -143,6 +143,17 @@ Feature: The full installation cycle
     Then the command exits with code 0
 
   @fast @acceptance @plugin-staging
+  Scenario: Staging sweep keeps an old folder whose contents were just written
+    Given an initialized home for the staging sweep
+    And an old plugin staging folder holding a file written a moment ago
+    When I run "roca _install-bundled-plugins --json"
+    Then the command exits with code 0
+    And the old staging folder still exists
+    When I run "roca doctor --json"
+    Then the command exits with code 0
+    And doctor lists no plugin staging folder
+
+  @fast @acceptance @plugin-staging
   Scenario: Staging sweep reports an unremovable leftover in doctor JSON
     Given an initialized home for the staging sweep
     And an old "unremovable" plugin staging folder

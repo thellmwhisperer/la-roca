@@ -52,6 +52,17 @@ func registerStagingSweepSteps(ctx *godog.ScenarioContext, m *world) {
 		}
 		return nil
 	})
+	ctx.Given(`^an old plugin staging folder holding a file written a moment ago$`, func() error {
+		folder = filepath.Join(m.home, ".roca", "plugins", ".roca-corpus-bundle-writing")
+		if err := os.MkdirAll(folder, 0o700); err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(folder, "payload"), []byte("12345"), 0o600); err != nil {
+			return err
+		}
+		old := time.Now().Add(-2 * time.Hour)
+		return os.Chtimes(folder, old, old)
+	})
 	ctx.Given(`^the old staging folder has an unlocked lock file$`, func() error {
 		path := filepath.Join(folder, ".held")
 		if err := os.WriteFile(path, nil, 0o600); err != nil {
@@ -96,6 +107,18 @@ func registerStagingSweepSteps(ctx *godog.ScenarioContext, m *world) {
 		got := report.PluginStaging[0]
 		if got.Path != folder || got.Bytes != 5 || !strings.Contains(got.Cause, cause) {
 			return fmt.Errorf("plugin_staging = %+v, want %s, 5 bytes, %s", got, folder, cause)
+		}
+		return nil
+	})
+	ctx.Then(`^doctor lists no plugin staging folder$`, func() error {
+		var report struct {
+			PluginStaging []json.RawMessage `json:"plugin_staging"`
+		}
+		if err := json.Unmarshal([]byte(m.last.stdout), &report); err != nil {
+			return err
+		}
+		if len(report.PluginStaging) != 0 {
+			return fmt.Errorf("plugin_staging = %s, want none", report.PluginStaging)
 		}
 		return nil
 	})

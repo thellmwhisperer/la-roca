@@ -681,9 +681,7 @@ func SweepStaging(root, pluginName string, remove bool) ([]StagingFolder, error)
 			folder.Removed = err == nil
 			if err != nil {
 				for path, modified := range directories {
-					if restoreErr := os.Chtimes(path, modified, modified); restoreErr != nil && !os.IsNotExist(restoreErr) {
-						err = errors.Join(err, restoreErr)
-					}
+					_ = os.Chtimes(path, modified, modified)
 				}
 				folder.Size = 0
 				_ = filepath.Walk(folder.Path, func(_ string, info os.FileInfo, _ error) error {
