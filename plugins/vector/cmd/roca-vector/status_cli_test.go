@@ -46,7 +46,7 @@ func TestStatusCommandReportsAXIRowsWithoutWaitingForTheModel(t *testing.T) {
 			{"plugin":"claude-code-parser","database":"corpus","path":"claude-code-corpus.db","alias":"parser","tables":[{"name":"sessions","id_column":"session_id","text_columns":["title"]}]},
 			{"plugin":"roca-corpus","database":"corpus","path":"roca-corpus.db","alias":"corpus","tables":[{"name":"notes","id_column":"id","text_columns":["body"]}]},
 			{"plugin":"roca-notes","database":"notes","path":"notes.db","alias":"notes","tables":[{"name":"task_state_versions","id_column":"id","text_columns":["body"]}]},
-			{"plugin":"roca-client-b","database":"client-b","path":"roca-client-b.db","alias":"client-b","tables":[{"name":"messages","id_column":"id","text_columns":["body"]}]},
+			{"plugin":"roca-client-b","database":"clientb","path":"roca-client-b.db","alias":"clientb","tables":[{"name":"messages","id_column":"id","text_columns":["body"]}]},
 			{"plugin":"roca-ops","database":"ops","path":"roca-ops.db","alias":"ops","tables":[{"name":"memories","id_column":"id","text_columns":["content"]}]}
 		]
 	}`
