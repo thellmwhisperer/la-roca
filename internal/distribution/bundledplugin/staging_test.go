@@ -106,15 +106,7 @@ func TestSweepStagingKeepsAgeAndLocksAcrossFolderFailures(t *testing.T) {
 					}
 					defer release()
 				}
-				old := time.Now().Add(-2 * time.Hour)
-				if err := filepath.Walk(directory, func(path string, _ os.FileInfo, err error) error {
-					if err != nil {
-						return err
-					}
-					return os.Chtimes(path, old, old)
-				}); err != nil {
-					t.Fatal(err)
-				}
+				ageTree(t, directory)
 				mode := os.FileMode(0o500)
 				if failure == "unreadable" {
 					protected = directory
@@ -233,15 +225,7 @@ func TestSweepStagingCountsSurvivingBytesAfterPartialRemoval(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(sub, "payload"), []byte("12345"), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			old := time.Now().Add(-2 * time.Hour)
-			if err := filepath.Walk(directory, func(path string, _ os.FileInfo, err error) error {
-				if err != nil {
-					return err
-				}
-				return os.Chtimes(path, old, old)
-			}); err != nil {
-				t.Fatal(err)
-			}
+			ageTree(t, directory)
 			if err := os.Chmod(sub, 0o500); err != nil {
 				t.Fatal(err)
 			}
@@ -255,6 +239,20 @@ func TestSweepStagingCountsSurvivingBytesAfterPartialRemoval(t *testing.T) {
 				t.Fatalf("surviving size = %+v, %v; want 5 bytes", folders, err)
 			}
 		})
+	}
+}
+
+// ageTree makes every entry under directory two hours old.
+func ageTree(t *testing.T, directory string) {
+	t.Helper()
+	old := time.Now().Add(-2 * time.Hour)
+	if err := filepath.Walk(directory, func(path string, _ os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		return os.Chtimes(path, old, old)
+	}); err != nil {
+		t.Fatal(err)
 	}
 }
 
