@@ -47,6 +47,7 @@ func TestPluginStagingAcceptance(t *testing.T) {
 func registerPluginStagingSteps(ctx *godog.ScenarioContext, m *world) {
 	var release func() error
 	var preserved []string
+	var fresh string
 	root := func() string { return filepath.Join(m.home, ".roca", "plugins") }
 	held := func() string { return filepath.Join(root(), ".roca-corpus-bundle-held", ".held") }
 	ctx.After(func(c context.Context, _ *godog.Scenario, _ error) (context.Context, error) {
@@ -55,12 +56,14 @@ func registerPluginStagingSteps(ctx *godog.ScenarioContext, m *world) {
 			release = nil
 		}
 		preserved = nil
+		fresh = ""
 		return c, nil
 	})
 	ctx.Given(`^abandoned bundled plugin staging folders$`, func() error {
-		for _, name := range []string{
+		names := []string{
 			".roca-corpus-schema-preflight-abandoned", ".roca-corpus-bundle-one", ".roca-corpus-bundle-two",
-		} {
+		}
+		for _, name := range names {
 			directory := filepath.Join(root(), name)
 			if err := os.MkdirAll(directory, 0o700); err != nil {
 				return err
@@ -70,7 +73,24 @@ func registerPluginStagingSteps(ctx *godog.ScenarioContext, m *world) {
 			}
 		}
 		// One old lock file is unlocked; the others predate the lock protocol.
-		return os.WriteFile(filepath.Join(root(), ".roca-corpus-bundle-one", ".held"), nil, 0o600)
+		if err := os.WriteFile(filepath.Join(root(), ".roca-corpus-bundle-one", ".held"), nil, 0o600); err != nil {
+			return err
+		}
+		old := time.Now().Add(-2 * time.Hour)
+		for _, name := range names {
+			if err := os.Chtimes(filepath.Join(root(), name), old, old); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	ctx.Given(`^a just-created "([^"]*)" staging folder without a lock$`, func(kind string) error {
+		fresh = filepath.Join(root(), ".roca-corpus-"+kind+"-fresh")
+		return os.MkdirAll(fresh, 0o700)
+	})
+	ctx.Then(`^the just-created staging folder still exists$`, func() error {
+		_, err := os.Stat(fresh)
+		return err
 	})
 	ctx.Given(`^the plugin staging filesystem fails at "([^"]*)"$`, func(location string) error {
 		if err := os.MkdirAll(filepath.Dir(root()), 0o700); err != nil {
@@ -92,7 +112,11 @@ func registerPluginStagingSteps(ctx *godog.ScenarioContext, m *world) {
 		}
 		var err error
 		release, err = securefile.Lock(held())
-		return err
+		if err != nil {
+			return err
+		}
+		old := time.Now().Add(-2 * time.Hour)
+		return os.Chtimes(filepath.Dir(held()), old, old)
 	})
 	ctx.When(`^I install bundled plugins while the staging lock is held$`, func() error {
 		// A blocking sweep cannot finish until this step returns and releases

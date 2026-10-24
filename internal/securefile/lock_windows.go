@@ -17,9 +17,9 @@ func LockExisting(path string) (func() error, error) {
 	return lock(path, windows.OPEN_EXISTING, windows.LOCKFILE_EXCLUSIVE_LOCK)
 }
 
-// TryLock is Lock without waiting; it returns ErrHeld if the lock is busy.
+// TryLock takes an existing lock without waiting; it returns ErrHeld if busy.
 func TryLock(path string) (func() error, error) {
-	return lock(path, windows.OPEN_ALWAYS, windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY)
+	return lock(path, windows.OPEN_EXISTING, windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY)
 }
 
 func lock(path string, disposition, operation uint32) (func() error, error) {

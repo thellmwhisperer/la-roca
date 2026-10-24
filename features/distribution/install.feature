@@ -69,6 +69,18 @@ Feature: The full installation cycle
     And no bundled plugin staging folders remain
 
   @fast @acceptance @plugin-staging
+  Scenario Outline: A just-created plugin staging folder survives installation
+    Given a just-created "<kind>" staging folder without a lock
+    When I run "roca _install-bundled-plugins --json"
+    Then the command exits with code 0
+    And the just-created staging folder still exists
+
+    Examples:
+      | kind             |
+      | bundle           |
+      | schema-preflight |
+
+  @fast @acceptance @plugin-staging
   Scenario: Plugin staging stays empty after repeated installations
     When I run "roca _install-bundled-plugins --json"
     Then the command exits with code 0

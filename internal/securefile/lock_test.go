@@ -2,6 +2,7 @@ package securefile_test
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -10,6 +11,12 @@ import (
 
 func TestTryLockDoesNotWaitAndCanBeReacquired(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ".held")
+	if unlock, err := securefile.TryLock(path); !os.IsNotExist(err) || unlock != nil {
+		t.Fatalf("missing lock = %v, unlock present = %v", err, unlock != nil)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("missing lock was created: %v", err)
+	}
 	release, err := securefile.Lock(path)
 	if err != nil {
 		t.Fatal(err)

@@ -2,6 +2,7 @@ package bundledplugin_test
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,15 +25,17 @@ func TestSweepStagingListsSizeAgeAndLocksBeforeRemoval(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(stale, "alpha.db"), []byte("database"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	old := time.Now().Add(-time.Hour)
-	if err := os.Chtimes(stale, old, old); err != nil {
-		t.Fatal(err)
-	}
 	release, err := securefile.Lock(filepath.Join(held, ".held"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer release()
+	old := time.Now().Add(-2 * time.Hour)
+	for _, directory := range []string{stale, held} {
+		if err := os.Chtimes(directory, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
 	listed, err := bundledplugin.SweepStaging(root, "alpha", false)
 	if err != nil || len(listed) != 2 {
 		t.Fatalf("list = %+v, %v", listed, err)
@@ -64,6 +67,70 @@ func TestSweepStagingListsSizeAgeAndLocksBeforeRemoval(t *testing.T) {
 		if _, err := os.Stat(directory); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestSweepStagingPreservesFreshFolders(t *testing.T) {
+	for _, kind := range []string{"bundle", "schema-preflight"} {
+		t.Run(kind, func(t *testing.T) {
+			root := t.TempDir()
+			directory := filepath.Join(root, ".alpha-"+kind+"-fresh")
+			if err := os.Mkdir(directory, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			folders, err := bundledplugin.SweepStaging(root, "alpha", true)
+			if err != nil || len(folders) != 1 {
+				t.Fatalf("sweep = %+v, %v", folders, err)
+			}
+			if folders[0].Removed || folders[0].Held || folders[0].Age > time.Hour {
+				t.Fatalf("fresh folder = %+v", folders[0])
+			}
+			if _, err := os.Stat(directory); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestSweepStagingConcurrentRemoval(t *testing.T) {
+	for _, kind := range []string{"bundle", "schema-preflight"} {
+		t.Run(kind, func(t *testing.T) {
+			root := t.TempDir()
+			old := time.Now().Add(-2 * time.Hour)
+			for i := 0; i < 24; i++ {
+				directory := filepath.Join(root, fmt.Sprintf(".alpha-%s-%02d", kind, i))
+				if err := os.Mkdir(directory, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if i%2 == 0 {
+					if err := os.WriteFile(filepath.Join(directory, ".held"), nil, 0o600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := os.Chtimes(directory, old, old); err != nil {
+					t.Fatal(err)
+				}
+			}
+			start := make(chan struct{})
+			results := make(chan error, 8)
+			for i := 0; i < cap(results); i++ {
+				go func() {
+					<-start
+					_, err := bundledplugin.SweepStaging(root, "alpha", true)
+					results <- err
+				}()
+			}
+			close(start)
+			for i := 0; i < cap(results); i++ {
+				if err := <-results; err != nil {
+					t.Error(err)
+				}
+			}
+			entries, err := os.ReadDir(root)
+			if err != nil || len(entries) != 0 {
+				t.Fatalf("staging remains after concurrent sweeps: %v, %v", entries, err)
+			}
+		})
 	}
 }
 

@@ -18,9 +18,9 @@ func LockExisting(path string) (func() error, error) {
 	return lock(path, os.O_RDWR, unix.LOCK_EX)
 }
 
-// TryLock is Lock without waiting; it returns ErrHeld if the lock is busy.
+// TryLock takes an existing lock without waiting; it returns ErrHeld if busy.
 func TryLock(path string) (func() error, error) {
-	return lock(path, os.O_CREATE|os.O_RDWR, unix.LOCK_EX|unix.LOCK_NB)
+	return lock(path, os.O_RDWR, unix.LOCK_EX|unix.LOCK_NB)
 }
 
 func lock(path string, flags, operation int) (func() error, error) {

@@ -631,8 +631,7 @@ type StagingFolder struct {
 }
 
 // SweepStaging lists one plugin's staging folders and, when remove is true,
-// removes only those whose .held lock can be acquired without waiting.
-// Listing also probes the locks, creating .held for folders from older builds.
+// removes only those older than one hour whose .held lock is free.
 func SweepStaging(root, pluginName string, remove bool) ([]StagingFolder, error) {
 	entries, err := os.ReadDir(root)
 	if os.IsNotExist(err) {
@@ -665,14 +664,19 @@ func SweepStaging(root, pluginName string, remove bool) ([]StagingFolder, error)
 			folder.Held = errors.Is(err, securefile.ErrHeld)
 			if folder.Held {
 				err = nil
+			} else if os.IsNotExist(err) {
+				_, err = os.Stat(folder.Path)
 			}
 		}
-		if err == nil && remove && !folder.Held {
+		if err == nil && remove && folder.Age > time.Hour && !folder.Held {
 			err = os.RemoveAll(folder.Path)
 			folder.Removed = err == nil
 		}
 		if release != nil {
 			_ = release()
+		}
+		if os.IsNotExist(err) {
+			continue
 		}
 		if err != nil {
 			return folders, err
@@ -689,10 +693,10 @@ func lockedStage(root, prefix string) (string, func(), error) {
 		release, err = securefile.Lock(filepath.Join(directory, ".held"))
 	}
 	cleanup := func() {
+		_ = os.RemoveAll(directory)
 		if release != nil {
 			_ = release()
 		}
-		_ = os.RemoveAll(directory)
 	}
 	return directory, cleanup, err
 }
