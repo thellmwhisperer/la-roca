@@ -215,6 +215,49 @@ func TestSweepStagingPreservesRecentDirectoryAndFileActivity(t *testing.T) {
 	}
 }
 
+func TestSweepStagingCountsSurvivingBytesAfterPartialRemoval(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("requires Unix permissions without root privileges")
+	}
+	for _, kind := range []string{"bundle", "schema-preflight"} {
+		t.Run(kind, func(t *testing.T) {
+			root := t.TempDir()
+			directory := filepath.Join(root, ".alpha-"+kind+"-leftover")
+			sub := filepath.Join(directory, "sub")
+			if err := os.MkdirAll(sub, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(directory, "removable"), []byte("deleted payload"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(sub, "payload"), []byte("12345"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			old := time.Now().Add(-2 * time.Hour)
+			if err := filepath.Walk(directory, func(path string, _ os.FileInfo, err error) error {
+				if err != nil {
+					return err
+				}
+				return os.Chtimes(path, old, old)
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(sub, 0o500); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if err := os.Chmod(sub, 0o700); err != nil {
+					t.Error(err)
+				}
+			})
+			folders, err := bundledplugin.SweepStaging(root, "alpha", true)
+			if err != nil || len(folders) != 1 || folders[0].Size != 5 {
+				t.Fatalf("surviving size = %+v, %v; want 5 bytes", folders, err)
+			}
+		})
+	}
+}
+
 func TestSweepStagingReturnsPluginRootFailure(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "not-a-directory")
 	if err := os.WriteFile(root, nil, 0o600); err != nil {

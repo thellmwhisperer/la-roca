@@ -685,6 +685,13 @@ func SweepStaging(root, pluginName string, remove bool) ([]StagingFolder, error)
 						err = errors.Join(err, restoreErr)
 					}
 				}
+				folder.Size = 0
+				_ = filepath.Walk(folder.Path, func(_ string, info os.FileInfo, _ error) error {
+					if info != nil && !info.IsDir() {
+						folder.Size += info.Size()
+					}
+					return nil
+				})
 			}
 		}
 		if release != nil {
