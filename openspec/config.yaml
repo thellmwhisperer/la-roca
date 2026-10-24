@@ -1,0 +1,15 @@
+schema: spec-driven
+
+context: |
+  Each change becomes one GitHub issue: Why with proof, the WHEN/THEN scenarios,
+  Done when, Not touched. The end-to-end test is the godog acceptance suite:
+  scenarios live in features/<domain>/*.feature, steps in test/acceptance, and
+  `make accept` runs them against a real `roca` binary (AGENTS.md).
+
+rules:
+  proposal:
+    - "Why ends with `Proof:` and a run id, a log line or the command that reproduces the problem. No proof, no change."
+    - "Why says, per requirement, who asked for it: Javi's literal sentence with its date and La Roca decision id, or `proposal`."
+    - "Impact names the acceptance scenarios that run the change (features/<domain>/*.feature, run by `make accept`), or the ones to write, and what is not touched."
+  specs:
+    - "Every scenario is something a real `roca` command shows or writes, checkable by the acceptance suite."
