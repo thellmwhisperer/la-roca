@@ -24,6 +24,30 @@ Most users need to do nothing: an already signed-in Codex or Claude CLI is detec
 
 The bootstrap JSON field `external_credential` is now named `command_transport`; it reports that the selected model runs through a local agent CLI without implying that La Roca owns authentication.
 
+## [1.94.0](https://github.com/thellmwhisperer/la-roca/compare/v1.93.1...v1.94.0) (2026-10-24)
+
+
+### Features
+
+* **agentcfg:** protect operator-owned MCP entries ([#531](https://github.com/thellmwhisperer/la-roca/issues/531)) ([3d87b62](https://github.com/thellmwhisperer/la-roca/commit/3d87b62d3eee18105cdd7ff63f6f06a923cf2a79))
+* **ingest:** record source identity and timestamp ownership ([#534](https://github.com/thellmwhisperer/la-roca/issues/534)) ([3d87b62](https://github.com/thellmwhisperer/la-roca/commit/3d87b62d3eee18105cdd7ff63f6f06a923cf2a79))
+* **provider:** warn in doctor about historical duplicate sessions ([#563](https://github.com/thellmwhisperer/la-roca/issues/563)) ([3d87b62](https://github.com/thellmwhisperer/la-roca/commit/3d87b62d3eee18105cdd7ff63f6f06a923cf2a79))
+* **vector:** report candidates for outdated sources ([#540](https://github.com/thellmwhisperer/la-roca/issues/540)) ([3d87b62](https://github.com/thellmwhisperer/la-roca/commit/3d87b62d3eee18105cdd7ff63f6f06a923cf2a79))
+
+
+### Bug Fixes
+
+* **cli:** list exec and vector in roca --help; session hook names attach aliases ([#565](https://github.com/thellmwhisperer/la-roca/issues/565)) ([3d87b62](https://github.com/thellmwhisperer/la-roca/commit/3d87b62d3eee18105cdd7ff63f6f06a923cf2a79))
+* **distribution:** create resident socket already restricted to 0600 ([#560](https://github.com/thellmwhisperer/la-roca/issues/560)) ([3d87b62](https://github.com/thellmwhisperer/la-roca/commit/3d87b62d3eee18105cdd7ff63f6f06a923cf2a79))
+* **distribution:** keep unremovable staging leftovers from failing commands and report them in doctor ([d22ad62](https://github.com/thellmwhisperer/la-roca/commit/d22ad62a1b51e63b4ad61b925f6f3df1c1cc4df3))
+* **distribution:** keep unremovable staging leftovers from failing commands and report them in doctor ([#568](https://github.com/thellmwhisperer/la-roca/issues/568)) ([3d87b62](https://github.com/thellmwhisperer/la-roca/commit/3d87b62d3eee18105cdd7ff63f6f06a923cf2a79))
+* **distribution:** preserve operator-owned ZCode hook settings ([#532](https://github.com/thellmwhisperer/la-roca/issues/532)) ([3d87b62](https://github.com/thellmwhisperer/la-roca/commit/3d87b62d3eee18105cdd7ff63f6f06a923cf2a79))
+* **distribution:** sweep abandoned bundled plugin staging folders on update ([#564](https://github.com/thellmwhisperer/la-roca/issues/564)) ([3d87b62](https://github.com/thellmwhisperer/la-roca/commit/3d87b62d3eee18105cdd7ff63f6f06a923cf2a79))
+* **ingest:** ingest Cowork audit turns and exclude sandbox JSON ([#538](https://github.com/thellmwhisperer/la-roca/issues/538)) ([3d87b62](https://github.com/thellmwhisperer/la-roca/commit/3d87b62d3eee18105cdd7ff63f6f06a923cf2a79))
+* preserve symlinked hook settings files ([#525](https://github.com/thellmwhisperer/la-roca/issues/525)) ([3d87b62](https://github.com/thellmwhisperer/la-roca/commit/3d87b62d3eee18105cdd7ff63f6f06a923cf2a79))
+* **search:** preserve full-text index when init probe times out ([#539](https://github.com/thellmwhisperer/la-roca/issues/539)) ([3d87b62](https://github.com/thellmwhisperer/la-roca/commit/3d87b62d3eee18105cdd7ff63f6f06a923cf2a79))
+* **securefile:** make shared file replacement crash-safe and conditional ([#527](https://github.com/thellmwhisperer/la-roca/issues/527)) ([3d87b62](https://github.com/thellmwhisperer/la-roca/commit/3d87b62d3eee18105cdd7ff63f6f06a923cf2a79))
+
 ## [1.93.1](https://github.com/thellmwhisperer/la-roca/compare/v1.93.0...v1.93.1) (2026-10-24)
 
 
