@@ -1,7 +1,9 @@
 # corpus-duplicates Specification
 
 ## Purpose
-TBD - created by archiving change doctor-reports-duplicate-sessions. Update Purpose after archive.
+Older ingests left some corpus sessions twice, with ids that differ only in the
+last character. This capability says how `roca doctor` reports them to the
+operator without changing any corpus row.
 
 ## Requirements
 
