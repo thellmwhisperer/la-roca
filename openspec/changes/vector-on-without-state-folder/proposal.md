@@ -21,8 +21,7 @@ emits a notice and leaves that database on its FTS/SQL route, a pending model
 download never blocks a query, and `roca vector install` starts the background
 pass while word search keeps answering.
 
-Who asked: proposal, from the chief of staff's report of 24-oct-2026; it
-reproduced on integration 9ebda82 and again on d22ad62.
+Who asked: issue #571; it reproduced on integration 9ebda82 and again on d22ad62.
 
 Proof: on integration d22ad62, in a disposable `HOME` with `roca` and
 `roca-vector` in `~/bin`, after `roca init --json --db-path ~/.roca/roca.db`

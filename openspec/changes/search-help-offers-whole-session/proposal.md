@@ -6,8 +6,7 @@ exchange, and `roca query` offers no per-hit line at all. The agent has to find 
 session id from the hit and write a SELECT by session ordered by exchange number; new
 agents miss that step.
 
-Who asked: proposal, from issue #547; decision 8151 orders release tickets rewritten as
-OpenSpec changes when they carry the same format problem.
+Who asked: issue #547.
 
 Proof: on 24-oct-2026, `roca vector query "<phrase>" 3 --databases corpus` prints two help
 lines: "read a hit in full" (one exchange by id) and "narrow or widen"; `roca query

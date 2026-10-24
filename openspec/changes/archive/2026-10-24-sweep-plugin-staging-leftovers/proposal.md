@@ -15,10 +15,9 @@ cleanup. `Ensure`/`EnsureAll` run on every `roca _install-bundled-plugins`, whic
 Nothing serializes two of them, so a sweep must leave alone a folder that another
 live `roca` process is still using.
 
-Who asked: proposal, from issue #550; decision 8151 (24-oct-2026, project la-roca)
-orders it rewritten as this change, carrying the piece that #551 (`roca clean`)
-builds on. Decision 8153 (same day) keeps the preflight free-space check that 8151
-listed out of this change: there is no proof of a home running out of disk, and its
+Who asked: issue #550, carrying the piece that #551 (`roca clean`) builds on. A
+preflight free-space check stays out of this change: there is no proof of a home
+running out of disk, and its
 failure branch cannot be reached by an end-to-end scenario without a product test hook.
 
 Proof: one home after the 1.87.x upgrade (same day as #432 and #461) held one
@@ -65,7 +64,6 @@ None.
   `make accept` through `roca _install-bundled-plugins --json`: old leftover preflight
   and bundle folders are gone after the install; a folder whose `.held` lock the test
   process holds survives it; a folder created a moment ago survives it.
-- Not touched: the full-size `VACUUM INTO` copy itself and any free-space check
-  (decision 8153);
+- Not touched: the full-size `VACUUM INTO` copy itself and any free-space check;
   `roca doctor` and any new command (#551); plugin databases, vector sidecars, their
   WAL/SHM/journal files, backups, logs and configuration; the schema advance rules.

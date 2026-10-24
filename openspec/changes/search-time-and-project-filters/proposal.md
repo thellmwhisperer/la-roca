@@ -5,8 +5,7 @@ Roca, and neither `roca query` nor `roca vector query` can express "last night" 
 this project". Both search the whole history; the agent then filters hits by timestamp
 or project with a hand-written SELECT.
 
-Who asked: proposal, from issue #546; decision 8151 orders release tickets rewritten as
-OpenSpec changes when they carry the same format problem.
+Who asked: issue #546.
 
 Proof: on 24-oct-2026, `roca query --help` lists `--databases`, `--max-chars`,
 `--no-templates`, `--oversample`, `--require-both` and `--top`, and

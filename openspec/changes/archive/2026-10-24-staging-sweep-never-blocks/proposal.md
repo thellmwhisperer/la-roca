@@ -13,10 +13,8 @@ The same sweep removes, on the next ordinary command, every leftover it can.
 So a separate `roca clean` command would almost never find anything to list.
 What is still missing is a report of the leftovers the sweep could not remove.
 
-Who asked: proposal, from issue #551 (`roca clean` and a doctor report);
-decision 8151 (24-oct-2026, project la-roca) orders it rewritten as this change;
-decision 8156 (24-oct-2026, project la-roca) reduces it to these two points and
-takes `roca clean` out, to a separate ticket after the release if Javi wants it.
+Who asked: issue #551 (`roca clean` and a doctor report), reduced to these two
+points; `roca clean` is out, a separate ticket if it is wanted.
 
 Proof: on the PR #564 build, 24-oct-2026, in a disposable HOME after `roca init`:
 `roca exec "SELECT count(*) FROM plugin_roca_ops.memories"` exits 0. Then create
@@ -63,7 +61,7 @@ None.
 - Acceptance scenarios, in `features/distribution/install.feature` (tag
   `@plugin-staging`), run by `make accept` against the real `roca`: the
   scenarios of `specs/plugin-staging/spec.md` that this change adds.
-- Not touched: `roca clean` and any new command (decision 8156); the one-hour
+- Not touched: `roca clean` and any new command; the one-hour
   threshold and the `.held` rule of the sweep; the read-only snapshot report of doctor; the
   ownership report of doctor; `roca doctor --report`; plugin databases, vector
   sidecars, their WAL/SHM/journal files, backups, logs and configuration.

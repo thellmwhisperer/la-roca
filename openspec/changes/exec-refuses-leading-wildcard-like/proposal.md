@@ -7,8 +7,7 @@ instead of an answer. The fast path exists (the table's FTS twin with `MATCH`, i
 milliseconds) but nothing in the binary points to it when the scan fails, and the rule
 lives in a skill that session start does not force anyone to load.
 
-Who asked: proposal, from issue #549; decision 8151 orders release tickets rewritten as
-OpenSpec changes when they carry the same format problem.
+Who asked: issue #549.
 
 Proof: on the real corpus on 24-oct-2026,
 `roca exec "SELECT count(*) FROM plugin_roca_corpus.exchanges WHERE human_text LIKE '%sweep%'"`

@@ -14,8 +14,7 @@ and the session hook. Both teach the wrong thing today.
   only in the generated `roca-semantica` skill. A session that skips the skill guesses
   table names.
 
-Who asked: proposal, from issue #548 (follow-up of #409); decision 8151 orders release
-tickets rewritten as OpenSpec changes when they carry the same format problem.
+Who asked: issue #548 (follow-up of #409).
 
 Proof: `roca --help` on v1.93.x lists no `exec` and no `vector` line;
 `roca exec "SELECT count(*) FROM sessions"` exits 1 with

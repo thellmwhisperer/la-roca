@@ -17,10 +17,8 @@ Counting by the first 35 characters alone gives false positives: the
 characters, with different start dates. A duplicate needs the same stem, the same
 `started_at` and the same title.
 
-Who asked: proposal, from issue #545; scope reduced on 24-oct-2026 by the CoS of
-workspace (decision 8152): no deletion of corpus rows, because the copies differ in
-text; only a `roca doctor` warning with the count. Deleting is a separate ticket if
-Javi asks for it.
+Who asked: issue #545. Scope: no deletion of corpus rows, because the copies differ in
+text; only a `roca doctor` warning with the count. Deleting is a separate ticket.
 
 Proof: on the real corpus, `roca exec` over `plugin_roca_corpus.sessions` grouped by
 `substr(session_id,1,35)`, `started_at` and title returns many groups with
