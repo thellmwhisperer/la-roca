@@ -4,6 +4,8 @@ package acceptance
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -37,17 +39,28 @@ func registerIngestDuplicateSteps(ctx *godog.ScenarioContext, w *ingestAcceptanc
 		if len(warnings) != 1 || !strings.Contains(warnings[0], "1 extra row in 1 group") {
 			return fmt.Errorf("duplicate-sessions warnings = %q", warnings)
 		}
-		_, listing, ok := strings.Cut(warnings[0], `roca exec "`)
+		_, listing, ok := strings.Cut(warnings[0], `roca exec `)
 		if !ok {
 			return fmt.Errorf("warning carries no SELECT: %q", warnings[0])
 		}
-		result, err := w.runCommand("exec", strings.TrimSuffix(listing, `"`), "--db-path", w.dbPath, "--json")
-		if err != nil {
+		other := filepath.Join(w.home, "other-installation")
+		if err := writeFixture(filepath.Join(other, "config.toml"), "[layout]\nserving = \"legacy-serving\"\n"); err != nil {
 			return err
 		}
+		command := exec.Command("/bin/sh", "-c", `exec "$0" exec `+listing, w.binary)
+		command.Env = []string{
+			"HOME=" + w.home,
+			"ROCA_DB_PATH=" + filepath.Join(other, "roca.db"),
+			"PATH=/usr/bin:/bin:/usr/sbin:/sbin",
+			"TMPDIR=" + filepath.Join(w.home, "tmp"),
+		}
+		if directory := os.Getenv("GOCOVERDIR"); directory != "" {
+			command.Env = append(command.Env, "GOCOVERDIR="+directory)
+		}
+		output, err := command.CombinedOutput()
 		for _, id := range []string{"60000000-0000-4000-8000-000000000010", "60000000-0000-4000-8000-000000000011"} {
-			if result.code != 0 || !strings.Contains(result.stdout, id) {
-				return fmt.Errorf("listing SELECT does not list %s: code %d: %s%s", id, result.code, result.stdout, result.stderr)
+			if err != nil || !strings.Contains(string(output), id) {
+				return fmt.Errorf("listing SELECT does not list %s: %v: %s", id, err, output)
 			}
 		}
 		return nil

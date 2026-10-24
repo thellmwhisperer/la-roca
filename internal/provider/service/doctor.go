@@ -248,7 +248,8 @@ func (s *Service) duplicateSessions(ctx context.Context) []string {
 		return fmt.Sprintf("%d %s%s", n, noun, strings.Repeat("s", min(n-1, 1)))
 	}
 	return []string{fmt.Sprintf("duplicate sessions: %s in %s share the id stem, started_at and title; "+
-		"nothing was changed. List them: roca exec \"%s\"", count(extra, "extra row"), count(groups, "group"), listing)}
+		"nothing was changed. List them: roca exec \"%s\" --db-path %s",
+		count(extra, "extra row"), count(groups, "group"), listing, shellQuoted(s.db.Path()))}
 }
 
 func (s *Service) memoryCount(ctx context.Context) int {
