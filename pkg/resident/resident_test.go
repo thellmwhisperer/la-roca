@@ -218,3 +218,13 @@ func TestProxyUnavailableStartupReturnsWithoutRetryingForever(t *testing.T) {
 		t.Fatalf("startup=%v duration=%s", err, time.Since(started))
 	}
 }
+
+func TestDialRefusesASocketWithGroupOrOtherBits(t *testing.T) {
+	_, opts := proxyListener(t)
+	if err := os.Chmod(opts.Socket, 0o660); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Dial(opts); err == nil || err.Error() != "unsafe resident socket: "+opts.Socket {
+		t.Fatalf("dial = %v", err)
+	}
+}
