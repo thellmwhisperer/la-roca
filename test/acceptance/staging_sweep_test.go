@@ -45,7 +45,25 @@ func registerStagingSweepSteps(ctx *godog.ScenarioContext, m *world) {
 			}
 		}
 		old := time.Now().Add(-2 * time.Hour)
-		return os.Chtimes(folder, old, old)
+		for _, path := range []string{filepath.Join(sub, "payload"), sub, folder} {
+			if err := os.Chtimes(path, old, old); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	ctx.Given(`^the old staging folder has an unlocked lock file$`, func() error {
+		path := filepath.Join(folder, ".held")
+		if err := os.WriteFile(path, nil, 0o600); err != nil {
+			return err
+		}
+		old := time.Now().Add(-2 * time.Hour)
+		for _, path := range []string{path, folder} {
+			if err := os.Chtimes(path, old, old); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	ctx.Given(`^staging commands use read-only mode$`, func() { m.readOnly = true })
 	ctx.Then(`^the old staging folder still exists$`, func() error {

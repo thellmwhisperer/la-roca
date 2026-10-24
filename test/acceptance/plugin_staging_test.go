@@ -85,11 +85,14 @@ func registerPluginStagingSteps(ctx *godog.ScenarioContext, m *world) {
 		}
 		old := time.Now().Add(-2 * time.Hour)
 		for _, name := range names {
+			if err := os.Chtimes(filepath.Join(root(), name, "roca-corpus.db"), old, old); err != nil {
+				return err
+			}
 			if err := os.Chtimes(filepath.Join(root(), name), old, old); err != nil {
 				return err
 			}
 		}
-		return nil
+		return os.Chtimes(filepath.Join(root(), ".roca-corpus-bundle-one", ".held"), old, old)
 	})
 	ctx.Given(`^a just-created "([^"]*)" staging folder without a lock$`, func(kind string) error {
 		fresh = filepath.Join(root(), ".roca-corpus-"+kind+"-fresh")
@@ -123,6 +126,9 @@ func registerPluginStagingSteps(ctx *godog.ScenarioContext, m *world) {
 			return err
 		}
 		old := time.Now().Add(-2 * time.Hour)
+		if err := os.Chtimes(held(), old, old); err != nil {
+			return err
+		}
 		return os.Chtimes(filepath.Dir(held()), old, old)
 	})
 	ctx.When(`^I install bundled plugins while the staging lock is held$`, func() error {

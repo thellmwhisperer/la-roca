@@ -619,7 +619,7 @@ func resultFromManifest(directory string, manifest plugininstall.Manifest) plugi
 }
 
 // StagingFolder describes a temporary bundle or schema preflight, never an
-// installed plugin. Age is measured from the directory's modification time.
+// installed plugin.
 type StagingFolder struct {
 	Path    string        `json:"path"`
 	Size    int64         `json:"bytes"`
@@ -647,30 +647,45 @@ func SweepStaging(root, pluginName string, remove bool) ([]StagingFolder, error)
 			continue
 		}
 		folder := StagingFolder{Path: filepath.Join(root, entry.Name())}
-		err := filepath.Walk(folder.Path, func(path string, info os.FileInfo, err error) error {
-			if err == nil {
-				if path == folder.Path {
-					folder.Age = time.Since(info.ModTime())
-				}
-				if !info.IsDir() {
-					folder.Size += info.Size()
-				}
-			}
-			return err
-		})
-		var release func() error
+		info, err := os.Lstat(folder.Path)
+		directories := map[string]time.Time{}
 		if err == nil {
-			release, err = securefile.TryLock(filepath.Join(folder.Path, ".held"))
-			folder.Held = errors.Is(err, securefile.ErrHeld)
-			if folder.Held {
-				err = nil
-			} else if os.IsNotExist(err) {
-				_, err = os.Stat(folder.Path)
-			}
+			modified := info.ModTime()
+			folder.Age = time.Since(modified)
+			_ = filepath.Walk(folder.Path, func(path string, info os.FileInfo, inspectErr error) error {
+				err = errors.Join(err, inspectErr)
+				if info != nil {
+					if info.ModTime().After(modified) {
+						modified = info.ModTime()
+						folder.Age = time.Since(modified)
+					}
+					if info.IsDir() {
+						directories[path] = info.ModTime()
+					} else {
+						folder.Size += info.Size()
+					}
+				}
+				return nil
+			})
 		}
+		release, lockErr := securefile.TryLock(filepath.Join(folder.Path, ".held"))
+		folder.Held = errors.Is(lockErr, securefile.ErrHeld)
+		if folder.Held {
+			lockErr = nil
+		} else if os.IsNotExist(lockErr) {
+			_, lockErr = os.Stat(folder.Path)
+		}
+		err = errors.Join(err, lockErr)
 		if err == nil && remove && folder.Age > time.Hour && !folder.Held {
 			err = os.RemoveAll(folder.Path)
 			folder.Removed = err == nil
+			if err != nil {
+				for path, modified := range directories {
+					if restoreErr := os.Chtimes(path, modified, modified); restoreErr != nil && !os.IsNotExist(restoreErr) {
+						err = errors.Join(err, restoreErr)
+					}
+				}
+			}
 		}
 		if release != nil {
 			_ = release()

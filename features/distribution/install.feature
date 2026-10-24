@@ -151,6 +151,20 @@ Feature: The full installation cycle
     And doctor lists the old staging folder with 5 bytes and cause "permission denied"
 
   @fast @acceptance @plugin-staging
+  Scenario: Staging sweep preserves a leftover diagnosis after partial deletion
+    Given an initialized home for the staging sweep
+    And an old "unremovable" plugin staging folder
+    And the old staging folder has an unlocked lock file
+    When I run "roca _install-bundled-plugins --json"
+    Then the command exits with code 0
+    When I run "roca doctor --json"
+    Then the command exits with code 0
+    And doctor lists the old staging folder with 5 bytes and cause "permission denied"
+    When I run "roca doctor --json"
+    Then the command exits with code 0
+    And doctor lists the old staging folder with 5 bytes and cause "permission denied"
+
+  @fast @acceptance @plugin-staging
   Scenario: Staging sweep reports an unremovable leftover in doctor text
     Given an initialized home for the staging sweep
     And an old "unremovable" plugin staging folder
