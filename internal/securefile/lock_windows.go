@@ -10,14 +10,19 @@ import (
 
 // Lock takes an advisory cross-process lock on a file beside the protected data.
 func Lock(path string) (func() error, error) {
-	return lock(path, windows.OPEN_ALWAYS)
+	return lock(path, windows.OPEN_ALWAYS, windows.LOCKFILE_EXCLUSIVE_LOCK)
 }
 
 func LockExisting(path string) (func() error, error) {
-	return lock(path, windows.OPEN_EXISTING)
+	return lock(path, windows.OPEN_EXISTING, windows.LOCKFILE_EXCLUSIVE_LOCK)
 }
 
-func lock(path string, disposition uint32) (func() error, error) {
+// TryLock is Lock without waiting; it returns ErrHeld if the lock is busy.
+func TryLock(path string) (func() error, error) {
+	return lock(path, windows.OPEN_ALWAYS, windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY)
+}
+
+func lock(path string, disposition, operation uint32) (func() error, error) {
 	name, err := windows.UTF16PtrFromString(path)
 	if err != nil {
 		return nil, err
@@ -35,8 +40,11 @@ func lock(path string, disposition uint32) (func() error, error) {
 		return nil, err
 	}
 	overlapped := &windows.Overlapped{}
-	if err := windows.LockFileEx(windows.Handle(file.Fd()), windows.LOCKFILE_EXCLUSIVE_LOCK, 0, 1, 0, overlapped); err != nil {
+	if err := windows.LockFileEx(windows.Handle(file.Fd()), operation, 0, 1, 0, overlapped); err != nil {
 		file.Close()
+		if err == windows.ERROR_LOCK_VIOLATION {
+			err = ErrHeld
+		}
 		return nil, err
 	}
 	release := func() error {

@@ -10,15 +10,18 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/migrationledger"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/plugininstall"
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
+	"github.com/thellmwhisperer/la-roca/internal/securefile"
 )
 
 type Spec struct {
@@ -129,6 +132,9 @@ func prepare(root, binDir, version string, spec Spec, validateUnchanged bool) (p
 	}
 	if root == "" || binDir == "" {
 		return preparedBundle{}, fmt.Errorf("plugin root and executable directory are required")
+	}
+	if _, err := SweepStaging(root, spec.Name, true); err != nil {
+		return preparedBundle{}, err
 	}
 	if strings.TrimSpace(version) == "" {
 		version = "dev"
@@ -313,11 +319,11 @@ func allowHomeMigrate() bool {
 }
 
 func preflightInstalledSchema(root, target string, spec Spec) error {
-	directory, err := os.MkdirTemp(root, "."+spec.Name+"-schema-preflight-")
+	directory, cleanup, err := lockedStage(root, "."+spec.Name+"-schema-preflight-")
+	defer cleanup()
 	if err != nil {
 		return fmt.Errorf("stage bundled %s schema preflight: %w", spec.Name, err)
 	}
-	defer os.RemoveAll(directory)
 	source := filepath.Join(target, spec.DatabaseFilename)
 	if err := probeInstalledDatabase(source, spec.Name); err != nil {
 		return err
@@ -507,11 +513,11 @@ func materialize(root, version string, spec Spec) (plugininstall.Candidate, func
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return plugininstall.Candidate{}, func() {}, fmt.Errorf("create plugin directory: %w", err)
 	}
-	directory, err := os.MkdirTemp(root, "."+spec.Name+"-bundle-")
+	directory, cleanup, err := lockedStage(root, "."+spec.Name+"-bundle-")
 	if err != nil {
+		cleanup()
 		return plugininstall.Candidate{}, func() {}, fmt.Errorf("stage bundled plugin: %w", err)
 	}
-	cleanup := func() { _ = os.RemoveAll(directory) }
 	fail := func(err error) (plugininstall.Candidate, func(), error) {
 		cleanup()
 		return plugininstall.Candidate{}, func() {}, err
@@ -612,4 +618,81 @@ func resultFromManifest(directory string, manifest plugininstall.Manifest) plugi
 		Name: manifest.Name, Version: manifest.Version, Checksum: manifest.Checksum,
 		Risk: manifest.Risk, Directory: directory, Executable: manifest.Executable,
 	}
+}
+
+// StagingFolder describes a temporary bundle or schema preflight, never an
+// installed plugin. Age is measured from the directory's modification time.
+type StagingFolder struct {
+	Path    string
+	Size    int64
+	Age     time.Duration
+	Held    bool
+	Removed bool
+}
+
+// SweepStaging lists one plugin's staging folders and, when remove is true,
+// removes only those whose .held lock can be acquired without waiting.
+// Listing also probes the locks, creating .held for folders from older builds.
+func SweepStaging(root, pluginName string, remove bool) ([]StagingFolder, error) {
+	entries, err := os.ReadDir(root)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var folders []StagingFolder
+	for _, entry := range entries {
+		if !entry.IsDir() || !(strings.HasPrefix(entry.Name(), "."+pluginName+"-schema-preflight-") ||
+			strings.HasPrefix(entry.Name(), "."+pluginName+"-bundle-")) {
+			continue
+		}
+		folder := StagingFolder{Path: filepath.Join(root, entry.Name())}
+		err := filepath.Walk(folder.Path, func(path string, info os.FileInfo, err error) error {
+			if err == nil {
+				if path == folder.Path {
+					folder.Age = time.Since(info.ModTime())
+				}
+				if !info.IsDir() {
+					folder.Size += info.Size()
+				}
+			}
+			return err
+		})
+		var release func() error
+		if err == nil {
+			release, err = securefile.TryLock(filepath.Join(folder.Path, ".held"))
+			folder.Held = errors.Is(err, securefile.ErrHeld)
+			if folder.Held {
+				err = nil
+			}
+		}
+		if err == nil && remove && !folder.Held {
+			err = os.RemoveAll(folder.Path)
+			folder.Removed = err == nil
+		}
+		if release != nil {
+			_ = release()
+		}
+		if err != nil {
+			return folders, err
+		}
+		folders = append(folders, folder)
+	}
+	return folders, nil
+}
+
+func lockedStage(root, prefix string) (string, func(), error) {
+	directory, err := os.MkdirTemp(root, prefix)
+	var release func() error
+	if err == nil {
+		release, err = securefile.Lock(filepath.Join(directory, ".held"))
+	}
+	cleanup := func() {
+		if release != nil {
+			_ = release()
+		}
+		_ = os.RemoveAll(directory)
+	}
+	return directory, cleanup, err
 }

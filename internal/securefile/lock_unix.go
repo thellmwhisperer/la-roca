@@ -3,6 +3,7 @@
 package securefile
 
 import (
+	"errors"
 	"os"
 
 	"golang.org/x/sys/unix"
@@ -10,14 +11,19 @@ import (
 
 // Lock takes an advisory cross-process lock on a file beside the protected data.
 func Lock(path string) (func() error, error) {
-	return lock(path, os.O_CREATE|os.O_RDWR)
+	return lock(path, os.O_CREATE|os.O_RDWR, unix.LOCK_EX)
 }
 
 func LockExisting(path string) (func() error, error) {
-	return lock(path, os.O_RDWR)
+	return lock(path, os.O_RDWR, unix.LOCK_EX)
 }
 
-func lock(path string, flags int) (func() error, error) {
+// TryLock is Lock without waiting; it returns ErrHeld if the lock is busy.
+func TryLock(path string) (func() error, error) {
+	return lock(path, os.O_CREATE|os.O_RDWR, unix.LOCK_EX|unix.LOCK_NB)
+}
+
+func lock(path string, flags, operation int) (func() error, error) {
 	file, err := os.OpenFile(path, flags, 0o600)
 	if err != nil {
 		return nil, err
@@ -26,8 +32,11 @@ func lock(path string, flags int) (func() error, error) {
 		file.Close()
 		return nil, err
 	}
-	if err := unix.Flock(int(file.Fd()), unix.LOCK_EX); err != nil {
+	if err := unix.Flock(int(file.Fd()), operation); err != nil {
 		file.Close()
+		if errors.Is(err, unix.EWOULDBLOCK) {
+			err = ErrHeld
+		}
 		return nil, err
 	}
 	release := func() error {
