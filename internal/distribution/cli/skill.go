@@ -467,6 +467,10 @@ func (env *cliEnv) hooksEnv() hooks.Env {
 			svc, _, err := env.openSessionContextService()
 			return svc, err
 		},
+		Catalog: func() ([]plugin.Database, error) {
+			_, databases, _, err := env.discoverPluginContracts()
+			return databases, err
+		},
 		RegisteredHook: func(runtime, path string) (artifact.Entry, bool, error) {
 			return env.registeredArtifact(artifactKindHook, runtime, path)
 		},

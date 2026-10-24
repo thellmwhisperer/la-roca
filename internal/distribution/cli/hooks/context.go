@@ -17,7 +17,7 @@ import (
 // that the craft arrives with the memory, in one wording, on every harness.
 const sessionCraft = `## La Roca is this machine's agent memory
 - Vectors first, no inference: ` + "`" + `roca vector query "<phrase in your own words>" 20..100 --databases corpus,ops` + "`" + ` to find the nearby rows.
-- Then frame it in SQL yourself: load the ` + "`" + `roca-semantica` + "`" + ` skill and run the SELECT with ` + "`" + `roca exec` + "`" + `. Qualify every table (` + "`" + `plugin_roca_corpus.exchanges` + "`" + `, ` + "`" + `plugin_roca_ops.memories` + "`" + `); an unqualified table returns 0 rows without a warning.
+- Then frame it in SQL yourself: load the ` + "`" + `roca-semantica` + "`" + ` skill and run the SELECT with ` + "`" + `roca exec` + "`" + `. Qualify every table (` + "`" + `plugin_roca_corpus.exchanges` + "`" + `, ` + "`" + `plugin_roca_ops.memories` + "`" + `); an unqualified table name is refused with the qualified candidates.
 - ` + "`" + `roca query` + "`" + ` is the zero-inference hybrid search: use it only when you cannot write the SELECT. ` + "`" + `roca playground` + "`" + ` and ` + "`" + `roca explore` + "`" + ` spend inference and are last resort. Never pass ` + "`" + `--full` + "`" + `.
 - Everything goes through the ` + "`" + `roca` + "`" + ` binary. Never open the .db files with sqlite3 or python.`
 
@@ -49,6 +49,9 @@ func (r SessionRequest) flags() []string {
 // craft still arrives, which is the part a fresh session cannot look up.
 func SessionHookBody(ctx context.Context, env Env, req SessionRequest) string {
 	sections := []string{sessionCraft}
+	if aliases := aliasLine(env); aliases != "" {
+		sections[0] += "\n- Attach aliases and their tables: " + aliases + "."
+	}
 	if req.Pills {
 		if rendered := sessionSection(ctx, env,
 			(*service.Service).ListPills, axi.Pills); rendered != "" {
@@ -86,6 +89,28 @@ func sessionSection[T any](ctx context.Context, env Env,
 		return ""
 	}
 	return strings.TrimRight(render(result), "\n")
+}
+
+// aliasLine names each attach alias and its tables from the catalog the
+// roca-semantica skill is generated from, so a session that skips the skill
+// still qualifies its tables. No database, no line.
+func aliasLine(env Env) string {
+	svc, err := env.OpenSessionContext()
+	if err != nil {
+		return ""
+	}
+	svc.Close()
+	// A catalog that cannot be read is nil, which renders no aliases.
+	databases, _ := env.Catalog()
+	aliases := make([]string, len(databases))
+	for i, database := range databases {
+		tables := make([]string, len(database.Tables))
+		for j, table := range database.Tables {
+			tables[j] = table.Name
+		}
+		aliases[i] = database.Schema + " (" + strings.Join(tables, ", ") + ")"
+	}
+	return strings.Join(aliases, "; ")
 }
 
 // newestHandoff is the one handoff a session opens with.

@@ -11,6 +11,7 @@ import (
 
 	"github.com/thellmwhisperer/la-roca/internal/artifact"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/agentcfg"
+	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
@@ -25,6 +26,7 @@ const (
 type Env struct {
 	Out                           io.Writer
 	OpenSessionContext            func() (*service.Service, error)
+	Catalog                       func() ([]plugin.Database, error)
 	RegisteredHook                func(runtime, path string) (artifact.Entry, bool, error)
 	RegisterHook                  func(path, runtime, system string) error
 	UnregisterHook                func(runtime, path string) error
