@@ -30,6 +30,7 @@ func registerDistributionCLISteps(ctx *godog.ScenarioContext, w *distributionWor
 		}
 		return nil
 	})
+	registerDistributionHelpHookSteps(ctx, w)
 	ctx.When(`^the operator asks for command-line help$`, w.askForCLIHelp)
 	ctx.Then(`^every public command appears once with an honest one-line summary$`, w.helpIsComplete)
 	ctx.When(`^the operator exercises the "([^"]*)" command in human and JSON form$`, w.exerciseOutputForms)
@@ -294,6 +295,7 @@ func (w *distributionWorld) helpIsComplete() error {
 		"explore": "concept", "playground": "sql", "remote": "ssh", "store": "memory",
 		"pill": "pill", "handoff": "handoff", "uninstall": "remove", "update": "release",
 		"plugin": "plugin", "plugins": "plugin", "migrate": "custody",
+		"exec": "select", "vector": "vector",
 	}
 	found := map[string]string{}
 	inCommands := false

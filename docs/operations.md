@@ -51,8 +51,9 @@ whose binary moved instead of adding a second one.
 same hook on every supported harness: `claude`, `codex`, `cursor`, `opencode`,
 `pi` and `zcode`. On session start it injects a fixed SYSTEM fragment — vectors
 first, `roca exec` with the semantic catalog, `roca query` as last resort, and
-never sqlite3 or python over the `.db` files — so a fresh session on any harness
-knows how to search before it starts guessing. `--pills` adds the active pills
+never sqlite3 or python over the `.db` files — plus one line naming each alias
+`roca exec` attaches under the current features and its tables, so a fresh
+session on any harness knows how to search before it starts guessing. `--pills` adds the active pills
 for the working directory's project; `--handoff` adds that project's latest
 handoff. Both are opt-in and neither is installed by init or update. The handoff
 runner selects at most one handoff using the
