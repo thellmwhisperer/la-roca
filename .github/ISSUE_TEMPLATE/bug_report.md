@@ -5,7 +5,7 @@ about: Report a reproducible problem, written from an OpenSpec change
 
 <!-- Public text: use ~, $TMPDIR, <workspace>, <host>, <lan-ip> and rounded counts; omit personal paths, hostnames and session identifiers. -->
 
-Type: bug
+Type: fix
 Where: binario|lanzador
 
 Written from the OpenSpec change `openspec/changes/<change-name>`. Write the change first (`openspec validate <change-name> --strict`); this issue copies it and never grows.
