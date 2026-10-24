@@ -3,6 +3,7 @@
 package acceptance
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -58,9 +59,19 @@ func registerIngestDuplicateSteps(ctx *godog.ScenarioContext, w *ingestAcceptanc
 			command.Env = append(command.Env, "GOCOVERDIR="+directory)
 		}
 		output, err := command.CombinedOutput()
-		for _, id := range []string{"60000000-0000-4000-8000-000000000010", "60000000-0000-4000-8000-000000000011"} {
-			if err != nil || !strings.Contains(string(output), id) {
-				return fmt.Errorf("listing SELECT does not list %s: %v: %s", id, err, output)
+		raw, readErr := os.ReadFile(filepath.Join(w.exportPath, "conversations.json"))
+		if readErr != nil {
+			return readErr
+		}
+		var conversations []struct {
+			UUID string `json:"uuid"`
+		}
+		if readErr := json.Unmarshal(raw, &conversations); readErr != nil || len(conversations) != 2 {
+			return fmt.Errorf("fixture conversations = %d: %v", len(conversations), readErr)
+		}
+		for _, conversation := range conversations {
+			if err != nil || !strings.Contains(string(output), conversation.UUID) {
+				return fmt.Errorf("listing SELECT does not list %s: %v: %s", conversation.UUID, err, output)
 			}
 		}
 		return nil
