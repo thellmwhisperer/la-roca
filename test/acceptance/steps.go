@@ -516,6 +516,9 @@ func (m *world) environment() []string {
 		"PATH=" + path,
 		"TMPDIR=" + filepath.Join(m.home, "tmp"),
 	}, m.modelEnvironment()...)
+	if directory := os.Getenv("GOCOVERDIR"); directory != "" {
+		environment = append(environment, "GOCOVERDIR="+directory)
+	}
 	if m.readOnly {
 		environment = append(environment, "ROCA_READ_ONLY=1")
 	}
