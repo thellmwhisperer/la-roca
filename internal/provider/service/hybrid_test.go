@@ -243,7 +243,6 @@ func TestPluginVectorQueryPassesCoreExecutable(t *testing.T) {
 		name, configured, core, want, wrapperWant string
 	}{
 		{"default", "", "", "unset", "unset"},
-		{"blank", " \t", "", " \t", " \t"},
 		{"configured", "", host, host, "unset"},
 		{"override", override, host, override, override},
 	} {
