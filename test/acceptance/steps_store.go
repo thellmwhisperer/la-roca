@@ -116,6 +116,7 @@ func registerStoreSteps(ctx *godog.ScenarioContext, binary string) {
 	ctx.Then(`^no two hits share the same table and id$`, m.noTwoHitsShareTableAndID)
 	ctx.Then(`^the number of hits equals the number of distinct rows that mention "([^"]*)"$`,
 		m.hitsEqualMentioningRows)
+	registerVectorCompanionSteps(ctx, m)
 }
 
 // freshSandbox gives a scenario a HOME of its own with nothing else in it.

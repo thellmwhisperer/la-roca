@@ -1044,6 +1044,8 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 		}
 	}
 	rocaOpsEnabled := file.Features.RocaOps || readLayout != service.LayoutLegacyServing || writerFenced
+	vectorCompanion, _ := resolveCompanion("vector", pluginExecutableDir(paths))
+	vectorCoreBinary, _ := os.Executable()
 	var rollbackLayout func(error) error
 	if !readOnly {
 		rollbackLayout = func(error) error {
@@ -1065,6 +1067,8 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 		PluginsEnabled:            file.Features.Plugins,
 		RocaOpsEnabled:            rocaOpsEnabled,
 		VectorEnabled:             file.Features.Vector,
+		VectorCompanion:           vectorCompanion,
+		VectorCoreBinary:          vectorCoreBinary,
 		CorpusEnabled:             !env.omitCorpus,
 		ReadLayout:                readLayout,
 		RollbackLayout:            rollbackLayout,

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"os"
 	"os/exec"
 	"slices"
 	"strconv"
@@ -87,11 +88,16 @@ type VectorSearchFunc func(ctx context.Context, question string, k int, database
 
 // VectorLeg is one PluginVectorQuery invocation.
 type VectorLeg struct {
-	K         int
-	Databases string
-	Expand    bool
-	Templates []string
-	MinScore  float64
+	// Path is the roca-vector executable; empty looks it up on PATH.
+	Path string
+	// CoreBinary becomes ROCA_VECTOR_ROCA_BINARY when set and the environment
+	// does not already choose one.
+	CoreBinary string
+	K          int
+	Databases  string
+	Expand     bool
+	Templates  []string
+	MinScore   float64
 }
 
 type searchSurface struct {
@@ -349,8 +355,9 @@ func (s *Service) searchVector(ctx context.Context, req SearchRequest, settings 
 		hits, err = s.opts.VectorSearch(ctx, req.Question, settings.Oversample, databases)
 	case s.opts.VectorEnabled:
 		hits, err = PluginVectorQuery(ctx, s.opts.DBPath, req.Question, VectorLeg{
-			K: settings.Oversample, Databases: databases,
-			Expand: settings.ExpandTemplates(), Templates: settings.TemplateList,
+			Path: s.opts.VectorCompanion, K: settings.Oversample, Databases: databases,
+			CoreBinary: s.opts.VectorCoreBinary,
+			Expand:     settings.ExpandTemplates(), Templates: settings.TemplateList,
 			MinScore: settings.MinVectorScore,
 		})
 	default:
@@ -701,7 +708,11 @@ func PluginVectorSearch(dbPath string) VectorSearchFunc {
 
 // PluginVectorQuery shells out to `roca-vector query` with the resolved knobs.
 func PluginVectorQuery(ctx context.Context, dbPath, question string, leg VectorLeg) (VectorHits, error) {
-	path, err := exec.LookPath("roca-vector")
+	path := leg.Path
+	var err error
+	if path == "" {
+		path, err = exec.LookPath("roca-vector")
+	}
 	if err != nil {
 		return VectorHits{Notices: []string{
 			"vector plugin is not installed; continuing with FTS-only",
@@ -723,6 +734,9 @@ func PluginVectorQuery(ctx context.Context, dbPath, question string, leg VectorL
 		args = append([]string{"--db-path", dbPath}, args...)
 	}
 	cmd := exec.CommandContext(ctx, path, args...)
+	if leg.CoreBinary != "" && strings.TrimSpace(os.Getenv("ROCA_VECTOR_ROCA_BINARY")) == "" {
+		cmd.Env = append(os.Environ(), "ROCA_VECTOR_ROCA_BINARY="+leg.CoreBinary)
+	}
 	out, runErr := cmd.Output()
 	if runErr != nil {
 		message := runErr.Error()
