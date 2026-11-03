@@ -630,7 +630,9 @@ rules.
 In cutover, qualified FTS queries use persistent plugin indexes directly.
 Internal legacy search uses column and identifier views, preserving historical
 memory IDs and forwarding SQLite's MATCH/bm25 handle without rebuilding
-temporary indexes. Ranks now reflect the owning persistent index's population.
+temporary indexes. When the corpus plugin is in scope, `roca query` searches
+sessions, exchanges and thinking blocks through its surfaces only, so each row
+comes back once; core memories keep their own view. Ranks now reflect the owning persistent index's population.
 Explicit SQL follows the
 [table qualification rule](queries.md#table-names-in-authored-sql).
 

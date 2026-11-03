@@ -43,6 +43,57 @@ func TestCutoverPreservesLegacyFTSIdentityAndRankShape(t *testing.T) {
 	}
 }
 
+func TestCutoverSearchPreservesSelectedCoreSurfaces(t *testing.T) {
+	fixture := newHubFixture(t)
+	seedHubCoreMemory(t, fixture.plugins, 42, "Synthetic orchard memory")
+	seedHubCoreSession(t, fixture.plugins, "synthetic-search", "claude", "claude-code")
+	corpus := openSQLite(t, filepath.Join(fixture.plugins, rocacorpus.Name, rocacorpus.DatabaseFilename))
+	defer corpus.Close()
+	for _, statement := range []string{
+		`UPDATE sessions SET title = 'Synthetic orchard session' WHERE session_id = 'synthetic-search'`,
+		`INSERT INTO exchanges (id, session_id, human_text)
+		 VALUES (43, 'synthetic-search', 'Synthetic orchard exchange')`,
+		`INSERT INTO thinking_blocks (id, session_id, full_text)
+		 VALUES (44, 'synthetic-search', 'Synthetic orchard thinking')`,
+	} {
+		if _, err := corpus.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	svc := openHubService(t, fixture, LayoutCutover, nil)
+	want := map[string]string{
+		"memories": "42", "sessions": "synthetic-search", "exchanges": "43", "thinking_blocks": "44",
+	}
+	for _, tc := range []struct {
+		name      string
+		databases []string
+	}{
+		{name: "core", databases: []string{"core"}},
+		{name: "core and ops", databases: []string{"core", "ops"}},
+		{name: "core and corpus", databases: []string{"core", "corpus"}},
+		{name: "default"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := svc.Search(t.Context(), SearchRequest{
+				Question: "orchard", Databases: tc.databases,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(result.Hits) != len(want) {
+				t.Fatalf("hits = %+v, want one hit per seeded row", result.Hits)
+			}
+			seen := map[string]bool{}
+			for _, hit := range result.Hits {
+				if hit.ID != want[hit.Table] || seen[hit.Table] || !strings.Contains(hit.Snippet, "orchard") {
+					t.Fatalf("unexpected or repeated hit: %+v", hit)
+				}
+				seen[hit.Table] = true
+			}
+		})
+	}
+}
+
 func TestCutoverPreservesSessionSourceSurface(t *testing.T) {
 	fixture := newHubFixture(t)
 	seedHubCoreMemory(t, fixture.plugins, 109, "Synthetic session surface marker")
