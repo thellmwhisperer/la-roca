@@ -9,7 +9,7 @@ SHALL return the matching memories, exchanges and thinking blocks.
 #### Scenario: A word in an exchange, a thinking block and a memory is found
 
 - **WHEN** a home was made by `roca init --db-path ~/.roca/roca.db`, it ingested
-  a Claude Code session whose exchange and thinking block mention `orchard`, the
+  an agent session whose exchange and thinking block mention `orchard`, the
   operator stored a memory with `roca store --layer discovery --content "orchard
   note"`, ran `roca migrate`, set `serving = "cutover"` under `[layout]` in
   `~/.roca/config.toml`, and runs `roca query "orchard" --json`

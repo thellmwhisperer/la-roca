@@ -24,7 +24,7 @@ slots. Memories do not duplicate: the core `memories` view shows only rows whose
 
 Who asked: proposal.
 
-Proof: on v1.94.0 (81721cf), in a disposable `HOME` with one Claude Code session
+Proof: on v1.94.0 (81721cf), in a disposable `HOME` with one agent session
 and one memory file ingested by `roca init --db-path ~/.roca/roca.db`, then
 `roca migrate` (`migration: verified`) and `serving = "cutover"` under
 `[layout]` in `~/.roca/config.toml`:
@@ -81,7 +81,7 @@ None.
 - Acceptance scenarios to write, run by `make accept` against the real `roca`:
   the two scenarios of `specs/cutover-search/spec.md`, in
   `features/store/search.feature` or a new `features/store/cutover-search.feature`,
-  on a home made by `roca init --db-path`, an ingest of a fixture Claude Code
+  on a home made by `roca init --db-path`, an ingest of a fixture agent
   session whose exchange and thinking block mention `orchard`, one
   `roca store` memory that mentions `orchard`, `roca migrate`, and
   `serving = "cutover"`.

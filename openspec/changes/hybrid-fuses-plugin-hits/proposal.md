@@ -25,7 +25,7 @@ provenance.
 
 Who asked: proposal.
 
-Proof: on v1.94.0 (81721cf), in a disposable `HOME` with one Claude Code session
+Proof: on v1.94.0 (81721cf), in a disposable `HOME` with one agent session
 ingested by `roca init --db-path ~/.roca/roca.db`, `vector = true` and a
 finished `roca vector install` (`roca vector status` shows `corpus` `complete`):
 

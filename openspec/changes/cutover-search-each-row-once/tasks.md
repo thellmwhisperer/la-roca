@@ -8,5 +8,5 @@
 
 ## 3. Acceptance
 
-- [ ] 3.1 Write the two scenarios of `specs/cutover-search/spec.md` as acceptance scenarios run by `make accept` against the real `roca`, on a fixture home made by `roca init --db-path`, a fixture Claude Code session, `roca store`, `roca migrate` and `serving = "cutover"`.
+- [ ] 3.1 Write the two scenarios of `specs/cutover-search/spec.md` as acceptance scenarios run by `make accept` against the real `roca`, on a fixture home made by `roca init --db-path`, a fixture agent session, `roca store`, `roca migrate` and `serving = "cutover"`.
 - [ ] 3.2 `make e2e-cover` passes: every changed line is executed by those scenarios.

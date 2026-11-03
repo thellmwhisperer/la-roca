@@ -8,8 +8,8 @@
 
 #### Scenario: The companion outside PATH still runs the vector leg
 
-- **WHEN** a home was made by `roca init --db-path ~/.roca/roca.db`, it ingested a
-  Claude Code session whose exchange mentions `harbor lantern`, `vector = true`
+- **WHEN** a home was made by `roca init --db-path ~/.roca/roca.db`, it ingested an
+  agent session whose exchange mentions `harbor lantern`, `vector = true`
   is set under `[features]`, a `roca-vector` that answers `query` with that
   exchange is in `~/.local/bin` only, `PATH` does not contain `~/.local/bin`, and
   the operator runs `roca query "harbor lantern" --json`

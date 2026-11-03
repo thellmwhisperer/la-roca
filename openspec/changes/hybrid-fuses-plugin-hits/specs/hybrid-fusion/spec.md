@@ -8,8 +8,8 @@ full-text leg or the vector leg found it.
 
 #### Scenario: A row found by both legs fuses into one hit
 
-- **WHEN** a home was made by `roca init --db-path ~/.roca/roca.db`, it ingested a
-  Claude Code session whose exchange mentions `harbor lantern`, `vector = true`
+- **WHEN** a home was made by `roca init --db-path ~/.roca/roca.db`, it ingested an
+  agent session whose exchange mentions `harbor lantern`, `vector = true`
   is set under `[features]`, a `roca-vector` on `PATH` answers `query` with that
   exchange as its only hit, and the operator runs
   `roca query "harbor lantern" --databases corpus --json`
