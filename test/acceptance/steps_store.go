@@ -47,6 +47,11 @@ func registerStoreSteps(ctx *godog.ScenarioContext, binary string) {
 	ctx.Given(`^a home Roca database containing a memory unique to home$`, m.homeDatabaseWithUniqueMemory)
 	ctx.Given(`^another Roca database containing a memory unique to that database$`, m.otherDatabaseWithUniqueMemory)
 	ctx.Given(`^a selected path where no Roca database exists$`, m.missingDatabasePath)
+	ctx.Given(`^a home made by roca init that ingested an agent session mentioning "([^"]*)"$`, m.hybridHome)
+	ctx.Given(`^vector search is switched on$`, func() error { return enableVectorFeature(m.home) })
+	ctx.Given(`^a roca-vector on PATH answers query with that exchange as its only hit$`, m.stubVectorLeg)
+	ctx.Given(`^a migrated cutover home whose agent session and stored memory mention "([^"]*)"$`,
+		m.cutoverHomeMentioning)
 
 	// --- when: the one action the scenario exercises ---
 	ctx.When(`^I initialize the database$`, m.runInit)
@@ -67,6 +72,7 @@ func registerStoreSteps(ctx *godog.ScenarioContext, binary string) {
 	ctx.When(`^I search without choosing a database for the command$`, m.searchHomeDatabase)
 	ctx.When(`^I search that database$`, m.searchMissingDatabase)
 	ctx.When(`^two writers store different memories at the same time$`, m.twoConcurrentWriters)
+	ctx.When(`^I run '([^']*)'$`, func(command string) error { _, err := m.run(command); return err })
 
 	// --- then: properties the scenario asserts ---
 	ctx.Then(`^the command exits with code (\d+)$`, m.itExitsWithCode)
@@ -101,6 +107,15 @@ func registerStoreSteps(ctx *godog.ScenarioContext, binary string) {
 	ctx.Then(`^both writes succeed$`, m.bothWritesSucceed)
 	ctx.Then(`^the database holds both memories intact$`, m.holdsBothMemories)
 	ctx.Then(`^the new memory id is greater than the deleted id$`, m.newIDGreaterThanDeleted)
+	ctx.Then(`^exactly one hit is that exchange from database "([^"]*)" found by fts and vector with consensus$`,
+		m.oneFusedExchangeHit)
+	ctx.Then(`^the hits include that exchange with consensus$`, m.exchangeHitWithConsensus)
+	ctx.Then(`^the output does not contain "([^"]*)"$`, m.theOutputDoesNotContain)
+	ctx.Then(`^the hits include one exchange, one thinking block and one memory mentioning "([^"]*)"$`,
+		m.hitsIncludeEachKind)
+	ctx.Then(`^no two hits share the same table and id$`, m.noTwoHitsShareTableAndID)
+	ctx.Then(`^the number of hits equals the number of distinct rows that mention "([^"]*)"$`,
+		m.hitsEqualMentioningRows)
 	registerVectorCompanionSteps(ctx, m)
 }
 
@@ -266,6 +281,43 @@ func (m *world) missingDatabasePath() error {
 		return fmt.Errorf("the selected path is not missing: %v", err)
 	}
 	return nil
+}
+
+// cutoverHomeMentioning is the operator's path onto the federation hub: init
+// ingests one agent session whose exchange and thinking block carry the word,
+// a memory carries it too, then migrate and serving = "cutover".
+func (m *world) cutoverHomeMentioning(word string) error {
+	session := filepath.Join(m.home, ".claude", "projects", "-w-"+word, seededSessionID+".jsonl")
+	if err := writeFixture(session, fmt.Sprintf(`{"type":"user","timestamp":"2026-08-01T10:00:00Z","cwd":"/w/%[1]s","message":{"content":"where is the %[1]s plan"}}
+{"type":"assistant","timestamp":"2026-08-01T10:00:02Z","message":{"content":[{"type":"thinking","thinking":"the %[1]s plan lives in docs"},{"type":"text","text":"in docs"}]}}
+`, word)); err != nil {
+		return err
+	}
+	steps := []func() error{
+		m.runInit,
+		func() error { return m.storeMemoryFixture("discovery", word+" note") },
+		func() error {
+			_, err := m.runWith("roca migrate --json", []string{"migrate", "--db-path", m.storeDBPath(), "--json"})
+			return err
+		},
+	}
+	for _, step := range steps {
+		if err := step(); err != nil {
+			return err
+		}
+		if m.last.code != 0 {
+			return fmt.Errorf("%s exited %d: %s", m.last.command, m.last.code, m.last.stderr)
+		}
+	}
+	config, err := os.OpenFile(filepath.Join(m.home, ".roca", "config.toml"), os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := config.WriteString("\n[layout]\nserving = \"cutover\"\n"); err != nil {
+		config.Close()
+		return err
+	}
+	return config.Close()
 }
 
 // --- when actions ---
@@ -803,6 +855,77 @@ func (m *world) storeDeleteStore() error {
 func (m *world) newIDGreaterThanDeleted() error {
 	if m.replacedID <= m.deletedID {
 		return fmt.Errorf("new id %d is not greater than deleted id %d", m.replacedID, m.deletedID)
+	}
+	return nil
+}
+
+func (m *world) hitsIncludeEachKind(word string) error {
+	rows, err := m.searchRows(true)
+	if err != nil {
+		return err
+	}
+	found := map[string]int{}
+	for _, raw := range rows {
+		row, _ := raw.(map[string]any)
+		if strings.Contains(fmt.Sprint(row["snippet"]), word) {
+			found[fmt.Sprint(row["table"])]++
+		}
+	}
+	for _, table := range []string{"exchanges", "thinking_blocks", "memories"} {
+		if found[table] != 1 {
+			return fmt.Errorf("%d %s hits mention %q, want 1: %s", found[table], table, word, m.last.stdout)
+		}
+	}
+	return nil
+}
+
+func (m *world) noTwoHitsShareTableAndID() error {
+	rows, err := m.searchRows(true)
+	if err != nil {
+		return err
+	}
+	seen := map[string]bool{}
+	for _, raw := range rows {
+		row, _ := raw.(map[string]any)
+		key := fmt.Sprint(row["table"]) + "." + fmt.Sprint(row["id"])
+		if seen[key] {
+			return fmt.Errorf("%s comes back twice: %s", key, m.last.stdout)
+		}
+		seen[key] = true
+	}
+	return nil
+}
+
+// hitsEqualMentioningRows counts, through the checked SELECT seat, every row
+// of every searched table whose indexed text carries the word.
+func (m *world) hitsEqualMentioningRows(word string) error {
+	rows, err := m.searchRows(true)
+	if err != nil {
+		return err
+	}
+	hits := len(rows)
+	like := "'%" + strings.ReplaceAll(word, "'", "''") + "%'"
+	statement := "SELECT " + strings.Join([]string{
+		"(SELECT COUNT(*) FROM plugin_roca_corpus.sessions WHERE title LIKE " + like + " OR project LIKE " + like + ")",
+		"(SELECT COUNT(*) FROM plugin_roca_corpus.exchanges WHERE human_text LIKE " + like + " OR agent_text LIKE " + like + ")",
+		"(SELECT COUNT(*) FROM plugin_roca_corpus.thinking_blocks WHERE full_text LIKE " + like + ")",
+		"(SELECT COUNT(*) FROM plugin_roca_corpus.memories WHERE content LIKE " + like + ")",
+		"(SELECT COUNT(*) FROM plugin_roca_ops.memories WHERE content LIKE " + like + ")",
+	}, " + ") + " AS mentions"
+	if _, err := m.runWith("roca exec <mentions> --json", []string{"exec", statement, "--json"}); err != nil {
+		return err
+	}
+	answer, err := m.json()
+	if err != nil {
+		return err
+	}
+	counted, _ := answer["rows"].([]any)
+	if len(counted) != 1 {
+		return fmt.Errorf("the mention count answered %s", m.last.stdout)
+	}
+	mentions := fmt.Sprint(counted[0].(map[string]any)["mentions"])
+	if mentions != strconv.Itoa(hits) {
+		return fmt.Errorf("the search returned %d hits for %s rows that mention %q", hits, mentions, word)
 	}
 	return nil
 }

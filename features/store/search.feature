@@ -45,3 +45,16 @@ Feature: Finding what was stored
     Then the command exits with code 0
     And the search returns no results
     And the JSON output declares the match was empty
+
+  Scenario: A cutover home finds an exchange, a thinking block and a memory by one word
+    Given a migrated cutover home whose agent session and stored memory mention "orchard"
+    When I search for "orchard"
+    Then the command exits with code 0
+    And the output does not contain "no such column"
+    And the hits include one exchange, one thinking block and one memory mentioning "orchard"
+
+  Scenario: A cutover home returns each matching row once
+    Given a migrated cutover home whose agent session and stored memory mention "orchard"
+    When I search for "orchard"
+    Then no two hits share the same table and id
+    And the number of hits equals the number of distinct rows that mention "orchard"
