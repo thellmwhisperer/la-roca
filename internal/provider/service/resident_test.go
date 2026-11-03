@@ -194,17 +194,7 @@ func TestHermesMemoryDedupReadsReservedOperationalMemories(t *testing.T) {
 }
 
 func TestKeywordSearchReadsExchangesFromTheResidentCorpus(t *testing.T) {
-	svc := corpusResidentService(t)
-	if _, err := svc.Init(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := svc.corpus.SQL().Exec(`
-		INSERT INTO sessions (session_id, source_agent) VALUES ('fixture-session', 'fixture');
-		INSERT INTO exchanges (session_id, human_text, agent_text, human_timestamp, agent_timestamp)
-		VALUES ('fixture-session', 'where is the cobalt atlas', 'in the perennial corpus',
-		        '2026-08-14T08:00:00Z', '2026-08-14T08:00:01Z')`); err != nil {
-		t.Fatal(err)
-	}
+	svc := cobaltAtlasCorpusService(t)
 	result, err := svc.Search(t.Context(), SearchRequest{
 		Question: "cobalt atlas", Databases: []string{rocaCorpusPluginName}, Top: 10,
 	})
@@ -272,16 +262,7 @@ func TestReadOnlyAnswersFromCoreWithoutTheBundledCorpus(t *testing.T) {
 }
 
 func TestSearchSnippetBudgetPreservesCorpusIdentity(t *testing.T) {
-	svc := corpusResidentService(t)
-	if _, err := svc.Init(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := svc.corpus.SQL().Exec(`
-		INSERT INTO sessions (session_id, source_agent) VALUES ('fixture-session', 'fixture');
-		INSERT INTO exchanges (id, session_id, human_text, agent_text)
-		VALUES (1234567, 'fixture-session', 'where is the cobalt atlas', 'in the perennial corpus')`); err != nil {
-		t.Fatal(err)
-	}
+	svc := cobaltAtlasCorpusService(t)
 	for _, tc := range []struct {
 		name        string
 		vector      bool
@@ -318,6 +299,24 @@ func TestSearchSnippetBudgetPreservesCorpusIdentity(t *testing.T) {
 			}
 		})
 	}
+}
+
+// cobaltAtlasCorpusService seeds the resident corpus with one exchange whose
+// id is wider than a five-character snippet budget.
+func cobaltAtlasCorpusService(t *testing.T) *Service {
+	t.Helper()
+	svc := corpusResidentService(t)
+	if _, err := svc.Init(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.corpus.SQL().Exec(`
+		INSERT INTO sessions (session_id, source_agent) VALUES ('fixture-session', 'fixture');
+		INSERT INTO exchanges (id, session_id, human_text, agent_text, human_timestamp, agent_timestamp)
+		VALUES (1234567, 'fixture-session', 'where is the cobalt atlas', 'in the perennial corpus',
+		        '2026-08-14T08:00:00Z', '2026-08-14T08:00:01Z')`); err != nil {
+		t.Fatal(err)
+	}
+	return svc
 }
 
 func corpusResidentService(t *testing.T) *Service {
