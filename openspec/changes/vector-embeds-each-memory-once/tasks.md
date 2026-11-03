@@ -1,0 +1,9 @@
+## 1. Ownership
+
+- [ ] 1.1 Make the ops sidecar embed, in cutover, the memories whose migration source is `core` (through `memory_compatibility` or a view over it), and leave corpus-sourced memories to the corpus sidecar.
+- [ ] 1.2 Report a sidecar with nothing to embed as finished after `roca vector install`, and drop the `roca vector install` remedy from `roca doctor` for it.
+
+## 2. End to end
+
+- [ ] 2.1 Write the two scenarios of `specs/vector-memory-ownership/spec.md` in `features/distribution/e2e-federation.feature`, run by `make e2e` against the installed candidate with the pinned embedding model, installing with `install.sh` from the suite's local release channel; record that both fail on v1.94.1.
+- [ ] 2.2 `make e2e-cover` passes: every changed line is executed by an end-to-end run.
