@@ -87,7 +87,9 @@ type VectorSearchFunc func(ctx context.Context, question string, k int, database
 // VectorLeg is one PluginVectorQuery invocation.
 type VectorLeg struct {
 	// Path is the roca-vector executable; empty looks it up on PATH.
-	Path       string
+	Path string
+	// CoreBinary becomes ROCA_VECTOR_ROCA_BINARY when set and the environment
+	// does not already choose one.
 	CoreBinary string
 	K          int
 	Databases  string

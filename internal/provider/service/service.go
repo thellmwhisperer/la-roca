@@ -70,7 +70,9 @@ type Options struct {
 	VectorEnabled bool
 	// VectorCompanion is the roca-vector executable the surface resolved. Empty
 	// leaves PluginVectorQuery to look it up on PATH.
-	VectorCompanion  string
+	VectorCompanion string
+	// VectorCoreBinary is the core roca the companion calls back into, handed
+	// over as ROCA_VECTOR_ROCA_BINARY unless the environment already sets it.
 	VectorCoreBinary string
 	// CorpusEnabled routes perennial ingest into the bundled corpus database and
 	// attaches that archive to every query. The CLI always enables it; the zero
