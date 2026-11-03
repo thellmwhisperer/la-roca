@@ -149,7 +149,10 @@ func (s *Service) Search(ctx context.Context, req SearchRequest) (SearchResult, 
 		// Under cutover the core sessions, exchanges and thinking blocks are views
 		// of the corpus tables its plugin already searches; only memories differ.
 		surfaces = slices.DeleteFunc(surfaces, func(surface searchSurface) bool {
-			return surface.Database == ScopeCore && surface.Table != "memories"
+			return surface.Database == ScopeCore && surface.Table != "memories" &&
+				slices.ContainsFunc(surfaces, func(candidate searchSurface) bool {
+					return candidate.Database == "corpus" && candidate.Table == surface.Table
+				})
 		})
 	}
 	tokens := uniqueTokens(search.Tokenize(req.Question))
