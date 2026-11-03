@@ -87,12 +87,13 @@ type VectorSearchFunc func(ctx context.Context, question string, k int, database
 // VectorLeg is one PluginVectorQuery invocation.
 type VectorLeg struct {
 	// Path is the roca-vector executable; empty looks it up on PATH.
-	Path      string
-	K         int
-	Databases string
-	Expand    bool
-	Templates []string
-	MinScore  float64
+	Path       string
+	CoreBinary string
+	K          int
+	Databases  string
+	Expand     bool
+	Templates  []string
+	MinScore   float64
 }
 
 type searchSurface struct {
@@ -341,7 +342,8 @@ func (s *Service) searchVector(ctx context.Context, req SearchRequest, settings 
 	case s.opts.VectorEnabled:
 		hits, err = PluginVectorQuery(ctx, s.opts.DBPath, req.Question, VectorLeg{
 			Path: s.opts.VectorCompanion, K: settings.Oversample, Databases: databases,
-			Expand: settings.ExpandTemplates(), Templates: settings.TemplateList,
+			CoreBinary: s.opts.VectorCoreBinary,
+			Expand:     settings.ExpandTemplates(), Templates: settings.TemplateList,
 			MinScore: settings.MinVectorScore,
 		})
 	default:
@@ -715,10 +717,8 @@ func PluginVectorQuery(ctx context.Context, dbPath, question string, leg VectorL
 		args = append([]string{"--db-path", dbPath}, args...)
 	}
 	cmd := exec.CommandContext(ctx, path, args...)
-	if strings.TrimSpace(os.Getenv("ROCA_VECTOR_ROCA_BINARY")) == "" {
-		if host, locErr := os.Executable(); locErr == nil && strings.TrimSpace(host) != "" {
-			cmd.Env = append(os.Environ(), "ROCA_VECTOR_ROCA_BINARY="+host)
-		}
+	if leg.CoreBinary != "" && strings.TrimSpace(os.Getenv("ROCA_VECTOR_ROCA_BINARY")) == "" {
+		cmd.Env = append(os.Environ(), "ROCA_VECTOR_ROCA_BINARY="+leg.CoreBinary)
 	}
 	out, runErr := cmd.Output()
 	if runErr != nil {
