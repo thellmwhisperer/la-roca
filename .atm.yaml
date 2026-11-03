@@ -10,4 +10,5 @@ docs_patterns: ["**/*.md", "docs/**"]
 # Delivery runs scripts/atm-delivery.sh: it launches no-mistakes without --yes and follows that one run by status,
 # with no second screen, so ATM's screen paints the gate. Whoever launched the run answers each gate.
 # Pull requests target integration, the release-train branch (docs/release-train.md).
-delivery: scripts/atm-delivery.sh
+# It starts with sh because ATM's preflight only accepts a delivery whose first word is on PATH or a word of sh.
+delivery: sh scripts/atm-delivery.sh
