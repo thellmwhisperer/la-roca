@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -577,7 +578,7 @@ func (s *Service) searchFTS(ctx context.Context, route PluginRoute, surfaces []s
 	statement := "SELECT surface, \"table\", id, snippet, rango FROM (" +
 		strings.Join(branches, " UNION ALL ") + ") ORDER BY rango LIMIT " +
 		strconv.Itoa(settings.Oversample)
-	rows, err := s.runSearchSQL(ctx, route, statement, maxChars)
+	rows, err := s.runSearchSQL(ctx, route, statement, math.MaxInt)
 	if err != nil {
 		return nil, err
 	}
@@ -587,7 +588,7 @@ func (s *Service) searchFTS(ctx context.Context, route PluginRoute, surfaces []s
 			Database: fmt.Sprint(row["surface"]),
 			Table:    fmt.Sprint(row["table"]),
 			ID:       fmt.Sprint(row["id"]),
-			Snippet:  fmt.Sprint(row["snippet"]),
+			Snippet:  Truncate(fmt.Sprint(row["snippet"]), maxChars, ""),
 			Rank:     index + 1,
 		})
 		docs[len(docs)-1].Key = search.SourceKey(docs[len(docs)-1].Database,

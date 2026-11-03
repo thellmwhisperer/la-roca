@@ -271,6 +271,55 @@ func TestReadOnlyAnswersFromCoreWithoutTheBundledCorpus(t *testing.T) {
 	}
 }
 
+func TestSearchSnippetBudgetPreservesCorpusIdentity(t *testing.T) {
+	svc := corpusResidentService(t)
+	if _, err := svc.Init(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.corpus.SQL().Exec(`
+		INSERT INTO sessions (session_id, source_agent) VALUES ('fixture-session', 'fixture');
+		INSERT INTO exchanges (id, session_id, human_text, agent_text)
+		VALUES (1234567, 'fixture-session', 'where is the cobalt atlas', 'in the perennial corpus')`); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name        string
+		vector      bool
+		requireBoth bool
+	}{
+		{name: "fts"},
+		{name: "hybrid", vector: true},
+		{name: "require-both", vector: true, requireBoth: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.vector {
+				svc.opts.VectorSearch = func(context.Context, string, int, string) (VectorHits, error) {
+					return VectorHits{Executed: true, Results: []VectorHit{{
+						Rank: 1, Score: 0.9, Database: "corpus", Table: "exchanges", ID: "1234567",
+						Text: "where is the cobalt atlas",
+					}}}, nil
+				}
+			}
+			result, err := svc.Search(t.Context(), SearchRequest{
+				Question: "cobalt atlas", Databases: []string{"corpus"}, MaxChars: 5,
+				RequireBoth: tc.requireBoth,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(result.Hits) != 1 {
+				t.Fatalf("hits = %+v, want one exchange", result.Hits)
+			}
+			hit := result.Hits[0]
+			if hit.Database != "corpus" || hit.Table != "exchanges" || hit.ID != "1234567" ||
+				hit.Source != "corpus.exchanges.1234567" || hit.FTSRank == nil ||
+				hit.Consensus != tc.vector || len([]rune(hit.Snippet)) != 5 {
+				t.Fatalf("snippet budget changed corpus identity or fusion: %+v", hit)
+			}
+		})
+	}
+}
+
 func corpusResidentService(t *testing.T) *Service {
 	t.Helper()
 	directory := t.TempDir()
