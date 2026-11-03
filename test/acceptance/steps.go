@@ -84,6 +84,9 @@ type world struct {
 	// update.
 	agentConfigsBefore map[string]string
 	configBefore       string
+	// exchangeID is the corpus exchange the hybrid scenarios' stub vector leg
+	// answers with.
+	exchangeID string
 }
 
 type run struct {

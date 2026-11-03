@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
+	"os"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -85,11 +88,16 @@ type VectorSearchFunc func(ctx context.Context, question string, k int, database
 
 // VectorLeg is one PluginVectorQuery invocation.
 type VectorLeg struct {
-	K         int
-	Databases string
-	Expand    bool
-	Templates []string
-	MinScore  float64
+	// Path is the roca-vector executable; empty looks it up on PATH.
+	Path string
+	// CoreBinary becomes ROCA_VECTOR_ROCA_BINARY when set and the environment
+	// does not already choose one.
+	CoreBinary string
+	K          int
+	Databases  string
+	Expand     bool
+	Templates  []string
+	MinScore   float64
 }
 
 type searchSurface struct {
@@ -144,6 +152,16 @@ func (s *Service) Search(ctx context.Context, req SearchRequest) (SearchResult, 
 	result.Notices = append(result.Notices, route.Warnings...)
 
 	surfaces := collectSurfaces(route)
+	if s.servingLayout() == LayoutCutover {
+		// Under cutover the core sessions, exchanges and thinking blocks are views
+		// of the corpus tables its plugin already searches; only memories differ.
+		surfaces = slices.DeleteFunc(surfaces, func(surface searchSurface) bool {
+			return surface.Database == ScopeCore && surface.Table != "memories" &&
+				slices.ContainsFunc(surfaces, func(candidate searchSurface) bool {
+					return candidate.Database == "corpus" && candidate.Table == surface.Table
+				})
+		})
+	}
 	tokens := uniqueTokens(search.Tokenize(req.Question))
 	legs, legsErr := s.runSearchLegs(ctx, req, route, surfaces, tokens, maxChars, settings)
 	result.Terms = legs.terms
@@ -337,8 +355,9 @@ func (s *Service) searchVector(ctx context.Context, req SearchRequest, settings 
 		hits, err = s.opts.VectorSearch(ctx, req.Question, settings.Oversample, databases)
 	case s.opts.VectorEnabled:
 		hits, err = PluginVectorQuery(ctx, s.opts.DBPath, req.Question, VectorLeg{
-			K: settings.Oversample, Databases: databases,
-			Expand: settings.ExpandTemplates(), Templates: settings.TemplateList,
+			Path: s.opts.VectorCompanion, K: settings.Oversample, Databases: databases,
+			CoreBinary: s.opts.VectorCoreBinary,
+			Expand:     settings.ExpandTemplates(), Templates: settings.TemplateList,
 			MinScore: settings.MinVectorScore,
 		})
 	default:
@@ -571,20 +590,23 @@ func (s *Service) searchFTS(ctx context.Context, route PluginRoute, surfaces []s
 	for _, surface := range surfaces {
 		branches = append(branches, ftsBranch(surface, match))
 	}
-	statement := "SELECT database, \"table\", id, snippet, rango FROM (" +
+	// The label travels as "surface" because ExecuteWithPlugins rewrites a
+	// "database" column to exec provenance; fusion needs the plan's name, the
+	// one the vector leg reports.
+	statement := "SELECT surface, \"table\", id, snippet, rango FROM (" +
 		strings.Join(branches, " UNION ALL ") + ") ORDER BY rango LIMIT " +
 		strconv.Itoa(settings.Oversample)
-	rows, err := s.runSearchSQL(ctx, route, statement, maxChars)
+	rows, err := s.runSearchSQL(ctx, route, statement, math.MaxInt)
 	if err != nil {
 		return nil, err
 	}
 	docs := make([]search.RankedDoc, 0, len(rows))
 	for index, row := range rows {
 		docs = append(docs, search.RankedDoc{
-			Database: fmt.Sprint(row["database"]),
+			Database: fmt.Sprint(row["surface"]),
 			Table:    fmt.Sprint(row["table"]),
 			ID:       fmt.Sprint(row["id"]),
-			Snippet:  fmt.Sprint(row["snippet"]),
+			Snippet:  Truncate(fmt.Sprint(row["snippet"]), maxChars, ""),
 			Rank:     index + 1,
 		})
 		docs[len(docs)-1].Key = search.SourceKey(docs[len(docs)-1].Database,
@@ -603,7 +625,7 @@ func ftsBranch(surface searchSurface, match string) string {
 			alias, quoteIdent(surface.IDColumn), quoteIdent("supersedes"), source, quoteIdent("supersedes"))
 	}
 	return fmt.Sprintf(
-		"SELECT %s AS database, %s AS \"table\", CAST(%s.%s AS TEXT) AS id, %s AS snippet, f.rango AS rango "+
+		"SELECT %s AS surface, %s AS \"table\", CAST(%s.%s AS TEXT) AS id, %s AS snippet, f.rango AS rango "+
 			"FROM (SELECT rowid AS fila, bm25(%s) AS rango FROM %s WHERE %s MATCH %s) AS f "+
 			"JOIN %s AS %s ON %s.rowid = f.fila%s",
 		sqlString(surface.Database), sqlString(surface.Table),
@@ -686,7 +708,11 @@ func PluginVectorSearch(dbPath string) VectorSearchFunc {
 
 // PluginVectorQuery shells out to `roca-vector query` with the resolved knobs.
 func PluginVectorQuery(ctx context.Context, dbPath, question string, leg VectorLeg) (VectorHits, error) {
-	path, err := exec.LookPath("roca-vector")
+	path := leg.Path
+	var err error
+	if path == "" {
+		path, err = exec.LookPath("roca-vector")
+	}
 	if err != nil {
 		return VectorHits{Notices: []string{
 			"vector plugin is not installed; continuing with FTS-only",
@@ -708,6 +734,9 @@ func PluginVectorQuery(ctx context.Context, dbPath, question string, leg VectorL
 		args = append([]string{"--db-path", dbPath}, args...)
 	}
 	cmd := exec.CommandContext(ctx, path, args...)
+	if leg.CoreBinary != "" && strings.TrimSpace(os.Getenv("ROCA_VECTOR_ROCA_BINARY")) == "" {
+		cmd.Env = append(os.Environ(), "ROCA_VECTOR_ROCA_BINARY="+leg.CoreBinary)
+	}
 	out, runErr := cmd.Output()
 	if runErr != nil {
 		message := runErr.Error()

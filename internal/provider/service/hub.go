@@ -48,14 +48,14 @@ func (s *Service) openHub(ctx context.Context) error {
 func installHubCompatibility(ctx context.Context, db *sql.DB, opsSchema, corpusSchema string) error {
 	ops, corpus := quoteSchema(opsSchema), quoteSchema(corpusSchema)
 	statements := []string{
-		`CREATE TEMP VIEW memories AS SELECT id, layer, content, metadata, origin,
+		`CREATE TEMP VIEW memories AS SELECT id AS rowid, id, layer, content, metadata, origin,
 			source_agent, source_model, source_surface, source_session, source_sequence,
 			project, status, supersedes, created_at
 		 FROM ` + ops + `.memory_compatibility WHERE source_database = 'core'`,
-		`CREATE TEMP VIEW sessions AS SELECT session_id, source_agent, project, started_at,
+		`CREATE TEMP VIEW sessions AS SELECT rowid AS rowid, session_id, source_agent, project, started_at,
 			ended_at, duration_minutes, title, metadata, source_surface
 		 FROM ` + corpus + `.sessions`,
-		`CREATE TEMP VIEW exchanges AS SELECT id, session_id,
+		`CREATE TEMP VIEW exchanges AS SELECT id AS rowid, id, session_id,
 			exchange_number, is_after_compaction, human_text, agent_text, human_timestamp,
 			agent_timestamp, response_latency_ms, model, provider, tokens_in, tokens_out,
 			tokens_reasoning, cost_usd
@@ -64,7 +64,7 @@ func installHubCompatibility(ctx context.Context, db *sql.DB, opsSchema, corpusS
 			exchange_number, tool_name, tool_params_summary, had_error, error_message,
 			initiative_type
 		 FROM ` + corpus + `.tool_uses`,
-		`CREATE TEMP VIEW thinking_blocks AS SELECT id, session_id,
+		`CREATE TEMP VIEW thinking_blocks AS SELECT id AS rowid, id, session_id,
 			exchange_number, position_in_session, depth, caution_ratio, word_count,
 			is_after_compaction, full_text
 		 FROM ` + corpus + `.thinking_blocks`,
