@@ -85,6 +85,8 @@ type VectorSearchFunc func(ctx context.Context, question string, k int, database
 
 // VectorLeg is one PluginVectorQuery invocation.
 type VectorLeg struct {
+	// Path is the roca-vector executable; empty looks it up on PATH.
+	Path      string
 	K         int
 	Databases string
 	Expand    bool
@@ -337,7 +339,7 @@ func (s *Service) searchVector(ctx context.Context, req SearchRequest, settings 
 		hits, err = s.opts.VectorSearch(ctx, req.Question, settings.Oversample, databases)
 	case s.opts.VectorEnabled:
 		hits, err = PluginVectorQuery(ctx, s.opts.DBPath, req.Question, VectorLeg{
-			K: settings.Oversample, Databases: databases,
+			Path: s.opts.VectorCompanion, K: settings.Oversample, Databases: databases,
 			Expand: settings.ExpandTemplates(), Templates: settings.TemplateList,
 			MinScore: settings.MinVectorScore,
 		})
@@ -686,7 +688,11 @@ func PluginVectorSearch(dbPath string) VectorSearchFunc {
 
 // PluginVectorQuery shells out to `roca-vector query` with the resolved knobs.
 func PluginVectorQuery(ctx context.Context, dbPath, question string, leg VectorLeg) (VectorHits, error) {
-	path, err := exec.LookPath("roca-vector")
+	path := leg.Path
+	var err error
+	if path == "" {
+		path, err = exec.LookPath("roca-vector")
+	}
 	if err != nil {
 		return VectorHits{Notices: []string{
 			"vector plugin is not installed; continuing with FTS-only",

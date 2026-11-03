@@ -68,6 +68,9 @@ type Options struct {
 	// VectorEnabled is the single consent gate for semantic retrieval. The MCP
 	// surface uses it to decide whether to connect to the shared vector resident.
 	VectorEnabled bool
+	// VectorCompanion is the roca-vector executable the surface resolved. Empty
+	// leaves PluginVectorQuery to look it up on PATH.
+	VectorCompanion string
 	// CorpusEnabled routes perennial ingest into the bundled corpus database and
 	// attaches that archive to every query. The CLI always enables it; the zero
 	// value keeps the engine usable with no bundled domains in package tests and

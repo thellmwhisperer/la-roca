@@ -101,6 +101,7 @@ func registerStoreSteps(ctx *godog.ScenarioContext, binary string) {
 	ctx.Then(`^both writes succeed$`, m.bothWritesSucceed)
 	ctx.Then(`^the database holds both memories intact$`, m.holdsBothMemories)
 	ctx.Then(`^the new memory id is greater than the deleted id$`, m.newIDGreaterThanDeleted)
+	registerVectorCompanionSteps(ctx, m)
 }
 
 // freshSandbox gives a scenario a HOME of its own with nothing else in it.
