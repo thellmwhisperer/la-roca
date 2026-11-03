@@ -571,7 +571,10 @@ func (s *Service) searchFTS(ctx context.Context, route PluginRoute, surfaces []s
 	for _, surface := range surfaces {
 		branches = append(branches, ftsBranch(surface, match))
 	}
-	statement := "SELECT database, \"table\", id, snippet, rango FROM (" +
+	// The label travels as "surface" because ExecuteWithPlugins rewrites a
+	// "database" column to exec provenance; fusion needs the plan's name, the
+	// one the vector leg reports.
+	statement := "SELECT surface, \"table\", id, snippet, rango FROM (" +
 		strings.Join(branches, " UNION ALL ") + ") ORDER BY rango LIMIT " +
 		strconv.Itoa(settings.Oversample)
 	rows, err := s.runSearchSQL(ctx, route, statement, maxChars)
@@ -581,7 +584,7 @@ func (s *Service) searchFTS(ctx context.Context, route PluginRoute, surfaces []s
 	docs := make([]search.RankedDoc, 0, len(rows))
 	for index, row := range rows {
 		docs = append(docs, search.RankedDoc{
-			Database: fmt.Sprint(row["database"]),
+			Database: fmt.Sprint(row["surface"]),
 			Table:    fmt.Sprint(row["table"]),
 			ID:       fmt.Sprint(row["id"]),
 			Snippet:  fmt.Sprint(row["snippet"]),
@@ -603,7 +606,7 @@ func ftsBranch(surface searchSurface, match string) string {
 			alias, quoteIdent(surface.IDColumn), quoteIdent("supersedes"), source, quoteIdent("supersedes"))
 	}
 	return fmt.Sprintf(
-		"SELECT %s AS database, %s AS \"table\", CAST(%s.%s AS TEXT) AS id, %s AS snippet, f.rango AS rango "+
+		"SELECT %s AS surface, %s AS \"table\", CAST(%s.%s AS TEXT) AS id, %s AS snippet, f.rango AS rango "+
 			"FROM (SELECT rowid AS fila, bm25(%s) AS rango FROM %s WHERE %s MATCH %s) AS f "+
 			"JOIN %s AS %s ON %s.rowid = f.fila%s",
 		sqlString(surface.Database), sqlString(surface.Table),

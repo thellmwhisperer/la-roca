@@ -211,7 +211,7 @@ func TestKeywordSearchReadsExchangesFromTheResidentCorpus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Hits) != 1 || result.Hits[0].Database != "plugin:roca-corpus" {
+	if len(result.Hits) != 1 || result.Hits[0].Database != "corpus" {
 		t.Fatalf("hits = %+v", result.Hits)
 	}
 	if !strings.Contains(strings.ToLower(result.Hits[0].Snippet), "cobalt atlas") &&

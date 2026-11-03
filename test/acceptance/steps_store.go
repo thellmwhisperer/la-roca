@@ -47,6 +47,9 @@ func registerStoreSteps(ctx *godog.ScenarioContext, binary string) {
 	ctx.Given(`^a home Roca database containing a memory unique to home$`, m.homeDatabaseWithUniqueMemory)
 	ctx.Given(`^another Roca database containing a memory unique to that database$`, m.otherDatabaseWithUniqueMemory)
 	ctx.Given(`^a selected path where no Roca database exists$`, m.missingDatabasePath)
+	ctx.Given(`^a home made by roca init that ingested an agent session mentioning "([^"]*)"$`, m.hybridHome)
+	ctx.Given(`^vector search is switched on$`, m.vectorSwitchedOn)
+	ctx.Given(`^a roca-vector on PATH answers query with that exchange as its only hit$`, m.stubVectorLeg)
 
 	// --- when: the one action the scenario exercises ---
 	ctx.When(`^I initialize the database$`, m.runInit)
@@ -67,6 +70,7 @@ func registerStoreSteps(ctx *godog.ScenarioContext, binary string) {
 	ctx.When(`^I search without choosing a database for the command$`, m.searchHomeDatabase)
 	ctx.When(`^I search that database$`, m.searchMissingDatabase)
 	ctx.When(`^two writers store different memories at the same time$`, m.twoConcurrentWriters)
+	ctx.When(`^I run '([^']*)'$`, func(command string) error { _, err := m.run(command); return err })
 
 	// --- then: properties the scenario asserts ---
 	ctx.Then(`^the command exits with code (\d+)$`, m.itExitsWithCode)
@@ -101,6 +105,9 @@ func registerStoreSteps(ctx *godog.ScenarioContext, binary string) {
 	ctx.Then(`^both writes succeed$`, m.bothWritesSucceed)
 	ctx.Then(`^the database holds both memories intact$`, m.holdsBothMemories)
 	ctx.Then(`^the new memory id is greater than the deleted id$`, m.newIDGreaterThanDeleted)
+	ctx.Then(`^exactly one hit is that exchange from database "([^"]*)" found by fts and vector with consensus$`,
+		m.oneFusedExchangeHit)
+	ctx.Then(`^the hits include that exchange with consensus$`, m.exchangeHitWithConsensus)
 }
 
 // freshSandbox gives a scenario a HOME of its own with nothing else in it.
