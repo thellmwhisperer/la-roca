@@ -77,7 +77,8 @@ func (m *world) vectorSwitchedOn() error {
 }
 
 func (m *world) stubVectorInLocalBin() error {
-	script := "#!/bin/sh\ncase \" $* \" in\n*\" query \"*) printf '%s\\n' '" + stubVectorHit + "' ;;\n*) exit 1 ;;\nesac\n"
+	script := "#!/bin/sh\n[ -n \"$ROCA_VECTOR_ROCA_BINARY\" ] && [ -x \"$ROCA_VECTOR_ROCA_BINARY\" ] || exit 1\n" +
+		"case \" $* \" in\n*\" query \"*) printf '%s\\n' '" + stubVectorHit + "' ;;\n*) exit 1 ;;\nesac\n"
 	path := filepath.Join(m.home, ".local", "bin", "roca-vector")
 	if err := writeFixture(path, script); err != nil {
 		return err

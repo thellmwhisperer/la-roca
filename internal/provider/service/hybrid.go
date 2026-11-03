@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -714,6 +715,11 @@ func PluginVectorQuery(ctx context.Context, dbPath, question string, leg VectorL
 		args = append([]string{"--db-path", dbPath}, args...)
 	}
 	cmd := exec.CommandContext(ctx, path, args...)
+	if strings.TrimSpace(os.Getenv("ROCA_VECTOR_ROCA_BINARY")) == "" {
+		if host, locErr := os.Executable(); locErr == nil && strings.TrimSpace(host) != "" {
+			cmd.Env = append(os.Environ(), "ROCA_VECTOR_ROCA_BINARY="+host)
+		}
+	}
 	out, runErr := cmd.Output()
 	if runErr != nil {
 		message := runErr.Error()
