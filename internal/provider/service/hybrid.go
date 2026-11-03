@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -145,6 +146,16 @@ func (s *Service) Search(ctx context.Context, req SearchRequest) (SearchResult, 
 	result.Notices = append(result.Notices, route.Warnings...)
 
 	surfaces := collectSurfaces(route)
+	if s.servingLayout() == LayoutCutover {
+		// Under cutover the core sessions, exchanges and thinking blocks are views
+		// of the corpus tables its plugin already searches; only memories differ.
+		surfaces = slices.DeleteFunc(surfaces, func(surface searchSurface) bool {
+			return surface.Database == ScopeCore && surface.Table != "memories" &&
+				slices.ContainsFunc(surfaces, func(candidate searchSurface) bool {
+					return candidate.Database == "corpus" && candidate.Table == surface.Table
+				})
+		})
+	}
 	tokens := uniqueTokens(search.Tokenize(req.Question))
 	legs, legsErr := s.runSearchLegs(ctx, req, route, surfaces, tokens, maxChars, settings)
 	result.Terms = legs.terms
