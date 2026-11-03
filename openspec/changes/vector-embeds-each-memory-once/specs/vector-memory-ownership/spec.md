@@ -33,5 +33,5 @@ offer `roca vector install` as its remedy.
 - **WHEN** on a home made the same way but without the `roca store` step, so
   every memory came from the corpus, `roca vector install` finished
 - **THEN** `roca vector status --json` shows the ops sidecar with 0 embedded
-  chunks and a state other than `outdated`, and `roca doctor` does not print
+  chunks and a state other than `outdated`, and `roca doctor` prints no
   `roca vector install`

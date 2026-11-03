@@ -40,7 +40,7 @@ $ roca vector status
   is `core`, read from `memory_records` through the ops `memory_compatibility`
   view; memories whose source is the corpus stay with the corpus sidecar only.
 - A sidecar whose tables hold nothing to embed reports a finished state, and
-  `roca doctor` does not offer `roca vector install` for it.
+  `roca doctor` offers no `roca vector install` for it.
 
 ## Capabilities
 
