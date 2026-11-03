@@ -240,27 +240,34 @@ func TestPluginVectorQueryPassesCoreExecutable(t *testing.T) {
 	}
 	override := filepath.Join(t.TempDir(), "selected core")
 	for _, tc := range []struct {
-		name, configured, want string
+		name, configured, core, want, wrapperWant string
 	}{
-		{"default", "", host},
-		{"blank", " \t", host},
-		{"override", override, override},
+		{"default", "", "", "unset", "unset"},
+		{"blank", " \t", "", " \t", " \t"},
+		{"configured", "", host, host, "unset"},
+		{"override", override, host, override, override},
 	} {
 		for _, resolved := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/resolved=%t", tc.name, resolved), func(t *testing.T) {
 				installVectorScript(t, `#!/bin/sh
-[ "$ROCA_VECTOR_ROCA_BINARY" = "$EXPECTED_ROCA_BINARY" ] || exit 1
+[ "${ROCA_VECTOR_ROCA_BINARY-unset}" = "$EXPECTED_ROCA_BINARY" ] || exit 1
 printf '%s\n' '{"vector_executed":true}'
 `)
 				t.Setenv("ROCA_VECTOR_ROCA_BINARY", tc.configured)
+				if tc.configured == "" {
+					if err := os.Unsetenv("ROCA_VECTOR_ROCA_BINARY"); err != nil {
+						t.Fatal(err)
+					}
+				}
 				t.Setenv("EXPECTED_ROCA_BINARY", tc.want)
 				var hits service.VectorHits
 				var err error
 				if resolved {
 					path := filepath.Join(filepath.SplitList(os.Getenv("PATH"))[0], "roca-vector")
 					t.Setenv("PATH", "/usr/bin:/bin")
-					hits, err = service.PluginVectorQuery(t.Context(), "", "harbor lantern", service.VectorLeg{Path: path, K: 1})
+					hits, err = service.PluginVectorQuery(t.Context(), "", "harbor lantern", service.VectorLeg{Path: path, CoreBinary: tc.core, K: 1})
 				} else {
+					t.Setenv("EXPECTED_ROCA_BINARY", tc.wrapperWant)
 					hits, err = service.PluginVectorSearch("")(t.Context(), "harbor lantern", 1, "all")
 				}
 				if err != nil || !hits.Executed {
