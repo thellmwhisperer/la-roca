@@ -24,6 +24,18 @@ Most users need to do nothing: an already signed-in Codex or Claude CLI is detec
 
 The bootstrap JSON field `external_credential` is now named `command_transport`; it reports that the selected model runs through a local agent CLI without implying that La Roca owns authentication.
 
+## [1.94.1](https://github.com/thellmwhisperer/la-roca/compare/v1.94.0...v1.94.1) (2026-11-03)
+
+
+### Bug Fixes
+
+* **provider:** return each row once from roca query on a cutover home ([ae91324](https://github.com/thellmwhisperer/la-roca/commit/ae9132486d3f9ec3ff30a3545cb3018a66f785bb))
+* **provider:** return each row once from roca query on a cutover home ([#582](https://github.com/thellmwhisperer/la-roca/issues/582)) ([7ed2f54](https://github.com/thellmwhisperer/la-roca/commit/7ed2f54883d5a5b0e60f62b796acf2aeb63692aa))
+* **search:** fuse plugin rows found by both full-text and vector legs ([0545d48](https://github.com/thellmwhisperer/la-roca/commit/0545d48c3bdd78b98f666a0d3a0bdcebdf90f603))
+* **search:** fuse plugin rows found by both full-text and vector legs ([#581](https://github.com/thellmwhisperer/la-roca/issues/581)) ([7ed2f54](https://github.com/thellmwhisperer/la-roca/commit/7ed2f54883d5a5b0e60f62b796acf2aeb63692aa))
+* **service:** roca query finds roca-vector in the managed install directory when it is not on PATH ([82af365](https://github.com/thellmwhisperer/la-roca/commit/82af3655badcd799b7060a7337cd5dabb7ca640b))
+* **service:** roca query finds roca-vector in the managed install directory when it is not on PATH ([#583](https://github.com/thellmwhisperer/la-roca/issues/583)) ([7ed2f54](https://github.com/thellmwhisperer/la-roca/commit/7ed2f54883d5a5b0e60f62b796acf2aeb63692aa))
+
 ## [1.94.0](https://github.com/thellmwhisperer/la-roca/compare/v1.93.1...v1.94.0) (2026-10-24)
 
 
