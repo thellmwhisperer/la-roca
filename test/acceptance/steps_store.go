@@ -48,7 +48,7 @@ func registerStoreSteps(ctx *godog.ScenarioContext, binary string) {
 	ctx.Given(`^another Roca database containing a memory unique to that database$`, m.otherDatabaseWithUniqueMemory)
 	ctx.Given(`^a selected path where no Roca database exists$`, m.missingDatabasePath)
 	ctx.Given(`^a home made by roca init that ingested an agent session mentioning "([^"]*)"$`, m.hybridHome)
-	ctx.Given(`^vector search is switched on$`, m.vectorSwitchedOn)
+	ctx.Given(`^vector search is switched on$`, func() error { return enableVectorFeature(m.home) })
 	ctx.Given(`^a roca-vector on PATH answers query with that exchange as its only hit$`, m.stubVectorLeg)
 
 	// --- when: the one action the scenario exercises ---

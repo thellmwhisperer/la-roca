@@ -46,18 +46,6 @@ func (m *world) hybridHome(phrase string) error {
 	return nil
 }
 
-func (m *world) vectorSwitchedOn() error {
-	path := filepath.Join(m.home, ".roca", "config.toml")
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	if !strings.Contains(string(raw), "vector = false") {
-		return fmt.Errorf("config has no vector switch to turn on:\n%s", raw)
-	}
-	return os.WriteFile(path, []byte(strings.Replace(string(raw), "vector = false", "vector = true", 1)), 0o600)
-}
-
 // stubVectorLeg stands in for the companion so no scenario loads the model: it
 // answers `query` with the exchange as its only hit, named as the companion
 // names it.
@@ -80,23 +68,15 @@ type hybridHit struct {
 	Consensus bool     `json:"consensus"`
 }
 
-func (m *world) hybridHits() ([]hybridHit, error) {
+func (m *world) exchangeHits() ([]hybridHit, error) {
 	var result struct {
 		Hits []hybridHit `json:"hits"`
 	}
 	if err := json.Unmarshal([]byte(m.last.stdout), &result); err != nil {
 		return nil, fmt.Errorf("decode %q: %w\n%s", m.last.command, err, m.last.stdout)
 	}
-	return result.Hits, nil
-}
-
-func (m *world) exchangeHits() ([]hybridHit, error) {
-	hits, err := m.hybridHits()
-	if err != nil {
-		return nil, err
-	}
 	var found []hybridHit
-	for _, hit := range hits {
+	for _, hit := range result.Hits {
 		if hit.Table == "exchanges" && hit.ID == m.exchangeID {
 			found = append(found, hit)
 		}
