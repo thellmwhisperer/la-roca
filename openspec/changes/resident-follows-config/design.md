@@ -45,8 +45,8 @@ The install path since #588 retires residents with SIGTERM from
 
 ### What the resident records at start, and what it compares
 
-Before `openService`, the resident records the SHA-256 of the bytes of the
-`config.toml` that open reads (or that the file is absent), and the identity of
+After `openService` returns, the resident records the SHA-256 of the bytes of
+`config.toml` (or that the file is absent), and the identity of
 its own executable: `os.Executable()` and `os.Stat` of that path (device,
 inode, size and modification time). On each `connect` probe, and before it
 runs each request on any connection, it reads the file again and stats the

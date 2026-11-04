@@ -333,76 +333,99 @@ func ProxyStdio(ctx context.Context, opts Options, in io.Reader, out io.Writer) 
 			}
 		}
 		clear(pending)
+		clear(lines)
 		return nil
 	}
+	var refused, held []message
 	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case received := <-input:
-			if received.err != nil {
-				if errors.Is(received.err, io.EOF) {
-					return nil
-				}
-				return received.err
-			}
-			var envelope struct {
-				Method string          `json:"method"`
-				ID     json.RawMessage `json:"id"`
-			}
-			_ = json.Unmarshal(received.line, &envelope)
-			if conn == nil {
-				if err := connect(envelope.Method != "initialize"); err != nil {
-					return err
-				}
-			}
-			if envelope.Method == "initialize" {
-				initialize = bytes.Clone(received.line)
-			}
-			if envelope.Method == "notifications/initialized" {
-				initialized = bytes.Clone(received.line)
-			}
-			if len(envelope.ID) > 0 && envelope.Method != "" {
-				pending[string(envelope.ID)] = envelope.ID
-				lines[string(envelope.ID)] = received.line
-			}
-			if _, err := conn.Write(append(received.line, '\n')); err != nil {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if len(refused) > 0 && len(pending) == 0 {
+			if conn != nil {
 				if err := disconnect(); err != nil {
 					return err
 				}
 			}
-		case received := <-responses:
-			if received.conn != conn {
-				continue
-			}
-			if received.err != nil {
-				if err := disconnect(); err != nil {
+			held = append(refused, held...)
+			refused = nil
+		}
+		var received message
+		if len(refused) == 0 && len(held) > 0 {
+			received = held[0]
+			held[0] = message{}
+			held = held[1:]
+		} else {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case received = <-input:
+				if len(refused) > 0 {
+					held = append(held, received)
+					continue
+				}
+			case received := <-responses:
+				if received.conn != conn {
+					continue
+				}
+				if received.err != nil {
+					if err := disconnect(); err != nil {
+						return err
+					}
+					continue
+				}
+				var envelope struct {
+					ID     json.RawMessage `json:"id"`
+					Method string          `json:"method"`
+					Error  struct {
+						Message string `json:"message"`
+					} `json:"error"`
+				}
+				_ = json.Unmarshal(received.line, &envelope)
+				if line, sent := lines[string(envelope.ID)]; sent && envelope.Error.Message == ErrRetired.Error() {
+					delete(pending, string(envelope.ID))
+					delete(lines, string(envelope.ID))
+					refused = append(refused, message{line: line})
+					continue
+				}
+				if envelope.Method == "" {
+					delete(pending, string(envelope.ID))
+					delete(lines, string(envelope.ID))
+				}
+				if _, err := out.Write(received.line); err != nil {
 					return err
 				}
 				continue
 			}
-			var envelope struct {
-				ID     json.RawMessage `json:"id"`
-				Method string          `json:"method"`
-				Error  struct {
-					Message string `json:"message"`
-				} `json:"error"`
+		}
+		if received.err != nil {
+			if errors.Is(received.err, io.EOF) {
+				return nil
 			}
-			_ = json.Unmarshal(received.line, &envelope)
-			if line, sent := lines[string(envelope.ID)]; sent && envelope.Error.Message == ErrRetired.Error() {
-				// The retired resident ran nothing: the request goes again, to the
-				// resident that replaces it, as if the agent had just sent it.
-				// ponytail: other requests in flight on it get the unknown answer.
-				delete(pending, string(envelope.ID))
-				_ = disconnect()
-				go func() { input <- message{line: line} }()
-				continue
+			return received.err
+		}
+		var envelope struct {
+			Method string          `json:"method"`
+			ID     json.RawMessage `json:"id"`
+		}
+		_ = json.Unmarshal(received.line, &envelope)
+		if conn == nil {
+			if err := connect(envelope.Method != "initialize"); err != nil {
+				return err
 			}
-			if envelope.Method == "" {
-				delete(pending, string(envelope.ID))
-				delete(lines, string(envelope.ID))
-			}
-			if _, err := out.Write(received.line); err != nil {
+		}
+		if envelope.Method == "initialize" {
+			initialize = bytes.Clone(received.line)
+		}
+		if envelope.Method == "notifications/initialized" {
+			initialized = bytes.Clone(received.line)
+		}
+		if len(envelope.ID) > 0 && envelope.Method != "" {
+			pending[string(envelope.ID)] = envelope.ID
+			lines[string(envelope.ID)] = received.line
+		}
+		if _, err := conn.Write(append(received.line, '\n')); err != nil {
+			if err := disconnect(); err != nil {
 				return err
 			}
 		}

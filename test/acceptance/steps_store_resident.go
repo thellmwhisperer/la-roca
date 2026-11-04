@@ -3,17 +3,13 @@
 package acceptance
 
 import (
-	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/cucumber/godog"
-	"github.com/thellmwhisperer/la-roca/pkg/resident"
 )
 
 // A core resident that an MCP session started, then config.toml or the roca
@@ -37,7 +33,6 @@ func registerResidentConfigSteps(ctx *godog.ScenarioContext, m *world) {
 		}
 		return m.theReadableMCPResponseContains(text)
 	})
-	ctx.When(`^that MCP session is closed and its resident let it go$`, m.mcpSessionLetGo)
 	ctx.When(`^vector is switched on under features$`, m.vectorSwitchedOn)
 	ctx.When(`^vector is switched off under features$`, func() error {
 		return m.switchFeature("vector = true", "vector = false")
@@ -139,21 +134,6 @@ func registerResidentConfigSteps(ctx *godog.ScenarioContext, m *world) {
 		}
 		return m.jsonKeyEqualTo("resident.vector", vector)
 	})
-}
-
-// mcpSessionLetGo closes the session and waits until the resident no longer
-// holds it: the status call that asks is its only client.
-func (m *world) mcpSessionLetGo() error {
-	m.closeThePlug()
-	options := resident.Options{Socket: m.residentSocket}
-	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
-		var status resident.Status
-		raw, err := resident.Call(context.Background(), options, "status", nil)
-		if err == nil && json.Unmarshal(raw, &status) == nil && status.AttachedClients <= 1 {
-			return nil
-		}
-	}
-	return fmt.Errorf("the resident still holds the closed MCP session")
 }
 
 // rocaVersion is the version and commit `roca --version` prints:

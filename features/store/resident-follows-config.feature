@@ -50,8 +50,7 @@ Feature: A resident answers only with the configuration and build on disk
     And an MCP session has called roca_query "harbor lantern" once
     When I run 'roca doctor --json'
     Then the JSON output has no resident or a resident with vector true
-    When that MCP session is closed and its resident let it go
-    And vector is switched off under features
+    When vector is switched off under features
     And I run 'roca doctor --json'
     Then the command exits with code 0
     And the JSON output has no resident or a resident with vector false

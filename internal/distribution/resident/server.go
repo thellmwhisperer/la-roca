@@ -52,8 +52,6 @@ type Home struct {
 	binary                 os.FileInfo
 }
 
-// RecordHome is read before the service opens, so a change made while it
-// opens is a change.
 func RecordHome(configPath string) Home {
 	executable, _ := os.Executable()
 	return readHome(configPath, executable)
