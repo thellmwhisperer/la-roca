@@ -74,7 +74,16 @@ func Open(path string) (*DB, error) {
 		return nil, fmt.Errorf("open the database %q: %w", abs, whyItCannotOpen(abs, err))
 	}
 	for _, artifact := range []string{abs, abs + "-wal", abs + "-shm"} {
-		if err := os.Chmod(artifact, 0o600); err != nil {
+		// A chmod that changes nothing still moves the change time, and a vector
+		// sidecar reads that as a source written after its pass.
+		info, err := os.Stat(artifact)
+		if err == nil && info.Mode().Perm() == 0o600 {
+			continue
+		}
+		if err == nil {
+			err = os.Chmod(artifact, 0o600)
+		}
+		if err != nil {
 			if artifact != abs && os.IsNotExist(err) {
 				continue
 			}

@@ -83,6 +83,11 @@
             "name": "memory_compatibility",
             "description": "Shadow-only projection that reproduces every legacy database label and memory ID.",
             "columns": ["source_database", "id", "physical_id", "layer", "content", "metadata", "origin", "provenance", "source_agent", "source_model", "source_surface", "source_session", "source_sequence", "project", "status", "supersedes", "created_at", "expires_at"]
+          },
+          {
+            "name": "core_memories",
+            "description": "Migrated memories only core held, by their ops physical id; the ops sidecar embeds them.",
+            "columns": ["id", "layer", "content", "project", "status", "created_at"]
           }
         ]
       }
@@ -95,6 +100,12 @@
         "tables": [
           {
             "name": "memories",
+            "id_column": "id",
+            "text_columns": ["content"],
+            "time_columns": ["created_at"]
+          },
+          {
+            "name": "core_memories",
             "id_column": "id",
             "text_columns": ["content"],
             "time_columns": ["created_at"]

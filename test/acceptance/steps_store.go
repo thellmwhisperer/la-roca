@@ -33,6 +33,12 @@ func registerStoreSteps(ctx *godog.ScenarioContext, binary string) {
 	})
 	ctx.After(func(c context.Context, _ *godog.Scenario, _ error) (context.Context, error) {
 		m.closeModels()
+		m.closeThePlug()
+		if m.residentCleanup != nil {
+			m.residentCleanup()
+			m.residentSocket, m.residentCleanup = "", nil
+		}
+		m.residents.close()
 		_ = os.RemoveAll(m.home)
 		return c, nil
 	})
@@ -117,6 +123,7 @@ func registerStoreSteps(ctx *godog.ScenarioContext, binary string) {
 	ctx.Then(`^the number of hits equals the number of distinct rows that mention "([^"]*)"$`,
 		m.hitsEqualMentioningRows)
 	registerVectorCompanionSteps(ctx, m)
+	registerResidentConfigSteps(ctx, m)
 }
 
 // freshSandbox gives a scenario a HOME of its own with nothing else in it.
@@ -309,6 +316,12 @@ func (m *world) cutoverHomeMentioning(word string) error {
 			return fmt.Errorf("%s exited %d: %s", m.last.command, m.last.code, m.last.stderr)
 		}
 	}
+	return m.serveCutoverLayout()
+}
+
+// serveCutoverLayout appends serving = "cutover" under [layout] to the home's
+// configuration.
+func (m *world) serveCutoverLayout() error {
 	config, err := os.OpenFile(filepath.Join(m.home, ".roca", "config.toml"), os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err

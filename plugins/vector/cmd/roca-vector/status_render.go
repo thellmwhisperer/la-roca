@@ -70,6 +70,10 @@ func needsVectorInstall(row vector.DatabaseVectorization) bool {
 	if strings.EqualFold(row.State, "missing") {
 		return true
 	}
+	// A finished pass over tables with nothing to embed holds zero chunks and is done.
+	if row.State == vector.StateComplete {
+		return false
+	}
 	if row.EmbeddedChunks != nil && *row.EmbeddedChunks == 0 {
 		return true
 	}

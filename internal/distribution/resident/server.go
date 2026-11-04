@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -31,9 +32,45 @@ type Server struct {
 	listener net.Listener
 	vectorMu sync.Mutex
 	vector   *vectorresident.Client
+
+	home    Home
+	mu      sync.Mutex
+	retired bool
 }
 
-func Run(ctx context.Context, svc *service.Service, build mcpplug.Build) error {
+// Home is what a resident answers with: the bytes of config.toml and the roca
+// executable it was started from.
+type Home struct {
+	configPath, executable string
+	config                 [sha256.Size]byte
+	configRead             bool
+	binary                 os.FileInfo
+}
+
+func RecordHome(configPath string) Home {
+	executable, _ := os.Executable()
+	return readHome(configPath, executable)
+}
+
+func readHome(configPath, executable string) Home {
+	home := Home{configPath: configPath, executable: executable}
+	if raw, err := os.ReadFile(configPath); err == nil {
+		home.config, home.configRead = sha256.Sum256(raw), true
+	}
+	home.binary, _ = os.Stat(executable)
+	return home
+}
+
+// Changed reports whether config.toml or the executable on disk is not the one
+// recorded. An executable that cannot be read is a change.
+func (h Home) Changed() bool {
+	now := readHome(h.configPath, h.executable)
+	return now.config != h.config || now.configRead != h.configRead ||
+		h.binary == nil || now.binary == nil || !os.SameFile(h.binary, now.binary) ||
+		h.binary.Size() != now.binary.Size() || !h.binary.ModTime().Equal(now.binary.ModTime())
+}
+
+func Run(ctx context.Context, svc *service.Service, build mcpplug.Build, home Home) error {
 	dataDir := svc.DataDir()
 	socket := transport.SocketPath(dataDir)
 	if err := os.MkdirAll(filepath.Dir(socket), 0o700); err != nil {
@@ -49,27 +86,36 @@ func Run(ctx context.Context, svc *service.Service, build mcpplug.Build) error {
 	if err != nil {
 		return fmt.Errorf("listen for resident clients: %w", err)
 	}
+	// Closing the listener unlinks its socket, once, so a retired resident never
+	// removes the socket of the one that replaced it.
 	defer listener.Close()
-	defer os.Remove(socket)
 	if err := os.Chmod(socket, 0o600); err != nil {
 		return fmt.Errorf("restrict resident socket: %w", err)
 	}
-	server := &Server{service: svc, build: build, dataDir: dataDir, started: time.Now(), listener: listener}
+	server := &Server{service: svc, build: build, dataDir: dataDir, started: time.Now(), listener: listener,
+		home: home}
 	defer server.closeVector()
 	go func() {
 		<-ctx.Done()
 		_ = listener.Close()
 	}()
+	var connections sync.WaitGroup
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil
 			}
+			if server.isRetired() {
+				connections.Wait()
+				return nil
+			}
 			return err
 		}
 		server.clients.Add(1)
+		connections.Add(1)
 		go func() {
+			defer connections.Done()
 			defer server.clients.Add(-1)
 			_ = server.handle(ctx, conn)
 		}()
@@ -85,7 +131,12 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) error {
 	}
 	var probe transport.Request
 	readOnly := false
+	// A CLI call runs with the home its connect found; an MCP session is
+	// checked again before each request.
 	if json.Unmarshal(bytes.TrimSpace(line), &probe) == nil && probe.Op == "connect" {
+		if !s.admit() {
+			return s.respond(conn, transport.Response{Error: transport.ErrRetired.Error()})
+		}
 		if probe.DBPath != "" {
 			requested, reqErr := filepath.Abs(probe.DBPath)
 			serving, svcErr := filepath.Abs(s.service.ConfiguredDBPath())
@@ -109,12 +160,30 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) error {
 		}
 		return s.handleCall(ctx, conn, line)
 	}
-	transportConn := &bufferedConn{
-		Conn:   conn,
-		reader: io.MultiReader(bytes.NewReader(line), reader),
+	transportConn := &mcpConn{
+		Conn: conn, server: s,
+		reader: bufio.NewReader(io.MultiReader(bytes.NewReader(line), reader)),
 	}
 	err = mcpplug.ServeConnection(ctx, s.service, s.build, transportConn, readOnly)
 	return err
+}
+
+// admit reports whether the home this resident opened is still the one on
+// disk.
+func (s *Server) admit() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.retired && s.home.Changed() {
+		s.retired = true
+		_ = s.listener.Close()
+	}
+	return !s.retired
+}
+
+func (s *Server) isRetired() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.retired
 }
 
 func (s *Server) handleCall(ctx context.Context, conn net.Conn, first []byte) error {
@@ -311,9 +380,12 @@ func (s *Server) closeVector() {
 }
 
 func (s *Server) status() transport.Status {
+	options := s.service.Options()
 	return transport.Status{
 		PID: os.Getpid(), StartedAt: s.started, UptimeMS: time.Since(s.started).Milliseconds(),
 		AttachedClients: int(s.clients.Load()), OpenConnections: s.service.OpenConnections(), WAL: walSizes(s.dataDir),
+		Version: s.build.Version, Commit: s.build.Commit, ConfigPath: options.ConfigPath,
+		Vector: s.service.VectorEnabled(), RocaOps: options.RocaOpsEnabled, Serving: string(s.service.ServingLayout()),
 	}
 }
 
@@ -336,11 +408,42 @@ func walSizes(root string) map[string]int64 {
 	return result
 }
 
-type bufferedConn struct {
+// mcpConn hands the MCP server one line at a time. A request that arrives once
+// the resident retired is refused with its id and never reaches the server.
+type mcpConn struct {
 	net.Conn
-	reader io.Reader
+	server *Server
+	reader *bufio.Reader
+	line   []byte
 }
 
-func (c *bufferedConn) Read(p []byte) (int, error) { return c.reader.Read(p) }
+type envelope struct {
+	ID     json.RawMessage `json:"id"`
+	Method string          `json:"method"`
+}
 
-var _ io.ReadWriteCloser = (*bufferedConn)(nil)
+func (c *mcpConn) Read(p []byte) (int, error) {
+	for len(c.line) == 0 {
+		line, err := c.reader.ReadBytes('\n')
+		if len(line) == 0 {
+			return 0, err
+		}
+		var message envelope
+		_ = json.Unmarshal(line, &message)
+		if message.Method != "" && !c.server.admit() {
+			if len(message.ID) > 0 {
+				refusal, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": message.ID,
+					"error": map[string]any{"code": -32000, "message": transport.ErrRetired.Error()}})
+				// A refusal that cannot be written is a broken connection the next read reports.
+				_, _ = c.Write(append(refusal, '\n'))
+			}
+			continue
+		}
+		c.line = line
+	}
+	n := copy(p, c.line)
+	c.line = c.line[n:]
+	return n, nil
+}
+
+var _ io.ReadWriteCloser = (*mcpConn)(nil)

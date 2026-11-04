@@ -87,6 +87,9 @@ type world struct {
 	// exchangeID is the corpus exchange the hybrid scenarios' stub vector leg
 	// answers with.
 	exchangeID string
+	// residents is the vector resident socket, payload and PATH the scenarios
+	// about which roca a resident answers with run under.
+	residents residentWorld
 }
 
 type run struct {
@@ -143,6 +146,7 @@ func registerSteps(ctx *godog.ScenarioContext, binary string) {
 				m.residentCleanup()
 				m.residentSocket, m.residentCleanup = "", nil
 			}
+			m.residents.close()
 		}()
 		// A traceback in the operator's face is always a failure, whether the
 		// step asserted it explicitly or not.
@@ -243,6 +247,8 @@ func registerSteps(ctx *godog.ScenarioContext, binary string) {
 	registerInstallSteps(ctx, m)
 	registerIngestSteps(ctx, m)
 	registerMCPSteps(ctx, m)
+	registerResidentSteps(ctx, m)
+	registerMemoryOwnershipSteps(ctx, m)
 }
 
 // registerModelSteps are the ones about the providers. They live apart because
@@ -519,12 +525,16 @@ func (m *world) environment() []string {
 	if m.models.factoryDefault {
 		path = filepath.Join(m.home, "bin")
 	}
+	if m.residents.operatorPath {
+		path = theBinariesDirectory(m.home) + ":" + path
+	}
 	environment := append([]string{
 		"HOME=" + m.home,
 		"ROCA_RESIDENT_SOCKET=" + m.residentSocket,
 		"PATH=" + path,
 		"TMPDIR=" + filepath.Join(m.home, "tmp"),
 	}, m.modelEnvironment()...)
+	environment = append(environment, m.residents.environment()...)
 	if directory := os.Getenv("GOCOVERDIR"); directory != "" {
 		environment = append(environment, "GOCOVERDIR="+directory)
 	}

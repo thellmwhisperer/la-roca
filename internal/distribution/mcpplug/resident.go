@@ -81,6 +81,8 @@ func dialOrSpawnResident(ctx context.Context, svc *service.Service, binary, sock
 
 func residentOptions(svc *service.Service, binary string) vectorresident.Options {
 	opts := vectorresident.Options{Binary: binary, Status: os.Stderr}
+	// The resident outlives this session's PATH, so it is told which roca it calls back.
+	opts.HostBinary, _ = os.Executable()
 	if svc == nil {
 		return opts
 	}

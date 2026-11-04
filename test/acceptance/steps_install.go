@@ -128,6 +128,7 @@ func registerInstallSteps(ctx *godog.ScenarioContext, m *world) {
 	ctx.Then(`^there is no Python virtual environment in the HOME$`, m.noVirtualEnvironment)
 	ctx.Then(`^there is no embedded interpreter in the HOME$`, m.noEmbeddedInterpreter)
 	ctx.Then(`^running "roca --version" exits with code (\d+)$`, m.versionExitsWith)
+	ctx.Then(`^running "roca-vector --version" exits with code (\d+)$`, m.vectorVersionExitsWith)
 	ctx.Then(`^the output of "roca --version" contains the version and the source SHA$`,
 		m.theVersionCarriesTheSHA)
 	ctx.Then(`^the JSON output has "([^"]*)" pointing at a file that exists$`, m.jsonKeyIsAnExistingFile)
@@ -314,16 +315,22 @@ func (m *world) theChannel() *installWorld {
 	if m.install.server != nil {
 		return &m.install
 	}
-	m.install.repo = "roca-acceptance/la-roca"
-	m.install.versions = map[string][]byte{}
-	m.install.builtVersion = m.builtVersion()
-	m.install.versions[m.install.builtVersion] = mustRead(m.artefact())
 	newBinary, err := newStampedBinary()
 	if err != nil {
 		panic(err)
 	}
-	m.install.versions[theNewVersion] = mustRead(newBinary)
+	builtVersion := m.builtVersion()
+	return m.openTheChannel(builtVersion, map[string][]byte{
+		builtVersion: mustRead(m.artefact()), theNewVersion: mustRead(newBinary),
+	})
+}
 
+// openTheChannel serves the given artefacts by tag, builtVersion being the one
+// `releases/latest` answers with.
+func (m *world) openTheChannel(builtVersion string, versions map[string][]byte) *installWorld {
+	m.install.repo = "roca-acceptance/la-roca"
+	m.install.versions = versions
+	m.install.builtVersion = builtVersion
 	channel := &m.install
 	m.install.server = httptest.NewTLSServer(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
@@ -885,6 +892,16 @@ func (m *world) versionExitsWith(expected int) error {
 	return m.itExitsWithCode(expected)
 }
 
+// vectorVersionExitsWith runs the installed companion, the cgo binary a Linux
+// with an older glibc than its builder's refuses to load.
+func (m *world) vectorVersionExitsWith(expected int) error {
+	vector := filepath.Join(theBinariesDirectory(m.home), "roca-vector")
+	if err := m.record("roca-vector --version", exec.Command(vector, "--version")); err != nil {
+		return err
+	}
+	return m.itExitsWithCode(expected)
+}
+
 func (m *world) theVersionCarriesTheSHA() error {
 	if _, err := m.run("roca --version"); err != nil {
 		return err
@@ -1275,7 +1292,13 @@ func (m *world) builtVersion() string {
 	if m.install.builtVersion != "" {
 		return m.install.builtVersion
 	}
-	output, err := exec.Command(m.artefact(), "version").CombinedOutput()
+	return binaryVersion(m.artefact())
+}
+
+// binaryVersion is the tag a binary calls itself, which is the tag a channel
+// publishing it answers with.
+func binaryVersion(binary string) string {
+	output, err := exec.Command(binary, "version").CombinedOutput()
 	if err != nil {
 		return "dev"
 	}

@@ -61,6 +61,15 @@ jobs:
       - name: Format, vet, tests and build of the vector module
         run: make -C plugins/vector check
 
+  # The release's own Linux legs, glibc floor included, so a regression is red
+  # before a tag exists. Its release-linux-amd64 artifact is the candidate an
+  # operator installs on a real Linux machine; nothing reaches GitHub Releases.
+  linux-release-build:
+    uses: ./.github/workflows/linux-release-build.yml
+    with:
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      retention-days: "7"
+
   vector-native-linux:
     runs-on: ubuntu-latest
     steps:

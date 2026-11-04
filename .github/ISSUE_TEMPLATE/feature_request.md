@@ -1,6 +1,6 @@
 ---
 name: Feature request
-about: Propose a bounded change, written from an OpenSpec change
+about: Propose a bounded change
 ---
 
 <!-- Public text: use ~, $TMPDIR, <workspace>, <host>, <lan-ip> and rounded counts; omit personal paths, hostnames and session identifiers. -->
@@ -8,25 +8,20 @@ about: Propose a bounded change, written from an OpenSpec change
 Type: feature
 Where: binario|lanzador
 
-Written from the OpenSpec change `openspec/changes/<change-name>`. Write the change first (`openspec validate <change-name> --strict`); this issue copies it and never grows.
+## What breaks
 
-## Why
+<!-- One or two sentences: what is missing today and who needs it. -->
 
-<!-- From the proposal's Why: what fails today and who asked for it. -->
-
-Proof: <!-- a run id, a log line or the command that reproduces the problem -->
-
-## Scenarios
-
-<!-- Copied from the spec's WHEN/THEN, one bullet each. -->
-
-- WHEN ..., THEN ...
+Proof: <!-- a run id, a log line or the command that reproduces it -->
 
 ## Done when
 
-- The scenarios above are acceptance scenarios in `features/<domain>/*.feature`, with steps in `test/acceptance`, run by `make accept` against the real `roca`. They fail on integration and pass with the change.
-- `make e2e-cover` passes: every changed non-test line is executed by those scenarios.
+<!-- One test, or the exact command that goes from red to green. If it takes five tests, it is five issues. -->
+
+`go test -count=1 -run 'TestName' ./pkg` fails on integration and passes with the change.
 
 ## Not touched
 
-<!-- From the proposal's Impact. -->
+<!-- Three lines at most. -->
+
+- 

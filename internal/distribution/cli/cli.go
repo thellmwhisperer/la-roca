@@ -26,6 +26,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
+	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 	"github.com/thellmwhisperer/la-roca/internal/securefile"
 )
@@ -385,6 +386,11 @@ func dispatchPlugin(env *cliEnv, root *cobra.Command, args []string, features co
 	path, found := resolveCompanion(args[0], pluginExecutableDir(paths))
 	if !found {
 		return false, 0, nil
+	}
+	if args[0] == "vector" && fileExists(plugin.VectorRegistryPath(pluginRoot(paths))) {
+		if err := env.refreshVectorRegistry(); err != nil {
+			return true, ExitError, fmt.Errorf("refresh vector declarations: %w", err)
+		}
 	}
 	if args[0] == "vector" && features.Vector {
 		if handled, code, err := runVectorQueryResident(env, args[1:], path, paths); handled {
@@ -1036,14 +1042,10 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 			}
 		}
 	}
-	writerFenced := false
-	if fileExists(opsDatabase) {
-		writerFenced, err = rocaops.MemoryCustodyWriterFenced(context.Background(), opsDatabase)
-		if err != nil {
-			return nil, fmt.Errorf("inspect the DATA SPLIT writer fence: %w", err)
-		}
+	rocaOpsEnabled, err := rocaOpsServed(file, opsDatabase)
+	if err != nil {
+		return nil, err
 	}
-	rocaOpsEnabled := file.Features.RocaOps || readLayout != service.LayoutLegacyServing || writerFenced
 	vectorCompanion, _ := resolveCompanion("vector", pluginExecutableDir(paths))
 	vectorCoreBinary, _ := os.Executable()
 	var rollbackLayout func(error) error
@@ -1094,6 +1096,22 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 	}
 	env.openedDir = filepath.Dir(paths.DB)
 	return svc, nil
+}
+
+// rocaOpsServed is the one rule for whether the query route attaches the ops
+// database: roca_ops on, a serving layout other than legacy-serving, or the
+// DATA SPLIT writer fence. The vector registry declares ops by the same rule.
+func rocaOpsServed(file config.File, opsDatabase string) (bool, error) {
+	writerFenced := false
+	if fileExists(opsDatabase) {
+		var err error
+		writerFenced, err = rocaops.MemoryCustodyWriterFenced(context.Background(), opsDatabase)
+		if err != nil {
+			return false, fmt.Errorf("inspect the DATA SPLIT writer fence: %w", err)
+		}
+	}
+	return file.Features.RocaOps || service.ReadLayout(file.Layout.Serving) != service.LayoutLegacyServing ||
+		writerFenced, nil
 }
 
 func (env *cliEnv) finishIngestProgress() {

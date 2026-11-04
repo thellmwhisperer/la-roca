@@ -3,6 +3,7 @@
 package acceptance
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -26,12 +27,27 @@ func registerVectorCompanionSteps(ctx *godog.ScenarioContext, m *world) {
 		m.stubVectorInLocalBin)
 	ctx.Given(`^PATH does not contain ~/.local/bin$`, m.pathLacksLocalBin)
 	ctx.Given(`^no roca-vector exists in ~/.local/bin or on PATH$`, m.noVectorCompanion)
+	ctx.Given(`^a stub roca-vector that answers status is in ~/.local/bin$`, m.stubVectorStatusInLocalBin)
+	ctx.Given(`^serving = "cutover" is written under layout in config.toml$`, m.servingCutoverByHand)
+	ctx.Given(`^config.toml is not valid TOML$`, m.configNotTOML)
+	ctx.Given(`^roca_ops = false is written under features in config.toml$`, func() error {
+		return m.switchFeature("roca_ops = true", "roca_ops = false")
+	})
+	ctx.Given(`^roca-ops.db is not a SQLite database$`, func() error {
+		return os.WriteFile(filepath.Join(m.home, ".roca", "plugins", "roca-ops", "roca-ops.db"),
+			[]byte("not a sqlite database"), 0o600)
+	})
+	ctx.Then(`^the vector registry declares no ops sidecar$`, func() error {
+		if err := m.registryDeclaresOpsTables(""); err == nil || !strings.Contains(err.Error(), "declares no ops sidecar") {
+			return fmt.Errorf("the vector registry still declares an ops sidecar: %v", err)
+		}
+		return nil
+	})
+	ctx.Given(`^the vector registry declares the ops tables "([^"]*)"$`, m.registryDeclaresOpsTables)
+	ctx.Then(`^the vector registry declares the ops tables "([^"]*)"$`, m.registryDeclaresOpsTables)
 	ctx.When(`^the operator runs roca query "([^"]*)" as json$`, func(question string) error {
 		_, err := m.runWith("roca query "+question+" --json", []string{"query", question, "--json"})
 		return err
-	})
-	ctx.Then(`^the query engines include "([^"]*)"$`, func(engine string) error {
-		return m.queryList("engines", func(values []string) bool { return slices.Contains(values, engine) })
 	})
 	ctx.Then(`^the query engines are only "([^"]*)"$`, func(engine string) error {
 		return m.queryList("engines", func(values []string) bool { return slices.Equal(values, []string{engine}) })
@@ -39,11 +55,22 @@ func registerVectorCompanionSteps(ctx *godog.ScenarioContext, m *world) {
 	ctx.Then(`^the query notices include "([^"]*)"$`, func(notice string) error {
 		return m.queryList("notices", func(values []string) bool { return slices.Contains(values, notice) })
 	})
+	registerQueryListSteps(ctx, m)
+}
+
+// registerQueryListSteps are the `roca query --json` engine and notice checks
+// the store and the journey suites share.
+func registerQueryListSteps(ctx *godog.ScenarioContext, m *world) {
+	ctx.Then(`^the query engines include "([^"]*)"$`, m.queryEnginesInclude)
 	ctx.Then(`^the query notices do not include "([^"]*)"$`, func(notice string) error {
 		return m.queryList("notices", func(values []string) bool {
 			return !slices.ContainsFunc(values, func(value string) bool { return strings.Contains(value, notice) })
 		})
 	})
+}
+
+func (m *world) queryEnginesInclude(engine string) error {
+	return m.queryList("engines", func(values []string) bool { return slices.Contains(values, engine) })
 }
 
 // homeWithSessionMentioning is `roca init --db-path ~/.roca/roca.db` over one
@@ -63,17 +90,20 @@ func (m *world) homeWithSessionMentioning(words string) error {
 	return m.noVectorCompanion()
 }
 
-func (m *world) vectorSwitchedOn() error {
+func (m *world) vectorSwitchedOn() error { return m.switchFeature("vector = false", "vector = true") }
+
+// switchFeature rewrites one line init wrote under [features].
+func (m *world) switchFeature(from, to string) error {
 	path := filepath.Join(m.home, ".roca", "config.toml")
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
 	text := string(raw)
-	if !strings.Contains(text, "vector = false") {
-		return fmt.Errorf("init left no `vector = false` to switch on:\n%s", text)
+	if !strings.Contains(text, from) {
+		return fmt.Errorf("init left no `%s` to switch:\n%s", from, text)
 	}
-	return os.WriteFile(path, []byte(strings.Replace(text, "vector = false", "vector = true", 1)), 0o600)
+	return os.WriteFile(path, []byte(strings.Replace(text, from, to, 1)), 0o600)
 }
 
 func (m *world) stubVectorInLocalBin() error {
@@ -84,6 +114,65 @@ func (m *world) stubVectorInLocalBin() error {
 		return err
 	}
 	return os.Chmod(path, 0o700)
+}
+
+func (m *world) stubVectorStatusInLocalBin() error {
+	script := "#!/bin/sh\ncase \" $* \" in\n*\" status \"*) echo 'stub roca-vector status' ;;\n*) exit 1 ;;\nesac\n"
+	path := filepath.Join(m.home, ".local", "bin", "roca-vector")
+	if err := writeFixture(path, script); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0o700)
+}
+
+// servingCutoverByHand edits config.toml the way an operator does, without
+// any roca command that would regenerate the vector registry.
+func (m *world) servingCutoverByHand() error {
+	path := filepath.Join(m.home, ".roca", "config.toml")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(raw, "\n[layout]\nserving = \"cutover\"\n"...), 0o600)
+}
+
+func (m *world) configNotTOML() error {
+	return os.WriteFile(filepath.Join(m.home, ".roca", "config.toml"), []byte("[features\nvector = \n"), 0o600)
+}
+
+// registryDeclaresOpsTables reads the vector registry, the generated JSON
+// contract roca-vector consumes, and compares the ops sidecar's tables.
+func (m *world) registryDeclaresOpsTables(want string) error {
+	raw, err := os.ReadFile(filepath.Join(m.home, ".roca", "plugins", "vector-registry.json"))
+	if err != nil {
+		return err
+	}
+	var registry struct {
+		Databases []struct {
+			Plugin string `json:"plugin"`
+			Tables []struct {
+				Name string `json:"name"`
+			} `json:"tables"`
+		} `json:"databases"`
+	}
+	if err := json.Unmarshal(raw, &registry); err != nil {
+		return fmt.Errorf("the vector registry is not JSON: %w", err)
+	}
+	for _, database := range registry.Databases {
+		if database.Plugin != "roca-ops" {
+			continue
+		}
+		var names []string
+		for _, table := range database.Tables {
+			names = append(names, table.Name)
+		}
+		slices.Sort(names)
+		if got := strings.Join(names, " "); got != want {
+			return fmt.Errorf("ops vector tables = %q, want %q", got, want)
+		}
+		return nil
+	}
+	return fmt.Errorf("the vector registry declares no ops sidecar:\n%s", raw)
 }
 
 func (m *world) pathLacksLocalBin() error {

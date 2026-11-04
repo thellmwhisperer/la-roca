@@ -1,0 +1,69 @@
+name: Linux release build
+
+# The one build of the Linux release artefacts, called by the release and by
+# CI. Each leg runs inside a pinned ubuntu:22.04 container, so the cgo
+# `roca-vector` links glibc 2.35 whatever image the hosted runner moves to, and
+# scripts/linux-release-lane.sh refuses a binary that needs more.
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+      # Empty derives the version from `git describe`, as the Makefile does.
+      version:
+        required: false
+        type: string
+        default: ""
+      # Empty keeps the repository's default retention.
+      retention-days:
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-amd64
+            runner: ubuntu-latest
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    container: ubuntu:22.04
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      # Before checkout, so it clones with git instead of the REST API.
+      - run: apt-get update
+      - name: Native build tools
+        run: apt-get install -y git make cmake g++ ca-certificates
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      # The container runs as root over a workspace the runner owns.
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: Build, hold the glibc floor and archive the lane
+        env:
+          TARGET: ${{ matrix.target }}
+          VERSION: ${{ inputs.version }}
+        run: ./scripts/linux-release-lane.sh "$TARGET" "$VERSION"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: release-${{ matrix.target }}.tar.gz
+          if-no-files-found: error
+          retention-days: ${{ inputs.retention-days }}
