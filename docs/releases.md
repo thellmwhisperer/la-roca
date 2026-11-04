@@ -13,8 +13,9 @@ existing merge policy. For release pull requests with a number above #249, the
 workflow asks GitHub to auto-merge with a merge commit once the required checks
 pass. The resulting push to `main` lets Release Please create both the `vX.Y.Z`
 tag and GitHub release. The tag then triggers
-`.github/workflows/release.yml`, the only workflow that builds and uploads
-release artefacts.
+`.github/workflows/release.yml`, the only workflow that uploads release
+artefacts. Its Linux legs come from `.github/workflows/linux-release-build.yml`,
+which CI also runs on every pull request without publishing.
 
 Each `vX.Y.Z` binary release carries four `roca` binaries, each with its
 matching vector executable embedded for installation, plus the four existing

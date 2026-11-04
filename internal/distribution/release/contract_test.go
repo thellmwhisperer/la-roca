@@ -30,21 +30,25 @@ type releaseWorkflow struct {
 		} `yaml:"push"`
 	} `yaml:"on"`
 	Jobs map[string]struct {
-		Needs    any    `yaml:"needs"`
-		RunsOn   any    `yaml:"runs-on"`
-		If       string `yaml:"if"`
-		Strategy struct {
+		Needs     any    `yaml:"needs"`
+		RunsOn    any    `yaml:"runs-on"`
+		If        string `yaml:"if"`
+		Uses      string `yaml:"uses"`
+		Container any    `yaml:"container"`
+		Strategy  struct {
 			Matrix struct {
 				Include []map[string]any `yaml:"include"`
 			} `yaml:"matrix"`
 		} `yaml:"strategy"`
-		Steps []struct {
-			Name string         `yaml:"name"`
-			Uses string         `yaml:"uses"`
-			Run  string         `yaml:"run"`
-			With map[string]any `yaml:"with"`
-		} `yaml:"steps"`
+		Steps []workflowStep `yaml:"steps"`
 	} `yaml:"jobs"`
+}
+
+type workflowStep struct {
+	Name string         `yaml:"name"`
+	Uses string         `yaml:"uses"`
+	Run  string         `yaml:"run"`
+	With map[string]any `yaml:"with"`
 }
 
 func TestReleaseLaneArchivePreservesActualArtifactSetAndModes(t *testing.T) {
@@ -117,10 +121,23 @@ func TestReleaseWorkflowBuildsNativelyAndAggregatesBeforePublishing(t *testing.T
 	if !ok {
 		t.Fatal("release workflow has no native-artifacts job")
 	}
+	// The Linux legs come from the reusable workflow CI also calls, built
+	// inside ubuntu:22.04 so they need at most GLIBC_2.35.
+	linux, ok := workflow.Jobs["linux-artifacts"]
+	if !ok || linux.Uses != "./.github/workflows/linux-release-build.yml" {
+		t.Fatalf("release workflow has no linux-artifacts job calling the reusable Linux build: %+v", linux.Uses)
+	}
+	linuxBuild, ok := parseWorkflow(t, "../../../.github/workflows/linux-release-build.yml").Jobs["build"]
+	if !ok {
+		t.Fatal("the reusable Linux build has no build job")
+	}
+	if linuxBuild.Container != "ubuntu:22.04" {
+		t.Fatalf("Linux release container = %v, want ubuntu:22.04", linuxBuild.Container)
+	}
 	wantTargets := []string{"darwin-arm64", "linux-amd64", "linux-arm64"}
 	var targets []string
 	darwinRunner := ""
-	for _, lane := range native.Strategy.Matrix.Include {
+	for _, lane := range slices.Concat(native.Strategy.Matrix.Include, linuxBuild.Strategy.Matrix.Include) {
 		target, _ := lane["target"].(string)
 		runner, _ := lane["runner"].(string)
 		targets = append(targets, target)
@@ -136,19 +153,24 @@ func TestReleaseWorkflowBuildsNativelyAndAggregatesBeforePublishing(t *testing.T
 	if !strings.HasPrefix(darwinRunner, "macos-") {
 		t.Fatalf("darwin artifact runner = %q, want native macOS", darwinRunner)
 	}
-	archiveUpload := false
-	for _, step := range native.Steps {
-		if step.Uses == "actions/upload-artifact@v4" &&
-			step.With["path"] == "release-${{ matrix.target }}.tar.gz" {
-			archiveUpload = true
+	for name, steps := range map[string][]workflowStep{"native-artifacts": native.Steps, "linux build": linuxBuild.Steps} {
+		archiveUpload := false
+		for _, step := range steps {
+			if step.Uses == "actions/upload-artifact@v4" &&
+				step.With["path"] == "release-${{ matrix.target }}.tar.gz" {
+				archiveUpload = true
+			}
 		}
-	}
-	if !archiveUpload {
-		t.Fatal("native lanes do not upload mode-preserving release archives")
+		if !archiveUpload {
+			t.Fatalf("%s lanes do not upload mode-preserving release archives", name)
+		}
 	}
 	publish, ok := workflow.Jobs["publish"]
 	if !ok {
 		t.Fatal("release workflow has no publish job")
+	}
+	if needs, _ := publish.Needs.([]any); !slices.Contains(needs, any("linux-artifacts")) {
+		t.Fatalf("publish needs %v, want linux-artifacts among them", publish.Needs)
 	}
 	aggregated := false
 	for _, step := range publish.Steps {
@@ -173,7 +195,7 @@ func TestReleaseWorkflowSeparatesBinaryAndModelJobs(t *testing.T) {
 		t.Fatalf("model release condition = %q, want %q", models.If, modelCondition)
 	}
 	binaryCondition := "${{ !startsWith(inputs.tag || github.ref_name, 'models-v') }}"
-	for _, name := range []string{"upgrade-homes", "upgrade-gauntlet", "native-artifacts", "publish"} {
+	for _, name := range []string{"upgrade-homes", "upgrade-gauntlet", "native-artifacts", "linux-artifacts", "publish"} {
 		job, ok := workflow.Jobs[name]
 		if !ok {
 			t.Fatalf("release workflow has no %s job", name)
@@ -269,10 +291,15 @@ func readCommandLog(t *testing.T, path string) [][]string {
 
 func parseReleaseWorkflow(t *testing.T) releaseWorkflow {
 	t.Helper()
-	body := readRepoFile(t, "../../../.github/workflows/release.yml")
+	return parseWorkflow(t, "../../../.github/workflows/release.yml")
+}
+
+func parseWorkflow(t *testing.T, path string) releaseWorkflow {
+	t.Helper()
+	body := readRepoFile(t, path)
 	var workflow releaseWorkflow
 	if err := yaml.Unmarshal([]byte(body), &workflow); err != nil {
-		t.Fatalf("release workflow is not valid YAML: %v", err)
+		t.Fatalf("%s is not valid YAML: %v", path, err)
 	}
 	return workflow
 }

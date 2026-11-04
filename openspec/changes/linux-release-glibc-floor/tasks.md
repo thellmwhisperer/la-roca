@@ -1,7 +1,8 @@
 ## 1. Floor check
 
-- [ ] 1.1 Write `scripts/linux-glibc-floor.sh FILE...` in POSIX `sh` over `readelf --version-info --wide`, `grep` and `sort -V`, with the floor `2.35` as a constant: one `<file> GLIBC_x.y` or `<file> none` line per file, exit non-zero naming each file above the floor and `GLIBC_2.35`. Verify with a Go test in `scripts/` that puts a stub `readelf` first on `PATH` and covers a file at `GLIBC_2.43` (exit non-zero), one at `GLIBC_2.34` (exit 0) and one with no glibc (`none`, exit 0); `go test ./scripts` passes inside `make check`.
-- [ ] 1.2 Run the script on a Linux machine against the `roca-vector` inside the published `roca-vector-v1.94.1-linux-x64.tar.gz`, and record here that it prints `GLIBC_2.43` and exits non-zero.
+- [x] 1.1 Write `scripts/linux-glibc-floor.sh FILE...` in POSIX `sh` over `readelf --version-info --wide`, `grep` and `sort -V`, with the floor `2.35` as a constant: one `<file> GLIBC_x.y` or `<file> none` line per file, exit non-zero naming each file above the floor and `GLIBC_2.35`. Verify with a Go test in `scripts/` that puts a stub `readelf` first on `PATH` and covers a file at `GLIBC_2.43` (exit non-zero), one at `GLIBC_2.34` (exit 0) and one with no glibc (`none`, exit 0); `go test ./scripts` passes inside `make check`.
+- [x] 1.2 Run the script on a Linux machine against the `roca-vector` inside the published `roca-vector-v1.94.1-linux-x64.tar.gz`, and record here that it prints `GLIBC_2.43` and exits non-zero.
+  Maintainer verification on Linux x86_64 against the published archive downloaded with `gh release download v1.94.1`: stdout `roca-vector GLIBC_2.43`, stderr `roca-vector needs GLIBC_2.43, above the floor GLIBC_2.35`, exit status `1`.
 
 ## 2. One Linux build for release and CI
 
@@ -11,6 +12,6 @@
 
 ## 3. Operator proof and docs
 
-- [ ] 3.1 Add the step `running "roca-vector --version" exits with code 0` to the scenario "Installing bundles the core and optional vector executable with the domain stores" in `features/distribution/install.feature`, with its step in `test/acceptance/steps_install.go`. Verify with `make accept`.
+- [x] 3.1 Add the step `running "roca-vector --version" exits with code 0` to the scenario "Installing bundles the core and optional vector executable with the domain stores" in `features/distribution/install.feature`, with its step in `test/acceptance/steps_install.go`. Verify with `make accept`.
 - [ ] 3.2 On an Ubuntu 24.04 LTS machine, download the `release-linux-amd64` artifact of the pull request's CI run with `gh run download`, run that install scenario with `ROCA_BIN` pointing at its `roca-<version>-linux-x64`, so `install.sh` installs it from the suite's local release channel, and record here that it passes and that the v1.94.1 `roca-vector` run on the same machine prints `version 'GLIBC_2.43' not found`.
-- [ ] 3.3 Add one sentence to `docs/lifecycle.md`, next to the list of core release artefacts, that the Linux binaries need glibc 2.35 or later (Ubuntu 22.04 or later). Verify the sentence renders in the list's section.
+- [x] 3.3 Add one sentence to `docs/lifecycle.md`, next to the list of core release artefacts, that the Linux binaries need glibc 2.35 or later (Ubuntu 22.04 or later). Verify the sentence renders in the list's section.
