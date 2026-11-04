@@ -238,7 +238,10 @@ owns an adjacent sidecar: `roca-corpus.db` owns `roca-corpus.vector.db`,
 `roca-ops.db` owns `roca-ops.vector.db`, and third-party declarations follow
 the same rule. In a home served in `cutover`, the ops declaration also
 covers `core_memories`: migrated memories that only core held, which no other
-sidecar embeds; corpus-sourced memories stay with the corpus sidecar. Every
+sidecar embeds; corpus-sourced memories stay with the corpus sidecar. The ops
+sidecar is declared only while the home serves ops (`roca_ops = true`, or after
+`roca migrate` and cutover); before that, a memory `roca store` wrote lives in
+core and answers through full-text search (`roca query`). Every
 `roca vector` command regenerates an existing registry before the companion
 reads it, so a hand edit of `[layout].serving` takes effect on the next
 command. Plugin update preserves that sidecar; uninstall archives or

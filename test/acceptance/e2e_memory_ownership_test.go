@@ -5,6 +5,7 @@ package acceptance
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -31,6 +32,58 @@ func registerMemoryOwnershipSteps(ctx *godog.ScenarioContext, m *world) {
 	ctx.Then(`^the ops sidecar has (some|0) embedded chunks and a state other than "outdated"$`,
 		m.opsSidecarHas)
 	ctx.Then(`^the vector hits holding "([^"]*)" are one memory from "([^"]*)"$`, m.memoryHitsAreOne)
+	ctx.Then(`^the last vector worker line says "([^"]*)" and the worker log holds no "([^"]*)"$`, m.workerLogEnds)
+	ctx.Then(`^vector status lists no "([^"]*)" database and no state "([^"]*)" or "([^"]*)"$`, m.statusListsNo)
+	ctx.Then(`^a query hit from "([^"]*)" holds "([^"]*)"$`, m.queryHitHolds)
+}
+
+func (m *world) workerLogEnds(want, absent string) error {
+	raw, err := os.ReadFile(filepath.Join(m.home, ".roca", "plugins", "roca-vector", "state", "worker.log"))
+	if err != nil {
+		return err
+	}
+	log := string(raw)
+	last := ""
+	for _, line := range strings.Split(log, "\n") {
+		if strings.HasPrefix(line, "vector worker:") {
+			last = line
+		}
+	}
+	if !strings.Contains(last, want) || strings.Contains(log, absent) {
+		return fmt.Errorf("worker log, want last worker line with %q and no %q:\n%s", want, absent, log)
+	}
+	return nil
+}
+
+func (m *world) statusListsNo(plugin, state, other string) error {
+	rows, err := m.vectorStatusRows()
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		if row.Plugin == plugin || row.State == state || row.State == other {
+			return fmt.Errorf("vector status lists %s in state %s:\n%s", row.Plugin, row.State, m.last.stdout)
+		}
+	}
+	return nil
+}
+
+func (m *world) queryHitHolds(source, text string) error {
+	var result struct {
+		Hits []struct {
+			Source  string `json:"source"`
+			Snippet string `json:"snippet"`
+		} `json:"hits"`
+	}
+	if err := json.Unmarshal([]byte(m.last.stdout), &result); err != nil {
+		return fmt.Errorf("roca query is not JSON: %w\n%s", err, m.last.stdout)
+	}
+	for _, hit := range result.Hits {
+		if strings.HasPrefix(hit.Source, source) && strings.Contains(hit.Snippet, text) {
+			return nil
+		}
+	}
+	return fmt.Errorf("no query hit from %s holds %q:\n%s", source, text, m.last.stdout)
 }
 
 func (m *world) homeWithSessionMemory(opsOff, words string) error {
@@ -77,18 +130,28 @@ func (m *world) migratedToCutover() error {
 	return m.servingCutoverByHand()
 }
 
-func (m *world) opsSidecarHas(chunks string) error {
+type vectorStatusRow struct {
+	Plugin         string `json:"plugin"`
+	EmbeddedChunks *int64 `json:"embedded_chunks"`
+	State          string `json:"state"`
+}
+
+func (m *world) vectorStatusRows() ([]vectorStatusRow, error) {
 	var status struct {
-		Databases []struct {
-			Plugin         string `json:"plugin"`
-			EmbeddedChunks *int64 `json:"embedded_chunks"`
-			State          string `json:"state"`
-		} `json:"databases"`
+		Databases []vectorStatusRow `json:"databases"`
 	}
 	if err := json.Unmarshal([]byte(m.last.stdout), &status); err != nil {
-		return fmt.Errorf("vector status is not JSON: %w\n%s", err, m.last.stdout)
+		return nil, fmt.Errorf("vector status is not JSON: %w\n%s", err, m.last.stdout)
 	}
-	for _, row := range status.Databases {
+	return status.Databases, nil
+}
+
+func (m *world) opsSidecarHas(chunks string) error {
+	rows, err := m.vectorStatusRows()
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
 		if row.Plugin != "roca-ops" {
 			continue
 		}
