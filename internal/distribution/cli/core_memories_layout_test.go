@@ -117,15 +117,13 @@ func TestVectorDispatchReadsCurrentServingLayout(t *testing.T) {
 	}
 	home := t.TempDir()
 	isolateRuntimeDirs(t, home)
-	paths, err := config.Resolve(config.Input{Home: home})
+	corePath := filepath.Join(home, "roca.db")
+	seedLayoutMemory(t, corePath, "Synthetic orchard compass note")
+	env := migratedCLIEnv(t, corePath)
+	paths, err := env.resolvePaths()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Dir(paths.DB), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	seedLayoutMemory(t, paths.DB, "Synthetic orchard compass note")
-	env := migratedCLIEnv(t, paths.DB)
 	if err := env.refreshVectorRegistry(); err != nil {
 		t.Fatal(err)
 	}

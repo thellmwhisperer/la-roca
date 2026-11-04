@@ -5,7 +5,6 @@ package acceptance
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -75,12 +74,7 @@ func (m *world) migratedToCutover() error {
 	if !strings.Contains(m.last.stdout, "data2-memory-custody state=verified destination=memory_records") {
 		return fmt.Errorf("memory custody is not verified:\n%s", m.last.stdout)
 	}
-	path := filepath.Join(m.home, ".roca", "config.toml")
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, append(raw, "\n[layout]\nserving = \"cutover\"\n"...), 0o600)
+	return m.servingCutoverByHand()
 }
 
 func (m *world) opsSidecarHas(chunks string) error {
