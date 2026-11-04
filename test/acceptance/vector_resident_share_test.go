@@ -288,18 +288,24 @@ func publishedRoca(t *testing.T) string {
 
 func buildFakeVectorResident(t *testing.T) string {
 	t.Helper()
-	root, err := acceptanceRoot()
-	if err != nil {
+	out := filepath.Join(t.TempDir(), "roca-vector")
+	if err := buildFakeVectorResidentAt(out); err != nil {
 		t.Fatal(err)
 	}
-	out := filepath.Join(t.TempDir(), "roca-vector")
+	return out
+}
+
+func buildFakeVectorResidentAt(out string) error {
+	root, err := acceptanceRoot()
+	if err != nil {
+		return err
+	}
 	command := exec.Command("go", "build", "-o", out, "./testdata/fake-vector-resident")
 	command.Dir = filepath.Join(root, "test", "acceptance")
-	output, err := command.CombinedOutput()
-	if err != nil {
-		t.Fatalf("build fake vector resident: %v\n%s", err, output)
+	if output, err := command.CombinedOutput(); err != nil {
+		return fmt.Errorf("build fake vector resident: %w\n%s", err, output)
 	}
-	return out
+	return nil
 }
 
 func enableVectorFeature(home string) error {

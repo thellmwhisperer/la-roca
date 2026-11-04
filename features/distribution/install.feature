@@ -199,3 +199,16 @@ Feature: The full installation cycle
     When I run "roca doctor"
     Then the command exits with code 0
     And the output contains "plugin staging: none leftover"
+
+  @fast @acceptance @residents
+  Scenario: Installing retires the residents an MCP session left running
+    Given La Roca is installed and initialized
+    And semantic search is answered by a stand-in vector resident
+    And an MCP session started with a PATH without ~/.local/bin has called roca_vector_query once
+    And the stand-in vector resident was told the installed roca
+    When I run "roca _install-bundled-plugins --json"
+    Then the command exits with code 0
+    And no resident of the home listens any more
+    When the MCP session calls roca_vector_query "harbor lantern" again
+    Then the response is not an error
+    And the stand-in vector resident was told the installed roca

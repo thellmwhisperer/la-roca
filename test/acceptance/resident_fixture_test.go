@@ -15,18 +15,8 @@ import (
 // Keep socket addresses short even when the checkout has a long absolute path.
 // CLI children and their resident inherit the acceptance process's directory.
 func acceptanceResident() (string, func(), error) {
-	dir, err := acceptanceTempDir("resident-")
+	dir, socket, err := shortSocket("resident-", filepath.Join("socket", "resident.sock"))
 	if err != nil {
-		return "", nil, err
-	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		_ = os.RemoveAll(dir)
-		return "", nil, err
-	}
-	socket, err := filepath.Rel(cwd, filepath.Join(dir, "socket", "resident.sock"))
-	if err != nil {
-		_ = os.RemoveAll(dir)
 		return "", nil, err
 	}
 	return socket, func() {
@@ -41,4 +31,22 @@ func acceptanceResident() (string, func(), error) {
 		}
 		_ = os.RemoveAll(dir)
 	}, nil
+}
+
+// shortSocket is a fresh private directory and the path of name inside it,
+// relative to the suite's directory.
+func shortSocket(prefix, name string) (dir, socket string, err error) {
+	dir, err = acceptanceTempDir(prefix)
+	if err != nil {
+		return "", "", err
+	}
+	cwd, err := os.Getwd()
+	if err == nil {
+		socket, err = filepath.Rel(cwd, filepath.Join(dir, name))
+	}
+	if err != nil {
+		_ = os.RemoveAll(dir)
+		return "", "", err
+	}
+	return dir, socket, nil
 }

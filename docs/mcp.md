@@ -56,6 +56,14 @@ PID, uptime, attached clients, connections in its service pools, and discovered
 
 Closing an MCP session disconnects only that client. Both resident sockets are
 private and stale sockets from a killed process are replaced on the next start.
+A resident keeps the build and the `PATH` of whatever started it, so the install
+step that `install.sh` and `roca update` run (`roca _install-bundled-plugins`)
+stops the data directory's database and model residents, `.current` included,
+once the new binaries are in place; the next client starts them from the
+installed build and an attached shim reconnects as above. On platforms without
+Unix peer credentials (Windows) they are left running. Every start of the model
+resident passes it the starting `roca` as `ROCA_VECTOR_ROCA_BINARY`, unless the
+environment already sets one.
 
 `ROCA_RESIDENT_SOCKET` overrides the database resident socket. For the model
 resident, `ROCA_VECTOR_RESIDENT_SOCKET` overrides its socket. Both place their

@@ -54,8 +54,10 @@ func (env *environment) residentQueryOptions() vectorresident.Options {
 	if err != nil {
 		state = ""
 	}
+	core, _ := env.core()
 	return vectorresident.Options{
 		Binary:     binary,
+		HostBinary: core.Executable,
 		DataDir:    coreDataDir(env.dbPath),
 		DBPath:     env.dbPath,
 		PluginRoot: pluginRoot,
