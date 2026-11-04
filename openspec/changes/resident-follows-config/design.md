@@ -70,10 +70,9 @@ On the first change it sees, the resident closes its listener and removes its
 socket at once, so the next client can start a new resident through the
 existing locked start. It then answers the call that found the change with a
 refusal that says it retired and ran nothing, refuses every later request on
-its open connections the same way, and exits once the requests it already
-started have returned. The exit path removes the socket only if the socket on
-disk is still the one this resident created, so it never deletes the socket
-of the resident that replaced it.
+its open connections the same way, and exits once every client connection
+still open has closed. The socket is removed only by closing the listener, at
+retirement, so it never deletes the socket of the resident that replaced it.
 
 - A CLI client reads that refusal at `connect` as unavailable, so
   `tryResident` falls back to the local service, which reads the

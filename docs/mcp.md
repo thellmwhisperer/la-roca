@@ -76,8 +76,8 @@ the resident serves the database of the session that started it.
 The database resident retires when `config.toml` or its `roca` executable
 changes on disk. It checks both whenever a client connects and before each
 request. On a change it frees its socket, refuses the call that found the change
-and every later one without running them, and exits once the requests it already
-started return. A CLI call then answers locally with the configuration on disk,
+and every later one without running them, and exits once every client still
+connected has closed its connection. A CLI call then answers locally with the configuration on disk,
 and the next client starts a new resident from it.
 On Unix, the socket directory must be owned by the current user and private,
 and the socket path must be shorter than 100 bytes. The model resident exits

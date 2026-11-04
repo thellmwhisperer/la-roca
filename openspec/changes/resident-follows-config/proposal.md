@@ -59,7 +59,7 @@ resident process is stopped by hand, `roca query` answers with `engines:
   executable it was started from, with the ones on disk whenever a client
   connects and before it runs each request. When either changed, it retires:
   it stops accepting clients and frees its socket, runs nothing more, and exits
-  once the calls it already started have returned. The call that found the
+  once its open client connections have closed. The call that found the
   change is answered with the current configuration, by the CLI's local path
   or by a resident that the existing locked start brings up.
 - An agent MCP session that stays open across the change keeps working: its
