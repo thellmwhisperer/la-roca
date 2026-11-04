@@ -37,8 +37,10 @@ $ roca vector status
 ## What Changes
 
 - In cutover, the ops sidecar also embeds the memories whose migration source
-  is `core`, read from `memory_records` through the ops `memory_compatibility`
-  view; memories whose source is the corpus stay with the corpus sidecar only.
+  is `core`, read from `memory_records` through the ops `core_memories` view,
+  declared only while the home serves in cutover; memories whose source is the
+  corpus stay with the corpus sidecar only. Each `roca vector` command
+  regenerates the vector registry first, so a serving edit takes effect.
 - A sidecar whose tables hold nothing to embed reports a finished state, and
   `roca doctor` offers no `roca vector install` for it.
 
@@ -56,9 +58,11 @@ None.
 ## Impact
 
 - Code: the ops vector declaration in `internal/distribution/rocaops/plugin.json`
-  and, if a view is needed, `internal/distribution/rocaops/schema.sql` with its
-  `SchemaVersion` bump and frozen upgrade home (docs/releases.md); the sidecar
-  state in `plugins/vector` and its doctor remedy.
+  and the `core_memories` view in `internal/distribution/rocaops/schema.sql`,
+  without a `SchemaVersion` bump: a bump reopens every verified custody
+  migration, and upgraded homes receive the view because the bundled plugin
+  re-applies `schema.sql` on every version change; the sidecar state in
+  `plugins/vector` and its doctor remedy.
 - End-to-end scenarios to write in `features/distribution/e2e-federation.feature`,
   run by `make e2e` against the installed candidate with the pinned embedding
   model: the scenarios of `specs/vector-memory-ownership/spec.md`, on a home

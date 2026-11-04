@@ -248,6 +248,7 @@ func registerSteps(ctx *godog.ScenarioContext, binary string) {
 	registerIngestSteps(ctx, m)
 	registerMCPSteps(ctx, m)
 	registerResidentSteps(ctx, m)
+	registerMemoryOwnershipSteps(ctx, m)
 }
 
 // registerModelSteps are the ones about the providers. They live apart because

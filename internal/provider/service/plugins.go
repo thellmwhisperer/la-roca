@@ -176,6 +176,9 @@ func (s *Service) openResidents(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		if stableLayers != nil {
+			*stableLayers = stableLayers.ForServingLayout(s.servingLayout() == LayoutCutover)
+		}
 	}
 	var candidates []plugin.Descriptor
 	if s.opts.RocaOpsEnabled {
@@ -210,6 +213,9 @@ func (s *Service) openResidents(ctx context.Context) error {
 		limit--
 	}
 	route := validatePluginRouteLimit(ctx, candidates, nil, limit, s.opts.ReadOnly)
+	for index := range route.Databases {
+		route.Databases[index] = route.Databases[index].ForServingLayout(s.servingLayout() == LayoutCutover)
+	}
 	s.resident, s.residentOmitted, s.residentWarnings = route.Databases, route.Omitted, route.Warnings
 
 	var opsDatabase *plugin.Database

@@ -16,6 +16,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/agentcfg"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/cli/hooks"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/skill"
+	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
@@ -353,6 +354,10 @@ func (env *cliEnv) discoverPluginContracts() (string, []plugin.Database, []strin
 	if err != nil {
 		return "", nil, nil, err
 	}
+	file, err := config.LoadFile(paths.Config)
+	if err != nil {
+		return "", nil, nil, err
+	}
 	root := pluginRoot(paths)
 	descriptors, warnings := plugin.Discover(root)
 	databases := make([]plugin.Database, 0, len(descriptors))
@@ -363,7 +368,7 @@ func (env *cliEnv) discoverPluginContracts() (string, []plugin.Database, []strin
 				"plugin %s is unavailable: %v", descriptor.Name, err))
 			continue
 		}
-		databases = append(databases, database)
+		databases = append(databases, database.ForServingLayout(file.Layout.Serving == config.LayoutCutover))
 	}
 	return root, databases, warnings, nil
 }

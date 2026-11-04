@@ -451,9 +451,15 @@ func findFTSTable(tables []plugin.Table, source string, textColumns []string) (p
 			return table, true
 		}
 	}
+	// An index named after another declared table holds that table's rowids.
+	indexesAnother := func(fts plugin.Table) bool {
+		return slices.ContainsFunc(tables, func(table plugin.Table) bool {
+			return !table.FTS5 && table.Name == strings.TrimSuffix(fts.Name, "_fts")
+		})
+	}
 	var matches []plugin.Table
 	for _, table := range tables {
-		if table.FTS5 && columnsCovered(table.Columns, textColumns) {
+		if table.FTS5 && !indexesAnother(table) && columnsCovered(table.Columns, textColumns) {
 			matches = append(matches, table)
 		}
 	}
@@ -461,7 +467,7 @@ func findFTSTable(tables []plugin.Table, source string, textColumns []string) (p
 		return matches[0], true
 	}
 	for _, table := range tables {
-		if !table.FTS5 {
+		if !table.FTS5 || indexesAnother(table) {
 			continue
 		}
 		stem := strings.TrimSuffix(table.Name, "_fts")

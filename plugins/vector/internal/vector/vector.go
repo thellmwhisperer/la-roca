@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -635,7 +636,7 @@ func (i Index) queryVector(ctx context.Context, store *sql.DB, embedding []float
 	if k < 1 || k > 100 {
 		return nil, fmt.Errorf("k must be between 1 and 100")
 	}
-	candidates, err := nearest(ctx, store, vectorBlob(embedding), min(k*8, 800))
+	candidates, err := i.nearestDeclared(ctx, store, vectorBlob(embedding), min(k*8, 800))
 	if err != nil {
 		return nil, err
 	}
@@ -1308,6 +1309,25 @@ type neighbor struct {
 	sourceID string
 	distance float64
 	where    locator
+}
+
+// nearestDeclared drops chunks of tables no longer declared (a home back on
+// legacy serving). Only when it dropped some does it widen the pool once.
+func (i Index) nearestDeclared(ctx context.Context, db *sql.DB, vector []byte, k int) ([]neighbor, error) {
+	for {
+		candidates, err := nearest(ctx, db, vector, k)
+		if err != nil || i.SourceKinds == nil {
+			return candidates, err
+		}
+		found := len(candidates)
+		candidates = slices.DeleteFunc(candidates, func(candidate neighbor) bool {
+			return !i.SourceKinds[candidate.kind]
+		})
+		if len(candidates) == found || k == 800 {
+			return candidates, nil
+		}
+		k = 800
+	}
 }
 
 func nearest(ctx context.Context, db *sql.DB, vector []byte, k int) ([]neighbor, error) {

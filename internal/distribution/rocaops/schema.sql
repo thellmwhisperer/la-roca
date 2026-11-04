@@ -158,6 +158,20 @@ LEFT JOIN memory_provenance AS source
   ON source.source_database = memberships.source_database
  AND source.source_key = memberships.source_key;
 
+-- After the migration a memory only core held lives nowhere but memory_records,
+-- so the ops sidecar embeds it from here. A record another source also holds is
+-- embedded by that source: corpus memories by the corpus sidecar, ops memories
+-- through `memories`.
+CREATE VIEW IF NOT EXISTS core_memories AS
+SELECT records.id, records.layer, records.content, records.project, records.status,
+  records.created_at
+FROM memory_records AS records
+WHERE records.provenance = 'core'
+  AND NOT EXISTS (SELECT 1 FROM custody_memberships AS memberships
+    WHERE memberships.destination_table = 'memory_records'
+      AND memberships.destination_key = CAST(records.id AS TEXT)
+      AND memberships.source_database <> 'core');
+
 -- JSONL is the sole audit destination. These historical rows are not archived.
 DROP TABLE IF EXISTS call_history;
 DROP TABLE IF EXISTS call_history_segments;
