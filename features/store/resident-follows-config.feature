@@ -26,9 +26,12 @@ Feature: A resident answers only with the configuration and build on disk
     Given a home initialized with an agent session that mentions "harbor lantern"
     And a stub roca-vector that answers query with that exchange is in ~/.local/bin only
     And an MCP session has called roca_query "harbor lantern" once
+    And the MCP session has a roca_exec running that takes a second
     When vector is switched on under features
+    And the MCP session sends roca_query "harbor lantern" while that roca_exec runs
     And the MCP session calls roca_query "harbor lantern" again
     Then the MCP answer is not an error and holds "engines fts,vector"
+    And every call the MCP session made was answered without an error
     When the operator runs roca query "harbor lantern" as json
     Then the command exits with code 0
     And the query engines include "vector"
