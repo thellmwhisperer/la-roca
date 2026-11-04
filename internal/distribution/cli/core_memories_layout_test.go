@@ -116,14 +116,14 @@ func TestVectorDispatchReadsCurrentServingLayout(t *testing.T) {
 		t.Skip("fixture uses a POSIX executable")
 	}
 	home := t.TempDir()
-	isolateRuntimeDirs(t, home)
-	corePath := filepath.Join(home, "roca.db")
-	seedLayoutMemory(t, corePath, "Synthetic orchard compass note")
-	env := migratedCLIEnv(t, corePath)
-	paths, err := env.resolvePaths()
-	if err != nil {
+	// rootCommand resets env.dbPath, so dispatch resolves the default layout
+	// under home; seed that same database and config.
+	paths := resolvedIn(t, home)
+	if err := os.MkdirAll(filepath.Dir(paths.DB), 0o700); err != nil {
 		t.Fatal(err)
 	}
+	seedLayoutMemory(t, paths.DB, "Synthetic orchard compass note")
+	env := migratedCLIEnv(t, paths.DB)
 	if err := env.refreshVectorRegistry(); err != nil {
 		t.Fatal(err)
 	}
