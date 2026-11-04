@@ -168,6 +168,16 @@ func TestStatusHelpSuggestsInstallOnlyWhenChunksAreMissing(t *testing.T) {
 		t.Fatalf("embedded sidecar still suggested install: %v", help)
 	}
 
+	finishedEmpty := vector.Vectorization{
+		Databases: []vector.DatabaseVectorization{
+			{Plugin: "roca-ops", Database: "ops", State: vector.StateComplete, EmbeddedChunks: &zero, IndexLock: vector.IndexLockUnheld},
+		},
+	}
+	help = statusHelp(finishedEmpty)
+	if joined = strings.Join(help, "\n"); strings.Contains(joined, "roca vector install") {
+		t.Fatalf("finished sidecar with nothing to embed still suggested install: %v", help)
+	}
+
 	locked := vector.Vectorization{
 		Databases: []vector.DatabaseVectorization{
 			{Plugin: "roca-ops", Database: "ops", State: vector.StateComplete, EmbeddedChunks: &chunks, IndexLock: vector.IndexLockHeld},
