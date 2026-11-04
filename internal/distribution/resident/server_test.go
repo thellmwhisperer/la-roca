@@ -32,7 +32,9 @@ func TestResidentPreservesTheMCPHandshakeWhileSniffingTheProtocol(t *testing.T) 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- Run(ctx, svc, mcpplug.Build{Version: "0.0.0-test", Commit: "0123456789abcdef"}) }()
+	go func() {
+		done <- Run(ctx, svc, mcpplug.Build{Version: "0.0.0-test", Commit: "0123456789abcdef"}, RecordHome(""))
+	}()
 
 	conn := waitResidentTestSocket(t, socket)
 	defer conn.Close()
@@ -70,7 +72,7 @@ func TestResidentServesCLIStatusAlongsideMCPClients(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- Run(ctx, svc, mcpplug.Build{}) }()
+	go func() { done <- Run(ctx, svc, mcpplug.Build{}, RecordHome("")) }()
 	conn := waitResidentTestSocket(t, socket)
 	defer conn.Close()
 	result, err := transport.Call(context.Background(), transport.Options{Socket: socket}, "status", struct{}{})
@@ -139,7 +141,7 @@ func startReviewResident(t *testing.T) (*service.Service, transport.Options) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- Run(ctx, svc, mcpplug.Build{}) }()
+	go func() { done <- Run(ctx, svc, mcpplug.Build{}, RecordHome("")) }()
 	waitResidentTestSocket(t, socket).Close()
 	t.Cleanup(func() { cancel(); <-done })
 	return svc, transport.Options{Socket: socket, DBPath: svc.ConfiguredDBPath()}
@@ -301,7 +303,7 @@ func TestResidentSocketIsNeverVisibleWithBroaderPermissionsThan0600(t *testing.T
 	for i := 0; i < 200; i++ {
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan error, 1)
-		go func() { done <- Run(ctx, svc, mcpplug.Build{}) }()
+		go func() { done <- Run(ctx, svc, mcpplug.Build{}, RecordHome("")) }()
 		for {
 			conn, err := transport.Dial(transport.Options{Socket: socket})
 			if err == nil {
@@ -328,4 +330,164 @@ func TestResidentSocketIsNeverVisibleWithBroaderPermissionsThan0600(t *testing.T
 		t.Fatalf("resident socket was visible as %v during startup", mode)
 	default:
 	}
+}
+
+func TestHomeChangesWithConfigOrExecutable(t *testing.T) {
+	root := residentTestRoot(t)
+	config, executable := filepath.Join(root, "config.toml"), filepath.Join(root, "roca")
+	write := func(path, text string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, test := range []struct {
+		name    string
+		change  func()
+		changed bool
+	}{
+		{"unchanged home", func() { write(config, "[features]\nvector = false\n") }, false},
+		{"changed digest", func() { write(config, "[features]\nvector = true\n") }, true},
+		{"removed config.toml", func() { _ = os.Remove(config) }, true},
+		{"replaced executable", func() {
+			write(executable+".new", "build one")
+			if err := os.Rename(executable+".new", executable); err != nil {
+				t.Fatal(err)
+			}
+		}, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			write(config, "[features]\nvector = false\n")
+			write(executable, "build one")
+			home := readHome(config, executable)
+			test.change()
+			if got := home.Changed(); got != test.changed {
+				t.Fatalf("changed = %v, want %v", got, test.changed)
+			}
+		})
+	}
+}
+
+func TestResidentRetiresWhenConfigChanges(t *testing.T) {
+	svc, socket := openResidentTestService(t, service.Options{})
+	config := filepath.Join(svc.DataDir(), "config.toml")
+	if err := os.WriteFile(config, []byte("[features]\nvector = false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	done := runResidentTestHome(t, svc, config)
+	waitResidentTestSocket(t, socket).Close()
+	options := transport.Options{Socket: socket}
+	session, err := transport.Dial(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	reader := initializeResidentTestSession(t, session)
+
+	changeResidentTestConfig(t, config)
+	if _, err := transport.Call(context.Background(), options, "status", struct{}{}); !errors.Is(err, transport.ErrUnavailable) {
+		t.Fatalf("call after the change = %v, want unavailable", err)
+	}
+	if _, err := os.Lstat(socket); !os.IsNotExist(err) {
+		t.Fatalf("retired socket still on disk: %v", err)
+	}
+	fmt.Fprintln(session, `{"jsonrpc":"2.0","id":2,"method":"tools/list"}`)
+	line, err := reader.ReadString('\n')
+	if err != nil || !strings.Contains(line, `"id":2`) || !strings.Contains(line, transport.ErrRetired.Error()) {
+		t.Fatalf("request after the change = %s err=%v", line, err)
+	}
+	closeAndAwaitResidentExit(t, session, done)
+}
+
+// changeResidentTestConfig rewrites config.toml so the recorded home no
+// longer matches the one on disk.
+func changeResidentTestConfig(t *testing.T, config string) {
+	t.Helper()
+	if err := os.WriteFile(config, []byte("[features]\nvector = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// runResidentTestHome runs the resident recorded against config until the
+// test ends and returns the channel Run's result arrives on.
+func runResidentTestHome(t *testing.T, svc *service.Service, config string) <-chan error {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	done := make(chan error, 1)
+	go func() { done <- Run(ctx, svc, mcpplug.Build{}, RecordHome(config)) }()
+	return done
+}
+
+// initializeResidentTestSession completes the MCP initialize handshake on
+// session and returns the reader positioned after its response.
+func initializeResidentTestSession(t *testing.T, session net.Conn) *bufio.Reader {
+	t.Helper()
+	if err := session.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fmt.Fprintln(session, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}`); err != nil {
+		t.Fatal(err)
+	}
+	reader := bufio.NewReader(session)
+	if line, err := reader.ReadString('\n'); err != nil || !strings.Contains(line, `"result"`) {
+		t.Fatalf("initialize = %s err=%v", line, err)
+	}
+	return reader
+}
+
+// closeAndAwaitResidentExit closes the client session and requires the
+// retired resident's Run to return cleanly once it has.
+func closeAndAwaitResidentExit(t *testing.T, session net.Conn, done <-chan error) {
+	t.Helper()
+	if err := session.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("retired resident did not exit after the client closed")
+	}
+}
+
+func TestRetiredResidentRefusesQueuedRequestsUntilClientCloses(t *testing.T) {
+	svc, socket := openResidentTestService(t, service.Options{})
+	config := filepath.Join(svc.DataDir(), "config.toml")
+	done := runResidentTestHome(t, svc, config)
+	session := waitResidentTestSocket(t, socket)
+	defer session.Close()
+	reader := initializeResidentTestSession(t, session)
+	changeResidentTestConfig(t, config)
+	if _, err := fmt.Fprintln(session, `{"jsonrpc":"2.0","id":2,"method":"tools/list"}
+{"jsonrpc":"2.0","id":3,"method":"tools/list"}`); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []int{2, 3} {
+		line, err := reader.ReadBytes('\n')
+		if err != nil {
+			t.Fatalf("request %d: %v", id, err)
+		}
+		var response struct {
+			ID    int `json:"id"`
+			Error struct {
+				Code    int    `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal(line, &response); err != nil {
+			t.Fatal(err)
+		}
+		if response.ID != id || response.Error.Code != -32000 || response.Error.Message != transport.ErrRetired.Error() {
+			t.Fatalf("request %d: response = %s", id, line)
+		}
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("retired resident exited with an open client: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	closeAndAwaitResidentExit(t, session, done)
 }

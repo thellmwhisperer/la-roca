@@ -29,10 +29,11 @@ func serveCommand(env *cliEnv) *cobra.Command {
 			"there would corrupt the session.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if residentMode {
-				svc, _, err := env.openService()
+				svc, paths, err := env.openService()
 				if err != nil {
 					return err
 				}
+				home := residentserver.RecordHome(paths.Config)
 				defer svc.Close()
 				// An install retires this resident with SIGTERM; it closes like a cancelled one.
 				ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGTERM)
@@ -40,7 +41,7 @@ func serveCommand(env *cliEnv) *cobra.Command {
 				return residentserver.Run(ctx, svc, mcpplug.Build{
 					Version: env.build.Version,
 					Commit:  env.build.Commit,
-				})
+				}, home)
 			}
 			paths, err := env.resolvePaths()
 			if err != nil {

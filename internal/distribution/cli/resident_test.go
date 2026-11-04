@@ -12,9 +12,85 @@ import (
 	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
+	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 	transport "github.com/thellmwhisperer/la-roca/pkg/resident"
 )
+
+func TestResidentStartsAfterCutoverRollback(t *testing.T) {
+	home := t.TempDir()
+	isolateRuntimeDirs(t, home)
+	corePath := filepath.Join(home, "roca.db")
+	seedLayoutMemory(t, corePath, "resident rollback marker")
+	env := migratedCLIEnv(t, corePath)
+	paths, err := env.resolvePaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := config.SetServingLayout(paths.Config, config.LayoutCutover); err != nil {
+		t.Fatal(err)
+	}
+	ops := openLayoutDatabase(t, filepath.Join(home, ".roca", "plugins", rocaops.Name, rocaops.DatabaseFilename))
+	if _, err := ops.Exec(`DROP VIEW memory_compatibility`); err != nil {
+		ops.Close()
+		t.Fatal(err)
+	}
+	ops.Close()
+	dir, err := os.MkdirTemp("", "r604-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	socket := filepath.Join(dir, "test.sock")
+	t.Setenv("ROCA_RESIDENT_SOCKET", socket)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	done := make(chan error, 1)
+	go func() {
+		command := serveCommand(env)
+		command.SetArgs([]string{"--resident"})
+		done <- command.ExecuteContext(ctx)
+	}()
+	defer func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Errorf("resident exit: %v", err)
+		}
+	}()
+	for {
+		conn, err := transport.Dial(transport.Options{Socket: socket, DBPath: corePath})
+		if err == nil {
+			defer conn.Close()
+			if err := json.NewEncoder(conn).Encode(transport.Request{Op: "status"}); err != nil {
+				t.Fatal(err)
+			}
+			var reply struct {
+				Result transport.Status `json:"result"`
+				Error  string           `json:"error"`
+			}
+			if err := json.NewDecoder(conn).Decode(&reply); err != nil {
+				t.Fatal(err)
+			}
+			if reply.Error != "" || reply.Result.Serving != "legacy-serving" {
+				t.Fatalf("resident after rollback: %+v", reply)
+			}
+			file, err := config.LoadFile(paths.Config)
+			if err != nil || file.Layout.Serving != config.LayoutLegacyServing {
+				t.Fatalf("configuration after rollback: %+v: %v", file.Layout, err)
+			}
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("resident failed to accept a connection after rollback: %v", err)
+		case err := <-done:
+			done <- err
+			t.Fatalf("resident exited before accepting a connection after rollback: %v", err)
+		default:
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+}
 
 func residentCLIStub(t *testing.T, reply func(transport.Request) any) {
 	t.Helper()

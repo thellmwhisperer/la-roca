@@ -278,6 +278,9 @@ func (s *Service) servingLayout() ReadLayout {
 	return s.readLayout
 }
 
+// ServingLayout is the layout this service reads with, after any rollback.
+func (s *Service) ServingLayout() ReadLayout { return s.servingLayout() }
+
 // DB exposes the database for whatever has no method of its own in the service
 // yet.
 func (s *Service) DB() *store.DB { return s.db }
