@@ -1,0 +1,18 @@
+schema: 1
+id: T-PONYTAIL-20261104-034019-1
+status: accepted
+category: alien_code
+title: "Cut the job-level `permissions: contents: read` from `linux-artifacts`. A called workflow can only lower the caller's token permissions, and `linux-release-build.yml` already sets `permissions: contents: read` at its top level, so this pair of lines changed nothing."
+created_at: 2026-11-04
+incident:
+  pattern: "Cut the job-level `permissions: contents: read` from `linux-artifacts`. A called workflow can only lower the caller's token permissions, and `linux-release-build.yml` already sets `permissions: contents: read` at its top level, so this pair of lines changed nothing."
+  what_went_wrong: "A coding agent wrote it and the ponytail pass cut it before delivery."
+  root_cause: "The coding agent wrote more than the issue needed."
+  rule_established: "Cut by the ponytail pass; it does not come back."
+  evidence:
+    - family: speculative_hardening
+      example: "Cut the job-level `permissions: contents: read` from `linux-artifacts`. A called workflow can only lower the caller's token permissions, and `linux-release-build.yml` already sets `permissions: contents: read` at its top level, so this pair of lines changed nothing."
+      artifact: ".github/workflows/release.yml"
+match:
+  family: speculative_hardening
+  artifact: ".github/workflows/release.yml"

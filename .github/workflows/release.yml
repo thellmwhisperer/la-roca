@@ -98,8 +98,6 @@ jobs:
   linux-artifacts:
     if: ${{ !startsWith(inputs.tag || github.ref_name, 'models-v') }}
     needs: upgrade-gauntlet
-    permissions:
-      contents: read
     uses: ./.github/workflows/linux-release-build.yml
     with:
       ref: ${{ inputs.tag || github.ref_name }}
