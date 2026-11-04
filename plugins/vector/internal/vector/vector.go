@@ -635,7 +635,7 @@ func (i Index) queryVector(ctx context.Context, store *sql.DB, embedding []float
 	if k < 1 || k > 100 {
 		return nil, fmt.Errorf("k must be between 1 and 100")
 	}
-	candidates, err := nearest(ctx, store, vectorBlob(embedding), min(k*8, 800))
+	candidates, err := nearest(ctx, store, vectorBlob(embedding), min(k*8, 800), i.SourceKinds)
 	if err != nil {
 		return nil, err
 	}
@@ -1310,10 +1310,20 @@ type neighbor struct {
 	where    locator
 }
 
-func nearest(ctx context.Context, db *sql.DB, vector []byte, k int) ([]neighbor, error) {
+func nearest(ctx context.Context, db *sql.DB, vector []byte, k int, kinds map[string]bool) ([]neighbor, error) {
+	filter := ""
+	if kinds != nil {
+		var allowed []string
+		for kind, declared := range kinds {
+			if declared {
+				allowed = append(allowed, sqlLiteral(kind))
+			}
+		}
+		filter = " AND rowid IN (SELECT id FROM chunks WHERE source_kind IN (" + strings.Join(allowed, ",") + "))"
+	}
 	rows, err := db.QueryContext(ctx, `WITH candidates AS (
 			SELECT rowid FROM ann_embeddings
-			WHERE embedding MATCH vec_quantize_binary(?) AND k = ?
+			WHERE embedding MATCH vec_quantize_binary(?) AND k = ?`+filter+`
 		)
 		SELECT c.source_kind,c.source_id,c.locator,vec_distance_cosine(e.embedding,?) AS distance
 		FROM candidates a

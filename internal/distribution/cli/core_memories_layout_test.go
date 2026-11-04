@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
@@ -106,6 +107,76 @@ func TestCoreMemoriesFollowServingLayout(t *testing.T) {
 			if strings.Contains(catalog, "plugin_roca_ops.core_memories") != state.visible {
 				t.Fatalf("catalog core_memories visibility should be %t", state.visible)
 			}
+		})
+	}
+}
+
+func TestVectorDispatchReadsCurrentServingLayout(t *testing.T) {
+	if os.PathSeparator == '\\' {
+		t.Skip("fixture uses a POSIX executable")
+	}
+	home := t.TempDir()
+	isolateRuntimeDirs(t, home)
+	paths, err := config.Resolve(config.Input{Home: home})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(paths.DB), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	seedLayoutMemory(t, paths.DB, "Synthetic orchard compass note")
+	env := migratedCLIEnv(t, paths.DB)
+	if err := env.refreshVectorRegistry(); err != nil {
+		t.Fatal(err)
+	}
+	registryPath := plugin.VectorRegistryPath(pluginRoot(paths))
+	if _, err := plugin.LoadVectorRegistry(registryPath); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(home, "bin")
+	if err := os.MkdirAll(bin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	observed := filepath.Join(home, "observed-registry.json")
+	t.Setenv("ROCA_PREFIX", bin)
+	t.Setenv("ROCA_TEST_VECTOR_REGISTRY", registryPath)
+	t.Setenv("ROCA_TEST_VECTOR_OBSERVED", observed)
+	t.Setenv("ROCA_VECTOR_RESIDENT_SOCKET", filepath.Join(home, "vector.sock"))
+	if err := os.WriteFile(filepath.Join(bin, "roca-vector"),
+		[]byte("#!/bin/sh\ncat \"$ROCA_TEST_VECTOR_REGISTRY\" > \"$ROCA_TEST_VECTOR_OBSERVED\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	root := rootCommand(env)
+	for _, state := range []struct{ layout, verb string }{
+		{"cutover", "install"}, {"legacy-serving", "status"}, {"cutover", "query"},
+	} {
+		t.Run(state.verb, func(t *testing.T) {
+			if err := os.WriteFile(paths.Config, []byte("[features]\nvector = true\n[layout]\nserving = \""+state.layout+"\"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			args := []string{"vector", state.verb}
+			if state.verb == "query" {
+				args = append(args, "orchard compass note", "--databases", "ops")
+			}
+			if handled, code, err := dispatchPlugin(env, root, args, config.FeaturesConfig{Vector: true}); !handled || code != ExitOK || err != nil {
+				t.Fatalf("vector dispatch: handled=%t code=%d err=%v", handled, code, err)
+			}
+			registry, err := plugin.LoadVectorRegistry(observed)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, database := range registry.Databases {
+				if database.Plugin == "roca-ops" {
+					visible := slices.ContainsFunc(database.Tables, func(table plugin.VectorRegistrationTable) bool {
+						return table.Name == "core_memories"
+					})
+					if visible != (state.layout == "cutover") {
+						t.Fatalf("companion read stale ops tables: %+v", database.Tables)
+					}
+					return
+				}
+			}
+			t.Fatal("companion read no ops declaration")
 		})
 	}
 }
