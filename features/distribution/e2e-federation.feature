@@ -372,3 +372,47 @@ Feature: Frozen federation installed binary
     Then the ops sidecar has 0 embedded chunks and a state other than "outdated"
     When I run "roca doctor"
     Then the output does not contain "roca vector install"
+
+  # resident-follows-config: config.toml or the roca executable changes while
+  # an agent session keeps the core resident alive.
+  @provisioned
+  Scenario: Turning vectors on while an agent session keeps the resident alive
+    Given La Roca has just been installed from the release channel
+    And a home made by roca init with vector = false, over an agent session that carries a memory mentioning "harbor lantern"
+    And an MCP session started with a PATH without ~/.local/bin has called roca_query "harbor lantern" once
+    When vector is switched on under features
+    And I run "roca vector install"
+    Then the command exits with code 0
+    And the last vector worker line says "exit 0" and the worker log holds no "is not a table this query can read"
+    When I run "roca query 'harbor lantern' --json" with ~/.local/bin on PATH
+    Then the command exits with code 0
+    And the query engines include "vector"
+    And the query notices do not include "vector index is not installed"
+    When I run "roca vector query 'harbor lantern' 3" with ~/.local/bin on PATH
+    Then the command exits with code 0
+    And the output contains "north pier"
+    And the output does not contain "semantic search is disabled"
+
+  @provisioned
+  Scenario: The open agent session after the change
+    Given La Roca has just been installed from the release channel
+    And a home made by roca init with vector = false, over an agent session that carries a memory mentioning "harbor lantern"
+    And an MCP session started with a PATH without ~/.local/bin has called roca_query "harbor lantern" once
+    When vector is switched on under features
+    And I run "roca vector install"
+    Then the command exits with code 0
+    And the last vector worker line says "exit 0" and the worker log holds no "is not a table this query can read"
+    When the MCP session calls roca_query "harbor lantern" again
+    Then the MCP query hits hold "north pier" with "vector" among their legs
+    When I run "roca query 'harbor lantern' --json" with ~/.local/bin on PATH
+    Then the command exits with code 0
+    And the query engines include "vector"
+
+  @provisioned
+  Scenario: The roca executable replaced by hand
+    Given a frozen synthetic federation lab installed by install.sh from the release channel
+    And an MCP session started with a PATH without ~/.local/bin has called roca_query "harbor lantern" once
+    When the operator copies another build of roca over ~/.local/bin/roca without the installer
+    And I run "roca doctor" with ~/.local/bin on PATH
+    Then the command exits with code 0
+    And roca doctor reports a resident whose version is the one roca --version prints, or no resident

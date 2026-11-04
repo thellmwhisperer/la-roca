@@ -290,8 +290,10 @@ func renderResidentDoctor(env *cliEnv, report *resident.Status) {
 		env.print("resident: down")
 		return
 	}
-	env.print("resident: pid=%d · uptime=%s · attached clients=%d · open connections=%d",
-		report.PID, doctorDuration(report.UptimeMS), report.AttachedClients, report.OpenConnections)
+	env.print("resident: pid=%d · uptime=%s · attached clients=%d · open connections=%d · "+
+		"version %s (%s) · config %s · vector %t · roca_ops %t · serving %s",
+		report.PID, doctorDuration(report.UptimeMS), report.AttachedClients, report.OpenConnections,
+		report.Version, report.Commit, report.ConfigPath, report.Vector, report.RocaOps, report.Serving)
 	if len(report.WAL) == 0 {
 		env.print("resident WALs: none")
 		return

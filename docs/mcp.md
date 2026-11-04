@@ -40,7 +40,8 @@ commands outside this set use their local paths.
 
 An attached MCP shim reconnects on the next request after a disconnect and
 replays its MCP initialize handshake. Pending requests receive an error saying
-their outcome is unknown; they are not replayed, including writes. If the
+their outcome is unknown; they are not replayed, including writes. A request a
+retired resident refused is resent to the new one, since it never ran. If the
 replacement cannot be started or connected, the shim exits with an error.
 Writes attempt a WAL checkpoint after committing; contention can leave WAL
 frames until another write attempts checkpointing. The maintenance semantics
@@ -53,6 +54,8 @@ for vector results. Different data directories have separate pairs of
 residents. When it connects to the database resident, `roca doctor` reports its
 PID, uptime, attached clients, connections in its service pools, and discovered
 `*.db-wal` sizes beneath its data directory. These are not machine-wide counts.
+It also reports the resident's version and commit, the `config.toml` it opened,
+and the settings it answers with: `vector`, `roca_ops` and the serving layout.
 
 Closing an MCP session disconnects only that client. Both resident sockets are
 private and stale sockets from a killed process are replaced on the next start.
@@ -68,8 +71,14 @@ environment already sets one.
 `ROCA_RESIDENT_SOCKET` overrides the database resident socket. For the model
 resident, `ROCA_VECTOR_RESIDENT_SOCKET` overrides its socket. Both place their
 startup lock alongside the socket. Use a separate pair for each data context:
-the resident retains the database and plugin configuration of the session that
-started it.
+the resident serves the database of the session that started it.
+
+The database resident retires when `config.toml` or its `roca` executable
+changes on disk. It checks both whenever a client connects and before each
+request. On a change it frees its socket, refuses the call that found the change
+and every later one without running them, and exits once the requests it already
+started return. A CLI call then answers locally with the configuration on disk,
+and the next client starts a new resident from it.
 On Unix, the socket directory must be owned by the current user and private,
 and the socket path must be shorter than 100 bytes. The model resident exits
 after five minutes with no clients attached by default. A positive Go duration

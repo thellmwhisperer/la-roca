@@ -24,6 +24,10 @@ import (
 var ErrUnavailable = errors.New("resident is not running")
 var ErrDatabaseMismatch = errors.New("resident is serving a different database")
 
+// ErrRetired is a resident's answer to a call it did not run because its
+// config.toml or its roca executable changed since it started.
+var ErrRetired = errors.New("resident retired; request not run")
+
 const (
 	maxSocketPath = 100
 	startupWait   = 10 * time.Second
@@ -56,6 +60,12 @@ type Status struct {
 	AttachedClients int              `json:"attached_clients"`
 	OpenConnections int              `json:"open_connections"`
 	WAL             map[string]int64 `json:"wal_bytes"`
+	Version         string           `json:"version"`
+	Commit          string           `json:"commit"`
+	ConfigPath      string           `json:"config_path"`
+	Vector          bool             `json:"vector"`
+	RocaOps         bool             `json:"roca_ops"`
+	Serving         string           `json:"serving"`
 }
 
 func SocketPath(dataDir string) string {
@@ -111,6 +121,9 @@ func Dial(opts Options) (net.Conn, error) {
 		conn.Close()
 		if response.Error == ErrDatabaseMismatch.Error() {
 			return nil, ErrDatabaseMismatch
+		}
+		if response.Error == ErrRetired.Error() {
+			return nil, ErrUnavailable
 		}
 		return nil, errors.New(response.Error)
 	}
@@ -270,6 +283,8 @@ func ProxyStdio(ctx context.Context, opts Options, in io.Reader, out io.Writer) 
 	}()
 	var initialize, initialized []byte
 	pending := map[string]json.RawMessage{}
+	// lines keeps each pending request as sent, for a retired resident's refusal.
+	lines := map[string][]byte{}
 	connect := func(replay bool) error {
 		candidate, err := DialOrSpawn(ctx, opts)
 		if err != nil {
@@ -349,6 +364,7 @@ func ProxyStdio(ctx context.Context, opts Options, in io.Reader, out io.Writer) 
 			}
 			if len(envelope.ID) > 0 && envelope.Method != "" {
 				pending[string(envelope.ID)] = envelope.ID
+				lines[string(envelope.ID)] = received.line
 			}
 			if _, err := conn.Write(append(received.line, '\n')); err != nil {
 				if err := disconnect(); err != nil {
@@ -368,10 +384,23 @@ func ProxyStdio(ctx context.Context, opts Options, in io.Reader, out io.Writer) 
 			var envelope struct {
 				ID     json.RawMessage `json:"id"`
 				Method string          `json:"method"`
+				Error  struct {
+					Message string `json:"message"`
+				} `json:"error"`
 			}
 			_ = json.Unmarshal(received.line, &envelope)
+			if line, sent := lines[string(envelope.ID)]; sent && envelope.Error.Message == ErrRetired.Error() {
+				// The retired resident ran nothing: the request goes again, to the
+				// resident that replaces it, as if the agent had just sent it.
+				// ponytail: other requests in flight on it get the unknown answer.
+				delete(pending, string(envelope.ID))
+				_ = disconnect()
+				go func() { input <- message{line: line} }()
+				continue
+			}
 			if envelope.Method == "" {
 				delete(pending, string(envelope.ID))
+				delete(lines, string(envelope.ID))
 			}
 			if _, err := out.Write(received.line); err != nil {
 				return err

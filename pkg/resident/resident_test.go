@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -186,13 +187,81 @@ func TestProxyReconnectsWithoutReplayingAnUncertainWrite(t *testing.T) {
 	fmt.Fprintln(writer, `{"jsonrpc":"2.0","method":"notifications/initialized"}`)
 	fmt.Fprintln(writer, `{"jsonrpc":"2.0","id":2,"method":"tools/call"}`)
 	result := read()
-	if string(result["id"]) != "2" || len(result["error"]) == 0 {
+	if string(result["id"]) != "2" || !strings.Contains(string(result["error"]), "request outcome is unknown") {
 		t.Fatalf("uncertain request=%v", result)
 	}
 	fmt.Fprintln(writer, `{"jsonrpc":"2.0","id":3,"method":"tools/list"}`)
 	result = read()
 	if string(result["id"]) != "3" || len(result["result"]) == 0 {
 		t.Fatalf("reconnected request=%v", result)
+	}
+	if err := <-observed; err != nil {
+		t.Fatal(err)
+	}
+	writer.Close()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestProxyResendsARequestARetiredResidentRefused(t *testing.T) {
+	listener, options := proxyListener(t)
+	input, writer := io.Pipe()
+	defer input.Close()
+	defer writer.Close()
+	output, sink := io.Pipe()
+	defer output.Close()
+	defer sink.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- ProxyStdio(ctx, options, input, sink) }()
+	observed := make(chan error, 1)
+	go func() {
+		// The first resident retires on the call; the second runs it.
+		for attempt := 0; attempt < 2; attempt++ {
+			conn, reader, err := acceptProxy(listener)
+			if err != nil {
+				observed <- err
+				return
+			}
+			defer conn.Close()
+			_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
+			for _, want := range []string{"initialize", "notifications/initialized", "tools/call"} {
+				line, err := reader.ReadBytes('\n')
+				var request struct {
+					Method string `json:"method"`
+				}
+				if err != nil || json.Unmarshal(line, &request) != nil || request.Method != want {
+					observed <- fmt.Errorf("attempt %d: want %s, got %s err=%v", attempt, want, line, err)
+					return
+				}
+				if want == "initialize" {
+					fmt.Fprintln(conn, `{"jsonrpc":"2.0","id":1,"result":{}}`)
+				}
+			}
+			if attempt == 0 {
+				fmt.Fprintf(conn, `{"jsonrpc":"2.0","id":2,"error":{"code":-32000,"message":%q}}`+"\n", ErrRetired.Error())
+			} else {
+				fmt.Fprintln(conn, `{"jsonrpc":"2.0","id":2,"result":{"answered":"new"}}`)
+			}
+		}
+		observed <- nil
+	}()
+	decoder := json.NewDecoder(output)
+	var value map[string]json.RawMessage
+	fmt.Fprintln(writer, `{"jsonrpc":"2.0","id":1,"method":"initialize"}`)
+	if err := decoder.Decode(&value); err != nil {
+		t.Fatal(err)
+	}
+	fmt.Fprintln(writer, `{"jsonrpc":"2.0","method":"notifications/initialized"}`)
+	fmt.Fprintln(writer, `{"jsonrpc":"2.0","id":2,"method":"tools/call"}`)
+	value = nil
+	if err := decoder.Decode(&value); err != nil {
+		t.Fatal(err)
+	}
+	if string(value["id"]) != "2" || string(value["result"]) != `{"answered":"new"}` {
+		t.Fatalf("refused request = %v", value)
 	}
 	if err := <-observed; err != nil {
 		t.Fatal(err)

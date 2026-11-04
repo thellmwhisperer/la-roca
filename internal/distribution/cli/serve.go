@@ -29,6 +29,9 @@ func serveCommand(env *cliEnv) *cobra.Command {
 			"there would corrupt the session.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if residentMode {
+				// openService reports a path it cannot resolve.
+				paths, _ := env.resolvePaths()
+				home := residentserver.RecordHome(paths.Config)
 				svc, _, err := env.openService()
 				if err != nil {
 					return err
@@ -40,7 +43,7 @@ func serveCommand(env *cliEnv) *cobra.Command {
 				return residentserver.Run(ctx, svc, mcpplug.Build{
 					Version: env.build.Version,
 					Commit:  env.build.Commit,
-				})
+				}, home)
 			}
 			paths, err := env.resolvePaths()
 			if err != nil {

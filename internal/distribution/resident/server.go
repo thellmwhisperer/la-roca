@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -31,9 +32,52 @@ type Server struct {
 	listener net.Listener
 	vectorMu sync.Mutex
 	vector   *vectorresident.Client
+
+	home Home
+	// mu guards retired and running; drained closes once a retired resident has
+	// nothing running.
+	mu      sync.Mutex
+	retired bool
+	running int
+	drained chan struct{}
+	drain   sync.Once
 }
 
-func Run(ctx context.Context, svc *service.Service, build mcpplug.Build) error {
+// Home is what a resident answers with: the bytes of config.toml and the roca
+// executable it was started from.
+type Home struct {
+	configPath, executable string
+	config                 [sha256.Size]byte
+	configRead             bool
+	binary                 os.FileInfo
+}
+
+// RecordHome is read before the service opens, so a change made while it
+// opens is a change.
+func RecordHome(configPath string) Home {
+	executable, _ := os.Executable()
+	return readHome(configPath, executable)
+}
+
+func readHome(configPath, executable string) Home {
+	home := Home{configPath: configPath, executable: executable}
+	if raw, err := os.ReadFile(configPath); err == nil {
+		home.config, home.configRead = sha256.Sum256(raw), true
+	}
+	home.binary, _ = os.Stat(executable)
+	return home
+}
+
+// Changed reports whether config.toml or the executable on disk is not the one
+// recorded. An executable that cannot be read is a change.
+func (h Home) Changed() bool {
+	now := readHome(h.configPath, h.executable)
+	return now.config != h.config || now.configRead != h.configRead ||
+		h.binary == nil || now.binary == nil || !os.SameFile(h.binary, now.binary) ||
+		h.binary.Size() != now.binary.Size() || !h.binary.ModTime().Equal(now.binary.ModTime())
+}
+
+func Run(ctx context.Context, svc *service.Service, build mcpplug.Build, home Home) error {
 	dataDir := svc.DataDir()
 	socket := transport.SocketPath(dataDir)
 	if err := os.MkdirAll(filepath.Dir(socket), 0o700); err != nil {
@@ -49,12 +93,14 @@ func Run(ctx context.Context, svc *service.Service, build mcpplug.Build) error {
 	if err != nil {
 		return fmt.Errorf("listen for resident clients: %w", err)
 	}
+	// Closing the listener unlinks its socket, once, so a retired resident never
+	// removes the socket of the one that replaced it.
 	defer listener.Close()
-	defer os.Remove(socket)
 	if err := os.Chmod(socket, 0o600); err != nil {
 		return fmt.Errorf("restrict resident socket: %w", err)
 	}
-	server := &Server{service: svc, build: build, dataDir: dataDir, started: time.Now(), listener: listener}
+	server := &Server{service: svc, build: build, dataDir: dataDir, started: time.Now(), listener: listener,
+		home: home, drained: make(chan struct{})}
 	defer server.closeVector()
 	go func() {
 		<-ctx.Done()
@@ -64,6 +110,10 @@ func Run(ctx context.Context, svc *service.Service, build mcpplug.Build) error {
 		conn, err := listener.Accept()
 		if err != nil {
 			if ctx.Err() != nil {
+				return nil
+			}
+			if server.isRetired() {
+				<-server.drained
 				return nil
 			}
 			return err
@@ -85,7 +135,15 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) error {
 	}
 	var probe transport.Request
 	readOnly := false
+	// A CLI call runs with the home its connect found; an MCP session is
+	// checked again before each request.
+	admitted := 0
+	defer func() { s.finish(admitted) }()
 	if json.Unmarshal(bytes.TrimSpace(line), &probe) == nil && probe.Op == "connect" {
+		admitted = 1
+		if !s.admit(true) {
+			return s.respond(conn, transport.Response{Error: transport.ErrRetired.Error()})
+		}
 		if probe.DBPath != "" {
 			requested, reqErr := filepath.Abs(probe.DBPath)
 			serving, svcErr := filepath.Abs(s.service.ConfiguredDBPath())
@@ -109,12 +167,53 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) error {
 		}
 		return s.handleCall(ctx, conn, line)
 	}
-	transportConn := &bufferedConn{
-		Conn:   conn,
-		reader: io.MultiReader(bytes.NewReader(line), reader),
+	s.finish(admitted)
+	admitted = 0
+	transportConn := &mcpConn{
+		Conn: conn, server: s, running: map[string]bool{},
+		reader: bufio.NewReader(io.MultiReader(bytes.NewReader(line), reader)),
 	}
+	defer transportConn.finishAll()
 	err = mcpplug.ServeConnection(ctx, s.service, s.build, transportConn, readOnly)
 	return err
+}
+
+// admit reports whether the home this resident opened is still the one on
+// disk. A request counts, run or refused, until its caller finishes it, so the
+// resident exits only after its last answer. The first change retires the
+// resident: its socket goes at once, so the next client starts a new one.
+func (s *Server) admit(request bool) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if request {
+		s.running++
+	}
+	if !s.retired && s.home.Changed() {
+		s.retired = true
+		_ = s.listener.Close()
+		s.settle()
+	}
+	return !s.retired
+}
+
+func (s *Server) finish(requests int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.running -= requests
+	s.settle()
+}
+
+// settle runs with mu held.
+func (s *Server) settle() {
+	if s.retired && s.running == 0 {
+		s.drain.Do(func() { close(s.drained) })
+	}
+}
+
+func (s *Server) isRetired() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.retired
 }
 
 func (s *Server) handleCall(ctx context.Context, conn net.Conn, first []byte) error {
@@ -311,9 +410,12 @@ func (s *Server) closeVector() {
 }
 
 func (s *Server) status() transport.Status {
+	options := s.service.Options()
 	return transport.Status{
 		PID: os.Getpid(), StartedAt: s.started, UptimeMS: time.Since(s.started).Milliseconds(),
 		AttachedClients: int(s.clients.Load()), OpenConnections: s.service.OpenConnections(), WAL: walSizes(s.dataDir),
+		Version: s.build.Version, Commit: s.build.Commit, ConfigPath: options.ConfigPath,
+		Vector: s.service.VectorEnabled(), RocaOps: options.RocaOpsEnabled, Serving: string(s.service.ServingLayout()),
 	}
 }
 
@@ -336,11 +438,71 @@ func walSizes(root string) map[string]int64 {
 	return result
 }
 
-type bufferedConn struct {
+// mcpConn hands the MCP server one line at a time. A request that arrives once
+// the resident retired is refused with its id and never reaches the server; a
+// request that runs counts until its response is written.
+type mcpConn struct {
 	net.Conn
-	reader io.Reader
+	server  *Server
+	reader  *bufio.Reader
+	line    []byte
+	mu      sync.Mutex
+	running map[string]bool
 }
 
-func (c *bufferedConn) Read(p []byte) (int, error) { return c.reader.Read(p) }
+type envelope struct {
+	ID     json.RawMessage `json:"id"`
+	Method string          `json:"method"`
+}
 
-var _ io.ReadWriteCloser = (*bufferedConn)(nil)
+func (c *mcpConn) Read(p []byte) (int, error) {
+	for len(c.line) == 0 {
+		line, err := c.reader.ReadBytes('\n')
+		if len(line) == 0 {
+			return 0, err
+		}
+		var message envelope
+		_ = json.Unmarshal(line, &message)
+		call := len(message.ID) > 0 && message.Method != ""
+		if message.Method != "" && !c.server.admit(call) {
+			if call {
+				refusal, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": message.ID,
+					"error": map[string]any{"code": -32000, "message": transport.ErrRetired.Error()}})
+				// A refusal that cannot be written is a broken connection the next read reports.
+				_, _ = c.Write(append(refusal, '\n'))
+				c.server.finish(1)
+			}
+			continue
+		}
+		if call {
+			c.mu.Lock()
+			c.running[string(message.ID)] = true
+			c.mu.Unlock()
+		}
+		c.line = line
+	}
+	n := copy(p, c.line)
+	c.line = c.line[n:]
+	return n, nil
+}
+
+func (c *mcpConn) Write(p []byte) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var message envelope
+	if json.Unmarshal(p, &message) == nil && message.Method == "" && c.running[string(message.ID)] {
+		delete(c.running, string(message.ID))
+		defer c.server.finish(1)
+	}
+	return c.Conn.Write(p)
+}
+
+// finishAll releases what a closed connection will never answer.
+func (c *mcpConn) finishAll() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.server.finish(len(c.running))
+	clear(c.running)
+}
+
+var _ io.ReadWriteCloser = (*mcpConn)(nil)
