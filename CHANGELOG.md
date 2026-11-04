@@ -24,6 +24,23 @@ Most users need to do nothing: an already signed-in Codex or Claude CLI is detec
 
 The bootstrap JSON field `external_credential` is now named `command_transport`; it reports that the selected model runs through a local agent CLI without implying that La Roca owns authentication.
 
+## [1.94.2](https://github.com/thellmwhisperer/la-roca/compare/v1.94.1...v1.94.2) (2026-11-04)
+
+
+### Bug Fixes
+
+* **cli:** declare the ops vector sidecar only when the route serves ops ([cfdaac6](https://github.com/thellmwhisperer/la-roca/commit/cfdaac659c29b9587e738776aea598c55f836138))
+* **cli:** declare the ops vector sidecar only when the route serves ops ([#601](https://github.com/thellmwhisperer/la-roca/issues/601)) ([71ec22a](https://github.com/thellmwhisperer/la-roca/commit/71ec22a5c55726d70c23e2f0a1bff4f50baaf94f))
+* **distribution:** retire stale residents at install and pass the installed roca to the vector resident ([fcf1d80](https://github.com/thellmwhisperer/la-roca/commit/fcf1d80d5705b549b41e39aebbf1a81d87362340))
+* **distribution:** retire stale residents at install and pass the installed roca to the vector resident ([#593](https://github.com/thellmwhisperer/la-roca/issues/593)) ([71ec22a](https://github.com/thellmwhisperer/la-roca/commit/71ec22a5c55726d70c23e2f0a1bff4f50baaf94f))
+* **release:** build Linux release binaries in ubuntu:22.04 and enforce a GLIBC_2.35 floor ([7872e54](https://github.com/thellmwhisperer/la-roca/commit/7872e54a5445196bf61225b933cf4d030c4ef790))
+* **release:** build Linux release binaries in ubuntu:22.04 and enforce a GLIBC_2.35 floor ([#597](https://github.com/thellmwhisperer/la-roca/issues/597)) ([71ec22a](https://github.com/thellmwhisperer/la-roca/commit/71ec22a5c55726d70c23e2f0a1bff4f50baaf94f))
+* **resident:** retire a core resident whose config.toml or roca changed on disk ([61fe6e6](https://github.com/thellmwhisperer/la-roca/commit/61fe6e67054af4c8a156ff5cfa6e875280301d9a))
+* **resident:** retire a core resident whose config.toml or roca changed on disk ([#606](https://github.com/thellmwhisperer/la-roca/issues/606)) ([71ec22a](https://github.com/thellmwhisperer/la-roca/commit/71ec22a5c55726d70c23e2f0a1bff4f50baaf94f))
+* **vector:** embed migrated core memories from the ops sidecar in cutover ([058a310](https://github.com/thellmwhisperer/la-roca/commit/058a310e7827d2f7b8d1dc3d552d756ad2480e88))
+* **vector:** embed migrated core memories from the ops sidecar in cutover ([#592](https://github.com/thellmwhisperer/la-roca/issues/592)) ([71ec22a](https://github.com/thellmwhisperer/la-roca/commit/71ec22a5c55726d70c23e2f0a1bff4f50baaf94f))
+* **vector:** filter undeclared source kinds after the ANN search ([2fb2ae4](https://github.com/thellmwhisperer/la-roca/commit/2fb2ae4aa88e99c5231c3e30e9aabe680af5f075))
+
 ## [1.94.1](https://github.com/thellmwhisperer/la-roca/compare/v1.94.0...v1.94.1) (2026-11-03)
 
 
