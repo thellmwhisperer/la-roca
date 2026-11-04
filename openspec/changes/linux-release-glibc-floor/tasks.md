@@ -1,7 +1,8 @@
 ## 1. Floor check
 
 - [x] 1.1 Write `scripts/linux-glibc-floor.sh FILE...` in POSIX `sh` over `readelf --version-info --wide`, `grep` and `sort -V`, with the floor `2.35` as a constant: one `<file> GLIBC_x.y` or `<file> none` line per file, exit non-zero naming each file above the floor and `GLIBC_2.35`. Verify with a Go test in `scripts/` that puts a stub `readelf` first on `PATH` and covers a file at `GLIBC_2.43` (exit non-zero), one at `GLIBC_2.34` (exit 0) and one with no glibc (`none`, exit 0); `go test ./scripts` passes inside `make check`.
-- [ ] 1.2 Run the script on a Linux machine against the `roca-vector` inside the published `roca-vector-v1.94.1-linux-x64.tar.gz`, and record here that it prints `GLIBC_2.43` and exits non-zero.
+- [x] 1.2 Run the script on a Linux machine against the `roca-vector` inside the published `roca-vector-v1.94.1-linux-x64.tar.gz`, and record here that it prints `GLIBC_2.43` and exits non-zero.
+  Maintainer verification on Linux x86_64 against the published archive downloaded with `gh release download v1.94.1`: stdout `roca-vector GLIBC_2.43`, stderr `roca-vector needs GLIBC_2.43, above the floor GLIBC_2.35`, exit status `1`.
 
 ## 2. One Linux build for release and CI
 

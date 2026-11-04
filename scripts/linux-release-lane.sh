@@ -26,6 +26,8 @@ mkdir -p .tmp
 bundle_home=$(mktemp -d "$PWD/.tmp/glibc-floor.XXXXXX")
 mkdir -p "$bundle_home/bin" "$bundle_home/vector"
 HOME="$bundle_home" ROCA_PREFIX="$bundle_home/bin" "$core" _install-bundled-plugins --json
+tar -C "$bundle_home/vector" -xzf "bin/roca-vector-$version-linux-$arch.tar.gz"
+"$scripts/linux-glibc-floor.sh" "$core" "$bundle_home/bin/roca-vector" "$bundle_home/vector/roca-vector"
 reported=$("$bundle_home/bin/roca-vector" --version)
 echo "$reported"
 case $reported in
@@ -35,6 +37,4 @@ case $reported in
 	exit 1
 	;;
 esac
-tar -C "$bundle_home/vector" -xzf "bin/roca-vector-$version-linux-$arch.tar.gz"
-"$scripts/linux-glibc-floor.sh" "$core" "$bundle_home/bin/roca-vector" "$bundle_home/vector/roca-vector"
 "$scripts/archive-release-lane.sh" bin "release-$target.tar.gz"
