@@ -75,6 +75,7 @@ func registerResidentSteps(ctx *godog.ScenarioContext, m *world) {
 	ctx.Step(`^the stand-in vector resident was told the installed roca$`, m.standInWasToldTheInstalledRoca)
 	ctx.Then(`^no resident of the home listens any more$`, m.noResidentListens)
 	registerQueryListSteps(ctx, m)
+	registerResidentConfigSteps(ctx, m)
 	ctx.Then(`^the vector hits include the harbor lantern exchange$`, func() error {
 		return harborLanternExchangeAmong(m.last.stdout)
 	})

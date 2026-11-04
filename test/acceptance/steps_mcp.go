@@ -47,6 +47,7 @@ var theWithdrawnTools = map[string]string{
 // plugWorld is the scenario's protocol session and what it last got back.
 type plugWorld struct {
 	session    *mcp.ClientSession
+	agent      *agentSession
 	tools      *mcp.ListToolsResult
 	last       *mcp.CallToolResult
 	clientName string
@@ -264,6 +265,9 @@ func (m *world) callTool(name string, arguments map[string]any) error {
 func (m *world) closeThePlug() {
 	if m.plug.session != nil {
 		m.plug.session.Close()
+	}
+	if m.plug.agent != nil {
+		m.plug.agent.close()
 	}
 	m.plug = plugWorld{}
 }

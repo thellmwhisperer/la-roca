@@ -17,7 +17,7 @@ import (
 // roca init, migrated, served in cutover, embedded with the pinned model.
 
 func registerMemoryOwnershipSteps(ctx *godog.ScenarioContext, m *world) {
-	ctx.Given(`^a home made by roca init with vector = true( and roca_ops = false)?, over an agent session that carries a memory mentioning "([^"]*)"$`,
+	ctx.Given(`^a home made by roca init with vector = (true|false)( and roca_ops = false)?, over an agent session that carries a memory mentioning "([^"]*)"$`,
 		m.homeWithSessionMemory)
 	ctx.Given(`^the operator ran roca store --layer discovery --content "([^"]*)" before the migration$`,
 		func(content string) error {
@@ -86,7 +86,7 @@ func (m *world) queryHitHolds(source, text string) error {
 	return fmt.Errorf("no query hit from %s holds %q:\n%s", source, text, m.last.stdout)
 }
 
-func (m *world) homeWithSessionMemory(opsOff, words string) error {
+func (m *world) homeWithSessionMemory(vector, opsOff, words string) error {
 	cwd := filepath.Join(m.home, "workspace", "harbor")
 	project := filepath.Join(m.home, ".claude", "projects", encodeAgentPath(cwd))
 	if err := writeFixture(filepath.Join(project, seededSessionID+".jsonl"), fmt.Sprintf(
@@ -99,8 +99,8 @@ func (m *world) homeWithSessionMemory(opsOff, words string) error {
 		"The "+words+" hangs on the north pier.\n"); err != nil {
 		return err
 	}
-	// init keeps a config that is already there, so this home is made with vector on.
-	config := "[features]\nvector = true\n"
+	// init keeps a config that is already there, so this home is made with that vector.
+	config := "[features]\nvector = " + vector + "\n"
 	if opsOff != "" {
 		config += "roca_ops = false\n"
 	}
