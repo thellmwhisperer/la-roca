@@ -406,6 +406,9 @@ func TestResidentRetiresWhenConfigChanges(t *testing.T) {
 	if err != nil || !strings.Contains(line, `"id":2`) || !strings.Contains(line, transport.ErrRetired.Error()) {
 		t.Fatalf("request after the change = %s err=%v", line, err)
 	}
+	if err := session.Close(); err != nil {
+		t.Fatal(err)
+	}
 	select {
 	case err := <-done:
 		if err != nil {
@@ -413,5 +416,68 @@ func TestResidentRetiresWhenConfigChanges(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("retired resident did not exit")
+	}
+}
+
+func TestRetiredResidentRefusesQueuedRequestsUntilClientCloses(t *testing.T) {
+	svc, socket := openResidentTestService(t, service.Options{})
+	config := filepath.Join(svc.DataDir(), "config.toml")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- Run(ctx, svc, mcpplug.Build{}, RecordHome(config)) }()
+	session := waitResidentTestSocket(t, socket)
+	defer session.Close()
+	if err := session.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fmt.Fprintln(session, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}`); err != nil {
+		t.Fatal(err)
+	}
+	reader := bufio.NewReader(session)
+	if line, err := reader.ReadString('\n'); err != nil || !strings.Contains(line, `"result"`) {
+		t.Fatalf("initialize = %s err=%v", line, err)
+	}
+	if err := os.WriteFile(config, []byte("[features]\nvector = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fmt.Fprintln(session, `{"jsonrpc":"2.0","id":2,"method":"tools/list"}
+{"jsonrpc":"2.0","id":3,"method":"tools/list"}`); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []int{2, 3} {
+		line, err := reader.ReadBytes('\n')
+		if err != nil {
+			t.Fatalf("request %d: %v", id, err)
+		}
+		var response struct {
+			ID    int `json:"id"`
+			Error struct {
+				Code    int    `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal(line, &response); err != nil {
+			t.Fatal(err)
+		}
+		if response.ID != id || response.Error.Code != -32000 || response.Error.Message != transport.ErrRetired.Error() {
+			t.Fatalf("request %d: response = %s", id, line)
+		}
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("retired resident exited with an open client: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if err := session.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("retired resident did not exit after the client closed")
 	}
 }

@@ -33,9 +33,7 @@ type Server struct {
 	vectorMu sync.Mutex
 	vector   *vectorresident.Client
 
-	home Home
-	// mu guards retired and running; drained closes once a retired resident has
-	// nothing running.
+	home    Home
 	mu      sync.Mutex
 	retired bool
 	running int
@@ -118,7 +116,10 @@ func Run(ctx context.Context, svc *service.Service, build mcpplug.Build, home Ho
 		}
 		server.clients.Add(1)
 		go func() {
-			defer server.clients.Add(-1)
+			defer func() {
+				server.clients.Add(-1)
+				server.finish(0)
+			}()
 			_ = server.handle(ctx, conn)
 		}()
 	}
@@ -203,7 +204,7 @@ func (s *Server) finish(requests int) {
 
 // settle runs with mu held.
 func (s *Server) settle() {
-	if s.retired && s.running == 0 {
+	if s.retired && s.running == 0 && s.clients.Load() == 0 {
 		s.drain.Do(func() { close(s.drained) })
 	}
 }
