@@ -42,9 +42,13 @@ error: find the roca core executable on PATH: exec: "roca": executable file not 
 
 - Every start of the shared vector resident passes the path of the `roca`
   that starts it, so the resident finds the core whatever its `PATH` holds.
-- A core or vector resident started by another build is not reused: the
-  client that finds it replaces it with a resident of its own build, so a
-  query after an upgrade is answered by the installed binaries.
+- Installing or updating `roca` retires the core and vector residents the
+  previous binaries left running, before the command returns, so the next
+  client starts residents of the installed build through the existing locked
+  start. A first attempt had each client stop residents of another build
+  during a query; review showed it races (two queries start two residents)
+  and fights MCP sessions opened before the upgrade, so no client stops a
+  resident any more. The install step is the one place that does.
 
 ## Capabilities
 
@@ -58,15 +62,17 @@ None.
 
 ## Impact
 
-- Code: `pkg/resident` (the handshake and the start), the starters of the
-  vector resident in `internal/distribution/mcpplug/resident.go` and
-  `plugins/vector/cmd/roca-vector/resident_query.go`, and `pkg/vectorresident`
-  where the core path becomes `ROCA_VECTOR_ROCA_BINARY`.
+- Code: the starters of the vector resident in
+  `internal/distribution/mcpplug/resident.go` and
+  `plugins/vector/cmd/roca-vector/resident_query.go`, `pkg/vectorresident`
+  where the core path becomes `ROCA_VECTOR_ROCA_BINARY`, and the install step
+  that `install.sh` and `roca update` run (`roca _install-bundled-plugins`),
+  which stops the home's residents after the new binaries are in place.
 - End-to-end scenarios to write in `features/distribution/e2e-federation.feature`,
   run by `make e2e` against the installed candidate with the pinned embedding
-  model: the two scenarios of `specs/resident-binaries/spec.md`. Both install
+  model: the four scenarios of `specs/resident-binaries/spec.md`. They install
   with `install.sh` from the suite's local release channel into
-  `~/.local/bin`, and both fail on v1.94.1.
+  `~/.local/bin`, and each fails on v1.94.1.
 - Acceptance scenarios run by `make accept`, as many as `make e2e-cover` needs
   so that every changed line runs end to end.
 - Not touched: the #583 companion lookup when `~/.local/bin` is not on `PATH`;
