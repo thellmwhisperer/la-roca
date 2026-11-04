@@ -23,6 +23,8 @@ Feature: The full installation cycle
     And there is no embedded interpreter in the HOME
     And running "roca --version" exits with code 0
     And the output of "roca --version" contains the version and the source SHA
+    And running "roca-vector --version" exits with code 0
+    And the output contains the installed version
 
   @fast
   Scenario: Querying works without anything having been started

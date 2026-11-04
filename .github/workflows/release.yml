@@ -70,13 +70,6 @@ jobs:
         include:
           - target: darwin-arm64
             runner: macos-14
-            compatibility: false
-          - target: linux-amd64
-            runner: ubuntu-latest
-            compatibility: true
-          - target: linux-arm64
-            runner: ubuntu-24.04-arm
-            compatibility: false
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -88,17 +81,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Native build tools
-        if: startsWith(matrix.target, 'linux-')
-        run: sudo apt-get update && sudo apt-get install -y cmake g++
       - name: Build native release artifacts
         env:
           VERSION: ${{ inputs.tag || github.ref_name }}
-        run: |
-          make "${{ matrix.target }}" VERSION="$VERSION"
-          if [ "${{ matrix.compatibility }}" = true ]; then
-            make windows-amd64 VERSION="$VERSION"
-          fi
+        run: make "${{ matrix.target }}" VERSION="$VERSION"
       - name: Preserve release artifact modes
         run: ./scripts/archive-release-lane.sh bin "release-${{ matrix.target }}.tar.gz"
       - uses: actions/upload-artifact@v4
@@ -107,11 +93,23 @@ jobs:
           path: release-${{ matrix.target }}.tar.gz
           if-no-files-found: error
 
+  # The Linux legs CI also builds on every pull request, so the glibc floor is
+  # held by the same steps before and after the tag.
+  linux-artifacts:
+    if: ${{ !startsWith(inputs.tag || github.ref_name, 'models-v') }}
+    needs: upgrade-gauntlet
+    permissions:
+      contents: read
+    uses: ./.github/workflows/linux-release-build.yml
+    with:
+      ref: ${{ inputs.tag || github.ref_name }}
+      version: ${{ inputs.tag || github.ref_name }}
+
   # One red leg of the matrix fails the whole job, so no historical home can
   # stop upgrading and still be published over.
   publish:
     if: ${{ !startsWith(inputs.tag || github.ref_name, 'models-v') }}
-    needs: [upgrade-gauntlet, native-artifacts]
+    needs: [upgrade-gauntlet, native-artifacts, linux-artifacts]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

@@ -128,6 +128,7 @@ func registerInstallSteps(ctx *godog.ScenarioContext, m *world) {
 	ctx.Then(`^there is no Python virtual environment in the HOME$`, m.noVirtualEnvironment)
 	ctx.Then(`^there is no embedded interpreter in the HOME$`, m.noEmbeddedInterpreter)
 	ctx.Then(`^running "roca --version" exits with code (\d+)$`, m.versionExitsWith)
+	ctx.Then(`^running "roca-vector --version" exits with code (\d+)$`, m.vectorVersionExitsWith)
 	ctx.Then(`^the output of "roca --version" contains the version and the source SHA$`,
 		m.theVersionCarriesTheSHA)
 	ctx.Then(`^the JSON output has "([^"]*)" pointing at a file that exists$`, m.jsonKeyIsAnExistingFile)
@@ -886,6 +887,16 @@ func (m *world) filesInTheHome(wanted func(name string) bool) []string {
 
 func (m *world) versionExitsWith(expected int) error {
 	if _, err := m.run("roca --version"); err != nil {
+		return err
+	}
+	return m.itExitsWithCode(expected)
+}
+
+// vectorVersionExitsWith runs the installed companion, the cgo binary a Linux
+// with an older glibc than its builder's refuses to load.
+func (m *world) vectorVersionExitsWith(expected int) error {
+	vector := filepath.Join(theBinariesDirectory(m.home), "roca-vector")
+	if err := m.record("roca-vector --version", exec.Command(vector, "--version")); err != nil {
 		return err
 	}
 	return m.itExitsWithCode(expected)

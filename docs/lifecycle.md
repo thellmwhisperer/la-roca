@@ -74,6 +74,9 @@ executable release artefacts are:
 - `roca-<version>-linux-arm64`
 - `roca-<version>-windows-x64.exe`
 
+The Linux binaries, and the `roca-vector` they carry, need glibc 2.35 or later
+(Ubuntu 22.04 or later).
+
 ## Initialize
 
 Run `roca init` after installation. With no home database it asks for one of
