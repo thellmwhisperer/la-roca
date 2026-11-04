@@ -374,10 +374,7 @@ func TestResidentRetiresWhenConfigChanges(t *testing.T) {
 	if err := os.WriteFile(config, []byte("[features]\nvector = false\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	done := make(chan error, 1)
-	go func() { done <- Run(ctx, svc, mcpplug.Build{}, RecordHome(config)) }()
+	done := runResidentTestHome(t, svc, config)
 	waitResidentTestSocket(t, socket).Close()
 	options := transport.Options{Socket: socket}
 	session, err := transport.Dial(options)
@@ -385,16 +382,9 @@ func TestResidentRetiresWhenConfigChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer session.Close()
-	_ = session.SetDeadline(time.Now().Add(3 * time.Second))
-	reader := bufio.NewReader(session)
-	fmt.Fprintln(session, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}`)
-	if line, err := reader.ReadString('\n'); err != nil || !strings.Contains(line, `"result"`) {
-		t.Fatalf("initialize = %s err=%v", line, err)
-	}
+	reader := initializeResidentTestSession(t, session)
 
-	if err := os.WriteFile(config, []byte("[features]\nvector = true\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	changeResidentTestConfig(t, config)
 	if _, err := transport.Call(context.Background(), options, "status", struct{}{}); !errors.Is(err, transport.ErrUnavailable) {
 		t.Fatalf("call after the change = %v, want unavailable", err)
 	}
@@ -406,28 +396,33 @@ func TestResidentRetiresWhenConfigChanges(t *testing.T) {
 	if err != nil || !strings.Contains(line, `"id":2`) || !strings.Contains(line, transport.ErrRetired.Error()) {
 		t.Fatalf("request after the change = %s err=%v", line, err)
 	}
-	if err := session.Close(); err != nil {
+	closeAndAwaitResidentExit(t, session, done)
+}
+
+// changeResidentTestConfig rewrites config.toml so the recorded home no
+// longer matches the one on disk.
+func changeResidentTestConfig(t *testing.T, config string) {
+	t.Helper()
+	if err := os.WriteFile(config, []byte("[features]\nvector = true\n"), 0o600); err != nil {
 		t.Fatal(err)
-	}
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("retired resident did not exit")
 	}
 }
 
-func TestRetiredResidentRefusesQueuedRequestsUntilClientCloses(t *testing.T) {
-	svc, socket := openResidentTestService(t, service.Options{})
-	config := filepath.Join(svc.DataDir(), "config.toml")
+// runResidentTestHome runs the resident recorded against config until the
+// test ends and returns the channel Run's result arrives on.
+func runResidentTestHome(t *testing.T, svc *service.Service, config string) <-chan error {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	t.Cleanup(cancel)
 	done := make(chan error, 1)
 	go func() { done <- Run(ctx, svc, mcpplug.Build{}, RecordHome(config)) }()
-	session := waitResidentTestSocket(t, socket)
-	defer session.Close()
+	return done
+}
+
+// initializeResidentTestSession completes the MCP initialize handshake on
+// session and returns the reader positioned after its response.
+func initializeResidentTestSession(t *testing.T, session net.Conn) *bufio.Reader {
+	t.Helper()
 	if err := session.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
@@ -438,9 +433,34 @@ func TestRetiredResidentRefusesQueuedRequestsUntilClientCloses(t *testing.T) {
 	if line, err := reader.ReadString('\n'); err != nil || !strings.Contains(line, `"result"`) {
 		t.Fatalf("initialize = %s err=%v", line, err)
 	}
-	if err := os.WriteFile(config, []byte("[features]\nvector = true\n"), 0o600); err != nil {
+	return reader
+}
+
+// closeAndAwaitResidentExit closes the client session and requires the
+// retired resident's Run to return cleanly once it has.
+func closeAndAwaitResidentExit(t *testing.T, session net.Conn, done <-chan error) {
+	t.Helper()
+	if err := session.Close(); err != nil {
 		t.Fatal(err)
 	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("retired resident did not exit after the client closed")
+	}
+}
+
+func TestRetiredResidentRefusesQueuedRequestsUntilClientCloses(t *testing.T) {
+	svc, socket := openResidentTestService(t, service.Options{})
+	config := filepath.Join(svc.DataDir(), "config.toml")
+	done := runResidentTestHome(t, svc, config)
+	session := waitResidentTestSocket(t, socket)
+	defer session.Close()
+	reader := initializeResidentTestSession(t, session)
+	changeResidentTestConfig(t, config)
 	if _, err := fmt.Fprintln(session, `{"jsonrpc":"2.0","id":2,"method":"tools/list"}
 {"jsonrpc":"2.0","id":3,"method":"tools/list"}`); err != nil {
 		t.Fatal(err)
@@ -469,15 +489,5 @@ func TestRetiredResidentRefusesQueuedRequestsUntilClientCloses(t *testing.T) {
 		t.Fatalf("retired resident exited with an open client: %v", err)
 	case <-time.After(100 * time.Millisecond):
 	}
-	if err := session.Close(); err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("retired resident did not exit after the client closed")
-	}
+	closeAndAwaitResidentExit(t, session, done)
 }
