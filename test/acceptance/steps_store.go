@@ -309,6 +309,12 @@ func (m *world) cutoverHomeMentioning(word string) error {
 			return fmt.Errorf("%s exited %d: %s", m.last.command, m.last.code, m.last.stderr)
 		}
 	}
+	return m.serveCutoverLayout()
+}
+
+// serveCutoverLayout appends serving = "cutover" under [layout] to the home's
+// configuration.
+func (m *world) serveCutoverLayout() error {
 	config, err := os.OpenFile(filepath.Join(m.home, ".roca", "config.toml"), os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err

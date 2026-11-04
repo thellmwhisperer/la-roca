@@ -158,6 +158,8 @@ func serveFakeResidentSession(in io.Reader, out io.Writer) {
 			"kind": "result", "stage": "query", "id": request.ID,
 			"result": map[string]any{
 				"hit": request.Query, "k": request.K,
+				// The roca the real companion would call back, as its starter passed it.
+				"core":      os.Getenv("ROCA_VECTOR_ROCA_BINARY"),
 				"databases": []string{"ops"}, "vector_executed": true,
 				"results": []map[string]any{{
 					"rank": 1, "score": 0.5, "database": "ops", "table": "memories",

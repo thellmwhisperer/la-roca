@@ -36,20 +36,28 @@ func registerVectorCompanionSteps(ctx *godog.ScenarioContext, m *world) {
 		_, err := m.runWith("roca query "+question+" --json", []string{"query", question, "--json"})
 		return err
 	})
-	ctx.Then(`^the query engines include "([^"]*)"$`, func(engine string) error {
-		return m.queryList("engines", func(values []string) bool { return slices.Contains(values, engine) })
-	})
 	ctx.Then(`^the query engines are only "([^"]*)"$`, func(engine string) error {
 		return m.queryList("engines", func(values []string) bool { return slices.Equal(values, []string{engine}) })
 	})
 	ctx.Then(`^the query notices include "([^"]*)"$`, func(notice string) error {
 		return m.queryList("notices", func(values []string) bool { return slices.Contains(values, notice) })
 	})
+	registerQueryListSteps(ctx, m)
+}
+
+// registerQueryListSteps are the `roca query --json` engine and notice checks
+// the store and the journey suites share.
+func registerQueryListSteps(ctx *godog.ScenarioContext, m *world) {
+	ctx.Then(`^the query engines include "([^"]*)"$`, m.queryEnginesInclude)
 	ctx.Then(`^the query notices do not include "([^"]*)"$`, func(notice string) error {
 		return m.queryList("notices", func(values []string) bool {
 			return !slices.ContainsFunc(values, func(value string) bool { return strings.Contains(value, notice) })
 		})
 	})
+}
+
+func (m *world) queryEnginesInclude(engine string) error {
+	return m.queryList("engines", func(values []string) bool { return slices.Contains(values, engine) })
 }
 
 // homeWithSessionMentioning is `roca init --db-path ~/.roca/roca.db` over one

@@ -512,6 +512,19 @@ func (m *world) aFrozenPR324FederationLab() error {
 }
 
 func (m *world) prepareFrozenSyntheticFederationLab(snapshot string) error {
+	if err := m.extractVerifiedSnapshot(snapshot); err != nil {
+		return err
+	}
+	lab := &federationLab{m: m}
+	if err := lab.installPrefix(); err != nil {
+		return err
+	}
+	return m.readyFrozenVectorState()
+}
+
+// extractVerifiedSnapshot copies a frozen home into the scenario's HOME once
+// its bytes match the pinned digest.
+func (m *world) extractVerifiedSnapshot(snapshot string) error {
 	root, err := acceptanceRoot()
 	if err != nil {
 		return err
@@ -525,10 +538,12 @@ func (m *world) prepareFrozenSyntheticFederationLab(snapshot string) error {
 	if _, err := os.Stat(filepath.Join(m.home, ".roca", "roca.db")); err != nil {
 		return fmt.Errorf("frozen snapshot %s has no core database: %w", snapshot, err)
 	}
-	lab := &federationLab{m: m}
-	if err := lab.installPrefix(); err != nil {
-		return err
-	}
+	return nil
+}
+
+// readyFrozenVectorState links the pinned model and prepares the vector state
+// once roca is installed in the frozen home.
+func (m *world) readyFrozenVectorState() error {
 	if err := installFrozenVectorModel(m.home); err != nil {
 		return err
 	}

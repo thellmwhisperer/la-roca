@@ -2,7 +2,9 @@ package cli
 
 import (
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 
 	"github.com/spf13/cobra"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/mcpplug"
@@ -32,7 +34,10 @@ func serveCommand(env *cliEnv) *cobra.Command {
 					return err
 				}
 				defer svc.Close()
-				return residentserver.Run(cmd.Context(), svc, mcpplug.Build{
+				// An install retires this resident with SIGTERM; it closes like a cancelled one.
+				ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGTERM)
+				defer stop()
+				return residentserver.Run(ctx, svc, mcpplug.Build{
 					Version: env.build.Version,
 					Commit:  env.build.Commit,
 				})

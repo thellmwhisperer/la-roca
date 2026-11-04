@@ -83,6 +83,11 @@ project, MCP handoff store refusal as contract, the published-release update
 and clean init smoke, and MCP `roca_health`. The [release train](release-train.md#e2e-timings)
 owns the timing policy.
 
+Plus issue 588: four `@provisioned` cases that install with `install.sh` from
+the scenario's local release channel and prove `roca query` keeps its vector
+engine when residents were started by an MCP session with another `PATH` or by
+the published release before an upgrade.
+
 ## Fixture rule
 
 The databases under `testdata/e2e-federation/frozen` are the lab. Rebuild them

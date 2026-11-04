@@ -21,6 +21,8 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	pluginstd "github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
+	residenttransport "github.com/thellmwhisperer/la-roca/pkg/resident"
+	"github.com/thellmwhisperer/la-roca/pkg/vectorresident"
 )
 
 // storeCommand is the write half of the product on the shell. It is the same
@@ -188,6 +190,14 @@ func installBundledPluginsCommand(env *cliEnv) *cobra.Command {
 			}
 			if err := env.refreshVectorRegistry(); err != nil {
 				return fmt.Errorf("refresh vector declarations: %w", err)
+			}
+			// Running residents keep the build and the PATH that started them. With
+			// the new binaries in place they go, and the next client starts the
+			// installed ones through the usual locked start.
+			dataDir := filepath.Dir(paths.DB)
+			vectorSocket, _ := vectorresident.SocketPaths(dataDir)
+			for _, socket := range []string{residenttransport.SocketPath(dataDir), vectorSocket, vectorSocket + ".current"} {
+				residenttransport.Retire(socket)
 			}
 			ops, corpus, cron, vector := installed[0], installed[1], installed[2], installed[3]
 			return env.report(map[string]any{

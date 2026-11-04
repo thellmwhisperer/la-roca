@@ -266,6 +266,56 @@ Feature: Frozen federation installed binary
     Then the response is not an error
     And the readable MCP response contains "health: pass"
 
+  @provisioned
+  Scenario: 588 residents started by an MCP session with another PATH
+    Given a frozen synthetic federation lab installed by install.sh from the release channel
+    And the lab is migrated and serves the cutover layout
+    And an MCP session started with a PATH without ~/.local/bin has called roca_vector_query once
+    When I run "roca query harbor lantern --json" with ~/.local/bin on PATH
+    Then the command exits with code 0
+    And the query engines include "vector"
+    And the query notices do not include "vector plugin is not installed"
+    And the query notices do not include "vector search unavailable"
+    When I run "roca-vector --json query 'harbor lantern'" with ~/.local/bin on PATH
+    Then the command exits with code 0
+    And the vector hits include the harbor lantern exchange
+    And the output does not contain "find the roca core executable on PATH"
+
+  @provisioned
+  Scenario: 588 an upgrade over running residents
+    Given a frozen synthetic federation lab installed by install.sh at the published release
+    And the lab is migrated and serves the cutover layout
+    And an MCP session started with a PATH without ~/.local/bin has called roca_vector_query once
+    And that MCP session is closed
+    When the candidate is installed by install.sh over it
+    And I run "roca query harbor lantern --json" with ~/.local/bin on PATH
+    Then the command exits with code 0
+    And the query engines include "vector"
+    And the query notices do not include "vector plugin is not installed"
+    And the query notices do not include "vector search unavailable"
+
+  @provisioned
+  Scenario: 588 an MCP session that stays open across the upgrade
+    Given a frozen synthetic federation lab installed by install.sh at the published release
+    And the lab is migrated and serves the cutover layout
+    And an MCP session started with a PATH without ~/.local/bin has called roca_vector_query once
+    When the candidate is installed by install.sh over it
+    And the MCP session calls roca_vector_query "harbor lantern" again
+    Then the MCP vector hits include the harbor lantern exchange
+    When I run "roca query harbor lantern --json" with ~/.local/bin on PATH
+    Then the command exits with code 0
+    And the query engines include "vector"
+
+  @provisioned
+  Scenario: 588 two queries right after the upgrade
+    Given a frozen synthetic federation lab installed by install.sh at the published release
+    And the lab is migrated and serves the cutover layout
+    And an MCP session started with a PATH without ~/.local/bin has called roca_vector_query once
+    When the candidate is installed by install.sh over it
+    And I run two "roca query harbor lantern --json" at the same time with ~/.local/bin on PATH
+    Then both queries exit 0 with "vector" among their engines
+    And exactly one vector resident process runs for the home
+
   # Issue 589. roca_ops = false is the legacy home where roca store writes core.
   @provisioned
   Scenario: 589 a core memory and a corpus memory after the migration
