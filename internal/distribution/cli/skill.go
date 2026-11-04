@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/artifact"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/agentcfg"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/cli/hooks"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/skill"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
@@ -342,14 +344,17 @@ func (env *cliEnv) warnf(format string, args ...any) {
 // a query can actually reach, and what could not serve one is said in the body
 // instead of silently omitted.
 func (env *cliEnv) composedCatalogSkill() (string, error) {
-	_, databases, warnings, err := env.discoverPluginContracts()
+	_, databases, warnings, err := env.discoverPluginContracts(false)
 	if err != nil {
 		return "", err
 	}
 	return skill.CatalogBody(databases, warnings), nil
 }
 
-func (env *cliEnv) discoverPluginContracts() (string, []plugin.Database, []string, error) {
+// discoverPluginContracts validates every installed plugin. For the vector
+// registry it leaves ops out while the query route does not serve it, so no
+// pass reads a table the reader refuses; the semantic catalog keeps it.
+func (env *cliEnv) discoverPluginContracts(vector bool) (string, []plugin.Database, []string, error) {
 	paths, err := env.resolvePaths()
 	if err != nil {
 		return "", nil, nil, err
@@ -359,9 +364,18 @@ func (env *cliEnv) discoverPluginContracts() (string, []plugin.Database, []strin
 		return "", nil, nil, err
 	}
 	root := pluginRoot(paths)
+	opsServed := true
+	if vector {
+		if opsServed, err = rocaOpsServed(file, filepath.Join(root, rocaops.Name, rocaops.DatabaseFilename)); err != nil {
+			return "", nil, nil, err
+		}
+	}
 	descriptors, warnings := plugin.Discover(root)
 	databases := make([]plugin.Database, 0, len(descriptors))
 	for _, descriptor := range descriptors {
+		if !opsServed && descriptor.Name == rocaops.Name {
+			continue
+		}
 		database, err := plugin.Validate(context.Background(), descriptor)
 		if err != nil {
 			warnings = append(warnings, fmt.Sprintf(
@@ -378,13 +392,13 @@ func (env *cliEnv) discoverPluginContracts() (string, []plugin.Database, []strin
 // the semantic catalog is written only to runtimes that previously asked for
 // skills. A failure is a warning because the package action already succeeded.
 func (env *cliEnv) refreshPluginContracts() {
-	root, databases, warnings, err := env.discoverPluginContracts()
+	_, databases, warnings, err := env.discoverPluginContracts(false)
 	if err != nil {
 		env.warnCatalogRefresh(err)
 		env.warnVectorRegistryRefresh(err)
 		return
 	}
-	if err := saveVectorRegistry(root, databases); err != nil {
+	if err := env.refreshVectorRegistry(); err != nil {
 		env.warnVectorRegistryRefresh(err)
 	}
 	catalog := skill.CatalogBody(databases, warnings)
@@ -427,7 +441,7 @@ func (env *cliEnv) refreshPluginContracts() {
 }
 
 func (env *cliEnv) refreshVectorRegistry() error {
-	root, databases, _, err := env.discoverPluginContracts()
+	root, databases, _, err := env.discoverPluginContracts(true)
 	if err != nil {
 		return err
 	}

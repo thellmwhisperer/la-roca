@@ -30,6 +30,19 @@ func registerVectorCompanionSteps(ctx *godog.ScenarioContext, m *world) {
 	ctx.Given(`^a stub roca-vector that answers status is in ~/.local/bin$`, m.stubVectorStatusInLocalBin)
 	ctx.Given(`^serving = "cutover" is written under layout in config.toml$`, m.servingCutoverByHand)
 	ctx.Given(`^config.toml is not valid TOML$`, m.configNotTOML)
+	ctx.Given(`^roca_ops = false is written under features in config.toml$`, func() error {
+		return m.switchFeature("roca_ops = true", "roca_ops = false")
+	})
+	ctx.Given(`^roca-ops.db is not a SQLite database$`, func() error {
+		return os.WriteFile(filepath.Join(m.home, ".roca", "plugins", "roca-ops", "roca-ops.db"),
+			[]byte("not a sqlite database"), 0o600)
+	})
+	ctx.Then(`^the vector registry declares no ops sidecar$`, func() error {
+		if err := m.registryDeclaresOpsTables(""); err == nil || !strings.Contains(err.Error(), "declares no ops sidecar") {
+			return fmt.Errorf("the vector registry still declares an ops sidecar: %v", err)
+		}
+		return nil
+	})
 	ctx.Given(`^the vector registry declares the ops tables "([^"]*)"$`, m.registryDeclaresOpsTables)
 	ctx.Then(`^the vector registry declares the ops tables "([^"]*)"$`, m.registryDeclaresOpsTables)
 	ctx.When(`^the operator runs roca query "([^"]*)" as json$`, func(question string) error {
@@ -77,17 +90,20 @@ func (m *world) homeWithSessionMentioning(words string) error {
 	return m.noVectorCompanion()
 }
 
-func (m *world) vectorSwitchedOn() error {
+func (m *world) vectorSwitchedOn() error { return m.switchFeature("vector = false", "vector = true") }
+
+// switchFeature rewrites one line init wrote under [features].
+func (m *world) switchFeature(from, to string) error {
 	path := filepath.Join(m.home, ".roca", "config.toml")
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
 	text := string(raw)
-	if !strings.Contains(text, "vector = false") {
-		return fmt.Errorf("init left no `vector = false` to switch on:\n%s", text)
+	if !strings.Contains(text, from) {
+		return fmt.Errorf("init left no `%s` to switch:\n%s", from, text)
 	}
-	return os.WriteFile(path, []byte(strings.Replace(text, "vector = false", "vector = true", 1)), 0o600)
+	return os.WriteFile(path, []byte(strings.Replace(text, from, to, 1)), 0o600)
 }
 
 func (m *world) stubVectorInLocalBin() error {
