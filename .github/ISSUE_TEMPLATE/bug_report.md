@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Report a reproducible problem, written from an OpenSpec change
+about: Report a reproducible problem
 ---
 
 <!-- Public text: use ~, $TMPDIR, <workspace>, <host>, <lan-ip> and rounded counts; omit personal paths, hostnames and session identifiers. -->
@@ -8,25 +8,20 @@ about: Report a reproducible problem, written from an OpenSpec change
 Type: fix
 Where: binario|lanzador
 
-Written from the OpenSpec change `openspec/changes/<change-name>`. Write the change first (`openspec validate <change-name> --strict`); this issue copies it and never grows.
+## What breaks
 
-## Why
+<!-- One or two sentences: what happens and what should happen instead. -->
 
-<!-- From the proposal's Why: what happens, what should happen instead, and who asked for it. -->
-
-Proof: <!-- the command that reproduces the problem, a run id or a log line -->
-
-## Scenarios
-
-<!-- Copied from the spec's WHEN/THEN, one bullet each. The first one fails today. -->
-
-- WHEN ..., THEN ...
+Proof: <!-- a run id, a log line or the command that reproduces it -->
 
 ## Done when
 
-- The scenarios above are acceptance scenarios in `features/<domain>/*.feature`, with steps in `test/acceptance`, run by `make accept` against the real `roca`. They fail on integration and pass with the fix.
-- `make e2e-cover` passes: every changed non-test line is executed by those scenarios.
+<!-- One test, or the exact command that goes from red to green. If it takes five tests, it is five issues. -->
+
+`go test -count=1 -run 'TestName' ./pkg` fails on integration and passes with the fix.
 
 ## Not touched
 
-<!-- From the proposal's Impact. -->
+<!-- Three lines at most. -->
+
+- 
