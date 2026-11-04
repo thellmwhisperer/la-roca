@@ -276,7 +276,7 @@ Feature: Frozen federation installed binary
     And the query engines include "vector"
     And the query notices do not include "vector plugin is not installed"
     And the query notices do not include "vector search unavailable"
-    When I run "roca-vector --json query harbor lantern" with ~/.local/bin on PATH
+    When I run "roca-vector --json query 'harbor lantern'" with ~/.local/bin on PATH
     Then the command exits with code 0
     And the vector hits include the harbor lantern exchange
     And the output does not contain "find the roca core executable on PATH"
