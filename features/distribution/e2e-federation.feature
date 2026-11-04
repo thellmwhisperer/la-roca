@@ -265,3 +265,31 @@ Feature: Frozen federation installed binary
     When I call the health tool over stdio
     Then the response is not an error
     And the readable MCP response contains "health: pass"
+
+  # Issue 589. roca_ops = false is the legacy home where roca store writes core.
+  @provisioned
+  Scenario: 589 a core memory and a corpus memory after the migration
+    Given La Roca has just been installed from the release channel
+    And a home made by roca init with vector = true and roca_ops = false, over an agent session that carries a memory mentioning "harbor lantern"
+    And the operator ran roca store --layer discovery --content "orchard compass note" before the migration
+    And roca migrate is verified and serving = "cutover" is set under layout
+    When I run "roca vector install"
+    Then the command exits with code 0
+    When I run "roca vector status --json"
+    Then the ops sidecar has some embedded chunks and a state other than "outdated"
+    When I vector-query "orchard compass note" in databases "ops"
+    Then the vector hits holding "orchard compass note" are one memory from "ops"
+    When I vector-query "harbor lantern" in databases "corpus,ops"
+    Then the vector hits holding "harbor lantern" are one memory from "corpus"
+
+  @provisioned
+  Scenario: 589 an ops sidecar with no memories of its own
+    Given La Roca has just been installed from the release channel
+    And a home made by roca init with vector = true, over an agent session that carries a memory mentioning "harbor lantern"
+    And roca migrate is verified and serving = "cutover" is set under layout
+    When I run "roca vector install"
+    Then the command exits with code 0
+    When I run "roca vector status --json"
+    Then the ops sidecar has 0 embedded chunks and a state other than "outdated"
+    When I run "roca doctor"
+    Then the output does not contain "roca vector install"

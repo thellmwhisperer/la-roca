@@ -26,6 +26,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
+	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 	"github.com/thellmwhisperer/la-roca/internal/securefile"
 )
@@ -385,6 +386,11 @@ func dispatchPlugin(env *cliEnv, root *cobra.Command, args []string, features co
 	path, found := resolveCompanion(args[0], pluginExecutableDir(paths))
 	if !found {
 		return false, 0, nil
+	}
+	if args[0] == "vector" && fileExists(plugin.VectorRegistryPath(pluginRoot(paths))) {
+		if err := env.refreshVectorRegistry(); err != nil {
+			return true, ExitError, fmt.Errorf("refresh vector declarations: %w", err)
+		}
 	}
 	if args[0] == "vector" && features.Vector {
 		if handled, code, err := runVectorQueryResident(env, args[1:], path, paths); handled {

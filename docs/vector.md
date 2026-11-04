@@ -100,7 +100,8 @@ remain in the successful envelope, using the field-specific states described
 above.
 
 The help recommends `roca vector install` only when a database is missing or
-has zero embedded chunks. An unheld index lock is the reusable flock file and
+has zero embedded chunks without being `complete`; a finished pass over tables
+with nothing to embed is `complete` at zero chunks and needs no install. An unheld index lock is the reusable flock file and
 needs no operator action; a held lock names the sidecar still being written.
 An inspection error is reported as `error`, not as a leftover lock. An existing
 partial index is not treated as absent work.
@@ -235,7 +236,12 @@ root (`~/.roca/plugins/` by default, or `%USERPROFILE%\.roca\plugins\` on
 Windows) and embeds every declared database in the background. Each database
 owns an adjacent sidecar: `roca-corpus.db` owns `roca-corpus.vector.db`,
 `roca-ops.db` owns `roca-ops.vector.db`, and third-party declarations follow
-the same rule. Plugin update preserves that sidecar; uninstall archives or
+the same rule. In a home served in `cutover`, the ops declaration also
+covers `core_memories`: migrated memories that only core held, which no other
+sidecar embeds; corpus-sourced memories stay with the corpus sidecar. Every
+`roca vector` command regenerates an existing registry before the companion
+reads it, so a hand edit of `[layout].serving` takes effect on the next
+command. Plugin update preserves that sidecar; uninstall archives or
 removes it under the database's custody policy. Manual filesystem operations
 must treat the pair together or discard the sidecar and regenerate it. Every
 completed sidecar records its owner, embedding model, dimensions, build

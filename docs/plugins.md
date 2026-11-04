@@ -833,7 +833,8 @@ every legacy database label and ID. Its derived `memory_records_fts` is rebuilt
 and checked before the ledger becomes `verified`. These names stay outside
 prompts and the SQL gate during legacy serving, so the served `memories`/
 `memories_fts` route and source databases remain untouched until the atomic
-cutover.
+cutover. In cutover, the ops `core_memories` view exposes the migrated
+memories only core held, for SQL and the ops vector sidecar.
 
 DATA-2 runs through the
 [explicit migration coordinator](operations.md#explicit-data-split-migration).

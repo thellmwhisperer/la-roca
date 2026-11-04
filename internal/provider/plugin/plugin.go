@@ -100,6 +100,22 @@ type Database struct {
 	Orphans []string
 }
 
+func (d Database) ForServingLayout(cutover bool) Database {
+	if cutover || d.Name != "roca-ops" {
+		return d
+	}
+	d.Tables = slices.DeleteFunc(slices.Clone(d.Tables), func(table Table) bool {
+		return table.Name == "core_memories"
+	})
+	d.Semantic.Tables = slices.DeleteFunc(slices.Clone(d.Semantic.Tables), func(table SemanticTable) bool {
+		return table.Name == "core_memories"
+	})
+	d.VectorTables = slices.DeleteFunc(slices.Clone(d.VectorTables), func(table VectorTable) bool {
+		return table.Name == "core_memories"
+	})
+	return d
+}
+
 func (d Database) ReadOnlyURI() string {
 	return databaseURI(d.Database)
 }
