@@ -22,11 +22,13 @@ find the core whatever `PATH` the resident was started with.
   unavailable`, and `roca-vector query` exits 0 with that exchange among its
   hits and prints no `find the roca core executable on PATH`
 
-### Requirement: A resident of another build is replaced
+### Requirement: Installing roca retires the residents of the previous build
 
-A client that reaches a core resident or a vector resident started by a
-different build SHALL NOT use it: it SHALL replace it with a resident of its
-own build and get its answer from that one.
+When `install.sh` or `roca update` replaces `roca`, the core and vector
+residents of the home that the previous binaries left running SHALL be
+stopped before the command returns, so the next client starts residents of
+the installed build through the existing locked start. No client SHALL stop a
+resident while answering a query or an MCP request.
 
 #### Scenario: An upgrade over running residents
 
@@ -39,3 +41,21 @@ own build and get its answer from that one.
 - **THEN** the command exits 0, its `engines` include `vector`, and its notices
   include neither `vector plugin is not installed` nor `vector search
   unavailable`
+
+#### Scenario: An MCP session that stays open across the upgrade
+
+- **WHEN** on the same kind of home, an MCP session started by the published
+  release through `roca mcp serve` called `roca_vector_query` once, the
+  candidate was installed by `install.sh` over it while that session stayed
+  open, and the session then calls `roca_vector_query "harbor lantern"` again
+- **THEN** that call returns that exchange among its hits, and a `roca query
+  "harbor lantern" --json` run afterwards still has `vector` among its
+  `engines`
+
+#### Scenario: Two queries right after the upgrade
+
+- **WHEN** on the same kind of home, the candidate was installed by
+  `install.sh` over the published release while its residents ran, and the
+  operator starts two `roca query "harbor lantern" --json` at the same time
+- **THEN** both exit 0 with `vector` among their `engines`, and once both have
+  returned exactly one vector resident process runs for the home
