@@ -14,9 +14,11 @@ each hit. Without a vector index the same command runs full-text alone.
 `--no-templates` try those retrieval knobs before they land in
 [`config.toml` `[query]`](models.md#the-configuration); the remaining knobs are
 configured there. `--since YYYY-MM-DD` keeps retrieved hits dated on or after
-that UTC day (session rows use their session start; undated hits are dropped);
-it filters after retrieval and fusion, so ranking is unchanged and fewer than
-`--top` hits can remain. `--require-both` keeps only dual-confirmed hits, and
+that UTC day (session rows use their session start; undated hits are dropped),
+and `--project <name>` keeps hits belonging to that exact project (session rows
+use their session's project; hits without a project are dropped). Both filter
+after retrieval and fusion, so ranking is unchanged and fewer than `--top` hits
+can remain. `--require-both` keeps only dual-confirmed hits, and
 `--databases` narrows the default (every attached plugin database, including
 ops). Vector coverage follows the
 [sidecar selection rules](vector.md#first-query). `--json` returns the complete
