@@ -88,7 +88,7 @@ jobs:
           CGO_ENABLED=1 go test -tags=native_equivalence ./internal/vector -run TestNativeEngineMatchesPublicEquivalenceFixture -count=1
 
   vector-native-darwin:
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
