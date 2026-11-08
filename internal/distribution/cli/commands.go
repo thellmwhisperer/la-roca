@@ -689,6 +689,7 @@ func queryCommand(env *cliEnv) *cobra.Command {
 		}),
 	}
 	cmd.Flags().IntVar(&req.Top, "top", search.DefaultTop, "number of fused hits to return")
+	cmd.Flags().StringVar(&req.Project, "project", "", "keep retrieved hits belonging to this exact project; hits without a project are excluded")
 	cmd.Flags().StringVar(&since, "since", "", "keep retrieved hits dated on or after YYYY-MM-DD (UTC); session rows use their session start, undated hits are excluded")
 	cmd.Flags().IntVar(&oversample, "oversample", search.HybridOversample,
 		"candidates each retrieval leg gathers before fusion")
