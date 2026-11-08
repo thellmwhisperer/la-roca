@@ -81,6 +81,10 @@ func registerStoreSteps(ctx *godog.ScenarioContext, binary string) {
 	ctx.When(`^two writers store different memories at the same time$`, m.twoConcurrentWriters)
 	ctx.When(`^I run '([^']*)'$`, func(command string) error { _, err := m.run(command); return err })
 
+	ctx.When(`^I run the session help command verbatim$`, m.runSessionHelp)
+	ctx.Then(`^the session help command reads the hit session in exchange order with max-chars 2000$`, m.sessionHelpReadsHit)
+	ctx.Then(`^the output contains the three session exchanges in order$`, m.threeSessionExchangesInOrder)
+
 	// --- then: properties the scenario asserts ---
 	ctx.Then(`^the command exits with code (\d+)$`, m.itExitsWithCode)
 	ctx.Then(`^the command exits with a code other than 0$`, m.itExitsWithNonZeroCode)
