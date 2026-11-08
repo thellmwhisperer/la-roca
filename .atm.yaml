@@ -7,8 +7,8 @@ lint: make lint
 test_file: make test-file DIR={dir}
 test_patterns: ["**/*_test.go", "features/**", "test/**", "testdata/**"]
 docs_patterns: ["**/*.md", "docs/**"]
-# Delivery runs scripts/atm-delivery.sh: it launches no-mistakes without --yes and follows that one run by status,
-# with no second screen, so ATM's screen paints the gate. Whoever launched the run answers each gate.
-# Pull requests target integration, the release-train branch (docs/release-train.md).
+# Delivery runs scripts/deliver.sh: no-mistakes in the foreground without --yes, so ATM's screen paints its steps
+# with no second screen. Whoever launched the run answers each gate. Pull requests target integration, the
+# repository's default branch and the release-train branch (docs/release-train.md).
 # It starts with sh because ATM's preflight only accepts a delivery whose first word is on PATH or a word of sh.
-delivery: sh scripts/atm-delivery.sh
+delivery: sh scripts/deliver.sh
