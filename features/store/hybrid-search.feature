@@ -22,6 +22,9 @@ Feature: Hybrid search fuses a plugin row found by both legs
     And the hits include that exchange with consensus
 
   Scenario: Since filters retrieved hits by session date before printing
+    Given a home made by roca init that ingested an agent session mentioning "harbor lantern"
+    And vector search is switched on
+    And a roca-vector on PATH answers query with that exchange as its only hit
     Given agent sessions on October 1 and October 20 mention orchard
     When I run 'roca query "orchard" --json'
     Then the command exits with code 0
