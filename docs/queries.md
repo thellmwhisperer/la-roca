@@ -196,11 +196,15 @@ terms[3]: stale, lock, error
 rows[2]{rank,source,legs,consensus,vector_score,vector_rank,fts_rank,snippet}:
   1,corpus.exchanges.912,vector+fts,true,0.61,2,1,"fixed: stale .lock left by a killed run; remove it and rerun"
   2,corpus.memories.207,vector+fts,true,0.57,4,2,"Pattern: a killed ingest can leave its lock file behind"
-help[3]:
+help[4]:
   - "Run `roca vector query \"have I fixed a stale lock error before\" 20 --databases core,corpus,ops` for the fast semantic leg alone (this command adds the full-text leg and fusion)"
   - "Run `roca query \"have I fixed a stale lock error before\" --json` for the complete result envelope"
   - "Run `roca query \"have I fixed a stale lock error before\" --require-both` to keep only dual-confirmed hits"
+  - "Run `roca exec \"SELECT exchange_number, human_text, agent_text FROM plugin_roca_corpus.exchanges WHERE session_id = (SELECT session_id FROM plugin_roca_corpus.exchanges WHERE id = '912') ORDER BY exchange_number\" --max-chars 2000` to read the whole session of hit 1"
 ```
+
+Each `corpus.exchanges` hit adds one help line with a ready `roca exec`
+statement that reads that hit's whole session in exchange order.
 
 The FTS leg measures each token against the selected live indexes, removes
 zero-frequency and broadly common terms, and keeps a small rare-term set for
