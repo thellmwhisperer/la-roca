@@ -27,6 +27,7 @@ type SearchRequest struct {
 	RequireBoth bool
 	MaxChars    int
 	Since       time.Time
+	Project     string
 	// Overlay is the flag write on top of the service's resolved [query] knobs.
 	Overlay search.Overlay
 }
@@ -187,8 +188,8 @@ func (s *Service) Search(ctx context.Context, req SearchRequest) (SearchResult, 
 	}
 
 	fused := search.FuseRRF(legs.vectorDocs, legs.ftsDocs, settings.RRFK)
-	if !req.Since.IsZero() {
-		fused, err = s.filterSearchSince(ctx, route, surfaces, fused, req.Since)
+	if !req.Since.IsZero() || req.Project != "" {
+		fused, err = s.filterSearchHits(ctx, route, surfaces, fused, req)
 	}
 	if req.RequireBoth {
 		kept := make([]search.FusedDoc, 0, len(fused))
@@ -230,9 +231,9 @@ func (s *Service) Search(ctx context.Context, req SearchRequest) (SearchResult, 
 	return result, err
 }
 
-// filterSearchSince checks only retrieved candidates, leaving retrieval and RRF unchanged.
-func (s *Service) filterSearchSince(ctx context.Context, route PluginRoute, surfaces []searchSurface,
-	docs []search.FusedDoc, since time.Time) ([]search.FusedDoc, error) {
+// filterSearchHits checks only retrieved candidates, leaving retrieval and RRF unchanged.
+func (s *Service) filterSearchHits(ctx context.Context, route PluginRoute, surfaces []searchSurface,
+	docs []search.FusedDoc, req SearchRequest) ([]search.FusedDoc, error) {
 	branches := []string{"SELECT '' AS source WHERE 0"}
 	for _, surface := range surfaces {
 		timestamp := "NULL"
@@ -245,12 +246,26 @@ func (s *Service) filterSearchSince(ctx context.Context, route PluginRoute, surf
 			timestamp = "(SELECT started_at FROM " + qualified(surface.Schema, "sessions") +
 				" WHERE session_id = s.session_id)"
 		}
+		predicate := "1"
+		if !req.Since.IsZero() {
+			predicate += " AND julianday(" + timestamp + ") >= julianday(" + sqlString(req.Since.Format(time.DateOnly)) + ")"
+		}
+		if req.Project != "" {
+			project := "NULL"
+			switch {
+			case slices.Contains(surface.Columns, "project"):
+				project = "s.project"
+			case slices.Contains(surface.Columns, "session_id"):
+				project = "(SELECT project FROM " + qualified(surface.Schema, "sessions") +
+					" WHERE session_id = s.session_id)"
+			}
+			predicate += " AND " + project + " = " + sqlString(req.Project)
+		}
 		for _, doc := range docs {
 			if doc.Database == surface.Database && doc.Table == surface.Table {
 				branches = append(branches, "SELECT "+sqlString(doc.Key)+" AS source FROM "+
 					qualified(surface.Schema, surface.Table)+" AS s WHERE s."+quoteIdent(surface.IDColumn)+
-					" = "+sqlString(doc.ID)+" AND julianday("+timestamp+") >= julianday("+
-					sqlString(since.Format(time.DateOnly))+")")
+					" = "+sqlString(doc.ID)+" AND "+predicate)
 			}
 		}
 	}

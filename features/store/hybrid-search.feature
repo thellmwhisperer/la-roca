@@ -45,6 +45,34 @@ Feature: Hybrid search fuses a plugin row found by both legs
     Then the command exits with code 0
     And the search returns no results
 
+  Scenario: Project filters fused hits to the named session project before printing
+    Given a home made by roca init that ingested an agent session mentioning "harbor lantern"
+    And vector search is switched on
+    And a roca-vector on PATH answers query with that exchange as its only hit
+    And agent sessions in projects alpha and beta mention orchard
+    When I run 'roca query "orchard" --json'
+    Then the command exits with code 0
+    And the output contains "orchard alpha"
+    And the output contains "orchard beta"
+    And the search returns exactly 3 results
+    When I run 'roca query "orchard" --project alpha --json'
+    Then the command exits with code 0
+    And the output contains "orchard alpha"
+    And the output does not contain "orchard beta"
+    And the output does not contain "the fixture exchange"
+    And the search returns exactly 1 result
+    When I run 'roca query "orchard" --project alpha'
+    Then the command exits with code 0
+    And the output contains "orchard alpha"
+    And the output does not contain "orchard beta"
+    And the output does not contain "the fixture exchange"
+    When I run 'roca query "orchard" --project alpha --since 2026-10-21 --json'
+    Then the command exits with code 0
+    And the search returns no results
+    When I run 'roca query "orchard" --project missing --json'
+    Then the command exits with code 0
+    And the search returns no results
+
   Scenario Outline: Since accepts only a calendar date
     When I run 'roca query "orchard" --since=<date>'
     Then the command exits with code 1

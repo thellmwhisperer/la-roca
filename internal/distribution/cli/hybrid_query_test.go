@@ -29,7 +29,7 @@ func TestQueryHelpNamesTheHybridKnobs(t *testing.T) {
 	if err := root.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"--oversample", "--no-templates", "--top", "--since", "YYYY-MM-DD"} {
+	for _, want := range []string{"--oversample", "--no-templates", "--top", "--since", "--project", "YYYY-MM-DD"} {
 		if !strings.Contains(output.String(), want) {
 			t.Errorf("query help lacks %q:\n%s", want, output.String())
 		}
