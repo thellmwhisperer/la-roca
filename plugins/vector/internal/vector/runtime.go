@@ -137,6 +137,12 @@ func LockStateUsage(directory string) (func() error, error) {
 		return nil, fmt.Errorf("lock vector state relocation: %w", err)
 	}
 	if _, err := os.Stat(directory); err != nil {
+		if managed && os.IsNotExist(err) && filepath.Base(filepath.Dir(directory)) == "roca-vector" {
+			err = os.MkdirAll(directory, 0o700)
+			if err == nil {
+				return release, nil
+			}
+		}
 		_ = release()
 		if os.IsNotExist(err) {
 			return nil, fmt.Errorf("vector state moved from %s; rerun the command", directory)
