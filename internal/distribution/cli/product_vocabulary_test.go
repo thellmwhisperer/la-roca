@@ -60,13 +60,12 @@ func TestProductVocabularyIsFreeOfInternalRoles(t *testing.T) {
 		// Go tests contain fixture data rather than authored product copy.
 		// Release Please generates CHANGELOG.md from commit history; it is not
 		// authored product copy owned by this source-tree vocabulary check.
-		// .atm.yaml and the delivery script it runs, with that script's test, are
-		// operator delivery config that must name its tools.
+		// .atm.yaml and the delivery script it runs are operator delivery config
+		// that must name its tools.
 		if entry.Name() == ".git" || strings.HasSuffix(entry.Name(), "_test.go") ||
 			filepath.Clean(path) == filepath.Join(root, "CHANGELOG.md") ||
 			filepath.Clean(path) == filepath.Join(root, ".atm.yaml") ||
-			filepath.Clean(path) == filepath.Join(root, "scripts", "atm-delivery.sh") ||
-			filepath.Clean(path) == filepath.Join(root, "scripts", "atm-delivery-test.py") {
+			filepath.Clean(path) == filepath.Join(root, "scripts", "deliver.sh") {
 			return nil
 		}
 		body, err := os.ReadFile(path)
