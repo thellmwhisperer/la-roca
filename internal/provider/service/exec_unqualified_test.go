@@ -48,7 +48,8 @@ func TestExecRefusesAnUnqualifiedTableSharedByAttachedPlugins(t *testing.T) {
 	}
 
 	result, err := svc.Exec(t.Context(), service.ExecRequest{
-		SQL: `SELECT content FROM plugin_roca_ops.memories WHERE content LIKE '%proceso alpha%'`,
+		SQL:        `SELECT content FROM plugin_roca_ops.memories WHERE content LIKE '%proceso alpha%'`,
+		TimeoutSet: true,
 	})
 	if err != nil {
 		t.Fatal(err)

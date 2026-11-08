@@ -133,7 +133,7 @@ Feature: Frozen federation installed binary
 
   Scenario: 233400 exec harbor lantern
     Given a frozen synthetic federation lab
-    When I exec the SQL "SELECT content FROM plugin_roca_ops.memories WHERE content LIKE '%harbor lantern%'"
+    When I exec the SQL "SELECT content FROM plugin_roca_ops.memories WHERE content LIKE '%harbor lantern%'" with timeout-ms 5000
     Then the command exits with code 0
 
   @provisioned

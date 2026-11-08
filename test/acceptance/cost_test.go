@@ -67,7 +67,7 @@ func TestCostReadOnly(t *testing.T) {
 		t.Fatal("fixture does not deny temporary copies")
 	}
 	before := durableDigests(t, m.home)
-	output, code := m.runUnder(t, nil, "exec", "SELECT content FROM plugin_roca_ops.memories WHERE content LIKE '%harbor lanterns%'", "--json")
+	output, code := m.runUnder(t, nil, "exec", "SELECT content FROM plugin_roca_ops.memories WHERE content LIKE '%harbor lanterns%'", "--json", "--timeout-ms", "5000")
 	if code != 0 || !strings.Contains(output, "the cost-lab memory about harbor lanterns") {
 		t.Fatalf("D1: read-only result with copies denied: code=%d %s", code, output)
 	}

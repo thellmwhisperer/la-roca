@@ -25,7 +25,7 @@ func TestExecRefusesUnqualifiedMemoriesAndKeepsQualifiedReads(t *testing.T) {
 	}
 
 	human := runRoot(t, contractBuild(), "exec",
-		`SELECT content FROM plugin_roca_ops.memories WHERE content LIKE '%proceso alpha%'`)
+		`SELECT content FROM plugin_roca_ops.memories WHERE content LIKE '%proceso alpha%'`, "--timeout-ms", "5000")
 	if !strings.Contains(human, "synthetic proceso alpha marker") {
 		t.Fatalf("qualified exec lost the stored row:\n%s", human)
 	}
