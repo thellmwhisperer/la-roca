@@ -107,3 +107,20 @@ func (m *world) exchangeHitWithConsensus() error {
 	}
 	return nil
 }
+
+func (m *world) datedOrchardSessions() error {
+	for _, day := range []string{"2026-10-01", "2026-10-20"} {
+		body := fmt.Sprintf(`{"type":"user","timestamp":"%sT00:00:00Z","message":{"content":"orchard %s"}}
+{"type":"assistant","timestamp":"%sT00:00:01Z","message":{"content":[{"type":"text","text":"answer"}]}}
+`, day, day, day)
+		name := strings.ReplaceAll(day, "-", "") + "-0000-0000-0000-000000000000.jsonl"
+		path := filepath.Join(m.home, ".claude", "projects", "-unknown-absolute-project", name)
+		if err := writeFixture(path, body); err != nil {
+			return err
+		}
+	}
+	if _, err := m.runWith("roca ingest", []string{"ingest"}); err != nil {
+		return err
+	}
+	return m.itExitsWithCode(0)
+}

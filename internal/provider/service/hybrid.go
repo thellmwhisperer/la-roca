@@ -26,6 +26,7 @@ type SearchRequest struct {
 	Top         int
 	RequireBoth bool
 	MaxChars    int
+	Since       time.Time
 	// Overlay is the flag write on top of the service's resolved [query] knobs.
 	Overlay search.Overlay
 }
@@ -186,6 +187,9 @@ func (s *Service) Search(ctx context.Context, req SearchRequest) (SearchResult, 
 	}
 
 	fused := search.FuseRRF(legs.vectorDocs, legs.ftsDocs, settings.RRFK)
+	if !req.Since.IsZero() {
+		fused, err = s.filterSearchSince(ctx, route, surfaces, fused, req.Since)
+	}
 	if req.RequireBoth {
 		kept := make([]search.FusedDoc, 0, len(fused))
 		for _, doc := range fused {
@@ -223,7 +227,39 @@ func (s *Service) Search(ctx context.Context, req SearchRequest) (SearchResult, 
 	}
 	result.RowCount = len(result.Hits)
 	result.LatencyMS = time.Since(start).Milliseconds()
-	return result, nil
+	return result, err
+}
+
+// filterSearchSince checks only retrieved candidates, leaving retrieval and RRF unchanged.
+func (s *Service) filterSearchSince(ctx context.Context, route PluginRoute, surfaces []searchSurface,
+	docs []search.FusedDoc, since time.Time) ([]search.FusedDoc, error) {
+	branches := []string{"SELECT '' AS source WHERE 0"}
+	for _, surface := range surfaces {
+		timestamp := "NULL"
+		switch {
+		case slices.Contains(surface.Columns, "started_at"):
+			timestamp = "s.started_at"
+		case slices.Contains(surface.Columns, "created_at"):
+			timestamp = "s.created_at"
+		case slices.Contains(surface.Columns, "session_id"):
+			timestamp = "(SELECT started_at FROM " + qualified(surface.Schema, "sessions") +
+				" WHERE session_id = s.session_id)"
+		}
+		for _, doc := range docs {
+			if doc.Database == surface.Database && doc.Table == surface.Table {
+				branches = append(branches, "SELECT "+sqlString(doc.Key)+" AS source FROM "+
+					qualified(surface.Schema, surface.Table)+" AS s WHERE s."+quoteIdent(surface.IDColumn)+
+					" = "+sqlString(doc.ID)+" AND julianday("+timestamp+") >= julianday("+
+					sqlString(since.Format(time.DateOnly))+")")
+			}
+		}
+	}
+	rows, err := s.runSearchSQL(ctx, route, strings.Join(branches, " UNION ALL "), math.MaxInt)
+	keep := make(map[string]bool, len(rows))
+	for _, row := range rows {
+		keep[fmt.Sprint(row["source"])] = true
+	}
+	return slices.DeleteFunc(docs, func(doc search.FusedDoc) bool { return !keep[doc.Key] }), err
 }
 
 func vectorUnavailableNotice(message string) string {

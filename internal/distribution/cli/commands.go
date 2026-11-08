@@ -641,6 +641,7 @@ func indexCommand(env *cliEnv) *cobra.Command {
 
 func queryCommand(env *cliEnv) *cobra.Command {
 	var req service.SearchRequest
+	var since string
 	var databases string
 	var oversample int
 	var noTemplates bool
@@ -654,6 +655,13 @@ func queryCommand(env *cliEnv) *cobra.Command {
 			"override the built-in defaults.",
 		Args: cobra.MinimumNArgs(1),
 		PreRunE: func(cmd *cobra.Command, _ []string) error {
+			if cmd.Flags().Changed("since") {
+				date, err := time.Parse(time.DateOnly, since)
+				if err != nil {
+					return fmt.Errorf("--since must be a date in YYYY-MM-DD format")
+				}
+				req.Since = date
+			}
 			settings := search.DefaultSettings().Apply(queryFlagOverlay(cmd, oversample, noTemplates))
 			if err := settings.Validate(); err != nil {
 				return fmt.Errorf("invalid query flag: %w", err)
@@ -681,6 +689,7 @@ func queryCommand(env *cliEnv) *cobra.Command {
 		}),
 	}
 	cmd.Flags().IntVar(&req.Top, "top", search.DefaultTop, "number of fused hits to return")
+	cmd.Flags().StringVar(&since, "since", "", "keep retrieved hits dated on or after YYYY-MM-DD (UTC); session rows use their session start, undated hits are excluded")
 	cmd.Flags().IntVar(&oversample, "oversample", search.HybridOversample,
 		"candidates each retrieval leg gathers before fusion")
 	cmd.Flags().BoolVar(&noTemplates, "no-templates", false,
