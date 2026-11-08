@@ -63,19 +63,24 @@ func (v likeVisitor) Visit(node rqlite.Node) (rqlite.Visitor, rqlite.Node, error
 			continue
 		}
 		qualified := table.Schema.Name + "." + table.Name.Name
+		twinName := qualified + "_fts"
+		if strings.EqualFold(table.Name.Name, "thinking_blocks") {
+			twinName = table.Schema.Name + ".thinking_fts"
+		}
 		for _, twin := range v.schema.Tables {
 			name := twin.Name
 			if !strings.Contains(name, ".") {
 				name = "main." + name
 			}
-			if !twin.FTS5 || !strings.EqualFold(name, qualified+"_fts") ||
+			if !twin.FTS5 || !strings.EqualFold(name, twinName) ||
 				!slices.ContainsFunc(twin.Columns, func(name string) bool { return strings.EqualFold(name, column) }) {
 				continue
 			}
 			fts := name[strings.LastIndex(name, ".")+1:]
 			term := strings.Trim(pattern.Value, "%")
 			// Quote FTS punctuation as a phrase, then quote SQL and the shell separately.
-			if strings.ContainsFunc(term, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) }) || term == "" {
+			if slices.Contains([]string{"OR", "AND", "NOT"}, term) ||
+				strings.ContainsFunc(term, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) }) || term == "" {
 				term = `"` + strings.ReplaceAll(term, `"`, `""`) + `"`
 			}
 			literal := (&rqlite.StringLit{Value: term}).String()

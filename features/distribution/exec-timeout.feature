@@ -45,6 +45,34 @@ Feature: Exec time limit
       | WITH constants(human_text) AS (VALUES ('orchard')) SELECT human_text FROM constants WHERE human_text LIKE '%orchard%' |
       | SELECT 1 IS DISTINCT FROM 2 |
 
+  Scenario: CLI exec recognizes the thinking blocks FTS twin
+    Given La Roca is installed and initialized
+    And the corpus has FTS suggestion edge cases
+    When I exec the SQL "SELECT id FROM plugin_roca_corpus.thinking_blocks WHERE full_text LIKE '%orchard%'"
+    Then the command exits with a code other than 0
+    And the output contains "plugin_roca_corpus.thinking_blocks.full_text"
+    And the output contains "thinking_fts MATCH 'orchard'"
+    When I run the printed roca exec line verbatim
+    Then the command exits with code 0
+    And the output contains "rows[1]{id"
+    And the output contains "92001"
+
+  Scenario Outline: CLI exec quotes FTS operator words as search text
+    Given La Roca is installed and initialized
+    And the corpus has FTS suggestion edge cases
+    When I exec the SQL "SELECT id FROM plugin_roca_corpus.exchanges WHERE human_text LIKE '%<term>%'"
+    Then the command exits with a code other than 0
+    And the output contains "plugin_roca_corpus.exchanges.human_text"
+    When I run the printed roca exec line verbatim
+    Then the command exits with code 0
+    And the output contains "rows[1]{id"
+    And the output contains "<id>"
+    Examples:
+      | term | id    |
+      | OR   | 92011 |
+      | AND  | 92012 |
+      | NOT  | 92013 |
+
   Scenario: CLI exec permits an explicit timeout for a leading wildcard
     Given La Roca is installed and initialized
     And the corpus has orchard exchanges
