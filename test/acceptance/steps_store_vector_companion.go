@@ -21,6 +21,7 @@ const stubVectorHit = `{"results":[{"rank":1,"score":0.9,"database":"corpus","ta
 	`"id":"1","text":"where did we leave the harbor lantern"}],"vector_executed":true}`
 
 func registerVectorCompanionSteps(ctx *godog.ScenarioContext, m *world) {
+	registerVectorEnableAfterInitSteps(ctx, m)
 	ctx.Given(`^a home initialized with an agent session that mentions "([^"]*)"$`, m.homeWithSessionMentioning)
 	ctx.Given(`^vector is switched on under features$`, m.vectorSwitchedOn)
 	ctx.Given(`^a stub roca-vector that answers query with that exchange is in ~/.local/bin only$`,
