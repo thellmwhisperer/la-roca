@@ -114,12 +114,27 @@ func (m *world) exchangeHitWithConsensus() error {
 }
 
 func (m *world) datedOrchardSessions() error {
-	for _, day := range []string{"2026-10-01", "2026-10-20"} {
-		body := fmt.Sprintf(`{"type":"user","timestamp":"%sT00:00:00Z","message":{"content":"orchard %s"}}
+	return m.orchardSessions(false)
+}
+
+func (m *world) projectOrchardSessions() error {
+	return m.orchardSessions(true)
+}
+
+func (m *world) orchardSessions(byProject bool) error {
+	for i, day := range []string{"2026-10-01", "2026-10-20"} {
+		label, cwd := day, ""
+		directory := "-unknown-absolute-project"
+		if byProject {
+			label = []string{"alpha", "beta"}[i]
+			cwd = `,"cwd":"/workspace/` + label + `"`
+			directory = "-workspace-" + label
+		}
+		body := fmt.Sprintf(`{"type":"user"%s,"timestamp":"%sT00:00:00Z","message":{"content":"orchard %s"}}
 {"type":"assistant","timestamp":"%sT00:00:01Z","message":{"content":[{"type":"text","text":"answer"}]}}
-`, day, day, day)
+`, cwd, day, label, day)
 		name := strings.ReplaceAll(day, "-", "") + "-0000-0000-0000-000000000000.jsonl"
-		path := filepath.Join(m.home, ".claude", "projects", "-unknown-absolute-project", name)
+		path := filepath.Join(m.home, ".claude", "projects", directory, name)
 		if err := writeFixture(path, body); err != nil {
 			return err
 		}

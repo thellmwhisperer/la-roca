@@ -55,6 +55,7 @@ func registerStoreSteps(ctx *godog.ScenarioContext, binary string) {
 	ctx.Given(`^a selected path where no Roca database exists$`, m.missingDatabasePath)
 	ctx.Given(`^a home made by roca init that ingested an agent session mentioning "([^"]*)"$`, m.hybridHome)
 	ctx.Given(`^vector search is switched on$`, func() error { return enableVectorFeature(m.home) })
+	ctx.Given(`^agent sessions in projects alpha and beta mention orchard$`, m.projectOrchardSessions)
 	ctx.Given(`^agent sessions on October 1 and October 20 mention orchard$`, m.datedOrchardSessions)
 	ctx.Given(`^a roca-vector on PATH answers query with that exchange as its only hit$`, m.stubVectorLeg)
 	ctx.Given(`^a migrated cutover home whose agent session and stored memory mention "([^"]*)"$`,
