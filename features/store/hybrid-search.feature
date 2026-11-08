@@ -19,3 +19,36 @@ Feature: Hybrid search fuses a plugin row found by both legs
     When I run 'roca query "harbor lantern" --databases corpus --require-both --json'
     Then the command exits with code 0
     And the hits include that exchange with consensus
+
+  Scenario: Since filters retrieved hits by session date before printing
+    Given agent sessions on October 1 and October 20 mention orchard
+    When I run 'roca query "orchard" --json'
+    Then the command exits with code 0
+    And the output contains "orchard 2026-10-01"
+    And the output contains "orchard 2026-10-20"
+    And the search returns exactly 3 results
+    When I run 'roca query "orchard" --since 2026-10-15 --json'
+    Then the command exits with code 0
+    And the output contains "orchard 2026-10-20"
+    And the output does not contain "orchard 2026-10-01"
+    And the output does not contain "the fixture exchange"
+    And the search returns exactly 1 result
+    When I run 'roca query "orchard" --since 2026-10-20'
+    Then the command exits with code 0
+    And the output contains "orchard 2026-10-20"
+    And the output does not contain "orchard 2026-10-01"
+    When I run 'roca query "orchard" --since 2026-10-21 --json'
+    Then the command exits with code 0
+    And the search returns no results
+
+  Scenario Outline: Since accepts only a calendar date
+    When I run 'roca query "orchard" --since=<date>'
+    Then the command exits with code 1
+    And the output contains "--since must be a date in YYYY-MM-DD format"
+
+    Examples:
+      | date       |
+      | 2026-02-30 |
+      | yesterday  |
+      | 24h        |
+      | ""         |
