@@ -52,6 +52,11 @@ func (s *Service) exec(ctx context.Context, req ExecRequest, reader *ExecReader)
 		return ExecResult{}, err
 	}
 	defer route.CloseOnDemand()
+	if !req.TimeoutSet {
+		if err := rejectLeadingWildcard(validated, SchemaWithPlugins(route.IncludeCore, route.Databases)); err != nil {
+			return ExecResult{}, logfile.Typed(err, DegradedInvalidSQL)
+		}
+	}
 	var columns []string
 	var rows []map[string]any
 	budget := execBudget{timeout: req.Timeout, set: req.TimeoutSet}

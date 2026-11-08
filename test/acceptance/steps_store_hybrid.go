@@ -33,7 +33,7 @@ func (m *world) hybridHome(phrase string) error {
 	if m.last.code != 0 {
 		return fmt.Errorf("init exited %d: %s%s", m.last.code, m.last.stdout, m.last.stderr)
 	}
-	if _, err := m.runWith("roca exec", []string{"exec", "--json",
+	if _, err := m.runWith("roca exec", []string{"exec", "--json", "--timeout-ms", "5000",
 		"SELECT id FROM plugin_roca_corpus.exchanges WHERE human_text LIKE '%" + phrase + "%'"}); err != nil {
 		return err
 	}
