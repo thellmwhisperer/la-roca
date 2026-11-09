@@ -9,6 +9,17 @@ Feature: Distribution command line
     When the operator asks for command-line help
     Then every public command appears once with an honest one-line summary
 
+  Scenario Outline: Command help prints one flag list
+    When the operator asks for "<command>" command help
+    Then command help exits successfully with no bare usage and exactly one flag list
+
+    Examples:
+      | command |
+      | exec    |
+      | query   |
+      | store   |
+      | health  |
+
   Scenario Outline: Every command speaks human by default and JSON only when asked
     When the operator exercises the "<command>" command in human and JSON form
     Then the default answer is human-readable and the requested answer is one JSON document

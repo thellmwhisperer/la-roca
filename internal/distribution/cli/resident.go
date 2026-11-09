@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -201,7 +202,7 @@ func hasReadOnlyFlag(args []string) bool {
 
 func parseResidentExec(args []string) (service.ExecRequest, bool) {
 	flags := pflag.NewFlagSet("exec", pflag.ContinueOnError)
-	flags.SetOutput(nil)
+	flags.SetOutput(io.Discard)
 	maxChars := service.DefaultMaxChars
 	timeout := -1
 	flags.IntVar(&maxChars, "max-chars", maxChars, "")
@@ -219,7 +220,7 @@ func parseResidentExec(args []string) (service.ExecRequest, bool) {
 
 func parseResidentQuery(args []string) (service.SearchRequest, bool) {
 	flags := pflag.NewFlagSet("query", pflag.ContinueOnError)
-	flags.SetOutput(nil)
+	flags.SetOutput(io.Discard)
 	top, maxChars, oversample := 10, service.DefaultMaxChars, 0
 	databases := ""
 	requireBoth, noTemplates := false, false
@@ -246,7 +247,7 @@ func parseResidentQuery(args []string) (service.SearchRequest, bool) {
 
 func parseResidentStore(args []string) (service.StoreRequest, bool) {
 	flags := pflag.NewFlagSet("store", pflag.ContinueOnError)
-	flags.SetOutput(nil)
+	flags.SetOutput(io.Discard)
 	var request service.StoreRequest
 	var metadata, agent, model string
 	flags.StringVar(&request.Layer, "layer", "", "")
@@ -270,7 +271,7 @@ func parseResidentStore(args []string) (service.StoreRequest, bool) {
 
 func parseResidentHealth(args []string) (service.HealthRequest, bool) {
 	flags := pflag.NewFlagSet("health", pflag.ContinueOnError)
-	flags.SetOutput(nil)
+	flags.SetOutput(io.Discard)
 	maxRows := 0
 	flags.IntVar(&maxRows, "max-rows", 0, "")
 	if err := flags.Parse(args); err != nil || len(flags.Args()) != 0 {
