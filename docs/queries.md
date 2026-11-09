@@ -289,7 +289,9 @@ then hybrid query. `--json` returns the same two lab and pill sections as an
 object.
 
 The session-context reads (`roca pill`, `roca pill show`, and `roca handoff
-latest`) default `--project` to the basename of the working directory;
+latest`) default `--project` to the basename of the working directory only
+when the flag is omitted; `roca pill` and `roca handoff latest` reject an empty
+or whitespace-only `--project` instead of falling back to it.
 `handoff latest --all-projects` instead reads across projects. They
 always read the existing `roca-ops` database; if
 `features.roca_ops` is disabled or that database is missing, they refuse rather
