@@ -57,6 +57,36 @@ func registerDistributionCLISteps(ctx *godog.ScenarioContext, w *distributionWor
 	ctx.When(`^the operator initializes non-interactively with a detected model CLI$`, w.initWithDetectedModelCLI)
 	ctx.Then(`^init prints no answering notice and writes only the new-install features$`, w.initHasOneAnsweringNotice)
 	ctx.When(`^the operator asks for a doctor support report$`, w.askForDoctorReport)
+	ctx.When(`^the operator asks version with the stray argument "([^"]*)"$`, func(argument string) error {
+		w.last = w.run("version", argument)
+		return nil
+	})
+	ctx.Then(`^version fails naming "([^"]*)" without printing a version$`, func(argument string) error {
+		if w.last.code <= 0 || w.last.stdout != "" || !strings.Contains(w.last.stderr, `unknown command "`+argument+`"`) {
+			return fmt.Errorf("expected version to reject %q without a version: %+v", argument, w.last)
+		}
+		return nil
+	})
+	ctx.Then(`^version, version --json and --version still report the same build$`, func() error {
+		w.human = w.run("version")
+		w.machine = w.run("version", "--json")
+		if err := w.outputFormsAreExplicit(); err != nil {
+			return err
+		}
+		var build map[string]string
+		if err := json.Unmarshal([]byte(w.machine.stdout), &build); err != nil {
+			return err
+		}
+		if len(build) != 4 || build["version"] == "" || build["source_sha"] == "" || build["built_at"] == "" || build["platform"] == "" {
+			return fmt.Errorf("incomplete version JSON: %s", w.machine.stdout)
+		}
+		want := fmt.Sprintf("roca %s (%s) %s\n", build["version"], build["source_sha"], build["platform"])
+		flag := w.run("--version")
+		if flag.code != 0 || flag.stdout != want || w.human.stdout != want || flag.stderr+w.human.stderr+w.machine.stderr != "" {
+			return fmt.Errorf("version forms disagree: human=%+v JSON=%+v flag=%+v", w.human, w.machine, flag)
+		}
+		return nil
+	})
 	ctx.When(`^the operator asks doctor with the stray argument "([^"]*)"$`, func(argument string) error {
 		if err := w.ensurePrepared(); err != nil {
 			return err

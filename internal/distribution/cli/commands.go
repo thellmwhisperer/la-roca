@@ -37,6 +37,7 @@ import (
 func versionCommand(env *cliEnv) *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
+		Args:  cobra.NoArgs,
 		Short: "Version, source SHA and platform",
 		RunE: func(*cobra.Command, []string) error {
 			return env.report(map[string]any{
