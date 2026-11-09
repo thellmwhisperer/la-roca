@@ -91,6 +91,26 @@ Feature: Hybrid search fuses a plugin row found by both legs
     And the output contains "--top must be zero or greater"
     And the output does not contain "not a database"
 
+  Scenario Outline: Negative max-chars is refused before executing or searching
+    Given a home made by roca init that ingested an agent session mentioning "orchard"
+    When I run 'roca <command>'
+    Then the command exits with code 0
+    And the output contains "rows["
+    When I run 'roca <command> --max-chars -3'
+    Then the command exits with code 1
+    And the output contains "--max-chars must be zero or greater"
+    And the output does not contain "rows["
+    Given a clean HOME with a "corrupt" file at the database path
+    When I run 'roca <command> --max-chars -3'
+    Then the command exits with code 1
+    And the output contains "--max-chars must be zero or greater"
+    And the output does not contain "not a database"
+
+    Examples:
+      | command         |
+      | exec "SELECT 1" |
+      | query "orchard" |
+
   Scenario Outline: Since accepts only a calendar date
     When I run 'roca query "orchard" --since=<date>'
     Then the command exits with code 1

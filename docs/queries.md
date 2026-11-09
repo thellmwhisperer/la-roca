@@ -76,7 +76,8 @@ uses the deterministic hybrid path described above.
 
 `--max-chars N` sets the character budget per returned text field for `roca exec`,
 `roca playground`, and `roca explore`, and per snippet for `roca query`. The
-default is 500; zero or a negative value also selects that default. The same
+default is 500; zero also selects that default. `roca exec` and `roca query`
+refuse a negative value before running; elsewhere it selects the default. The same
 budget applies to CLI TOON output, CLI `--json`, and MCP's `max_chars` argument.
 TOON does not impose a smaller preview limit; selecting JSON does not expand
 the text.
