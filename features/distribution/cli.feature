@@ -53,6 +53,14 @@ Feature: Distribution command line
     When the operator initializes non-interactively with a detected model CLI
     Then init prints no answering notice and writes only the new-install features
 
+  Scenario: Doctor refuses a stray report argument without printing a diagnosis
+    When the operator asks doctor with the stray argument "report"
+    Then doctor fails naming "report" without printing a diagnosis
+    When the operator exercises the "doctor" command in human and JSON form
+    Then the default answer is human-readable and the requested answer is one JSON document
+    When the operator asks for a doctor support report
+    Then the report is one fenced block with a federation mode and the JSON form is one document
+
   Scenario: Doctor report is a privacy-safe pasteable snapshot
     When the operator asks for a doctor support report
     Then the report is one fenced block with a federation mode and the JSON form is one document

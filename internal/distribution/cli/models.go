@@ -51,6 +51,7 @@ func doctorCommand(env *cliEnv) *cobra.Command {
 	var support bool
 	cmd := &cobra.Command{
 		Use:   "doctor",
+		Args:  cobra.NoArgs,
 		Short: "Diagnose the configuration and which model is going to answer",
 		Long: "Reports where the data and the configuration are, which providers this\n" +
 			"installation declares, which of them are available and, for the ones that\n" +
