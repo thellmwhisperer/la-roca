@@ -111,6 +111,51 @@ Feature: Hybrid search fuses a plugin row found by both legs
       | exec "SELECT 1" |
       | query "orchard" |
 
+  Scenario: Exec refuses negative timeout-ms and preserves the default bound
+    Given a home made by roca init that ingested an agent session mentioning "orchard"
+    When I run 'roca exec "SELECT 1" --timeout-ms -5'
+    Then the command exits with code 1
+    And the output contains "--timeout-ms must be zero or greater"
+    And the output does not contain "rows["
+    When I run 'roca exec "SELECT 1"'
+    Then the command exits with code 0
+    And the output contains "rows[1]"
+    When I run 'roca exec "WITH RECURSIVE costly(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM costly WHERE n < 100000000) SELECT sum(n) FROM costly"'
+    Then the command exits with code 1
+    And the output contains "the validated SQL exceeded the time limit after 5s"
+    When I run 'roca exec "SELECT 1" --timeout-ms 0'
+    Then the command exits with code 0
+    And the output contains "rows[1]"
+    When I run 'roca exec "WITH RECURSIVE costly(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM costly WHERE n < 100000000) SELECT sum(n) FROM costly" --timeout-ms 0'
+    Then the command exits with code 1
+    And the output contains "the validated SQL exceeded the time limit after 5s"
+    Given an MCP session has called roca_query "orchard" once
+    Then the MCP answer is not an error and holds "orchard"
+    When I run 'roca doctor'
+    Then the command exits with code 0
+    And the output contains "resident: pid="
+    When I run 'roca exec "SELECT 1" --timeout-ms -5'
+    Then the command exits with code 1
+    And the output contains "--timeout-ms must be zero or greater"
+    And the output does not contain "rows["
+    When I run 'roca exec "SELECT 1"'
+    Then the command exits with code 0
+    And the output contains "rows[1]"
+    When I run 'roca exec "WITH RECURSIVE costly(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM costly WHERE n < 100000000) SELECT sum(n) FROM costly"'
+    Then the command exits with code 1
+    And the output contains "the validated SQL exceeded the time limit after 5s"
+    When I run 'roca exec "SELECT 1" --timeout-ms 0'
+    Then the command exits with code 0
+    And the output contains "rows[1]"
+    When I run 'roca exec "WITH RECURSIVE costly(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM costly WHERE n < 100000000) SELECT sum(n) FROM costly" --timeout-ms 0'
+    Then the command exits with code 1
+    And the output contains "the validated SQL exceeded the time limit after 5s"
+    Given a clean HOME with a "corrupt" file at the database path
+    When I run 'roca exec "SELECT 1" --timeout-ms -5'
+    Then the command exits with code 1
+    And the output contains "--timeout-ms must be zero or greater"
+    And the output does not contain "not a database"
+
   Scenario Outline: Since accepts only a calendar date
     When I run 'roca query "orchard" --since=<date>'
     Then the command exits with code 1
