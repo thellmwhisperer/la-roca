@@ -40,13 +40,20 @@ func (v likeVisitor) Visit(node rqlite.Node) (rqlite.Visitor, rqlite.Node, error
 	if !ok || comparison.Op != rqlite.LIKE {
 		return v, node, nil
 	}
-	pattern, ok := comparison.Y.(*rqlite.StringLit)
+	operand := unparenLikeOperand(comparison.Y)
+	if escape, ok := operand.(*rqlite.BinaryExpr); ok && escape.Op == rqlite.ESCAPE {
+		if char, ok := unparenLikeOperand(escape.Y).(*rqlite.StringLit); ok && char.Value == "%" {
+			return v, node, nil
+		}
+		operand = unparenLikeOperand(escape.X)
+	}
+	pattern, ok := operand.(*rqlite.StringLit)
 	if !ok || !strings.HasPrefix(pattern.Value, "%") {
 		return v, node, nil
 	}
 	var column, qualifier string
 	var qualifierSchema *rqlite.Ident
-	switch ref := comparison.X.(type) {
+	switch ref := unparenLikeOperand(comparison.X).(type) {
 	case *rqlite.Ident:
 		column = ref.Name
 	case *rqlite.QualifiedRef:
@@ -97,4 +104,14 @@ func (v likeVisitor) Visit(node rqlite.Node) (rqlite.Visitor, rqlite.Node, error
 		}
 	}
 	return v, node, nil
+}
+
+func unparenLikeOperand(expr rqlite.Expr) rqlite.Expr {
+	for {
+		paren, ok := expr.(*rqlite.ParenExpr)
+		if !ok {
+			return expr
+		}
+		expr = paren.X
+	}
 }
