@@ -230,7 +230,7 @@ func parseResidentQuery(args []string) (service.SearchRequest, bool) {
 	flags.StringVar(&databases, "databases", "", "")
 	flags.BoolVar(&requireBoth, "require-both", false, "")
 	flags.BoolVar(&noTemplates, "no-templates", false, "")
-	if err := flags.Parse(args); err != nil || len(flags.Args()) == 0 {
+	if err := flags.Parse(args); err != nil || len(flags.Args()) == 0 || top < 0 {
 		return service.SearchRequest{}, false
 	}
 	names, err := service.ParseDatabaseList(databases)

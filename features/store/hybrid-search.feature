@@ -79,6 +79,12 @@ Feature: Hybrid search fuses a plugin row found by both legs
     Then the command exits with code 1
     And the output contains "--top must be zero or greater"
     And the output does not contain "rows["
+    Given an MCP session has called roca_query "orchard" once
+    Then the MCP answer is not an error and holds "orchard"
+    When I run 'roca query "orchard" --top -5'
+    Then the command exits with code 1
+    And the output contains "--top must be zero or greater"
+    And the output does not contain "rows["
     Given a clean HOME with a "corrupt" file at the database path
     When I run 'roca query "orchard" --top -5'
     Then the command exits with code 1
