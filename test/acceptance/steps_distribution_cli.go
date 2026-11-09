@@ -82,7 +82,7 @@ func (w *distributionWorld) sessionProjectFlagIsExplicit() error {
 	project := filepath.Base(cwd)
 	for _, layer := range []string{"handoff", "pill"} {
 		run := w.run("store", "--layer", layer, "--project", project, "--content", "project flag fixture "+layer,
-			"--metadata", `{"pill_slug":"project-flag"}`)
+			"--metadata", `{"pill_slug":"project-flag"}`, "--origin", "agent", "--agent", "codex", "--model", "gpt-6-astra")
 		if run.code != 0 {
 			return fmt.Errorf("store %s fixture: %+v", layer, run)
 		}
