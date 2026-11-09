@@ -207,6 +207,7 @@ func Search(res service.SearchResult) string {
 			sql := "SELECT exchange_number, human_text, agent_text FROM plugin_roca_corpus.exchanges WHERE session_id = " +
 				"(SELECT session_id FROM plugin_roca_corpus.exchanges WHERE id = '" + strings.ReplaceAll(hit.ID, "'", "''") + "') ORDER BY exchange_number"
 			help = append(help, fmt.Sprintf("Run `roca exec %s --max-chars 2000` to read the whole session of hit %d", shellArg(sql), hit.Rank))
+			break
 		}
 	}
 	return searchText(res, help)

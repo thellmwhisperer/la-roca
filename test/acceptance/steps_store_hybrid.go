@@ -173,6 +173,21 @@ func (m *world) sessionHelpReadsHit() error {
 	return nil
 }
 
+func (m *world) oneSessionHelpForFirstExchange() error {
+	if count := strings.Count(m.last.stdout, "read the whole session"); count != 1 {
+		return fmt.Errorf("got %d whole-session help lines, want 1:\n%s", count, m.last.stdout)
+	}
+	first := regexp.MustCompile(`(?m)^  (\d+),corpus\.exchanges\.([^,]+),`).FindStringSubmatch(m.last.stdout)
+	if len(first) != 3 {
+		return fmt.Errorf("no exchange hit in output:\n%s", m.last.stdout)
+	}
+	if err := m.outputContains("read the whole session of hit " + first[1]); err != nil {
+		return err
+	}
+	m.exchangeID = first[2]
+	return m.sessionHelpReadsHit()
+}
+
 func (m *world) runSessionHelp() error {
 	return m.iRun(m.sessionHelpCommand())
 }

@@ -83,6 +83,7 @@ func registerStoreSteps(ctx *godog.ScenarioContext, binary string) {
 	ctx.When(`^I run '([^']*)'$`, func(command string) error { _, err := m.run(command); return err })
 
 	ctx.When(`^I run the session help command verbatim$`, m.runSessionHelp)
+	ctx.Then(`^exactly one whole-session help line refers to the first exchange hit$`, m.oneSessionHelpForFirstExchange)
 	ctx.Then(`^the session help command reads the hit session in exchange order with max-chars 2000$`, m.sessionHelpReadsHit)
 	ctx.Then(`^the output contains the three session exchanges in order$`, m.threeSessionExchangesInOrder)
 

@@ -85,6 +85,14 @@ Feature: Hybrid search fuses a plugin row found by both legs
       | 24h        |
       | ""         |
 
+  Scenario: Three session hits offer one whole-session help line for the first exchange hit
+    Given a home made by roca init that ingested an agent session mentioning "orchard"
+    And agent sessions on October 1 and October 20 mention orchard
+    When I run 'roca query "orchard"'
+    Then the command exits with code 0
+    And the output contains "rows[3]"
+    And exactly one whole-session help line refers to the first exchange hit
+
   Scenario: A search hit offers a runnable SELECT for its whole session
     Given a home made by roca init that ingested an agent session mentioning "orchard"
     When I run 'roca query "orchard"'
