@@ -9,6 +9,10 @@ Feature: Distribution command line
     When the operator asks for command-line help
     Then every public command appears once with an honest one-line summary
 
+  Scenario: Health rejects a negative sample size before running checks
+    When the operator runs health with a negative max-rows
+    Then health fails naming max-rows without reporting any checks
+
   Scenario Outline: Command help prints one flag list
     When the operator asks for "<command>" command help
     Then command help exits successfully with no bare usage and exactly one flag list

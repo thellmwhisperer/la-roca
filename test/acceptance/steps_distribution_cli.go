@@ -17,6 +17,16 @@ import (
 )
 
 func registerDistributionCLISteps(ctx *godog.ScenarioContext, w *distributionWorld) {
+	ctx.When(`^the operator runs health with a negative max-rows$`, func() error {
+		w.last = w.run("health", "--max-rows", "-2")
+		return nil
+	})
+	ctx.Then(`^health fails naming max-rows without reporting any checks$`, func() error {
+		if w.last.code <= 0 || !strings.Contains(w.last.stderr, "--max-rows") || w.last.stdout != "" {
+			return fmt.Errorf("expected max-rows rejection without health results: %+v", w.last)
+		}
+		return nil
+	})
 	ctx.When(`^the operator asks playground without its plugin$`, func() error {
 		if err := w.prepare("missing-playground"); err != nil {
 			return err
