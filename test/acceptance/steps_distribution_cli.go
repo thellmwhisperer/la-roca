@@ -32,6 +32,17 @@ func registerDistributionCLISteps(ctx *godog.ScenarioContext, w *distributionWor
 	})
 	registerDistributionHelpHookSteps(ctx, w)
 	ctx.When(`^the operator asks for command-line help$`, w.askForCLIHelp)
+	ctx.When(`^the operator asks for "([^"]*)" command help$`, func(command string) error {
+		w.last = w.runAt(w.root, w.binary, command, "--help")
+		return nil
+	})
+	ctx.Then(`^command help exits successfully with no bare usage and exactly one flag list$`, func() error {
+		output := w.last.stdout + w.last.stderr
+		if w.last.code != 0 || strings.Contains(output, "Usage of") || countDistributionLines(output, "Flags:") != 1 {
+			return fmt.Errorf("expected successful help with no bare usage and exactly one flag list: %+v", w.last)
+		}
+		return nil
+	})
 	ctx.Then(`^every public command appears once with an honest one-line summary$`, w.helpIsComplete)
 	ctx.When(`^the operator exercises the "([^"]*)" command in human and JSON form$`, w.exerciseOutputForms)
 	ctx.Then(`^the default answer is human-readable and the requested answer is one JSON document$`, w.outputFormsAreExplicit)
