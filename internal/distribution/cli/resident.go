@@ -234,7 +234,7 @@ func parseResidentQuery(args []string) (service.SearchRequest, bool) {
 		return service.SearchRequest{}, false
 	}
 	names, err := service.ParseDatabaseList(databases)
-	if err != nil {
+	if err != nil || (flags.Changed("databases") && len(names) == 0) {
 		return service.SearchRequest{}, false
 	}
 	request := service.SearchRequest{Question: strings.Join(flags.Args(), " "), Databases: names, Top: top, RequireBoth: requireBoth, MaxChars: maxChars}

@@ -20,7 +20,9 @@ use their session's project; hits without a project are dropped). Both filter
 after retrieval and fusion, so ranking is unchanged and fewer than `--top` hits
 can remain. `--require-both` keeps only dual-confirmed hits, and
 `--databases` narrows the default (every attached plugin database, including
-ops). Vector coverage follows the
+ops). An empty `--project` or an empty or blank `--databases` is refused
+before searching instead of widening to the default; omit the flag for that.
+Vector coverage follows the
 [sidecar selection rules](vector.md#first-query). `--json` returns the complete
 machine envelope; see [Memory identifiers for clients](#memory-identifiers-for-clients)
 for its identifier encoding.
