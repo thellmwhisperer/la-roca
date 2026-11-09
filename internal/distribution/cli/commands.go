@@ -661,6 +661,12 @@ func queryCommand(env *cliEnv) *cobra.Command {
 			if req.Top < 0 {
 				return fmt.Errorf("--top must be zero or greater")
 			}
+			if cmd.Flags().Changed("databases") && strings.TrimSpace(databases) == "" {
+				return fmt.Errorf("empty database name in --databases")
+			}
+			if cmd.Flags().Changed("project") && req.Project == "" {
+				return fmt.Errorf("--project must not be empty")
+			}
 			if cmd.Flags().Changed("since") {
 				date, err := time.Parse(time.DateOnly, since)
 				if err != nil {

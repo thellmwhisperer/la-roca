@@ -73,6 +73,46 @@ Feature: Hybrid search fuses a plugin row found by both legs
     Then the command exits with code 0
     And the search returns no results
 
+  Scenario Outline: Empty query scopes are refused before searching
+    Given a home made by roca init that ingested an agent session mentioning "orchard"
+    And agent sessions in projects alpha and beta mention orchard
+    When I run 'roca query "orchard"'
+    Then the command exits with code 0
+    And the output contains "databases: core, ops, corpus"
+    And the output contains "orchard alpha"
+    And the output contains "orchard beta"
+    When I run 'roca query "orchard" <flag> <value>'
+    Then the command exits with code 1
+    And the output contains "<message>"
+    And the output does not contain "search fts"
+    And the output does not contain "rows["
+    Given an MCP session has called roca_query "orchard" once
+    Then the MCP answer is not an error and holds "orchard"
+    When I run 'roca doctor'
+    Then the command exits with code 0
+    And the output contains "resident: pid="
+    When I run 'roca query "orchard" <flag> <value>'
+    Then the command exits with code 1
+    And the output contains "<message>"
+    And the output does not contain "search fts"
+    And the output does not contain "rows["
+    When I run 'roca query "orchard"'
+    Then the command exits with code 0
+    And the output contains "databases: core, ops, corpus"
+    And the output contains "orchard alpha"
+    And the output contains "orchard beta"
+    Given a clean HOME with a "corrupt" file at the database path
+    When I run 'roca query "orchard" <flag> <value>'
+    Then the command exits with code 1
+    And the output contains "<message>"
+    And the output does not contain "not a database"
+
+    Examples:
+      | flag        | value | message                            |
+      | --databases | ""    | empty database name in --databases |
+      | --databases | " "   | empty database name in --databases |
+      | --project   | ""    | --project must not be empty         |
+
   Scenario: Negative top is refused before searching
     Given a home made by roca init that ingested an agent session mentioning "orchard"
     When I run 'roca query "orchard" --top -5'
