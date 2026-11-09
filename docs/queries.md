@@ -208,8 +208,9 @@ help[4]:
   - "Run `roca exec \"SELECT exchange_number, human_text, agent_text FROM plugin_roca_corpus.exchanges WHERE session_id = (SELECT session_id FROM plugin_roca_corpus.exchanges WHERE id = '912') ORDER BY exchange_number\" --max-chars 2000` to read the whole session of hit 1"
 ```
 
-Each `corpus.exchanges` hit adds one help line with a ready `roca exec`
-statement that reads that hit's whole session in exchange order.
+The first `corpus.exchanges` hit adds one help line with a ready `roca exec`
+statement that reads that hit's whole session in exchange order; later
+exchange hits add no further session lines.
 
 The FTS leg measures each token against the selected live indexes, removes
 zero-frequency and broadly common terms, and keeps a small rare-term set for
