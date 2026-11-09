@@ -24,8 +24,6 @@ func TestExecReaderIndependentIngestAttachments(t *testing.T) {
 }
 
 func testExecReaderIndependentIngestAttachments(t *testing.T, layout ReadLayout) {
-	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
-	defer cancel()
 	options := residentTestOptions(t)
 	options.ReadLayout = layout
 	options.CorpusEnabled, options.PluginsEnabled = true, true
@@ -73,6 +71,9 @@ func testExecReaderIndependentIngestAttachments(t *testing.T, layout ReadLayout)
 	}
 	reader := svc.NewExecReader()
 	defer reader.Close()
+	// Give the reads their full budget after fixture and resident setup.
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
 	var jobs [2][]*ExecCursor
 	for n := range 9 {
 		cursor, err := reader.OpenExecCursor(ctx, fmt.Sprintf("SELECT id FROM lab%d.memories ORDER BY id", n), 1000)
