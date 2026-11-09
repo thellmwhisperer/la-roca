@@ -5,6 +5,7 @@ package acceptance
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +18,7 @@ import (
 )
 
 func registerDistributionCLISteps(ctx *godog.ScenarioContext, w *distributionWorld) {
+	ctx.Then(`^handoff latest and pill reject blank project flags and default only when the flag is omitted$`, w.sessionProjectFlagIsExplicit)
 	ctx.When(`^the operator asks playground without its plugin$`, func() error {
 		if err := w.prepare("missing-playground"); err != nil {
 			return err
@@ -67,6 +69,42 @@ func registerDistributionCLISteps(ctx *godog.ScenarioContext, w *distributionWor
 		w.declareOperatorVectorDelta)
 	ctx.Then(`^the nightly train reports 2 rides and names the operator declaration$`,
 		w.nightlyTrainReportsOperatorVectorDelta)
+}
+
+func (w *distributionWorld) sessionProjectFlagIsExplicit() error {
+	if err := w.prepare("session-project"); err != nil {
+		return err
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	project := filepath.Base(cwd)
+	for _, layer := range []string{"handoff", "pill"} {
+		run := w.run("store", "--layer", layer, "--project", project, "--content", "project flag fixture "+layer,
+			"--metadata", `{"pill_slug":"project-flag"}`)
+		if run.code != 0 {
+			return fmt.Errorf("store %s fixture: %+v", layer, run)
+		}
+	}
+	var failures []error
+	for _, command := range [][]string{{"handoff", "latest"}, {"pill"}} {
+		for _, value := range []string{"", "   "} {
+			args := append(append([]string{}, command...), "--project", value)
+			run := w.run(args...)
+			if run.code <= 0 || run.stdout != "" || !strings.Contains(run.stderr, "--project") || strings.Contains(run.stderr, "project flag fixture") {
+				failures = append(failures, fmt.Errorf("%q must reject the blank flag without records: %+v", args, run))
+			}
+		}
+		for _, flags := range [][]string{nil, {"--project", project}} {
+			args := append(append([]string{}, command...), flags...)
+			run := w.run(args...)
+			if run.code != 0 || !strings.Contains(run.stdout, "project: "+project) || !strings.Contains(run.stdout, "project flag fixture "+command[0]) {
+				failures = append(failures, fmt.Errorf("%q must return the working directory project: %+v", args, run))
+			}
+		}
+	}
+	return errors.Join(failures...)
 }
 
 func (w *distributionWorld) previewDefaultCronTrain() error {
