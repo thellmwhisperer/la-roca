@@ -9,9 +9,40 @@ Feature: Distribution command line
     When the operator asks for command-line help
     Then every public command appears once with an honest one-line summary
 
-  Scenario: Health rejects a negative sample size before running checks
-    When the operator runs health with a negative max-rows
+  Scenario Outline: Health rejects a negative sample size before running checks
+    Given health has an <resident> resident
+    When the operator runs health with "<arguments>"
     Then health fails naming max-rows without reporting any checks
+
+    Examples:
+      | resident | arguments                        |
+      | absent   | --max-rows -2                    |
+      | absent   | --max-rows=-2                    |
+      | absent   | --max-rows -2 --json             |
+      | absent   | --max-rows=-2 --json             |
+      | active   | --max-rows -2                    |
+      | active   | --max-rows=-2                    |
+      | active   | --max-rows -2 --json             |
+      | active   | --max-rows=-2 --json             |
+      | active   | --read-only --max-rows -2        |
+      | active   | --read-only --max-rows=-2 --json |
+
+  Scenario Outline: Health preserves default and positive sample sizes
+    Given health has an <resident> resident
+    When the operator runs health with "<arguments>"
+    Then health reports passing checks
+
+    Examples:
+      | resident | arguments                        |
+      | absent   | --json                           |
+      | absent   | --max-rows 0 --json              |
+      | absent   | --max-rows 2 --json              |
+      | active   | --json                           |
+      | active   | --max-rows 0 --json              |
+      | active   | --max-rows 2 --json              |
+      | active   | --read-only --json               |
+      | active   | --read-only --max-rows 0 --json  |
+      | active   | --read-only --max-rows 2 --json  |
 
   Scenario Outline: Command help prints one flag list
     When the operator asks for "<command>" command help

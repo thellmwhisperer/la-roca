@@ -36,6 +36,7 @@ type distributionWorld struct {
 	state     map[string]any
 
 	residentCleanup func()
+	residentSocket  string
 }
 
 const distributionPreparedConfig = "[models]\norder = [\"none\"]\n\n" +
@@ -230,6 +231,7 @@ func (w *distributionWorld) openMCP() error {
 		return err
 	}
 	w.residentCleanup = cleanup
+	w.residentSocket = socket
 	command := exec.Command(w.installed, "mcp", "serve")
 	command.Env = replaceEnvironment(distributionEnvironment(w.home, w.installed), "ROCA_RESIDENT_SOCKET", "ROCA_RESIDENT_SOCKET="+socket)
 	var stderr strings.Builder
@@ -259,6 +261,7 @@ func (w *distributionWorld) callTool(name string, arguments map[string]any) erro
 }
 
 func (w *distributionWorld) closeMCP() {
+	w.residentSocket = ""
 	if w.session != nil {
 		_ = w.session.Close()
 	}

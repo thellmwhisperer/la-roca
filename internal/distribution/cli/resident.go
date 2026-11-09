@@ -27,8 +27,7 @@ func (env *cliEnv) tryResident(ctx context.Context, raw []string) (bool, error) 
 		return false, nil
 	}
 	command, args, jsonOutput, dbPath := residentCommandArgs(raw)
-	if command == "" || (command != "exec" && command != "query" && command != "store" &&
-		command != "health") {
+	if command == "" || (command != "exec" && command != "query" && command != "store") {
 		if command != "vector" || !env.features.Vector || len(args) == 0 || args[0] != "query" {
 			return false, nil
 		}
@@ -69,8 +68,6 @@ func (env *cliEnv) tryResident(ctx context.Context, raw []string) (bool, error) 
 			})
 	case "store":
 		return runResidentCommand(env, args, jsonOutput, parseResidentStore, call, command, axi.Store, nil)
-	case "health":
-		return runResidentCommand(env, args, jsonOutput, parseResidentHealth, call, command, axi.Health, nil)
 	}
 	return true, nil
 }
@@ -267,17 +264,6 @@ func parseResidentStore(args []string) (service.StoreRequest, bool) {
 	}
 	request.Authorship = resolveCLIAuthorship(agent, model, currentAuthorshipEvidence)
 	return request, true
-}
-
-func parseResidentHealth(args []string) (service.HealthRequest, bool) {
-	flags := pflag.NewFlagSet("health", pflag.ContinueOnError)
-	flags.SetOutput(io.Discard)
-	maxRows := 0
-	flags.IntVar(&maxRows, "max-rows", 0, "")
-	if err := flags.Parse(args); err != nil || len(flags.Args()) != 0 {
-		return service.HealthRequest{}, false
-	}
-	return service.HealthRequest{MaxRows: maxRows}, true
 }
 
 func filepathDir(path string) string {

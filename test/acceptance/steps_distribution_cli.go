@@ -17,13 +17,40 @@ import (
 )
 
 func registerDistributionCLISteps(ctx *godog.ScenarioContext, w *distributionWorld) {
-	ctx.When(`^the operator runs health with a negative max-rows$`, func() error {
-		w.last = w.run("health", "--max-rows", "-2")
+	ctx.Given(`^health has an (active|absent) resident$`, func(state string) error {
+		if err := w.ensurePrepared(); err != nil {
+			return err
+		}
+		if state == "active" {
+			return w.openMCP()
+		}
+		return nil
+	})
+	ctx.When(`^the operator runs health with "([^"]*)"$`, func(arguments string) error {
+		args, err := split("health " + arguments)
+		if err != nil {
+			return err
+		}
+		w.last = w.runAtInput(w.home, w.installed, "",
+			[]string{"ROCA_RESIDENT_SOCKET=" + w.residentSocket}, args...)
 		return nil
 	})
 	ctx.Then(`^health fails naming max-rows without reporting any checks$`, func() error {
 		if w.last.code <= 0 || !strings.Contains(w.last.stderr, "--max-rows") || w.last.stdout != "" {
 			return fmt.Errorf("expected max-rows rejection without health results: %+v", w.last)
+		}
+		return nil
+	})
+	ctx.Then(`^health reports passing checks$`, func() error {
+		var report struct {
+			Status string                     `json:"status"`
+			Checks map[string]json.RawMessage `json:"checks"`
+		}
+		if err := json.Unmarshal([]byte(w.last.stdout), &report); err != nil {
+			return fmt.Errorf("decode health report: %w: %+v", err, w.last)
+		}
+		if w.last.code != 0 || report.Status != "pass" || len(report.Checks["ghost_sessions"]) == 0 {
+			return fmt.Errorf("expected passing health checks: %+v", w.last)
 		}
 		return nil
 	})

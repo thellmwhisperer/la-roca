@@ -525,11 +525,19 @@ func healthCommand(env *cliEnv) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "health",
 		Short: "Non-destructive checks over live data",
-		RunE: env.serviceRunE(func(cmd *cobra.Command, _ []string, svc *service.Service) error {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			if req.MaxRows < 0 {
 				return fmt.Errorf("--max-rows must be non-negative")
 			}
-			report, err := svc.Health(cmd.Context(), req)
+			var report service.HealthReport
+			handled, err := env.callResident(cmd.Context(), "health", req, &report)
+			if !handled {
+				err = env.serviceRunE(func(cmd *cobra.Command, _ []string, svc *service.Service) error {
+					var healthErr error
+					report, healthErr = svc.Health(cmd.Context(), req)
+					return healthErr
+				})(cmd, args)
+			}
 			if err != nil {
 				return err
 			}
@@ -538,7 +546,7 @@ func healthCommand(env *cliEnv) *cobra.Command {
 			}
 			env.print("%s", axi.Health(report))
 			return nil
-		}),
+		},
 	}
 	cmd.Flags().IntVar(&req.MaxRows, "max-rows", 0, "sample rows per check")
 	return cmd
