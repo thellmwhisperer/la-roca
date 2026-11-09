@@ -41,6 +41,25 @@ Feature: Exec time limit
     When I run the printed roca exec line verbatim
     Then the command exits with code 0
 
+  Scenario Outline: CLI exec refuses leading wildcards with ESCAPE or parenthesised operands
+    Given La Roca is installed and initialized
+    And the corpus has orchard exchanges
+    When I exec the SQL "<sql>"
+    Then the command exits with a code other than 0
+    And the output contains "plugin_roca_corpus.exchanges.human_text"
+    And the output contains "exchanges_fts MATCH 'orchard'"
+    And the command finished within 2 seconds
+    When I run the printed roca exec line verbatim
+    Then the command exits with code 0
+    And the result contains exactly the orchard exchange IDs
+    Examples:
+      | sql |
+      | SELECT id FROM plugin_roca_corpus.exchanges WHERE human_text LIKE '%orchard%' ESCAPE '!' |
+      | SELECT id FROM plugin_roca_corpus.exchanges WHERE (human_text) LIKE ('%orchard%') |
+      | SELECT id FROM plugin_roca_corpus.exchanges WHERE (human_text) LIKE '%orchard%' |
+      | SELECT id FROM plugin_roca_corpus.exchanges WHERE human_text LIKE ('%orchard%') |
+      | SELECT id FROM plugin_roca_corpus.exchanges WHERE ((human_text)) LIKE (('%orchard%')) ESCAPE '!' |
+
   Scenario Outline: CLI exec leaves other LIKE scans available
     Given La Roca is installed and initialized
     And the corpus has orchard exchanges
@@ -49,6 +68,8 @@ Feature: Exec time limit
     Examples:
       | sql |
       | SELECT id FROM plugin_roca_corpus.exchanges WHERE human_text LIKE 'orchard%' |
+      | SELECT id FROM plugin_roca_corpus.exchanges WHERE (human_text) LIKE ('orchard%') ESCAPE '!' |
+      | SELECT id FROM plugin_roca_corpus.exchanges WHERE human_text LIKE '%orchard%' ESCAPE ('%') |
       | SELECT id FROM plugin_roca_corpus.tool_uses WHERE tool_name LIKE '%orchard%' |
       | SELECT id FROM plugin_roca_corpus.exchanges WHERE model LIKE '%orchard%' |
       | WITH constants(human_text) AS (VALUES ('orchard')) SELECT human_text FROM constants WHERE human_text LIKE '%orchard%' |
