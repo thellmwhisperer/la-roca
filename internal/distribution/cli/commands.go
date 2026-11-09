@@ -655,6 +655,9 @@ func queryCommand(env *cliEnv) *cobra.Command {
 			"override the built-in defaults.",
 		Args: cobra.MinimumNArgs(1),
 		PreRunE: func(cmd *cobra.Command, _ []string) error {
+			if req.Top < 0 {
+				return fmt.Errorf("--top must be zero or greater")
+			}
 			if cmd.Flags().Changed("since") {
 				date, err := time.Parse(time.DateOnly, since)
 				if err != nil {
