@@ -57,6 +57,19 @@ func registerDistributionCLISteps(ctx *godog.ScenarioContext, w *distributionWor
 	ctx.When(`^the operator initializes non-interactively with a detected model CLI$`, w.initWithDetectedModelCLI)
 	ctx.Then(`^init prints no answering notice and writes only the new-install features$`, w.initHasOneAnsweringNotice)
 	ctx.When(`^the operator asks for a doctor support report$`, w.askForDoctorReport)
+	ctx.When(`^the operator asks doctor with the stray argument "([^"]*)"$`, func(argument string) error {
+		if err := w.ensurePrepared(); err != nil {
+			return err
+		}
+		w.last = w.runAt(w.home, w.installed, "doctor", argument)
+		return nil
+	})
+	ctx.Then(`^doctor fails naming "([^"]*)" without printing a diagnosis$`, func(argument string) error {
+		if w.last.code <= 0 || w.last.stdout != "" || !strings.Contains(w.last.stderr, `unknown command "`+argument+`"`) {
+			return fmt.Errorf("expected doctor to reject %q without a diagnosis: %+v", argument, w.last)
+		}
+		return nil
+	})
 	ctx.Then(`^the report is one fenced block with a federation mode and the JSON form is one document$`,
 		w.doctorReportIsPasteable)
 	ctx.When(`^the operator previews the default cron train with a gated plugin ride$`, w.previewDefaultCronTrain)
