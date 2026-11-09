@@ -207,7 +207,7 @@ func parseResidentExec(args []string) (service.ExecRequest, bool) {
 	timeout := -1
 	flags.IntVar(&maxChars, "max-chars", maxChars, "")
 	flags.IntVar(&timeout, "timeout-ms", -1, "")
-	if err := flags.Parse(args); err != nil || len(flags.Args()) == 0 || maxChars < 0 {
+	if err := flags.Parse(args); err != nil || len(flags.Args()) == 0 || maxChars < 0 || (flags.Changed("timeout-ms") && timeout < 0) {
 		return service.ExecRequest{}, false
 	}
 	request := service.ExecRequest{SQL: strings.Join(flags.Args(), " "), MaxChars: maxChars}

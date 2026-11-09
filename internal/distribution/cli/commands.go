@@ -843,9 +843,12 @@ func execCommand(env *cliEnv) *cobra.Command {
 		Long: "Natural companion of `playground --sql-only`: runs the SQL that command\n" +
 			"printed, under the same gate. What does not pass the gate does not touch the database.",
 		Args: cobra.MinimumNArgs(1),
-		PreRunE: func(_ *cobra.Command, _ []string) error {
+		PreRunE: func(cmd *cobra.Command, _ []string) error {
 			if req.MaxChars < 0 {
 				return fmt.Errorf("--max-chars must be zero or greater")
+			}
+			if cmd.Flags().Changed("timeout-ms") && timeoutMS < 0 {
+				return fmt.Errorf("--timeout-ms must be zero or greater")
 			}
 			return nil
 		},
