@@ -21,9 +21,10 @@ import (
 func pillCommand(env *cliEnv) *cobra.Command {
 	var project string
 	cmd := &cobra.Command{
-		Use:   "pill",
-		Short: "Load active pills for the current project",
-		Args:  cobra.NoArgs,
+		Use:     "pill",
+		Short:   "Load active pills for the current project",
+		Args:    cobra.NoArgs,
+		PreRunE: validateSessionProject,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runPillList(cmd.Context(), env, project)
 		},
@@ -108,9 +109,10 @@ func handoffLatestCommand(env *cliEnv) *cobra.Command {
 	var allProjects bool
 	var since string
 	cmd := &cobra.Command{
-		Use:   "latest",
-		Short: "Load active handoffs the project has not superseded",
-		Args:  cobra.NoArgs,
+		Use:     "latest",
+		Short:   "Load active handoffs the project has not superseded",
+		Args:    cobra.NoArgs,
+		PreRunE: validateSessionProject,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runLatestHandoffs(cmd.Context(), env, latestHandoffOptions{
 				project: project, limit: limit, allProjects: allProjects, since: since,
@@ -122,6 +124,13 @@ func handoffLatestCommand(env *cliEnv) *cobra.Command {
 	cmd.Flags().BoolVar(&allProjects, "all-projects", false, "print the newest handoff head for every project")
 	cmd.Flags().StringVar(&since, "since", "", "only include --all-projects handoffs newer than this nonnegative day count, e.g. 30d")
 	return cmd
+}
+
+func validateSessionProject(cmd *cobra.Command, _ []string) error {
+	if cmd.Flags().Changed("project") && strings.TrimSpace(cmd.Flag("project").Value.String()) == "" {
+		return fmt.Errorf("--project must not be empty or whitespace")
+	}
+	return nil
 }
 
 func runPillList(ctx context.Context, env *cliEnv, project string) error {

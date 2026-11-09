@@ -5,6 +5,9 @@ Feature: Distribution command line
   Background:
     Given an isolated La Roca distribution
 
+  Scenario: Session commands reject an explicitly empty project
+    Then handoff latest and pill reject blank project flags and default only when the flag is omitted
+
   Scenario: Help lists every command with one honest line each
     When the operator asks for command-line help
     Then every public command appears once with an honest one-line summary
