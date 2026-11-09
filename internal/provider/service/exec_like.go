@@ -45,17 +45,21 @@ func (v likeVisitor) Visit(node rqlite.Node) (rqlite.Visitor, rqlite.Node, error
 		return v, node, nil
 	}
 	var column, qualifier string
+	var qualifierSchema *rqlite.Ident
 	switch ref := comparison.X.(type) {
 	case *rqlite.Ident:
 		column = ref.Name
 	case *rqlite.QualifiedRef:
-		column, qualifier = ref.Column.Name, ref.Table.Name
+		column, qualifier, qualifierSchema = ref.Column.Name, ref.Table.Name, ref.Schema
 	default:
 		return v, node, nil
 	}
 	for _, source := range v.sources {
 		table, ok := source.(*rqlite.QualifiedTableName)
 		if !ok || table.Schema == nil {
+			continue
+		}
+		if qualifierSchema != nil && !strings.EqualFold(qualifierSchema.Name, table.Schema.Name) {
 			continue
 		}
 		if qualifier != "" && !strings.EqualFold(qualifier, table.Name.Name) &&

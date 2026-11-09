@@ -35,6 +35,9 @@ INSERT INTO exchanges(id, human_text, agent_text) VALUES
    (92012, 'synthetic AND marker', 'second reply'),
    (92013, 'synthetic NOT marker', 'third reply'),
    (92014, 'synthetic meadow marker', 'OR AND NOT');`))
+	ctx.Then(`^the printed roca exec line selects from corpus memories FTS$`, func() error {
+		return m.outputContains(`roca exec "SELECT rowid AS id FROM \"plugin_roca_corpus\".memories_fts WHERE`)
+	})
 	ctx.When(`^I run the printed roca exec line verbatim$`, func() error {
 		for _, line := range strings.Split(m.last.stdout+m.last.stderr, "\n") {
 			if strings.HasPrefix(line, `roca exec "`) {

@@ -32,6 +32,15 @@ Feature: Exec time limit
     Then the command exits with code 0
     And the result contains exactly the orchard exchange IDs
 
+  Scenario: CLI exec resolves a schema-qualified LIKE when joined tables share a name
+    Given La Roca is installed and initialized
+    When I exec the SQL "SELECT plugin_roca_corpus.memories.id FROM plugin_roca_ops.memories CROSS JOIN plugin_roca_corpus.memories WHERE plugin_roca_corpus.memories.content LIKE '%orchard%'"
+    Then the command exits with a code other than 0
+    And the output contains "leading-wildcard LIKE on plugin_roca_corpus.memories.content"
+    And the printed roca exec line selects from corpus memories FTS
+    When I run the printed roca exec line verbatim
+    Then the command exits with code 0
+
   Scenario Outline: CLI exec leaves other LIKE scans available
     Given La Roca is installed and initialized
     And the corpus has orchard exchanges
