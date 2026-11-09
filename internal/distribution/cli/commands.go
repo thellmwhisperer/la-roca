@@ -655,6 +655,9 @@ func queryCommand(env *cliEnv) *cobra.Command {
 			"override the built-in defaults.",
 		Args: cobra.MinimumNArgs(1),
 		PreRunE: func(cmd *cobra.Command, _ []string) error {
+			if req.MaxChars < 0 {
+				return fmt.Errorf("--max-chars must be zero or greater")
+			}
 			if req.Top < 0 {
 				return fmt.Errorf("--top must be zero or greater")
 			}
@@ -840,6 +843,12 @@ func execCommand(env *cliEnv) *cobra.Command {
 		Long: "Natural companion of `playground --sql-only`: runs the SQL that command\n" +
 			"printed, under the same gate. What does not pass the gate does not touch the database.",
 		Args: cobra.MinimumNArgs(1),
+		PreRunE: func(_ *cobra.Command, _ []string) error {
+			if req.MaxChars < 0 {
+				return fmt.Errorf("--max-chars must be zero or greater")
+			}
+			return nil
+		},
 		RunE: env.serviceRunE(func(cmd *cobra.Command, args []string, svc *service.Service) error {
 			req.SQL = strings.Join(args, " ")
 			if timeoutMS >= 0 {
