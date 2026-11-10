@@ -52,11 +52,6 @@ func (s *Service) exec(ctx context.Context, req ExecRequest, reader *ExecReader)
 		return ExecResult{}, err
 	}
 	defer route.CloseOnDemand()
-	if !req.TimeoutSet {
-		if err := rejectLeadingWildcard(validated, SchemaWithPlugins(route.IncludeCore, route.Databases)); err != nil {
-			return ExecResult{}, logfile.Typed(err, DegradedInvalidSQL)
-		}
-	}
 	var columns []string
 	var rows []map[string]any
 	budget := execBudget{timeout: req.Timeout, set: req.TimeoutSet}
@@ -66,6 +61,11 @@ func (s *Service) exec(ctx context.Context, req ExecRequest, reader *ExecReader)
 		columns, rows, err = s.executeWithPluginsBudget(ctx, validated, "", maxChars, route.Databases, budget)
 	}
 	if err != nil {
+		if !req.TimeoutSet && errors.Is(err, ErrQueryTimeout) {
+			if hint := leadingWildcardHint(validated, SchemaWithPlugins(route.IncludeCore, route.Databases)); hint != nil {
+				err = fmt.Errorf("%w; %s", err, hint)
+			}
+		}
 		return ExecResult{}, typedExecError(err)
 	}
 	result := ExecResult{

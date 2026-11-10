@@ -5,6 +5,7 @@ package acceptance
 import (
 	"database/sql"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,19 @@ import (
 )
 
 func registerExecLikeSteps(ctx *godog.ScenarioContext, m *world) {
+	ctx.When(`^I exec the SQL "([^"]*)" with a costly tail$`, func(statement string) error {
+		config, err := os.ReadFile(filepath.Join(m.home, ".roca", "config.toml"))
+		if err != nil {
+			return err
+		}
+		if err := m.writeConfig(string(config) + "\n[query]\ntimeout_ms = 100\n"); err != nil {
+			return err
+		}
+		// The LIKE leg really runs first, then a tiny recursive input forces the timeout.
+		statement = "WITH RECURSIVE costly(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM costly WHERE n < 100000000) " + statement + " UNION ALL SELECT sum(n) FROM costly"
+		_, err = m.runWith("roca exec with costly tail", []string{"exec", statement})
+		return err
+	})
 	seedCorpus := func(statements string) func() error {
 		return func() error {
 			db, err := sql.Open("sqlite", filepath.Join(m.home, ".roca", "plugins", "roca-corpus", "roca-corpus.db"))

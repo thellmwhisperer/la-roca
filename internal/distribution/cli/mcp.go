@@ -22,7 +22,9 @@ const EnvExecutable = "ROCA_BIN"
 func mcpCommand(env *cliEnv) *cobra.Command {
 	mcp := &cobra.Command{
 		Use:   "mcp",
+		Args:  cobra.NoArgs,
 		Short: "Manage MCP configuration and serve the MCP over stdio",
+		RunE:  func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 	}
 	mcp.AddCommand(
 		mcpInstallCommand(env), mcpUninstallCommand(env), mcpStatusCommand(env), serveCommand(env),

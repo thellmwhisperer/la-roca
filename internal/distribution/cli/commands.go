@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/axi"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
@@ -62,6 +63,7 @@ func versionLine(build Build) string {
 func initCommand(env *cliEnv) *cobra.Command {
 	return &cobra.Command{
 		Use:   "init",
+		Args:  cobra.NoArgs,
 		Short: "Choose a database, ingest history, and prepare word search",
 		Long: "Creates and bootstraps the database. With no home database, init asks new or adopt;\n" +
 			"adopt then asks for the source path and copies it, leaving the original untouched.\n" +
@@ -591,6 +593,7 @@ func schemaCommand(env *cliEnv) *cobra.Command {
 	}
 	schema.AddCommand(&cobra.Command{
 		Use:   "status",
+		Args:  cobra.NoArgs,
 		Short: "Classify the database by structure without touching it",
 		RunE: env.serviceRunE(func(cmd *cobra.Command, _ []string, svc *service.Service) error {
 			report, err := svc.SchemaStatus(cmd.Context())
@@ -618,6 +621,7 @@ func schemaCommand(env *cliEnv) *cobra.Command {
 func indexCommand(env *cliEnv) *cobra.Command {
 	return &cobra.Command{
 		Use:   "index",
+		Args:  cobra.NoArgs,
 		Short: "Build or refresh the search index",
 		Long: "Builds the full-text index.\n" +
 			"It is incremental: on an already indexed database it costs nothing, and\n" +
@@ -656,17 +660,8 @@ func queryCommand(env *cliEnv) *cobra.Command {
 			"override the built-in defaults.",
 		Args: cobra.MinimumNArgs(1),
 		PreRunE: func(cmd *cobra.Command, _ []string) error {
-			if req.MaxChars < 0 {
-				return fmt.Errorf("--max-chars must be zero or greater")
-			}
-			if req.Top < 0 {
-				return fmt.Errorf("--top must be zero or greater")
-			}
-			if cmd.Flags().Changed("databases") && strings.TrimSpace(databases) == "" {
-				return fmt.Errorf("empty database name in --databases")
-			}
-			if cmd.Flags().Changed("project") && req.Project == "" {
-				return fmt.Errorf("--project must not be empty")
+			if err := validateFlags(cmd.Flags(), "max-chars", "top", "databases", "project"); err != nil {
+				return err
 			}
 			if cmd.Flags().Changed("since") {
 				date, err := time.Parse(time.DateOnly, since)
@@ -851,13 +846,7 @@ func execCommand(env *cliEnv) *cobra.Command {
 			"printed, under the same gate. What does not pass the gate does not touch the database.",
 		Args: cobra.MinimumNArgs(1),
 		PreRunE: func(cmd *cobra.Command, _ []string) error {
-			if req.MaxChars < 0 {
-				return fmt.Errorf("--max-chars must be zero or greater")
-			}
-			if cmd.Flags().Changed("timeout-ms") && timeoutMS < 0 {
-				return fmt.Errorf("--timeout-ms must be zero or greater")
-			}
-			return nil
+			return validateFlags(cmd.Flags(), "max-chars", "timeout-ms")
 		},
 		RunE: env.serviceRunE(func(cmd *cobra.Command, args []string, svc *service.Service) error {
 			req.SQL = strings.Join(args, " ")
@@ -1141,7 +1130,9 @@ func shellCommand(args []string) string {
 func remoteCommand(env *cliEnv) *cobra.Command {
 	command := &cobra.Command{
 		Use:   "remote",
+		Args:  cobra.NoArgs,
 		Short: "Run read-only queries across SSH-connected Roca installations",
+		RunE:  func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 	}
 	command.AddCommand(remoteAddCommand(env), remoteListCommand(env), remoteExecCommand(env),
 		remoteVectorCommand(env), remoteCrossCommand(env))
@@ -1264,7 +1255,7 @@ func remoteExecCommand(env *cliEnv) *cobra.Command {
 }
 
 func remoteVectorCommand(env *cliEnv) *cobra.Command {
-	command := &cobra.Command{Use: "vector", Short: "Query a remote vector index"}
+	command := &cobra.Command{Use: "vector", Args: cobra.NoArgs, Short: "Query a remote vector index", RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
 	command.AddCommand(&cobra.Command{
 		Use:   "query <name> <phrase> [k]",
 		Short: "Search one remote vector index",
@@ -2138,4 +2129,29 @@ func integerValue(value any) (int64, bool) {
 		return int64(typed), true
 	}
 	return 0, false
+}
+
+// validateFlags checks explicitly supplied bounds and text, leaving defaults alone.
+func validateFlags(flags *pflag.FlagSet, names ...string) error {
+	for _, name := range names {
+		flag := flags.Lookup(name)
+		if !flag.Changed {
+			continue
+		}
+		switch flag.Value.Type() {
+		case "int":
+			value, _ := flags.GetInt(name)
+			if value < 0 {
+				return fmt.Errorf("--%s must be zero or greater", name)
+			}
+		case "string":
+			if strings.TrimSpace(flag.Value.String()) == "" {
+				if name == "databases" {
+					return fmt.Errorf("empty database name in --%s", name)
+				}
+				return fmt.Errorf("--%s must not be empty or whitespace", name)
+			}
+		}
+	}
+	return nil
 }
