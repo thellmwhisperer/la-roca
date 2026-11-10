@@ -1,6 +1,7 @@
 package service_test
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -145,4 +146,28 @@ func initializedScopedBundledPlugins(t *testing.T) (*service.Service, string) {
 		options.CorpusEnabled = true
 	})
 	return svc, plugins
+}
+
+func TestExecAddsLikeHintOnlyToImplicitTimeouts(t *testing.T) {
+	paths, plugins := scopedBundledPlugins(t)
+	svc := initialized(t, paths, func(options *service.Options) {
+		options.PluginDir = plugins
+		options.RocaOpsEnabled = true
+		options.CorpusEnabled = true
+		options.QueryTimeout = 20 * time.Millisecond
+	})
+	const statement = `SELECT human_text FROM plugin_roca_corpus.exchanges WHERE human_text LIKE '%orchard%'`
+	const costlyStatement = `WITH RECURSIVE costly(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM costly WHERE n < 100000000) ` + statement + ` UNION ALL SELECT sum(n) FROM costly`
+	if _, err := svc.Exec(t.Context(), service.ExecRequest{SQL: statement}); err != nil {
+		t.Fatalf("fast LIKE must complete: %v", err)
+	}
+	for _, explicit := range []bool{false, true} {
+		_, err := svc.Exec(t.Context(), service.ExecRequest{SQL: costlyStatement, TimeoutSet: explicit, Timeout: 20 * time.Millisecond})
+		if !errors.Is(err, service.ErrQueryTimeout) || logfile.ErrorType(err) != service.DegradedTimeout {
+			t.Fatalf("timeout identity lost: %v", err)
+		}
+		if got := strings.Contains(err.Error(), "exchanges_fts MATCH 'orchard'"); got == explicit {
+			t.Fatalf("explicit timeout=%v, hint=%v: %v", explicit, got, err)
+		}
+	}
 }

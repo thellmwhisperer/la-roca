@@ -31,6 +31,7 @@ func artifactsCommand(env *cliEnv) *cobra.Command {
 	var force bool
 	command := &cobra.Command{
 		Use:    "_artifacts",
+		Args:   cobra.NoArgs,
 		Hidden: true,
 		RunE: func(*cobra.Command, []string) error {
 			if executable == "" {

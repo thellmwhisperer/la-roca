@@ -99,6 +99,7 @@ func capabilityCountLine(count int) string {
 func capabilitiesCommand(env *cliEnv) *cobra.Command {
 	return &cobra.Command{
 		Use:    "_capabilities",
+		Args:   cobra.NoArgs,
 		Hidden: true,
 		RunE: func(*cobra.Command, []string) error {
 			open, err := env.openCapabilityProposals()

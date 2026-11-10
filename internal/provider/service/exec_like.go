@@ -10,17 +10,12 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider/query"
 )
 
-// This advisory uses the existing SQLite parser; unsupported syntax still goes
-// through the engine's validation and execution bound.
-func rejectLeadingWildcard(statement string, schema query.Schema) error {
-	statements, err := rqlite.NewParser(strings.NewReader(statement)).ParseStatements()
-	if err != nil {
-		return nil
-	}
-	for _, stmt := range statements {
-		if _, err := rqlite.Walk(likeVisitor{schema: schema}, stmt); err != nil {
-			return err
-		}
+// Diagnose only a timed-out SELECT; successful statements never pay for this hint.
+func leadingWildcardHint(statement string, schema query.Schema) error {
+	stmt, err := rqlite.NewParser(strings.NewReader(statement)).ParseStatement()
+	if err == nil {
+		_, err = rqlite.Walk(likeVisitor{schema: schema}, stmt)
+		return err
 	}
 	return nil
 }
@@ -99,7 +94,7 @@ func (v likeVisitor) Visit(node rqlite.Node) (rqlite.Visitor, rqlite.Node, error
 			suggestion := fmt.Sprintf("SELECT rowid AS id FROM %s.%s WHERE %s MATCH %s AND %s MATCH %s",
 				table.Schema.String(), fts, fts, literal, fts, columnMatch)
 			shellSQL := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "$", `\$`, "`", "\\`").Replace(suggestion)
-			return nil, node, fmt.Errorf("leading-wildcard LIKE on %s.%s.%s would scan text with an FTS twin; use MATCH for token search (not substring matching), or set --timeout-ms explicitly:\nroca exec \"%s\"\n",
+			return nil, node, fmt.Errorf("leading-wildcard LIKE on %s.%s.%s scanned text with an FTS twin; use MATCH for token search (not substring matching), or set --timeout-ms explicitly:\nroca exec \"%s\"\n",
 				table.Schema.Name, table.Name.Name, column, shellSQL)
 		}
 	}

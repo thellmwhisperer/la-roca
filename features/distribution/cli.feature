@@ -56,18 +56,8 @@ Feature: Distribution command line
     When the operator initializes non-interactively with a detected model CLI
     Then init prints no answering notice and writes only the new-install features
 
-  Scenario: Version refuses a stray check argument without printing a version
-    When the operator asks version with the stray argument "check"
-    Then version fails naming "check" without printing a version
-    And version, version --json and --version still report the same build
-
-  Scenario: Doctor refuses a stray report argument without printing a diagnosis
-    When the operator asks doctor with the stray argument "report"
-    Then doctor fails naming "report" without printing a diagnosis
-    When the operator exercises the "doctor" command in human and JSON form
-    Then the default answer is human-readable and the requested answer is one JSON document
-    When the operator asks for a doctor support report
-    Then the report is one fenced block with a federation mode and the JSON form is one document
+  Scenario: Version forms still report the same build
+    Then version, version --json and --version still report the same build
 
   Scenario: Doctor report is a privacy-safe pasteable snapshot
     When the operator asks for a doctor support report

@@ -41,8 +41,9 @@ five-second bound, and a negative value is refused before the statement runs.
 The bound always applies on CLI and MCP exec: it cannot be
 switched off. The bound cancels the SQLite statement itself, including scans
 that continue after the first row, so a bad query cannot hold the database past
-the limit. Without an explicit `--timeout-ms`, exec refuses a leading-wildcard
-`LIKE '%term%'` on a column that has an FTS twin before scanning, and prints a
+the limit. If a statement times out without an explicit `--timeout-ms`, a
+leading-wildcard `LIKE '%term%'` on a column that has an FTS twin adds a hint
+to the timeout error. Fast scans complete normally. The hint prints a
 ready-to-paste `roca exec "..."` line that uses `MATCH` instead (token search,
 not substring matching). Vector indexing's statement-budget exceptions are
 owned by [Local vector search](vector.md#index-declared-databases); query-time

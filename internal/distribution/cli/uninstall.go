@@ -46,6 +46,7 @@ func uninstallCommand(env *cliEnv) *cobra.Command {
 	var keepData, purge bool
 	cmd := &cobra.Command{
 		Use:   "uninstall",
+		Args:  cobra.NoArgs,
 		Short: "Remove La Roca, and with your consent its data too",
 		Long: "Unlinks the binary, withdraws La Roca's entry from every agent\n" +
 			"configuration it was declared in, and asks whether to keep the database.\n\n" +

@@ -38,6 +38,7 @@ func updateCommand(env *cliEnv) *cobra.Command {
 	var check, forceArtifacts bool
 	cmd := &cobra.Command{
 		Use:   "update",
+		Args:  cobra.NoArgs,
 		Short: "Replace this binary with the latest published release",
 		Long: "Asks the release channel for the newest version, downloads the artefact\n" +
 			"for this platform, verifies its sha256 against checksums.txt BEFORE\n" +

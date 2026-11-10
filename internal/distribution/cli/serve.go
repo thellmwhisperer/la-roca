@@ -21,6 +21,7 @@ func serveCommand(env *cliEnv) *cobra.Command {
 	var residentMode bool
 	command := &cobra.Command{
 		Use:   "serve",
+		Args:  cobra.NoArgs,
 		Short: "Serve the MCP over stdio, on demand and in the foreground",
 		Long: "Starts the MCP server on standard input and output. It is what the\n" +
 			"entry written by `roca mcp install` runs in an agent, and\n" +
