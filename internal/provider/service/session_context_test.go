@@ -341,7 +341,7 @@ func TestLatestHandoffsDoesNotFallBackAfterProjectRowsAreSuperseded(t *testing.T
 	old := insertHandoff(t, svc, handoffSeed{
 		content: "obsolete demo close", createdAt: "2026-08-02 00:00:00", project: "demo",
 	})
-	insertMemory(t, svc, "decision", "replacement decision", "demo", "2026-08-03 00:00:00", old, nil)
+	insertMemory(t, svc, "handoff-retirement", "retired a parallel current handoff", "demo", "2026-08-03 00:00:00", old, nil)
 
 	got, err := svc.LatestHandoffs(t.Context(), "demo")
 	if err == nil || !strings.Contains(err.Error(), "no handoff for project demo") {

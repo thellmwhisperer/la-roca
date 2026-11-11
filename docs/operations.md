@@ -184,7 +184,9 @@ handoff for a named project automatically retires every current handoff for
 that project. Pending or resolved writes do not trigger that automatic
 retirement. CLI `--supersedes` or the MCP `supersedes` field still names a
 specific predecessor when the writer wants something other than the current
-one; a SUPERSEDE in prose does not. A writer refusal names the
+one; a SUPERSEDE in prose does not. Only a handoff of the same project
+retires a handoff: a memory of another layer or project that names it with
+`--supersedes` leaves it the current handoff. A writer refusal names the
 agent, surface and origin it saw, lists the session writers, and shows those
 recommended labels with one example. Rejections direct worker progress to tasks-axi,
 delivery to the `pr` field, session decisions to layer `decision`, and expiring
