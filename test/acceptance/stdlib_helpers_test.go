@@ -3,6 +3,7 @@
 package acceptance
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -37,6 +38,18 @@ func TestStdlibHelpersRunUnderTheRealBinary(t *testing.T) {
 	write(".cursor/chats/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/11111111-aaaa-3bbb-3ccc-222222222222/meta.json",
 		`{"schemaVersion":1,"createdAtMs":1785589400000,"hasConversation":true,"title":"Synthetic harbor session","cwd":"/synthetic/harbor"}`)
 	copyFixture("cursor-database/state.vscdb", "Library/Application Support/Cursor/User/globalStorage/state.vscdb")
+	// The store carries its own session id; the conformance fixture names it.
+	var cursorStore struct {
+		Want struct {
+			Sessions []struct {
+				ID string `json:"id"`
+			} `json:"sessions"`
+		} `json:"want"`
+	}
+	if err := json.Unmarshal(mustRead(filepath.Join(conformance, "cursor-store", "fixture.json")), &cursorStore); err != nil || len(cursorStore.Want.Sessions) == 0 {
+		t.Fatalf("cursor-store fixture: %v", err)
+	}
+	cursorStoreSession := cursorStore.Want.Sessions[0].ID
 
 	// Qwen Code: a tool call that fails, and a record whose type nobody named.
 	write(".qwen/projects/-synthetic-orbit/chats/fixture-qwen.jsonl",
@@ -87,7 +100,7 @@ func TestStdlibHelpersRunUnderTheRealBinary(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exec: exit %d: %s", code, rows)
 	}
-	for _, want := range []string{"cursor:11111111-aaaa-3bbb-3ccc-222222222222", "cursor:11111111-2222-3333-4444-555555555555",
+	for _, want := range []string{cursorStoreSession, "cursor:11111111-2222-3333-4444-555555555555",
 		"fixture-qwen", "fixture-codex", "33333333-4444-5555-6666-777777777777"} {
 		if !strings.Contains(rows, want) {
 			t.Errorf("session %q was not ingested:\n%s", want, rows)
