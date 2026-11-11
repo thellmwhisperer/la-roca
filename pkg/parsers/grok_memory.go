@@ -1,7 +1,6 @@
 package parsers
 
 import (
-	"cmp"
 	"path/filepath"
 	"strings"
 )
@@ -10,7 +9,7 @@ func detectGrokMemory(file File) bool {
 	if !sourceIs(file.Meta, "grok") || strings.TrimSpace(string(file.Content)) == "" {
 		return false
 	}
-	name := cmp.Or(file.Meta.FileName, filepath.Base(file.Meta.Path))
+	name := firstNonEmpty(file.Meta.FileName, filepath.Base(file.Meta.Path))
 	if !strings.EqualFold(name, "MEMORY.md") {
 		return false
 	}

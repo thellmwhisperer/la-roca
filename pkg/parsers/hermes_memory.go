@@ -17,7 +17,7 @@ var (
 )
 
 func detectHermesMemory(file File) bool {
-	name := cmp.Or(file.Meta.FileName, filepath.Base(file.Meta.Path))
+	name := firstNonEmpty(file.Meta.FileName, filepath.Base(file.Meta.Path))
 	return sourceIs(file.Meta, "hermes") && strings.EqualFold(name, "MEMORY.md") &&
 		strings.TrimSpace(string(file.Content)) != ""
 }
