@@ -635,16 +635,6 @@ func classifyFederation(serving string, stores []Store, core, corpus map[string]
 	return FederationLegacyServing, custody
 }
 
-func storesReadable(stores []Store, names ...string) bool {
-	for _, name := range names {
-		store := storeNamed(stores, name)
-		if !store.Present || !store.Readable {
-			return false
-		}
-	}
-	return true
-}
-
 func storeNamed(stores []Store, name string) Store {
 	for _, store := range stores {
 		if store.Name == name {

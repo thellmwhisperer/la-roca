@@ -1144,14 +1144,6 @@ func mergeMetadata(base, preferred map[string]any) map[string]any {
 	return merged
 }
 
-// insertSession registers a session on first sight. ON CONFLICT DO NOTHING scopes
-// the idempotency to the primary key, so two processes racing over the same file
-// insert it once.
-func (w *writer) insertSession(ctx context.Context, session parsers.Session) error {
-	_, err := w.registerSession(ctx, session, false)
-	return err
-}
-
 // registerSession inserts a session row. When anyUnique is set, an exact-payload
 // collision is treated like a primary-key miss: the statement is ignored and
 // the caller skips children instead of aborting the batch.
