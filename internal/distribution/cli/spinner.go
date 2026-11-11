@@ -30,10 +30,6 @@ const clearLine = "\r\x1b[2K"
 // wide, legible at a glance and quiet on a slow terminal.
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
-// spinnerLabel carries the rock's voice in the register the rest of the
-// narration uses: terse, lowercase, present tense.
-const spinnerLabel = "🪨 searching memory"
-
 const (
 	spinnerShaping   = "🪨 shaping the search"
 	spinnerSearching = "🪨 searching memory"

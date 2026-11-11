@@ -73,10 +73,6 @@ func archiveMachine(machine sql.NullString) sql.NullString {
 	return sql.NullString{String: strings.TrimSpace(hostname), Valid: true}
 }
 
-func (payload exchangePayload) values() []any {
-	return payload.insertValues()
-}
-
 func (payload exchangePayload) currentValues() []any {
 	return append(payload.digestValues(), payload.machine)
 }
@@ -158,16 +154,6 @@ var archiveSourceTables = []archiveTable{
 			last_synced_at, last_error, metadata FROM ingest_file_state ORDER BY path`,
 		scan: scanIngestState,
 	},
-}
-
-func importSource(ctx context.Context, destination *sql.DB, source preparedSource, batchSize int) error {
-	for _, table := range archiveSourceTables {
-		if err := importTable(ctx, destination, source, table, batchSize); err != nil {
-			return fmt.Errorf("merge %s.%s into corpus shadow: %w",
-				source.Database, table.sourceTable, err)
-		}
-	}
-	return nil
 }
 
 // querier is the narrow surface scanRecords needs; both *sql.DB and *sql.Tx
