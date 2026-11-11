@@ -64,12 +64,6 @@ const (
 	QueryPhaseInterpretation QueryPhase = "interpretation"
 )
 
-func progress(req QueryRequest, phase QueryPhase) {
-	if req.Progress != nil {
-		req.Progress(phase)
-	}
-}
-
 // QueryResult is the shared playground answer envelope: which path it left by,
 // with what SQL, and from which version of the code.
 //

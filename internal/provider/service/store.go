@@ -335,11 +335,6 @@ func identicalMemory(ctx context.Context, db memoryQuerier, payload memoryPayloa
 	}
 }
 
-func memoryExists(ctx context.Context, db memoryQuerier, id int64) (bool, error) {
-	_, known, err := resolveMemoryID(ctx, db, id)
-	return known, err
-}
-
 func resolveMemoryID(ctx context.Context, db memoryQuerier, id int64) (int64, bool, error) {
 	var canonical int64
 	err := db.QueryRowContext(ctx, `SELECT id FROM memories WHERE id = ? OR legacy_id = ?`, id, id).

@@ -161,15 +161,6 @@ type sqlArgs struct {
 	Databases string `json:"databases,omitempty" jsonschema:"comma list of attached database names (corpus,ops), or all"`
 }
 
-func (a sqlArgs) request() service.QueryRequest {
-	return service.QueryRequest{
-		Question:  a.Query,
-		Layer:     a.Layer,
-		SQLOnly:   true,
-		Databases: mustParseDatabases(a.Databases),
-	}
-}
-
 // storeArgs is one memory to write. The identity card comes from the connected
 // session rather than these caller-controlled arguments.
 type storeArgs struct {

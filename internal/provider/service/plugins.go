@@ -90,11 +90,6 @@ func (s *Service) pluginsFor(ctx context.Context, input string,
 		selectPlugins(input, candidates), warnings, limit, s.opts.ReadOnly))
 }
 
-func validatePluginRoute(ctx context.Context, candidates []plugin.Descriptor,
-	warnings []string) PluginRoute {
-	return validatePluginRouteLimit(ctx, candidates, warnings, plugin.MaxAttached, false)
-}
-
 func validatePluginRouteLimit(ctx context.Context, candidates []plugin.Descriptor,
 	warnings []string, limit int, physicalReadOnly bool) PluginRoute {
 	route := PluginRoute{Warnings: slices.Clone(warnings)}

@@ -100,9 +100,6 @@ type RunRecord struct {
 	Result     any       `json:"result"`
 }
 
-type IngestRecord = RunRecord
-type MigrationRecord = RunRecord
-
 func New(dataDir string) *Writer {
 	return &Writer{
 		dir: filepath.Join(dataDir, DirName), now: time.Now,
