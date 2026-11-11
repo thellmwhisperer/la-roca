@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/thellmwhisperer/la-roca-vector/internal/engine"
+	"github.com/thellmwhisperer/la-roca-vector/internal/filelock"
 )
 
 var ErrNotDownloaded = errors.New("the embedding model is not downloaded")
@@ -61,7 +62,7 @@ func Ensure(ctx context.Context, dataDir string, manifest Manifest, sink engine.
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return "", fmt.Errorf("create the embedding model directory: %w", err)
 	}
-	release, err := lockModel(path + ".lock")
+	release, err := filelock.Lock(path + ".lock")
 	if err != nil {
 		return "", fmt.Errorf("lock the embedding model download: %w", err)
 	}

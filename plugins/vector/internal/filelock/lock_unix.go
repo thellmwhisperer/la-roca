@@ -1,6 +1,6 @@
 //go:build !windows
 
-package telemetry
+package filelock
 
 import (
 	"os"
@@ -8,7 +8,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func lockStream(path string) (func() error, error) {
+// Lock blocks until it holds an exclusive lock on path, creating it with mode 0600.
+func Lock(path string) (func() error, error) {
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, err
