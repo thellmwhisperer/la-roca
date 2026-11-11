@@ -1,8 +1,8 @@
 package datasplit
 
 import (
-	"database/sql"
 	"errors"
+	"github.com/thellmwhisperer/la-roca/test/testfixture"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,7 +36,7 @@ func TestMigrateRunsEveryShadowCustodyMigrationBeforeCutover(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Older DATA-4 imports have receipts but no published verification state.
-	cron := openCutoverDatabase(t, options.CronDatabase)
+	cron := testfixture.OpenSQLite(t, options.CronDatabase)
 	if _, err := cron.Exec(`UPDATE plugin_migrations SET migration_state = 'batch-in-progress', verification_digest = '' WHERE migration = 'data4-legacy-runs'`); err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestMigrateRunsEveryShadowCustodyMigrationBeforeCutover(t *testing.T) {
 		t.Fatalf("missing-cron eligibility = %t, err=%v", ready, err)
 	}
 
-	ops := openCutoverDatabase(t, options.OpsDatabase)
+	ops := testfixture.OpenSQLite(t, options.OpsDatabase)
 	defer ops.Close()
 	var memories int
 	if err := ops.QueryRow(`SELECT COUNT(*) FROM memory_compatibility
@@ -78,7 +78,7 @@ func TestMigrateRunsEveryShadowCustodyMigrationBeforeCutover(t *testing.T) {
 		t.Fatalf("core memory memberships = %d, want 1", memories)
 	}
 
-	corpus := openCutoverDatabase(t, options.CorpusDatabase)
+	corpus := testfixture.OpenSQLite(t, options.CorpusDatabase)
 	defer corpus.Close()
 	var sessions int
 	if err := corpus.QueryRow(`SELECT COUNT(*) FROM session_version_memberships
@@ -138,22 +138,13 @@ func seedHubSources(t *testing.T, options HubOptions) {
 	}
 }
 
-func openCutoverDatabase(t *testing.T, path string) *sql.DB {
-	t.Helper()
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return db
-}
-
 func TestMigrateMaterializesCurrentRowsAfterStorageUpgrade(t *testing.T) {
 	t.Setenv(bundledplugin.EnvAllowHomeMigrate, "1")
 	options := newMigrationFixture(t)
 	if _, err := Migrate(t.Context(), options); err != nil {
 		t.Fatal(err)
 	}
-	corpus := openCutoverDatabase(t, options.CorpusDatabase)
+	corpus := testfixture.OpenSQLite(t, options.CorpusDatabase)
 	if _, err := corpus.Exec(`DELETE FROM sessions;
 		ALTER TABLE session_versions ADD COLUMN title TEXT;
 		UPDATE session_versions SET title = 'Synthetic archive marker';
@@ -172,7 +163,7 @@ func TestMigrateMaterializesCurrentRowsAfterStorageUpgrade(t *testing.T) {
 	if report, err := Migrate(t.Context(), options); err != nil || !report.Ready {
 		t.Fatalf("explicit upgrade migration = %+v, err=%v", report, err)
 	}
-	corpus = openCutoverDatabase(t, options.CorpusDatabase)
+	corpus = testfixture.OpenSQLite(t, options.CorpusDatabase)
 	defer corpus.Close()
 	var title string
 	if err := corpus.QueryRow(`SELECT title FROM sessions WHERE session_id = 'synthetic-session'`).Scan(&title); err != nil {
@@ -191,7 +182,7 @@ func TestMigrateMaterializesCurrentRowsAfterStorageUpgrade(t *testing.T) {
 
 func TestMigrateResumesEmptyMemoryCustodyAfterArchiveInterruption(t *testing.T) {
 	options := newMigrationFixture(t)
-	core := openCutoverDatabase(t, options.CoreDatabase)
+	core := testfixture.OpenSQLite(t, options.CoreDatabase)
 	if _, err := core.Exec(`DELETE FROM memories;
 		INSERT INTO exchanges(session_id, exchange_number, agent_text)
 		VALUES ('synthetic-session', 1, 'resumable archive marker')`); err != nil {
@@ -200,7 +191,7 @@ func TestMigrateResumesEmptyMemoryCustodyAfterArchiveInterruption(t *testing.T) 
 	if err := core.Close(); err != nil {
 		t.Fatal(err)
 	}
-	corpus := openCutoverDatabase(t, options.CorpusDatabase)
+	corpus := testfixture.OpenSQLite(t, options.CorpusDatabase)
 	defer corpus.Close()
 	if _, err := corpus.Exec(`CREATE TRIGGER interrupt_archive BEFORE INSERT ON exchange_versions
 		BEGIN SELECT RAISE(ABORT, 'synthetic archive interruption'); END`); err != nil {

@@ -11,6 +11,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
+	"github.com/thellmwhisperer/la-roca/test/testfixture"
 	"io"
 	"os"
 	"path/filepath"
@@ -244,7 +245,7 @@ func TestPlaygroundRequiresExplicitMigrationBeforeDelegating(t *testing.T) {
 			t.Setenv(config.EnvReadOnly, "")
 			writeConfig(t, home, "[layout]\nserving = \"cutover\"\n")
 			db := filepath.Join(home, ".roca", "roca.db")
-			core := openLayoutDatabase(t, db)
+			core := testfixture.OpenSQLite(t, db)
 			if _, err := core.ExecContext(t.Context(), data.Schema); err != nil {
 				t.Fatal(err)
 			}
