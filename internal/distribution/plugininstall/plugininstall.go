@@ -1107,11 +1107,6 @@ func moveDatabaseSidecars(source, destination string, manifest Manifest) error {
 	return nil
 }
 
-func (m Manager) PreflightUpdate(candidate Candidate) error {
-	_, err := m.preflightUpdate(candidate, candidate.Name, candidate.Name)
-	return err
-}
-
 func (m Manager) PreflightUpdateFrom(candidate Candidate, installedName, manifestName string) error {
 	_, err := m.preflightUpdate(candidate, installedName, manifestName)
 	return err
@@ -1365,11 +1360,6 @@ func (m Manager) UpdateInPlace(candidate Candidate) (Result, error) {
 		return Result{}, err
 	}
 	return resultFor(candidate, target, ""), nil
-}
-
-func (m Manager) PreflightUpdateInPlace(candidate Candidate) error {
-	_, err := m.preflightUpdateInPlace(candidate, candidate.Name, candidate.Name)
-	return err
 }
 
 func (m Manager) PreflightUpdateInPlaceFrom(candidate Candidate, installedName, manifestName string) error {
