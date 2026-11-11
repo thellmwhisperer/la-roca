@@ -81,9 +81,6 @@ orphan_scopes:
       - "internal/distribution/cli/render.go"
       - "internal/distribution/cli/spinner.go"
       - "internal/distribution/cli/style.go"
-      - "internal/distribution/cli/openfiles_darwin.go"
-      - "internal/distribution/cli/openfiles_linux.go"
-      - "internal/distribution/cli/openfiles_other.go"
       # Internal resident dispatch helpers; cli.go owns the public seam.
       - "internal/distribution/cli/resident.go"
       - "internal/distribution/cli/vector_query_resident.go"
@@ -105,9 +102,6 @@ claims:
         - "internal/distribution/cli/render.go"
         - "internal/distribution/cli/spinner.go"
         - "internal/distribution/cli/style.go"
-        - "internal/distribution/cli/openfiles_darwin.go"
-        - "internal/distribution/cli/openfiles_linux.go"
-        - "internal/distribution/cli/openfiles_other.go"
         # Internal resident dispatch helpers; cli.go owns the public seam.
         - "internal/distribution/cli/resident.go"
         - "internal/distribution/cli/vector_query_resident.go"
