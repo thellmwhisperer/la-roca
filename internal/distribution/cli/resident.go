@@ -283,6 +283,9 @@ func parseResidentHealth(args []string) (service.HealthRequest, bool, error) {
 	if err := flags.Parse(args); err != nil || len(flags.Args()) != 0 {
 		return service.HealthRequest{}, false, nil
 	}
+	if err := validateFlags(flags, "max-rows"); err != nil {
+		return service.HealthRequest{}, true, err
+	}
 	return service.HealthRequest{MaxRows: maxRows}, true, nil
 }
 
