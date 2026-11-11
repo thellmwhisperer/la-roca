@@ -26,6 +26,8 @@ type SearchRequest struct {
 	Top         int
 	RequireBoth bool
 	MaxChars    int
+	Since       time.Time
+	Project     string
 	// Overlay is the flag write on top of the service's resolved [query] knobs.
 	Overlay search.Overlay
 }
@@ -186,6 +188,9 @@ func (s *Service) Search(ctx context.Context, req SearchRequest) (SearchResult, 
 	}
 
 	fused := search.FuseRRF(legs.vectorDocs, legs.ftsDocs, settings.RRFK)
+	if !req.Since.IsZero() || req.Project != "" {
+		fused, err = s.filterSearchHits(ctx, route, surfaces, fused, req)
+	}
 	if req.RequireBoth {
 		kept := make([]search.FusedDoc, 0, len(fused))
 		for _, doc := range fused {
@@ -223,7 +228,53 @@ func (s *Service) Search(ctx context.Context, req SearchRequest) (SearchResult, 
 	}
 	result.RowCount = len(result.Hits)
 	result.LatencyMS = time.Since(start).Milliseconds()
-	return result, nil
+	return result, err
+}
+
+// filterSearchHits checks only retrieved candidates, leaving retrieval and RRF unchanged.
+func (s *Service) filterSearchHits(ctx context.Context, route PluginRoute, surfaces []searchSurface,
+	docs []search.FusedDoc, req SearchRequest) ([]search.FusedDoc, error) {
+	branches := []string{"SELECT '' AS source WHERE 0"}
+	for _, surface := range surfaces {
+		timestamp := "NULL"
+		switch {
+		case slices.Contains(surface.Columns, "started_at"):
+			timestamp = "s.started_at"
+		case slices.Contains(surface.Columns, "created_at"):
+			timestamp = "s.created_at"
+		case slices.Contains(surface.Columns, "session_id"):
+			timestamp = "(SELECT started_at FROM " + qualified(surface.Schema, "sessions") +
+				" WHERE session_id = s.session_id)"
+		}
+		predicate := "1"
+		if !req.Since.IsZero() {
+			predicate += " AND julianday(" + timestamp + ") >= julianday(" + sqlString(req.Since.Format(time.DateOnly)) + ")"
+		}
+		if req.Project != "" {
+			project := "NULL"
+			switch {
+			case slices.Contains(surface.Columns, "project"):
+				project = "s.project"
+			case slices.Contains(surface.Columns, "session_id"):
+				project = "(SELECT project FROM " + qualified(surface.Schema, "sessions") +
+					" WHERE session_id = s.session_id)"
+			}
+			predicate += " AND " + project + " = " + sqlString(req.Project)
+		}
+		for _, doc := range docs {
+			if doc.Database == surface.Database && doc.Table == surface.Table {
+				branches = append(branches, "SELECT "+sqlString(doc.Key)+" AS source FROM "+
+					qualified(surface.Schema, surface.Table)+" AS s WHERE s."+quoteIdent(surface.IDColumn)+
+					" = "+sqlString(doc.ID)+" AND "+predicate)
+			}
+		}
+	}
+	rows, err := s.runSearchSQL(ctx, route, strings.Join(branches, " UNION ALL "), math.MaxInt)
+	keep := make(map[string]bool, len(rows))
+	for _, row := range rows {
+		keep[fmt.Sprint(row["source"])] = true
+	}
+	return slices.DeleteFunc(docs, func(doc search.FusedDoc) bool { return !keep[doc.Key] }), err
 }
 
 func vectorUnavailableNotice(message string) string {
@@ -629,6 +680,14 @@ func ftsBranch(surface searchSurface, match string) string {
 	if columnsCovered([]string{surface.IDColumn, "supersedes"}, surface.Columns) {
 		current = fmt.Sprintf(" WHERE %s.%s NOT IN (SELECT %s FROM %s WHERE %s IS NOT NULL)",
 			alias, quoteIdent(surface.IDColumn), quoteIdent("supersedes"), source, quoteIdent("supersedes"))
+		// A memory-shaped row also stops answering once resolved or expired.
+		if slices.Contains(surface.Columns, "status") {
+			current += fmt.Sprintf(" AND %s.%s IS NOT 'resolved'", alias, quoteIdent("status"))
+		}
+		if slices.Contains(surface.Columns, "expires_at") {
+			current += fmt.Sprintf(" AND (%[1]s.%[2]s IS NULL OR julianday(%[1]s.%[2]s) > julianday('now'))",
+				alias, quoteIdent("expires_at"))
+		}
 	}
 	return fmt.Sprintf(
 		"SELECT %s AS surface, %s AS \"table\", CAST(%s.%s AS TEXT) AS id, %s AS snippet, f.rango AS rango "+

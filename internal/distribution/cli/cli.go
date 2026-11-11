@@ -175,7 +175,25 @@ func executeWithOptions(env *cliEnv, args []string, in io.Reader, plugins bool) 
 	if in != nil {
 		root.SetIn(in)
 	}
-	executed, err := root.ExecuteC()
+	// A root typo must not become successful root help when --help is present.
+	executed, _, err := root.Find(args)
+	if err == nil && executed == root {
+		root.InitDefaultHelpFlag()
+		root.InitDefaultVersionFlag()
+		err = root.ParseFlags(args)
+		if err == nil {
+			arguments := root.Flags().Args()
+			err = root.ValidateArgs(arguments)
+			if err != nil {
+				if suggestions := root.SuggestionsFor(arguments[0]); len(suggestions) > 0 {
+					err = fmt.Errorf("%w\n\nDid you mean this?\n\t%s", err, strings.Join(suggestions, "\n\t"))
+				}
+			}
+		}
+	}
+	if err == nil {
+		executed, err = root.ExecuteC()
+	}
 	if reconciliationErr := env.reconcileAfterCommand(executed); err == nil {
 		err = reconciliationErr
 	}
@@ -268,6 +286,7 @@ func doctorInvocation(args []string) bool {
 func rootCommand(env *cliEnv) *cobra.Command {
 	root := &cobra.Command{
 		Use:   "roca",
+		Args:  cobra.NoArgs,
 		Short: "Local semantic memory for agent fleets",
 		Long: "La Roca is the memory your agents leave behind, made searchable.\n" +
 			"\n" +
@@ -275,8 +294,9 @@ func rootCommand(env *cliEnv) *cobra.Command {
 			"that into one local SQLite database, and answers natural-language questions\n" +
 			"about it. The database and search index stay on this machine. Natural-language\n" +
 			"questions use zero-inference FTS and vector search. Optional human answering belongs to roca-playground.",
-		SilenceUsage:  true,
-		SilenceErrors: true,
+		SuggestionsMinimumDistance: 2,
+		SilenceUsage:               true,
+		SilenceErrors:              true,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 			return env.refuseRootOverUserState(cmd)
 		},

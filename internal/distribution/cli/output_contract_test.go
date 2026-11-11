@@ -359,19 +359,19 @@ func TestExecHumanJSONAndError(t *testing.T) {
 	}
 }
 
-// An unknown command is a failure that names what was asked, and a typo close to
-// a real one is answered with the suggestion Cobra computes. That is how an
-// operator recovers from a misspelling; a wholly unknown name still fails by
-// name so a script does not mistake it for success.
-func TestUnknownCommandFailsByNameAndSuggestsATypo(t *testing.T) {
+// NoArgs names both an unknown command and a close typo, with the parent command
+// as context. The root now uses the same argument contract as every other
+// no-argument command instead of Cobra's implicit legacy suggestion validator.
+// Neither spelling may succeed or silently open the laboratory menu.
+func TestUnknownCommandFailsByNameIncludingATypo(t *testing.T) {
 	if err := failingRoot(t, "boguscmd"); !strings.Contains(err.Error(), "boguscmd") {
 		t.Errorf("the error does not name the unknown command: %v", err)
 	}
 
 	_, err := runRootErr(t, contractBuild(), nil, "quer")
-	if err == nil || !strings.Contains(err.Error(), "Did you mean this?") ||
-		!strings.Contains(err.Error(), "query") {
-		t.Errorf("a close typo is not suggested:\n%v", err)
+	if err == nil || !strings.Contains(err.Error(), `unknown command "quer"`) ||
+		!strings.Contains(err.Error(), `for "roca"`) {
+		t.Errorf("a close typo is not rejected by name and context:\n%v", err)
 	}
 }
 

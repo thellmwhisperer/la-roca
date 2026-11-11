@@ -10,6 +10,12 @@ protection prerequisite below must be completed before the train ships.
 - `integration` is the GitHub default branch. Normal feature, fix and docs pull
   requests target it. Merging into `integration` is deliberately
   cheap: pull-request CI is its gate, and it is the branch the e2e round pins.
+  Pull requests into `integration` merge by squash (`gh pr merge --squash`).
+  The repository squash settings take the commit title from the pull request
+  title and leave the body blank, so each change lands as one commit typed
+  like its pull request title (`fix:`, `feat:`). Release Please reads those
+  titles; the commits inside a pull request may carry any type and never
+  reach `integration`.
 - `main` is the release lane. Branch protection requires the CI status checks
   (strict, so a merge must be up to date), refuses force pushes and
   deletions, and binds administrators too. Separately, it must require a pull
@@ -53,7 +59,10 @@ round. CI builds and native-engine checks do not substitute for it.
 
 ## The cycle
 
-1. **Land.** Open a pull request against `integration` and let it merge.
+1. **Land.** Open a pull request against `integration` whose title is a
+   conventional commit (`fix:`, `feat:`, `docs:`, `chore:`) and merge it with
+   `gh pr merge --squash`. The release merge into `main` and the back-merge
+   stay merge commits, so `main` receives each squashed commit with its type.
 2. **Freeze and e2e round.** The release owner pauses merges into
    `integration`, including already armed auto-merges, before selecting the
    candidate. Normal PR auto-merge resumes after the cycle. Back-merge any

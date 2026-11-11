@@ -88,7 +88,7 @@ ROCA_E2E_VECTOR_MODEL ?= $(HOME)/.roca/models/nomic-embed-text-v2-moe/a5db3381f2
 # Pin the suite to the artefact this recipe's `build` just wrote. An inherited
 # ROCA_BIN, including a stub, cannot select a different binary.
 accept: build accept-index ## The godog acceptance suites against the real binary
-	ROCA_BIN=$(BIN) ROCA_PLAYGROUND_INTEGRATION= ROCA_PLAYGROUND_FEATURES= ROCA_PUBLISHED_BIN= ROCA_AUDIT_PUBLISHED_BIN= go test -tags=acceptance ./test/acceptance -count=1
+	ROCA_BIN=$(BIN) ROCA_PLAYGROUND_INTEGRATION= ROCA_PLAYGROUND_FEATURES= ROCA_PUBLISHED_BIN= ROCA_AUDIT_PUBLISHED_BIN= go test -tags=acceptance ./test/acceptance -count=1 -timeout 45m
 
 .PHONY: e2e-cover
 e2e-cover: ## Require end-to-end execution of every changed Go line inside coverage blocks

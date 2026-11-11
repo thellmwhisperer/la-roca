@@ -1,6 +1,7 @@
 package parsers
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -124,8 +125,8 @@ func ParseQwenCode(content []byte, meta FileMeta) (Records, error) {
 	reader.flush()
 
 	session := Session{
-		ID: reader.sessionID, SourceAgent: firstNonEmpty(meta.SourceAgent, "qwen-code"),
-		Project: firstNonEmpty(meta.Project, lastSegment(reader.cwd)),
+		ID: reader.sessionID, SourceAgent: cmp.Or(meta.SourceAgent, "qwen-code"),
+		Project: cmp.Or(meta.Project, lastSegment(reader.cwd)),
 		Metadata: WithoutEmpty(map[string]any{
 			"cwd": reader.cwd, "git_branch": reader.gitBranch,
 			"qwen_version": reader.version, "source_path": meta.Path,
@@ -149,9 +150,9 @@ func (r *qwenCodeReader) consume(record int, line qwenCodeRecord) {
 		r.unreadable(record, "Qwen Code record belongs to another session")
 		return
 	}
-	r.cwd = firstNonEmpty(r.cwd, line.Cwd)
-	r.gitBranch = firstNonEmpty(r.gitBranch, line.GitBranch)
-	r.version = firstNonEmpty(r.version, line.Version)
+	r.cwd = cmp.Or(r.cwd, line.Cwd)
+	r.gitBranch = cmp.Or(r.gitBranch, line.GitBranch)
+	r.version = cmp.Or(r.version, line.Version)
 
 	switch line.Type {
 	case "system":
@@ -174,7 +175,7 @@ func (r *qwenCodeReader) consume(record int, line qwenCodeRecord) {
 	case "tool_result":
 		r.claimToolResult(record, line)
 	default:
-		r.unreadable(record, "unknown Qwen Code record type: "+firstNonEmpty(line.Type, "unnamed"))
+		r.unreadable(record, "unknown Qwen Code record type: "+cmp.Or(line.Type, "unnamed"))
 	}
 }
 
@@ -242,10 +243,10 @@ func (r *qwenCodeReader) claimToolResult(record int, line qwenCodeRecord) {
 		delete(r.current.pending, response.ID)
 		r.current.openCalls--
 		failed := line.ToolResult.Status != "" && line.ToolResult.Status != "success"
-		message := firstNonEmpty(rawText(line.ToolResult.Error), rawText(response.Response.Error))
+		message := cmp.Or(rawText(line.ToolResult.Error), rawText(response.Response.Error))
 		tool.HadError = failed || message != ""
 		if tool.HadError {
-			tool.ErrorMessage = Clip(firstNonEmpty(message, line.ToolResult.Status), errorBudget)
+			tool.ErrorMessage = Clip(cmp.Or(message, line.ToolResult.Status), errorBudget)
 		}
 	}
 }

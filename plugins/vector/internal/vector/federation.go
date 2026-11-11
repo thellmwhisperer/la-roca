@@ -687,15 +687,6 @@ func (f Federation) vectorDatabaseForRoute(route vectorRoute) (vectorDatabase, b
 	return vectorDatabase{}, false
 }
 
-func containsString(values []string, candidate string) bool {
-	for _, value := range values {
-		if value == candidate {
-			return true
-		}
-	}
-	return false
-}
-
 func (f Federation) Ingest(ctx context.Context, sourceKind string) (FederationDelta, error) {
 	ctx, closeReader := withCoreReader(ctx)
 	defer closeReader()
@@ -1895,14 +1886,6 @@ func (t vectorTable) chunking() (int, int) {
 func SidecarPath(databasePath string) string {
 	extension := filepath.Ext(databasePath)
 	return strings.TrimSuffix(databasePath, extension) + ".vector" + extension
-}
-
-func (f Federation) SidecarPaths() []string {
-	paths := make([]string, 0, len(f.databases))
-	for _, database := range f.databases {
-		paths = append(paths, SidecarPath(f.databasePath(database)))
-	}
-	return paths
 }
 
 // InitOwnedSidecar writes the owned sidecar schema used by install and ingest.

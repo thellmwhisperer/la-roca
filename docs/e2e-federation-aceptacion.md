@@ -83,7 +83,7 @@ notices do not contain: fts-only
 notices do not contain: unavailable
 
 ## 233400
-command: roca exec SELECT content FROM plugin_roca_ops.memories WHERE content LIKE '%harbor lantern%'
+command: roca exec SELECT content FROM plugin_roca_ops.memories WHERE content LIKE '%harbor lantern%' --timeout-ms 5000
 exit: 0
 
 ## 233508

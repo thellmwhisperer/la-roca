@@ -1,6 +1,7 @@
 package parsers
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -121,7 +122,7 @@ func ParseClaudeSession(content []byte, meta FileMeta) (Records, error) {
 
 	session := Session{
 		ID:                           meta.SessionID,
-		SourceAgent:                  firstNonEmpty(meta.SourceAgent, "claude"),
+		SourceAgent:                  cmp.Or(meta.SourceAgent, "claude"),
 		Project:                      meta.Project,
 		Exchanges:                    builder.finish(),
 		ExchangeNumbersAuthoritative: true,
@@ -163,8 +164,8 @@ func ParseCoworkAudit(content []byte, meta FileMeta) (Records, error) {
 
 	sidecar := readSessionMetadata(meta.Sidecar)
 	session := Session{
-		ID:                           firstNonEmpty(sidecar.sessionID, meta.SessionID, firstSessionID),
-		SourceAgent:                  firstNonEmpty(meta.SourceAgent, "cowork"),
+		ID:                           cmp.Or(sidecar.sessionID, meta.SessionID, firstSessionID),
+		SourceAgent:                  cmp.Or(meta.SourceAgent, "cowork"),
 		Project:                      meta.Project,
 		Title:                        sidecar.title,
 		Snapshot:                     !meta.Incremental,
@@ -394,7 +395,7 @@ func (b *claudeBuilder) finish() []Exchange {
 // stamp is the transcript's timestamp, or the audit's when that is what the file
 // writes.
 func (l claudeLine) stamp() string {
-	return validInstant(firstNonEmpty(l.AuditTimestamp, l.Timestamp))
+	return validInstant(cmp.Or(l.AuditTimestamp, l.Timestamp))
 }
 
 // decodeContent reads a message's content, which is either a bare string or a

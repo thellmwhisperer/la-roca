@@ -55,6 +55,8 @@ func registerStoreSteps(ctx *godog.ScenarioContext, binary string) {
 	ctx.Given(`^a selected path where no Roca database exists$`, m.missingDatabasePath)
 	ctx.Given(`^a home made by roca init that ingested an agent session mentioning "([^"]*)"$`, m.hybridHome)
 	ctx.Given(`^vector search is switched on$`, func() error { return enableVectorFeature(m.home) })
+	ctx.Given(`^agent sessions in projects alpha and beta mention orchard$`, m.projectOrchardSessions)
+	ctx.Given(`^agent sessions on October 1 and October 20 mention orchard$`, m.datedOrchardSessions)
 	ctx.Given(`^a roca-vector on PATH answers query with that exchange as its only hit$`, m.stubVectorLeg)
 	ctx.Given(`^a migrated cutover home whose agent session and stored memory mention "([^"]*)"$`,
 		m.cutoverHomeMentioning)
@@ -79,6 +81,11 @@ func registerStoreSteps(ctx *godog.ScenarioContext, binary string) {
 	ctx.When(`^I search that database$`, m.searchMissingDatabase)
 	ctx.When(`^two writers store different memories at the same time$`, m.twoConcurrentWriters)
 	ctx.When(`^I run '([^']*)'$`, func(command string) error { _, err := m.run(command); return err })
+
+	ctx.When(`^I run the session help command verbatim$`, m.runSessionHelp)
+	ctx.Then(`^exactly one whole-session help line refers to the first exchange hit$`, m.oneSessionHelpForFirstExchange)
+	ctx.Then(`^the session help command reads the hit session in exchange order with max-chars 2000$`, m.sessionHelpReadsHit)
+	ctx.Then(`^the output contains the three session exchanges in order$`, m.threeSessionExchangesInOrder)
 
 	// --- then: properties the scenario asserts ---
 	ctx.Then(`^the command exits with code (\d+)$`, m.itExitsWithCode)
@@ -753,10 +760,6 @@ func (m *world) namesRefusedWrite() error {
 
 func (m *world) searchReturnsOtherMemory() error {
 	return m.firstResultContains(otherUniqueMemory)
-}
-
-func (m *world) outputIdentifiesOtherDatabase() error {
-	return m.firstSearchHitHasDatabase("core")
 }
 
 func (m *world) searchReturnsHomeMemory() error {

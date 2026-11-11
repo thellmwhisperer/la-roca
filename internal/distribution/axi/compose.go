@@ -197,11 +197,20 @@ func Search(res service.SearchResult) string {
 	if topic == "" {
 		topic = "<topic>"
 	}
-	return searchText(res, []string{
+	help := []string{
 		"Run `roca vector query " + shellArg(topic) + " 20 --databases " + databases + "` for the fast semantic leg alone (this command adds the full-text leg and fusion)",
 		"Run `roca query " + shellArg(res.Question) + " --json` for the complete result envelope",
 		"Run `roca query " + shellArg(res.Question) + " --require-both` to keep only dual-confirmed hits",
-	})
+	}
+	for _, hit := range res.Hits {
+		if hit.Database == "corpus" && hit.Table == "exchanges" && hit.ID != "" {
+			sql := "SELECT exchange_number, human_text, agent_text FROM plugin_roca_corpus.exchanges WHERE session_id = " +
+				"(SELECT session_id FROM plugin_roca_corpus.exchanges WHERE id = '" + strings.ReplaceAll(hit.ID, "'", "''") + "') ORDER BY exchange_number"
+			help = append(help, fmt.Sprintf("Run `roca exec %s --max-chars 2000` to read the whole session of hit %d", shellArg(sql), hit.Rank))
+			break
+		}
+	}
+	return searchText(res, help)
 }
 
 // MCPSearch is the same envelope with MCP-native next steps.

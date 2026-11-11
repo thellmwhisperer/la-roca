@@ -34,6 +34,7 @@ func storeCommand(env *cliEnv) *cobra.Command {
 	var agent, model string
 	cmd := &cobra.Command{
 		Use:   "store",
+		Args:  cobra.NoArgs,
 		Short: "Write one memory",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			svc, _, err := env.openStoreService()
@@ -524,7 +525,11 @@ func healthCommand(env *cliEnv) *cobra.Command {
 	var req service.HealthRequest
 	cmd := &cobra.Command{
 		Use:   "health",
+		Args:  cobra.NoArgs,
 		Short: "Non-destructive checks over live data",
+		PreRunE: func(cmd *cobra.Command, _ []string) error {
+			return validateFlags(cmd.Flags(), "max-rows")
+		},
 		RunE: env.serviceRunE(func(cmd *cobra.Command, _ []string, svc *service.Service) error {
 			report, err := svc.Health(cmd.Context(), req)
 			if err != nil {
@@ -542,7 +547,7 @@ func healthCommand(env *cliEnv) *cobra.Command {
 }
 
 func memoryCommand(env *cliEnv) *cobra.Command {
-	command := &cobra.Command{Use: "memory", Short: "Resolve durable memory identities"}
+	command := &cobra.Command{Use: "memory", Args: cobra.NoArgs, Short: "Resolve durable memory identities", RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
 	command.AddCommand(&cobra.Command{
 		Use:   "resolve <id>",
 		Short: "Resolve a memory id or exact-dedup alias to its canonical row",

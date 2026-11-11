@@ -1,13 +1,14 @@
 package parsers
 
 import (
+	"cmp"
 	"path/filepath"
 	"strings"
 	"unicode/utf8"
 )
 
 func detectGLMSkill(file File) bool {
-	name := firstNonEmpty(file.Meta.FileName, filepath.Base(file.Meta.Path))
+	name := cmp.Or(file.Meta.FileName, filepath.Base(file.Meta.Path))
 	return file.Meta.SourceAgent == "glm" && strings.EqualFold(filepath.Ext(name), ".md") &&
 		utf8.Valid(file.Content) && strings.TrimSpace(string(file.Content)) != ""
 }

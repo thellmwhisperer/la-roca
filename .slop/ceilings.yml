@@ -12,10 +12,12 @@
 # and reviewable, and the ceiling comes down by one all the same.
 schema: 1
 scopes:
-  # Production duplication stays at zero; every shared implementation has one
-  # owner.
+  # The scope now also scans pkg/ and plugins/, which it never did. The rise
+  # from zero to 56 is a wider scope and not new slack: most of it pairs
+  # plugins/vector with code it copies from the core. Each copy given one owner
+  # lowers this number; it never goes up.
   go_production:
-    active_clones_ceiling: 0
+    active_clones_ceiling: 54
 
   # The suites and the Gherkin harness. Most of what is left is the same fixture
   # assembled on either side of a package boundary, which Go cannot share without
@@ -25,9 +27,11 @@ scopes:
   # The v1 model-only strip removed the compiler/classifier/teach/calibrate
   # suites, dropping the count from 24 to 23. The OSS sanitization sweep removed
   # the bench and hooks suites, dropping the count from 23 to 22. Sharing the
-  # resident-corpus and ingest fixtures dropped the current count to 19.
+  # resident-corpus and ingest fixtures dropped the count to 17. Scanning pkg/,
+  # plugins/ and scripts/ too raised the measure to 73: a wider scope and not
+  # new slack.
   go_tests:
-    active_clones_ceiling: 17
+    active_clones_ceiling: 73
 
   # The markdown and public-surface blocks bootstrap today's census. They are
   # ratchets, not budgets: removing an orphan lowers the corresponding number,

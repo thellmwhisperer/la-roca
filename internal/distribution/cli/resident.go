@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -75,11 +76,11 @@ func (env *cliEnv) tryResident(ctx context.Context, raw []string) (bool, error) 
 }
 
 func runResidentCommand[Request, Result any](env *cliEnv, args []string, jsonOutput bool,
-	parse func([]string) (Request, bool), call func(string, any, any) error, command string,
+	parse func([]string) (Request, bool, error), call func(string, any, any) error, command string,
 	render func(Result) string, prepare func(*Result, Request)) (bool, error) {
-	request, ok := parse(args)
-	if !ok {
-		return false, nil
+	request, ok, err := parse(args)
+	if !ok || err != nil {
+		return ok, err
 	}
 	var result Result
 	if err := call(command, request, &result); errors.Is(err, errResidentUnavailable) {
@@ -199,27 +200,30 @@ func hasReadOnlyFlag(args []string) bool {
 	return false
 }
 
-func parseResidentExec(args []string) (service.ExecRequest, bool) {
+func parseResidentExec(args []string) (service.ExecRequest, bool, error) {
 	flags := pflag.NewFlagSet("exec", pflag.ContinueOnError)
-	flags.SetOutput(nil)
+	flags.SetOutput(io.Discard)
 	maxChars := service.DefaultMaxChars
 	timeout := -1
 	flags.IntVar(&maxChars, "max-chars", maxChars, "")
 	flags.IntVar(&timeout, "timeout-ms", -1, "")
 	if err := flags.Parse(args); err != nil || len(flags.Args()) == 0 {
-		return service.ExecRequest{}, false
+		return service.ExecRequest{}, false, nil
+	}
+	if err := validateFlags(flags, "max-chars", "timeout-ms"); err != nil {
+		return service.ExecRequest{}, true, err
 	}
 	request := service.ExecRequest{SQL: strings.Join(flags.Args(), " "), MaxChars: maxChars}
 	if timeout >= 0 {
 		request.TimeoutSet = true
 		request.Timeout = time.Duration(timeout) * time.Millisecond
 	}
-	return request, true
+	return request, true, nil
 }
 
-func parseResidentQuery(args []string) (service.SearchRequest, bool) {
+func parseResidentQuery(args []string) (service.SearchRequest, bool, error) {
 	flags := pflag.NewFlagSet("query", pflag.ContinueOnError)
-	flags.SetOutput(nil)
+	flags.SetOutput(io.Discard)
 	top, maxChars, oversample := 10, service.DefaultMaxChars, 0
 	databases := ""
 	requireBoth, noTemplates := false, false
@@ -230,23 +234,26 @@ func parseResidentQuery(args []string) (service.SearchRequest, bool) {
 	flags.BoolVar(&requireBoth, "require-both", false, "")
 	flags.BoolVar(&noTemplates, "no-templates", false, "")
 	if err := flags.Parse(args); err != nil || len(flags.Args()) == 0 {
-		return service.SearchRequest{}, false
+		return service.SearchRequest{}, false, nil
+	}
+	if err := validateFlags(flags, "max-chars", "top", "databases"); err != nil {
+		return service.SearchRequest{}, true, err
 	}
 	names, err := service.ParseDatabaseList(databases)
 	if err != nil {
-		return service.SearchRequest{}, false
+		return service.SearchRequest{}, true, err
 	}
 	request := service.SearchRequest{Question: strings.Join(flags.Args(), " "), Databases: names, Top: top, RequireBoth: requireBoth, MaxChars: maxChars}
 	if oversample > 0 {
 		request.Overlay.Oversample = &oversample
 	}
 	request.Overlay.NoTemplates = noTemplates
-	return request, true
+	return request, true, nil
 }
 
-func parseResidentStore(args []string) (service.StoreRequest, bool) {
+func parseResidentStore(args []string) (service.StoreRequest, bool, error) {
 	flags := pflag.NewFlagSet("store", pflag.ContinueOnError)
-	flags.SetOutput(nil)
+	flags.SetOutput(io.Discard)
 	var request service.StoreRequest
 	var metadata, agent, model string
 	flags.StringVar(&request.Layer, "layer", "", "")
@@ -258,25 +265,28 @@ func parseResidentStore(args []string) (service.StoreRequest, bool) {
 	flags.StringVar(&metadata, "metadata", "", "")
 	flags.StringVar(&agent, "agent", "", "")
 	flags.StringVar(&model, "model", "", "")
-	if err := flags.Parse(args); err != nil || request.Layer == "" || request.Content == "" {
-		return service.StoreRequest{}, false
+	if err := flags.Parse(args); err != nil || len(flags.Args()) != 0 || request.Layer == "" || request.Content == "" {
+		return service.StoreRequest{}, false, nil
 	}
 	if metadata != "" && (decodeJSON(metadata, &request.Metadata) != nil || request.Metadata == nil) {
-		return service.StoreRequest{}, false
+		return service.StoreRequest{}, false, nil
 	}
 	request.Authorship = resolveCLIAuthorship(agent, model, currentAuthorshipEvidence)
-	return request, true
+	return request, true, nil
 }
 
-func parseResidentHealth(args []string) (service.HealthRequest, bool) {
+func parseResidentHealth(args []string) (service.HealthRequest, bool, error) {
 	flags := pflag.NewFlagSet("health", pflag.ContinueOnError)
-	flags.SetOutput(nil)
+	flags.SetOutput(io.Discard)
 	maxRows := 0
 	flags.IntVar(&maxRows, "max-rows", 0, "")
 	if err := flags.Parse(args); err != nil || len(flags.Args()) != 0 {
-		return service.HealthRequest{}, false
+		return service.HealthRequest{}, false, nil
 	}
-	return service.HealthRequest{MaxRows: maxRows}, true
+	if err := validateFlags(flags, "max-rows"); err != nil {
+		return service.HealthRequest{}, true, err
+	}
+	return service.HealthRequest{MaxRows: maxRows}, true, nil
 }
 
 func filepathDir(path string) string {

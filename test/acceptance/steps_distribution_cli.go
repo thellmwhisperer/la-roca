@@ -5,6 +5,7 @@ package acceptance
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +18,8 @@ import (
 )
 
 func registerDistributionCLISteps(ctx *godog.ScenarioContext, w *distributionWorld) {
+	ctx.Then(`^handoff latest and pill reject blank project flags and default only when the flag is omitted$`, w.sessionProjectFlagIsExplicit)
+	ctx.Then(`^health refuses a negative --max-rows naming the flag and keeps 0 and omitted working$`, w.healthMaxRowsIsNonNegative)
 	ctx.When(`^the operator asks playground without its plugin$`, func() error {
 		if err := w.prepare("missing-playground"); err != nil {
 			return err
@@ -32,6 +35,17 @@ func registerDistributionCLISteps(ctx *godog.ScenarioContext, w *distributionWor
 	})
 	registerDistributionHelpHookSteps(ctx, w)
 	ctx.When(`^the operator asks for command-line help$`, w.askForCLIHelp)
+	ctx.When(`^the operator asks for "([^"]*)" command help$`, func(command string) error {
+		w.last = w.runAt(w.root, w.binary, command, "--help")
+		return nil
+	})
+	ctx.Then(`^command help exits successfully with no bare usage and exactly one flag list$`, func() error {
+		output := w.last.stdout + w.last.stderr
+		if w.last.code != 0 || strings.Contains(output, "Usage of") || countDistributionLines(output, "Flags:") != 1 {
+			return fmt.Errorf("expected successful help with no bare usage and exactly one flag list: %+v", w.last)
+		}
+		return nil
+	})
 	ctx.Then(`^every public command appears once with an honest one-line summary$`, w.helpIsComplete)
 	ctx.When(`^the operator exercises the "([^"]*)" command in human and JSON form$`, w.exerciseOutputForms)
 	ctx.Then(`^the default answer is human-readable and the requested answer is one JSON document$`, w.outputFormsAreExplicit)
@@ -46,6 +60,26 @@ func registerDistributionCLISteps(ctx *godog.ScenarioContext, w *distributionWor
 	ctx.When(`^the operator initializes non-interactively with a detected model CLI$`, w.initWithDetectedModelCLI)
 	ctx.Then(`^init prints no answering notice and writes only the new-install features$`, w.initHasOneAnsweringNotice)
 	ctx.When(`^the operator asks for a doctor support report$`, w.askForDoctorReport)
+	ctx.Then(`^version, version --json and --version still report the same build$`, func() error {
+		w.human = w.run("version")
+		w.machine = w.run("version", "--json")
+		if err := w.outputFormsAreExplicit(); err != nil {
+			return err
+		}
+		var build map[string]string
+		if err := json.Unmarshal([]byte(w.machine.stdout), &build); err != nil {
+			return err
+		}
+		if len(build) != 4 || build["version"] == "" || build["source_sha"] == "" || build["built_at"] == "" || build["platform"] == "" {
+			return fmt.Errorf("incomplete version JSON: %s", w.machine.stdout)
+		}
+		want := fmt.Sprintf("roca %s (%s) %s\n", build["version"], build["source_sha"], build["platform"])
+		flag := w.run("--version")
+		if flag.code != 0 || flag.stdout != want || w.human.stdout != want || flag.stderr+w.human.stderr+w.machine.stderr != "" {
+			return fmt.Errorf("version forms disagree: human=%+v JSON=%+v flag=%+v", w.human, w.machine, flag)
+		}
+		return nil
+	})
 	ctx.Then(`^the report is one fenced block with a federation mode and the JSON form is one document$`,
 		w.doctorReportIsPasteable)
 	ctx.When(`^the operator previews the default cron train with a gated plugin ride$`, w.previewDefaultCronTrain)
@@ -56,6 +90,57 @@ func registerDistributionCLISteps(ctx *godog.ScenarioContext, w *distributionWor
 		w.declareOperatorVectorDelta)
 	ctx.Then(`^the nightly train reports 2 rides and names the operator declaration$`,
 		w.nightlyTrainReportsOperatorVectorDelta)
+}
+
+func (w *distributionWorld) healthMaxRowsIsNonNegative() error {
+	for _, args := range [][]string{{"health", "--max-rows", "-2"}, {"health", "--max-rows", "-2", "--json"}} {
+		run := w.run(args...)
+		if run.code <= 0 || run.stdout != "" || !strings.Contains(run.stderr, "--max-rows must be zero or greater") {
+			return fmt.Errorf("%q must refuse the negative sample size without running a check: %+v", args, run)
+		}
+	}
+	for _, args := range [][]string{{"health"}, {"health", "--max-rows", "0"}} {
+		if run := w.run(args...); run.code != 0 || !strings.HasPrefix(run.stdout, "health: ") {
+			return fmt.Errorf("%q must keep running the checks: %+v", args, run)
+		}
+	}
+	return nil
+}
+
+func (w *distributionWorld) sessionProjectFlagIsExplicit() error {
+	if err := w.prepare("session-project"); err != nil {
+		return err
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	project := filepath.Base(cwd)
+	for _, layer := range []string{"handoff", "pill"} {
+		run := w.run("store", "--layer", layer, "--project", project, "--content", "project flag fixture "+layer,
+			"--metadata", `{"pill_slug":"project-flag"}`, "--origin", "agent", "--agent", "codex", "--model", "gpt-6-astra")
+		if run.code != 0 {
+			return fmt.Errorf("store %s fixture: %+v", layer, run)
+		}
+	}
+	var failures []error
+	for _, command := range [][]string{{"handoff", "latest"}, {"pill"}} {
+		for _, value := range []string{"", "   "} {
+			args := append(append([]string{}, command...), "--project", value)
+			run := w.run(args...)
+			if run.code <= 0 || run.stdout != "" || !strings.Contains(run.stderr, "--project") || strings.Contains(run.stderr, "project flag fixture") {
+				failures = append(failures, fmt.Errorf("%q must reject the blank flag without records: %+v", args, run))
+			}
+		}
+		for _, flags := range [][]string{nil, {"--project", project}} {
+			args := append(append([]string{}, command...), flags...)
+			run := w.run(args...)
+			if run.code != 0 || !strings.Contains(run.stdout, "project: "+project) || !strings.Contains(run.stdout, "project flag fixture "+command[0]) {
+				failures = append(failures, fmt.Errorf("%q must return the working directory project: %+v", args, run))
+			}
+		}
+	}
+	return errors.Join(failures...)
 }
 
 func (w *distributionWorld) previewDefaultCronTrain() error {

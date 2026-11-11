@@ -3,10 +3,11 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"math"
 	"os"
 	"regexp"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -581,7 +582,7 @@ func tomlAssignment(line string) (string, int) {
 			}
 			var path []string
 			for current := document; len(current) == 1; {
-				key := sortedKeys(current)[0]
+				key := slices.Sorted(maps.Keys(current))[0]
 				path = append(path, key)
 				nested, dotted := current[key].(map[string]any)
 				if !dotted {
@@ -899,7 +900,7 @@ func readRemoteSources(section map[string]any, path string, warnings *[]string) 
 	if section == nil {
 		return nil
 	}
-	for _, key := range sortedKeys(section) {
+	for _, key := range slices.Sorted(maps.Keys(section)) {
 		if key != "remote" {
 			*warnings = append(*warnings, unknownKey("sources."+key, path))
 		}
@@ -913,7 +914,7 @@ func readRemoteSources(section map[string]any, path string, warnings *[]string) 
 	var remotes []RemoteSource
 	seen := map[string]bool{}
 	for _, entry := range entries {
-		for _, key := range sortedKeys(entry) {
+		for _, key := range slices.Sorted(maps.Keys(entry)) {
 			switch key {
 			case "machine", "root":
 			default:
@@ -961,7 +962,7 @@ func remoteSourceEntries(value any) []map[string]any {
 
 func readLayout(section map[string]any, path string, warnings *[]string) LayoutConfig {
 	layout := defaultLayout()
-	for _, key := range sortedKeys(section) {
+	for _, key := range slices.Sorted(maps.Keys(section)) {
 		if key != "serving" {
 			*warnings = append(*warnings, unknownKey("layout."+key, path))
 			continue
@@ -997,7 +998,7 @@ func CommandPlaceholders(command []string) []string {
 
 func readQuery(section map[string]any, path string, warnings *[]string) (QueryConfig, error) {
 	var query QueryConfig
-	for _, key := range sortedKeys(section) {
+	for _, key := range slices.Sorted(maps.Keys(section)) {
 		switch key {
 		case "timeout_ms":
 			// Only a value that really decoded as a number a bound can be
@@ -1116,7 +1117,7 @@ func readFeatures(section map[string]any, path string, warnings *[]string) Featu
 		"roca_ops":             &features.RocaOps,
 		"release_redirects":    &features.ReleaseRedirects,
 	}
-	for _, key := range sortedKeys(section) {
+	for _, key := range slices.Sorted(maps.Keys(section)) {
 		enabled, known := switches[key]
 		if !known {
 			*warnings = append(*warnings, unknownKey("features."+key, path))
@@ -1141,7 +1142,7 @@ func readModels(section map[string]any, path string, warnings *[]string) ModelsC
 		return models
 	}
 
-	for _, key := range sortedKeys(section) {
+	for _, key := range slices.Sorted(maps.Keys(section)) {
 		value := section[key]
 		if table, isTable := value.(map[string]any); isTable {
 			name := normalizeProviderName(key)
@@ -1174,7 +1175,7 @@ func readProvider(table map[string]any, name, path string, warnings *[]string) P
 	cfg := ProviderConfig{Values: make(map[string]string, len(table))}
 	cfg.Command = readStrings(table["command"])
 	cfg.Models = readStrings(table["models"])
-	for _, key := range sortedKeys(table) {
+	for _, key := range slices.Sorted(maps.Keys(table)) {
 		text, _ := table[key].(string)
 		if key != "command" && key != "models" && key != "api_key" &&
 			key != "api_key_env" && key != "preset" && key != "base_url" {
@@ -1367,13 +1368,4 @@ func readFloat(value any) (float64, bool) {
 		return typed, true
 	}
 	return 0, false
-}
-
-func sortedKeys(table map[string]any) []string {
-	keys := make([]string, 0, len(table))
-	for key := range table {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
 }

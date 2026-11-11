@@ -4,8 +4,32 @@
 Feature: Hybrid search finds the vector companion where roca vector does
   `roca query` looks for `roca-vector` in the managed install directory before
   PATH, like `roca vector` does, so a shell that never had ~/.local/bin on its
-  PATH still gets the vector leg. The stub companion answers one fixed hit; no
-  scenario here loads the embedding model.
+  PATH still gets the vector leg. Discovery scenarios use a stub companion;
+  enabling vector after init uses the real companion with a local model fixture.
+
+  Scenario: Vector can be enabled after init without an existing managed state directory
+    Given a home initialized with an agent session that mentions "harbor lantern"
+    And the real vector companion uses a local model download fixture
+    And vector is switched on under features
+    When I run 'roca vector query "what did we decide" 5'
+    Then the command exits with code 0
+    And the output does not contain "rerun the command"
+    When I run 'roca vector query "what did we decide" 5'
+    Then the command exits with code 0
+    And the output does not contain "rerun the command"
+    When I run 'roca vector install'
+    Then the command exits with code 0
+    And the output does not contain "rerun the command"
+    And the managed vector state directory exists after the local model download
+
+  Scenario: A vector sidecar whose dimensions cannot be read fails the ingest and names the cause
+    Given a home initialized with an agent session that mentions "harbor lantern"
+    And the real vector companion uses a local model download fixture
+    And vector is switched on under features
+    And the corpus vector sidecar records a dimensions value that is not a number
+    When I run 'roca vector ingest --delta'
+    Then the command exits with a code other than 0
+    And the output contains "is not a number"
 
   Scenario: Hybrid search uses the companion in ~/.local/bin when PATH does not hold it
     Given a home initialized with an agent session that mentions "harbor lantern"

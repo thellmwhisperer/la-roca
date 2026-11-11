@@ -11,9 +11,10 @@ package skill
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 
 	_ "embed"
@@ -179,12 +180,7 @@ func ContentForPath(path string) (string, string) {
 // Runtimes are the supported skill seats, sorted. Six of them are also MCP
 // runtimes agentcfg knows; grok, qwen, and cursor are skill seats only.
 func Runtimes() []string {
-	names := make([]string, 0, len(rootOf))
-	for name := range rootOf {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
+	return slices.Sorted(maps.Keys(rootOf))
 }
 
 // Path resolves where one runtime keeps the definitive roca skill under home.

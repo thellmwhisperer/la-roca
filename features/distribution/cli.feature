@@ -5,9 +5,26 @@ Feature: Distribution command line
   Background:
     Given an isolated La Roca distribution
 
+  Scenario: Session commands reject an explicitly empty project
+    Then handoff latest and pill reject blank project flags and default only when the flag is omitted
+
+  Scenario: Health refuses a negative sample size without running any check
+    Then health refuses a negative --max-rows naming the flag and keeps 0 and omitted working
+
   Scenario: Help lists every command with one honest line each
     When the operator asks for command-line help
     Then every public command appears once with an honest one-line summary
+
+  Scenario Outline: Command help prints one flag list
+    When the operator asks for "<command>" command help
+    Then command help exits successfully with no bare usage and exactly one flag list
+
+    Examples:
+      | command |
+      | exec    |
+      | query   |
+      | store   |
+      | health  |
 
   Scenario Outline: Every command speaks human by default and JSON only when asked
     When the operator exercises the "<command>" command in human and JSON form
@@ -41,6 +58,9 @@ Feature: Distribution command line
   Scenario: Non-interactive init leaves answering to the optional plugin
     When the operator initializes non-interactively with a detected model CLI
     Then init prints no answering notice and writes only the new-install features
+
+  Scenario: Version forms still report the same build
+    Then version, version --json and --version still report the same build
 
   Scenario: Doctor report is a privacy-safe pasteable snapshot
     When the operator asks for a doctor support report

@@ -10,7 +10,11 @@ import (
 	"strconv"
 	"syscall"
 	"time"
+
+	"github.com/thellmwhisperer/la-roca/pkg/processidentity"
 )
+
+var processStartIdentity = processidentity.Start
 
 func processAlive(pid int) bool {
 	err := syscall.Kill(pid, 0)

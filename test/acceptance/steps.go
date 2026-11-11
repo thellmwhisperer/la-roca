@@ -249,6 +249,7 @@ func registerSteps(ctx *godog.ScenarioContext, binary string) {
 	registerMCPSteps(ctx, m)
 	registerResidentSteps(ctx, m)
 	registerMemoryOwnershipSteps(ctx, m)
+	registerExecLikeSteps(ctx, m)
 }
 
 // registerModelSteps are the ones about the providers. They live apart because
@@ -897,6 +898,7 @@ func split(line string) ([]string, error) {
 	var parts []string
 	var current strings.Builder
 	var quote rune
+	var quoted bool
 	for _, r := range line {
 		switch {
 		case quote != 0:
@@ -907,10 +909,12 @@ func split(line string) ([]string, error) {
 			current.WriteRune(r)
 		case r == '\'' || r == '"':
 			quote = r
+			quoted = true
 		case r == ' ':
-			if current.Len() > 0 {
+			if current.Len() > 0 || quoted {
 				parts = append(parts, current.String())
 				current.Reset()
+				quoted = false
 			}
 		default:
 			current.WriteRune(r)
@@ -919,7 +923,7 @@ func split(line string) ([]string, error) {
 	if quote != 0 {
 		return nil, fmt.Errorf("unclosed quote in %q", line)
 	}
-	if current.Len() > 0 {
+	if current.Len() > 0 || quoted {
 		parts = append(parts, current.String())
 	}
 	if len(parts) == 0 {

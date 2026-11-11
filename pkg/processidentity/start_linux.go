@@ -1,6 +1,9 @@
 //go:build linux
 
-package rocavector
+// Package processidentity owns the process start identity that the core vector
+// guard and the vector plugin both compare to tell a live owner from a reused
+// pid. Guards persist the string, so its format must not change on any OS.
+package processidentity
 
 import (
 	"bytes"
@@ -10,7 +13,7 @@ import (
 	"strings"
 )
 
-func processStartIdentity(pid int) (string, error) {
+func Start(pid int) (string, error) {
 	stat, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
 	if err != nil {
 		return "", err

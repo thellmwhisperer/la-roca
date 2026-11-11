@@ -13,9 +13,16 @@ each hit. Without a vector index the same command runs full-text alone.
 `--top N` (default 10) controls the fused result count. `--oversample` and
 `--no-templates` try those retrieval knobs before they land in
 [`config.toml` `[query]`](models.md#the-configuration); the remaining knobs are
-configured there. `--require-both` keeps only dual-confirmed hits, and
+configured there. `--since YYYY-MM-DD` keeps retrieved hits dated on or after
+that UTC day (session rows use their session start; undated hits are dropped),
+and `--project <name>` keeps hits belonging to that exact project (session rows
+use their session's project; hits without a project are dropped). Both filter
+after retrieval and fusion, so ranking is unchanged and fewer than `--top` hits
+can remain. `--require-both` keeps only dual-confirmed hits, and
 `--databases` narrows the default (every attached plugin database, including
-ops). Vector coverage follows the
+ops). An empty `--project` or an empty or blank `--databases` is refused
+before searching instead of widening to the default; omit the flag for that.
+Vector coverage follows the
 [sidecar selection rules](vector.md#first-query). `--json` returns the complete
 machine envelope; see [Memory identifiers for clients](#memory-identifiers-for-clients)
 for its identifier encoding.
@@ -30,12 +37,17 @@ reading of the rows. CLI `roca exec` and MCP `roca_exec` run your own `SELECT`
 through the same read-only gate and use the configured
 [`query.timeout_ms`](models.md#the-configuration). On the CLI, `--timeout-ms N`
 overrides that statement budget for one invocation; `0` uses the default
-five-second bound. The bound always applies on CLI and MCP exec: it cannot be
+five-second bound, and a negative value is refused before the statement runs.
+The bound always applies on CLI and MCP exec: it cannot be
 switched off. The bound cancels the SQLite statement itself, including scans
 that continue after the first row, so a bad query cannot hold the database past
-the limit. Vector indexing's statement-budget exceptions are owned by [Local vector
-search](vector.md#index-declared-databases); query-time source lookups keep the
-interactive budget.
+the limit. If a statement times out without an explicit `--timeout-ms`, a
+leading-wildcard `LIKE '%term%'` on a column that has an FTS twin adds a hint
+to the timeout error. Fast scans complete normally. The hint prints a
+ready-to-paste `roca exec "..."` line that uses `MATCH` instead (token search,
+not substring matching). Vector indexing's statement-budget exceptions are
+owned by [Local vector search](vector.md#index-declared-databases); query-time
+source lookups keep the interactive budget.
 
 For investigations, `roca explore "<term>"` uses the same checked query and
 second-inference seat but gives the interpreter an investigation mission. Every
@@ -68,7 +80,8 @@ uses the deterministic hybrid path described above.
 
 `--max-chars N` sets the character budget per returned text field for `roca exec`,
 `roca playground`, and `roca explore`, and per snippet for `roca query`. The
-default is 500; zero or a negative value also selects that default. The same
+default is 500; zero also selects that default. `roca exec` and `roca query`
+refuse a negative value before running; elsewhere it selects the default. The same
 budget applies to CLI TOON output, CLI `--json`, and MCP's `max_chars` argument.
 TOON does not impose a smaller preview limit; selecting JSON does not expand
 the text.
@@ -193,15 +206,22 @@ terms[3]: stale, lock, error
 rows[2]{rank,source,legs,consensus,vector_score,vector_rank,fts_rank,snippet}:
   1,corpus.exchanges.912,vector+fts,true,0.61,2,1,"fixed: stale .lock left by a killed run; remove it and rerun"
   2,corpus.memories.207,vector+fts,true,0.57,4,2,"Pattern: a killed ingest can leave its lock file behind"
-help[3]:
+help[4]:
   - "Run `roca vector query \"have I fixed a stale lock error before\" 20 --databases core,corpus,ops` for the fast semantic leg alone (this command adds the full-text leg and fusion)"
   - "Run `roca query \"have I fixed a stale lock error before\" --json` for the complete result envelope"
   - "Run `roca query \"have I fixed a stale lock error before\" --require-both` to keep only dual-confirmed hits"
+  - "Run `roca exec \"SELECT exchange_number, human_text, agent_text FROM plugin_roca_corpus.exchanges WHERE session_id = (SELECT session_id FROM plugin_roca_corpus.exchanges WHERE id = '912') ORDER BY exchange_number\" --max-chars 2000` to read the whole session of hit 1"
 ```
+
+The first `corpus.exchanges` hit adds one help line with a ready `roca exec`
+statement that reads that hit's whole session in exchange order; later
+exchange hits add no further session lines.
 
 The FTS leg measures each token against the selected live indexes, removes
 zero-frequency and broadly common terms, and keeps a small rare-term set for
-BM25 ranking. The vector leg embeds the raw question, gathers the fused top
+BM25 ranking. On memory-shaped tables it answers only current rows: a row
+another row supersedes, a `resolved` row, or a row whose `expires_at` has
+passed does not come back. The vector leg embeds the raw question, gathers the fused top
 neighbors, applies a similarity floor, and deduplicates chunks by stable
 source. RRF then combines ranks without normalizing either leg's native scores.
 If the vector leg times out, the envelope names `degraded: vector_timeout`
@@ -274,7 +294,9 @@ then hybrid query. `--json` returns the same two lab and pill sections as an
 object.
 
 The session-context reads (`roca pill`, `roca pill show`, and `roca handoff
-latest`) default `--project` to the basename of the working directory;
+latest`) default `--project` to the basename of the working directory only
+when the flag is omitted; `roca pill` and `roca handoff latest` reject an empty
+or whitespace-only `--project` instead of falling back to it.
 `handoff latest --all-projects` instead reads across projects. They
 always read the existing `roca-ops` database; if
 `features.roca_ops` is disabled or that database is missing, they refuse rather

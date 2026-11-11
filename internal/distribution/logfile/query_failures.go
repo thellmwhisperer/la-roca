@@ -2,6 +2,7 @@ package logfile
 
 import (
 	"bufio"
+	"cmp"
 	"encoding/json"
 	"errors"
 	"os"
@@ -139,22 +140,13 @@ func (r queryFailureRecord) queryFailure(since time.Time) (QueryFailure, bool) {
 	if !queryCall || !failed || r.Timestamp.Before(since) {
 		return QueryFailure{}, false
 	}
-	errorText := firstNonEmpty(r.Error, r.Result.ProviderError, r.Result.Message,
+	errorText := cmp.Or(r.Error, r.Result.ProviderError, r.Result.Message,
 		r.Fallback, r.Degraded, r.Result.Degraded, "query failed")
-	errorType := firstNonEmpty(r.ErrorType, r.Fallback, r.Degraded,
+	errorType := cmp.Or(r.ErrorType, r.Fallback, r.Degraded,
 		r.Result.Degraded, "query_error")
 	return QueryFailure{
 		Timestamp: r.Timestamp, Source: source, Operation: operation,
-		Question: firstNonEmpty(r.Question, r.Result.Question), Error: errorText,
+		Question: cmp.Or(r.Question, r.Result.Question), Error: errorText,
 		ErrorType: errorType, CorrelationID: r.CorrelationID,
 	}, true
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-	return ""
 }

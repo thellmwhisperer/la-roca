@@ -4,7 +4,6 @@ package acceptance
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"strconv"
 	"testing"
@@ -117,12 +116,4 @@ func number(document map[string]any, path string) float64 {
 	value, _ := lookup(document, path)
 	found, _ := value.(float64)
 	return found
-}
-
-func text(document map[string]any, path string) string {
-	value, found := lookup(document, path)
-	if !found {
-		return ""
-	}
-	return fmt.Sprint(value)
 }

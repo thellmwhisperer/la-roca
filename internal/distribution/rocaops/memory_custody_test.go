@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/thellmwhisperer/la-roca/test/testfixture"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/migrationledger"
+	"github.com/thellmwhisperer/la-roca/internal/store/payloadhash"
 	_ "modernc.org/sqlite"
 )
 
@@ -46,7 +48,7 @@ func TestDATA2MovesEveryMemoryIdentityIntoVerifiedOpsShadowCustody(t *testing.T)
 		t.Fatalf("DATA-2 report = %+v", report)
 	}
 
-	db := openCustodyDB(t, fixture.ops)
+	db := testfixture.OpenSQLite(t, fixture.ops)
 	defer db.Close()
 	assertCustodyCount(t, db, "SELECT COUNT(*) FROM memories", 25)
 	assertCustodyCount(t, db, `SELECT COUNT(*) FROM memory_compatibility AS legacy
@@ -96,12 +98,12 @@ func TestDATA2MovesEveryMemoryIdentityIntoVerifiedOpsShadowCustody(t *testing.T)
 		WHERE content = 'unique-core-1035'`, 2)
 	assertCustodyCount(t, db, `SELECT COUNT(*) FROM memory_compatibility
 		WHERE source_database = 'core' AND supersedes = 11458`, 1)
-	coreSource := openCustodyDB(t, fixture.core)
+	coreSource := testfixture.OpenSQLite(t, fixture.core)
 	assertCustodyCount(t, coreSource, "SELECT COUNT(*) FROM memories", 2114)
 	if err := coreSource.Close(); err != nil {
 		t.Fatal(err)
 	}
-	corpusSource := openCustodyDB(t, fixture.corpus)
+	corpusSource := testfixture.OpenSQLite(t, fixture.corpus)
 	assertCustodyCount(t, corpusSource, "SELECT COUNT(*) FROM memories", 481)
 	if err := corpusSource.Close(); err != nil {
 		t.Fatal(err)
@@ -122,7 +124,7 @@ func TestDATA2MovesEveryMemoryIdentityIntoVerifiedOpsShadowCustody(t *testing.T)
 func TestDATA2ResumesAfterACommittedBatchWithoutHalfRows(t *testing.T) {
 	run := newInterruptedCustodyRun(t)
 	fixture, options := run.fixture, run.options
-	db := openCustodyDB(t, fixture.ops)
+	db := testfixture.OpenSQLite(t, fixture.ops)
 	assertCustodyCount(t, db, "SELECT COUNT(*) FROM migration_batches", 2)
 	assertCustodyCount(t, db, "SELECT COUNT(*) FROM custody_memberships", 3)
 	assertCustodyCount(t, db, "SELECT COUNT(*) FROM memory_records", 3)
@@ -161,7 +163,7 @@ func TestDATA2ResumesAfterACommittedBatchWithoutHalfRows(t *testing.T) {
 		}
 	}
 
-	resumed := openCustodyDB(t, fixture.ops)
+	resumed := testfixture.OpenSQLite(t, fixture.ops)
 	defer resumed.Close()
 	probes := []struct {
 		name, query string
@@ -184,7 +186,7 @@ func TestDATA2ImportsAfterBatchSpillsInDeleteJournalMode(t *testing.T) {
 	insertFixtureMemories(t, fixture.core, false, nil)
 	insertFixtureMemories(t, fixture.corpus, true, nil)
 	insertOpsMemories(t, fixture.ops, 0)
-	db := openCustodyDB(t, fixture.ops)
+	db := testfixture.OpenSQLite(t, fixture.ops)
 	defer db.Close()
 	var journalMode string
 	if err := db.QueryRow("PRAGMA journal_mode").Scan(&journalMode); err != nil {
@@ -237,7 +239,7 @@ func TestDATA2VerifiesAVirginHomeWithNothingToCarry(t *testing.T) {
 		t.Fatalf("virgin home rerun = %+v", again)
 	}
 
-	core := openCustodyDB(t, fixture.core)
+	core := testfixture.OpenSQLite(t, fixture.core)
 	if _, err := core.Exec(`INSERT INTO memories
 		(id, layer, content, metadata, origin, status, created_at)
 		VALUES (7, 'project', 'written long after the empty verification', '{}', 'agent', 'active', '2026-08-05')`); err != nil {
@@ -274,7 +276,7 @@ func TestDATA2VerifiesEmptyMemoriesBesideAnUnrelatedPluginBatch(t *testing.T) {
 		t.Fatalf("empty memories beside an unrelated batch = %+v", report)
 	}
 
-	core := openCustodyDB(t, fixture.core)
+	core := testfixture.OpenSQLite(t, fixture.core)
 	if _, err := core.Exec(`INSERT INTO memories
 		(id, layer, content, metadata, origin, status, created_at)
 		VALUES (3, 'project', 'written after the unrelated batch', '{}', 'agent', 'active', '2026-08-06')`); err != nil {
@@ -307,7 +309,7 @@ func carryCustody(t *testing.T, fixture custodyFixture) MemoryCustodyReport {
 // migration in the same ops database, carrying rows into its own destination.
 func commitUnrelatedBatch(t *testing.T, path string) {
 	t.Helper()
-	db := openCustodyDB(t, path)
+	db := testfixture.OpenSQLite(t, path)
 	if err := migrationledger.PrepareMigration(t.Context(), db, migrationledger.Migration{
 		Name: "data5-call-history", DestinationTable: "legacy_records",
 	}); err != nil {
@@ -379,7 +381,7 @@ func TestDATA2KeepsTheVerifiedSnapshotWhenAReplacementFails(t *testing.T) {
 // ingest would: one committed row is rewritten, one is dropped, one is appended.
 func driftCore(t *testing.T, path string) {
 	t.Helper()
-	core := openCustodyDB(t, path)
+	core := testfixture.OpenSQLite(t, path)
 	statements := []string{
 		`UPDATE memories SET content = 'core alpha rewritten' WHERE id = 10`,
 		`DELETE FROM memories WHERE id = 11`,
@@ -487,7 +489,7 @@ func newCustodyFixture(t *testing.T) custodyFixture {
 
 func insertFixtureMemories(t *testing.T, path string, corpus bool, memories []fixtureMemory) {
 	t.Helper()
-	db := openCustodyDB(t, path)
+	db := testfixture.OpenSQLite(t, path)
 	provenance := ""
 	if corpus {
 		provenance = `, provenance TEXT NOT NULL DEFAULT 'harvest-file'`
@@ -524,7 +526,7 @@ func insertOpsMemories(t *testing.T, path string, count int) {
 	if err := ApplySchema(path); err != nil {
 		t.Fatal(err)
 	}
-	db := openCustodyDB(t, path)
+	db := testfixture.OpenSQLite(t, path)
 	for index := range count {
 		if _, err := db.Exec(`INSERT INTO memories (layer, content, metadata, origin, status, created_at)
 			VALUES ('handoff', ?, '{}', 'agent', 'active', '2026-08-04 00:00:00')`,
@@ -535,15 +537,6 @@ func insertOpsMemories(t *testing.T, path string, count int) {
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
-}
-
-func openCustodyDB(t *testing.T, path string) *sql.DB {
-	t.Helper()
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return db
 }
 
 func assertCustodyCount(t *testing.T, db *sql.DB, query string, want int) {
@@ -661,7 +654,7 @@ func TestDATA2CustodyQueriesSeekTheDestinationIndex(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	db := openCustodyDB(t, fixture.ops)
+	db := testfixture.OpenSQLite(t, fixture.ops)
 	defer db.Close()
 	var digest string
 	if err := db.QueryRow(`SELECT canonical_digest FROM memory_records LIMIT 1`).Scan(&digest); err != nil {
@@ -774,4 +767,55 @@ func TestDATA2VerifiedCustodyRejectsMissingSnapshot(t *testing.T) {
 			}
 		})
 	}
+}
+
+// opsExactPayloadGuard is the unique index internal/store/exactdedup builds:
+// a payload hash over every column but the identity, digest and timestamp.
+var opsExactPayloadGuard = func() string {
+	var parts []string
+	for _, name := range strings.Fields(`provenance layer content metadata origin source_agent
+		source_model source_surface source_session source_sequence project status supersedes expires_at`) {
+		parts = append(parts, "typeof("+name+")",
+			"CASE WHEN typeof("+name+") = 'text' THEN CAST("+name+" AS BLOB) ELSE "+name+" END")
+	}
+	return "CREATE UNIQUE INDEX idx_memory_records_exact_payload ON memory_records(" +
+		payloadhash.SQLFunc + "(" + strings.Join(parts, ",") + "))"
+}()
+
+func TestDATA2ResumeAliasesAMemoryTheExactPayloadGuardRefuses(t *testing.T) {
+	fixture := newCustodyFixture(t)
+	insertFixtureMemories(t, fixture.core, false, []fixtureMemory{{id: 1, layer: "project",
+		content: "core alpha", metadata: `{}`, origin: "agent", status: "active", createdAt: "2026-08-01"}})
+	insertFixtureMemories(t, fixture.corpus, true, nil)
+	insertOpsMemories(t, fixture.ops, 1)
+	carryCustody(t, fixture)
+	db := testfixture.OpenSQLite(t, fixture.ops)
+	defer db.Close()
+	// A plugin update reopens the verified migration; the new generation has no
+	// snapshot yet, and ops kept writing a memory whose digest differs only by
+	// created_at, which the guard does not cover.
+	for _, statement := range []string{opsExactPayloadGuard,
+		`INSERT INTO memories (layer, content, metadata, origin, status, created_at)
+			VALUES ('handoff', 'existing ops 0', '{}', 'agent', 'active', '2026-09-01 00:00:00')`,
+		`UPDATE plugin_migrations SET migration_state = 'prepared' WHERE migration = 'data2-memory-custody'`,
+	} {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.RemoveAll(fixture.snapshots); err != nil {
+		t.Fatal(err)
+	}
+	physical := 0
+	if err := db.QueryRow("SELECT COUNT(*) FROM memory_records").Scan(&physical); err != nil {
+		t.Fatal(err)
+	}
+
+	report := carryCustody(t, fixture)
+	if report.State != migrationledger.StateVerified || report.PhysicalRecords != physical {
+		t.Fatalf("resumed report = %+v, want verified over %d physical records", report, physical)
+	}
+	assertCustodyCount(t, db, `SELECT COUNT(DISTINCT destination_key) FROM custody_memberships
+		WHERE migration = 'data2-memory-custody' AND source_database = 'plugin:roca-ops'
+		AND source_key IN ('1', '2')`, 1)
 }

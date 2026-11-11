@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/axi"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
@@ -37,6 +38,7 @@ import (
 func versionCommand(env *cliEnv) *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
+		Args:  cobra.NoArgs,
 		Short: "Version, source SHA and platform",
 		RunE: func(*cobra.Command, []string) error {
 			return env.report(map[string]any{
@@ -61,6 +63,7 @@ func versionLine(build Build) string {
 func initCommand(env *cliEnv) *cobra.Command {
 	return &cobra.Command{
 		Use:   "init",
+		Args:  cobra.NoArgs,
 		Short: "Choose a database, ingest history, and prepare word search",
 		Long: "Creates and bootstraps the database. With no home database, init asks new or adopt;\n" +
 			"adopt then asks for the source path and copies it, leaving the original untouched.\n" +
@@ -590,6 +593,7 @@ func schemaCommand(env *cliEnv) *cobra.Command {
 	}
 	schema.AddCommand(&cobra.Command{
 		Use:   "status",
+		Args:  cobra.NoArgs,
 		Short: "Classify the database by structure without touching it",
 		RunE: env.serviceRunE(func(cmd *cobra.Command, _ []string, svc *service.Service) error {
 			report, err := svc.SchemaStatus(cmd.Context())
@@ -617,6 +621,7 @@ func schemaCommand(env *cliEnv) *cobra.Command {
 func indexCommand(env *cliEnv) *cobra.Command {
 	return &cobra.Command{
 		Use:   "index",
+		Args:  cobra.NoArgs,
 		Short: "Build or refresh the search index",
 		Long: "Builds the full-text index.\n" +
 			"It is incremental: on an already indexed database it costs nothing, and\n" +
@@ -641,6 +646,7 @@ func indexCommand(env *cliEnv) *cobra.Command {
 
 func queryCommand(env *cliEnv) *cobra.Command {
 	var req service.SearchRequest
+	var since string
 	var databases string
 	var oversample int
 	var noTemplates bool
@@ -654,6 +660,16 @@ func queryCommand(env *cliEnv) *cobra.Command {
 			"override the built-in defaults.",
 		Args: cobra.MinimumNArgs(1),
 		PreRunE: func(cmd *cobra.Command, _ []string) error {
+			if err := validateFlags(cmd.Flags(), "max-chars", "top", "databases", "project"); err != nil {
+				return err
+			}
+			if cmd.Flags().Changed("since") {
+				date, err := time.Parse(time.DateOnly, since)
+				if err != nil {
+					return fmt.Errorf("--since must be a date in YYYY-MM-DD format")
+				}
+				req.Since = date
+			}
 			settings := search.DefaultSettings().Apply(queryFlagOverlay(cmd, oversample, noTemplates))
 			if err := settings.Validate(); err != nil {
 				return fmt.Errorf("invalid query flag: %w", err)
@@ -681,6 +697,8 @@ func queryCommand(env *cliEnv) *cobra.Command {
 		}),
 	}
 	cmd.Flags().IntVar(&req.Top, "top", search.DefaultTop, "number of fused hits to return")
+	cmd.Flags().StringVar(&req.Project, "project", "", "keep retrieved hits belonging to this exact project; hits without a project are excluded")
+	cmd.Flags().StringVar(&since, "since", "", "keep retrieved hits dated on or after YYYY-MM-DD (UTC); session rows use their session start, undated hits are excluded")
 	cmd.Flags().IntVar(&oversample, "oversample", search.HybridOversample,
 		"candidates each retrieval leg gathers before fusion")
 	cmd.Flags().BoolVar(&noTemplates, "no-templates", false,
@@ -827,6 +845,9 @@ func execCommand(env *cliEnv) *cobra.Command {
 		Long: "Natural companion of `playground --sql-only`: runs the SQL that command\n" +
 			"printed, under the same gate. What does not pass the gate does not touch the database.",
 		Args: cobra.MinimumNArgs(1),
+		PreRunE: func(cmd *cobra.Command, _ []string) error {
+			return validateFlags(cmd.Flags(), "max-chars", "timeout-ms")
+		},
 		RunE: env.serviceRunE(func(cmd *cobra.Command, args []string, svc *service.Service) error {
 			req.SQL = strings.Join(args, " ")
 			if timeoutMS >= 0 {
@@ -1109,7 +1130,9 @@ func shellCommand(args []string) string {
 func remoteCommand(env *cliEnv) *cobra.Command {
 	command := &cobra.Command{
 		Use:   "remote",
+		Args:  cobra.NoArgs,
 		Short: "Run read-only queries across SSH-connected Roca installations",
+		RunE:  func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 	}
 	command.AddCommand(remoteAddCommand(env), remoteListCommand(env), remoteExecCommand(env),
 		remoteVectorCommand(env), remoteCrossCommand(env))
@@ -1232,7 +1255,7 @@ func remoteExecCommand(env *cliEnv) *cobra.Command {
 }
 
 func remoteVectorCommand(env *cliEnv) *cobra.Command {
-	command := &cobra.Command{Use: "vector", Short: "Query a remote vector index"}
+	command := &cobra.Command{Use: "vector", Args: cobra.NoArgs, Short: "Query a remote vector index", RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
 	command.AddCommand(&cobra.Command{
 		Use:   "query <name> <phrase> [k]",
 		Short: "Search one remote vector index",
@@ -2106,4 +2129,29 @@ func integerValue(value any) (int64, bool) {
 		return int64(typed), true
 	}
 	return 0, false
+}
+
+// validateFlags checks explicitly supplied bounds and text, leaving defaults alone.
+func validateFlags(flags *pflag.FlagSet, names ...string) error {
+	for _, name := range names {
+		flag := flags.Lookup(name)
+		if !flag.Changed {
+			continue
+		}
+		switch flag.Value.Type() {
+		case "int":
+			value, _ := flags.GetInt(name)
+			if value < 0 {
+				return fmt.Errorf("--%s must be zero or greater", name)
+			}
+		case "string":
+			if strings.TrimSpace(flag.Value.String()) == "" {
+				if name == "databases" {
+					return fmt.Errorf("empty database name in --%s", name)
+				}
+				return fmt.Errorf("--%s must not be empty or whitespace", name)
+			}
+		}
+	}
+	return nil
 }

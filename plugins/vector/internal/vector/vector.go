@@ -7,6 +7,7 @@ import (
 	"database/sql/driver"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net/url"
@@ -1040,11 +1041,20 @@ func tableColumns(db *sql.DB, table string) (map[string]bool, error) {
 }
 
 func readIndexMeta(db *sql.DB) (string, int, error) {
-	var model string
-	_ = db.QueryRow(`SELECT value FROM meta WHERE key='model'`).Scan(&model)
-	var dimensionText string
-	_ = db.QueryRow(`SELECT value FROM meta WHERE key='dimensions'`).Scan(&dimensionText)
-	dimensions, _ := strconv.Atoi(dimensionText)
+	var model, dimensionText string
+	if err := db.QueryRow(`SELECT value FROM meta WHERE key='model'`).Scan(&model); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return "", 0, fmt.Errorf("read index model: %w", err)
+	}
+	if err := db.QueryRow(`SELECT value FROM meta WHERE key='dimensions'`).Scan(&dimensionText); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return "", 0, fmt.Errorf("read index dimensions: %w", err)
+	}
+	if dimensionText == "" {
+		return model, 0, nil
+	}
+	dimensions, err := strconv.Atoi(dimensionText)
+	if err != nil {
+		return "", 0, fmt.Errorf("index dimensions %q is not a number: %w", dimensionText, err)
+	}
 	return model, dimensions, nil
 }
 

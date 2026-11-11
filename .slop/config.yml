@@ -2,9 +2,10 @@
 #
 # Two duplication scopes, measured independently so production code cannot
 # hide inside the test scope. Both sweep from the repository root because the
-# product's code lives in three roots (`cmd/`, `internal/`, `test/`) and a clone
-# copied from a command into a package is exactly the kind the gate exists to
-# catch: scoping per directory would make it invisible.
+# product's code lives in several roots (`cmd/`, `internal/`, `pkg/`, `plugins/`,
+# and for tests also `scripts/` and `test/`) and a clone copied from a command
+# into a package, or from the core into a plugin, is exactly the kind the gate
+# exists to catch: scoping per directory would make it invisible.
 #
 # `features/` is the frozen Gherkin contract and is not duplication input;
 # `bin/`, `dist/` and `.tmp/` are build output and gate caches. Embedded data
@@ -40,7 +41,7 @@ scopes:
   # Everything the shipped binary is made of.
   go_production:
     scan_path: .
-    pattern: "{cmd,internal}/**/*.go"
+    pattern: "{cmd,internal,pkg,plugins}/**/*.go"
     ignore:
       - "**/*_test.go"
 
@@ -49,7 +50,7 @@ scopes:
   # subsidises the production one.
   go_tests:
     scan_path: .
-    pattern: "{cmd/**/*_test.go,internal/**/*_test.go,test/**/*.go}"
+    pattern: "{cmd/**/*_test.go,internal/**/*_test.go,pkg/**/*_test.go,plugins/**/*_test.go,scripts/**/*_test.go,test/**/*.go}"
 
 # Orphan scopes are repository surfaces, not language scans. A new public
 # surface starts as active debt until something outside itself consumes it;
@@ -81,9 +82,6 @@ orphan_scopes:
       - "internal/distribution/cli/render.go"
       - "internal/distribution/cli/spinner.go"
       - "internal/distribution/cli/style.go"
-      - "internal/distribution/cli/openfiles_darwin.go"
-      - "internal/distribution/cli/openfiles_linux.go"
-      - "internal/distribution/cli/openfiles_other.go"
       # Internal resident dispatch helpers; cli.go owns the public seam.
       - "internal/distribution/cli/resident.go"
       - "internal/distribution/cli/vector_query_resident.go"
@@ -105,9 +103,6 @@ claims:
         - "internal/distribution/cli/render.go"
         - "internal/distribution/cli/spinner.go"
         - "internal/distribution/cli/style.go"
-        - "internal/distribution/cli/openfiles_darwin.go"
-        - "internal/distribution/cli/openfiles_linux.go"
-        - "internal/distribution/cli/openfiles_other.go"
         # Internal resident dispatch helpers; cli.go owns the public seam.
         - "internal/distribution/cli/resident.go"
         - "internal/distribution/cli/vector_query_resident.go"

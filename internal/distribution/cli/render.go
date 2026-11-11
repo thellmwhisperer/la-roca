@@ -2,9 +2,7 @@ package cli
 
 import (
 	"io"
-	"strings"
 
-	"github.com/charmbracelet/glamour"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/axi"
 	"golang.org/x/term"
 )
@@ -14,14 +12,7 @@ import (
 // itself has one owner.
 const fieldWidth = axi.FieldWidth
 
-const (
-	minimumTerminalWidth  = 40
-	fallbackTerminalWidth = 80
-)
-
-func terminalWidth(w io.Writer) int {
-	return saneTerminalWidth(detectedTerminalWidth(w))
-}
+const fallbackTerminalWidth = 80
 
 func detectedTerminalWidth(w io.Writer) int {
 	type descriptor interface{ Fd() uintptr }
@@ -34,38 +25,6 @@ func detectedTerminalWidth(w io.Writer) int {
 		return fallbackTerminalWidth
 	}
 	return width
-}
-
-func saneTerminalWidth(width int) int {
-	if width < minimumTerminalWidth {
-		return minimumTerminalWidth
-	}
-	return width
-}
-
-// formatInterpretation keeps pipes byte-for-byte plain and lets Glamour own
-// interactive Markdown. The renderer receives the detected terminal width, so
-// it wraps at word boundaries instead of applying a fixed paper width.
-func formatInterpretation(markdown string, tty bool, width int, colour bool) string {
-	if !tty || markdown == "" {
-		return markdown
-	}
-	style := "ascii"
-	if colour {
-		style = "dark"
-	}
-	renderer, err := glamour.NewTermRenderer(
-		glamour.WithStandardStyle(style),
-		glamour.WithWordWrap(saneTerminalWidth(width)),
-	)
-	if err != nil {
-		return markdown
-	}
-	rendered, err := renderer.Render(markdown)
-	if err != nil {
-		return markdown
-	}
-	return strings.Trim(rendered, "\n")
 }
 
 // rowOutput forwards to the shared renderer. The shell's listings build rows of

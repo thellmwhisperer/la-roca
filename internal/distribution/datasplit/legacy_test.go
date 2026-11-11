@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"github.com/thellmwhisperer/la-roca/test/testfixture"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -21,7 +22,7 @@ func TestLegacyOrphansResumeIntoExplicitQuarantineWithoutChangingJourneys(t *tes
 	if err := rocacron.ApplySchema(options.CronDatabase); err != nil {
 		t.Fatal(err)
 	}
-	cron := openDatabase(t, options.CronDatabase)
+	cron := testfixture.OpenSQLite(t, options.CronDatabase)
 	if _, err := cron.Exec(`INSERT INTO journeys
 		(train, ride, plugin, started_at, ended_at, duration_ms, exit_code, error, gate_status)
 		VALUES ('nightly', 'current-fixture', 'synthetic', 'start', 'end', 7, 0, '', 'ready')`); err != nil {
@@ -46,7 +47,7 @@ func TestLegacyOrphansResumeIntoExplicitQuarantineWithoutChangingJourneys(t *tes
 	}); err != nil || ready {
 		t.Fatalf("interrupted DATA-4 readiness = %t, err=%v", ready, err)
 	}
-	cron = openDatabase(t, options.CronDatabase)
+	cron = testfixture.OpenSQLite(t, options.CronDatabase)
 	assertCount(t, cron, "migration_batches", 1)
 	assertCount(t, cron, "legacy_runs", 2)
 	if err := cron.Close(); err != nil {
@@ -77,7 +78,7 @@ func TestLegacyOrphansResumeIntoExplicitQuarantineWithoutChangingJourneys(t *tes
 		t.Fatalf("idempotent replay changed table digests")
 	}
 
-	cron = openDatabase(t, options.CronDatabase)
+	cron = testfixture.OpenSQLite(t, options.CronDatabase)
 	defer cron.Close()
 	assertCountWhere(t, cron, "journeys", "ride = 'current-fixture'", 1)
 	assertCount(t, cron, "legacy_runs", 3)
@@ -93,7 +94,7 @@ func TestLegacyOrphansResumeIntoExplicitQuarantineWithoutChangingJourneys(t *tes
 		"run_id": float64(2), "level": "error", "created_at": "2026-08-14T09:00:30Z",
 	}, nil)
 
-	ops := openDatabase(t, options.OpsDatabase)
+	ops := testfixture.OpenSQLite(t, options.OpsDatabase)
 	defer ops.Close()
 	assertCount(t, ops, "legacy_records", 10)
 	for _, recordType := range []string{"garden_channels", "garden_memberships", "garden_messages",
@@ -102,7 +103,7 @@ func TestLegacyOrphansResumeIntoExplicitQuarantineWithoutChangingJourneys(t *tes
 		assertCountWhere(t, ops, "legacy_records", "record_type = '"+recordType+"'", wantRows[recordType])
 	}
 
-	corpus := openDatabase(t, options.CorpusDatabase)
+	corpus := testfixture.OpenSQLite(t, options.CorpusDatabase)
 	defer corpus.Close()
 	assertCount(t, corpus, "legacy_flow_patterns", 3)
 	for _, check := range []struct {
@@ -125,7 +126,7 @@ func TestLegacyOrphansResumeIntoExplicitQuarantineWithoutChangingJourneys(t *tes
 		}
 	}
 
-	source := openDatabase(t, options.SourceClone)
+	source := testfixture.OpenSQLite(t, options.SourceClone)
 	defer source.Close()
 	for table, want := range wantRows {
 		assertCount(t, source, table, want)
@@ -148,7 +149,7 @@ func TestLegacyImportRefusesAnUnratifiedDispositionBeforeCreatingDestinations(t 
 		t.Run(fixture.name, func(t *testing.T) {
 			directory := t.TempDir()
 			source := filepath.Join(directory, "source.db")
-			db := openDatabase(t, source)
+			db := testfixture.OpenSQLite(t, source)
 			if _, err := db.Exec(fixture.schema); err != nil {
 				t.Fatal(err)
 			}
@@ -191,7 +192,7 @@ func legacyFixture(t *testing.T) LegacyOptions {
 	t.Helper()
 	directory := t.TempDir()
 	sourcePath := filepath.Join(directory, "source.db")
-	source := openDatabase(t, sourcePath)
+	source := testfixture.OpenSQLite(t, sourcePath)
 	schema := `
 		CREATE TABLE runs (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, status TEXT NOT NULL,
 			project TEXT, source_agent TEXT, metadata TEXT, started_at TEXT, completed_at TEXT,
@@ -262,15 +263,6 @@ func fixtureOptions(directory, source string) LegacyOptions {
 	}
 }
 
-func openDatabase(t *testing.T, path string) *sql.DB {
-	t.Helper()
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return db
-}
-
 func assertReportCounts(t *testing.T, report LegacyReport, want map[string]int) {
 	t.Helper()
 	if len(report.Undisposed) != 0 {
@@ -292,7 +284,7 @@ func destinationBatchCounts(t *testing.T, options LegacyOptions) map[string]int 
 	t.Helper()
 	counts := make(map[string]int)
 	for name, path := range map[string]string{"cron": options.CronDatabase, "ops": options.OpsDatabase, "corpus": options.CorpusDatabase} {
-		db := openDatabase(t, path)
+		db := testfixture.OpenSQLite(t, path)
 		var count int
 		if err := db.QueryRow("SELECT COUNT(*) FROM migration_batches").Scan(&count); err != nil {
 			db.Close()

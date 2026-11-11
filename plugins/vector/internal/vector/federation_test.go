@@ -1277,7 +1277,7 @@ func databaseScopeRunner(next CommandRunner, attached []DatabaseSelection) Comma
 				if !matched {
 					available := make([]string, 0, len(attached))
 					for _, database := range attached {
-						if !containsString(available, database.Database) {
+						if !slices.Contains(available, database.Database) {
 							available = append(available, database.Database)
 						}
 					}

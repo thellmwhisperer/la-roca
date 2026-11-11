@@ -1,6 +1,7 @@
 package ingest
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -1144,14 +1145,6 @@ func mergeMetadata(base, preferred map[string]any) map[string]any {
 	return merged
 }
 
-// insertSession registers a session on first sight. ON CONFLICT DO NOTHING scopes
-// the idempotency to the primary key, so two processes racing over the same file
-// insert it once.
-func (w *writer) insertSession(ctx context.Context, session parsers.Session) error {
-	_, err := w.registerSession(ctx, session, false)
-	return err
-}
-
 // registerSession inserts a session row. When anyUnique is set, an exact-payload
 // collision is treated like a primary-key miss: the statement is ignored and
 // the caller skips children instead of aborting the batch.
@@ -1411,8 +1404,8 @@ func exchangeProvenanceValues(provenance parsers.Provenance) []any {
 func (w *writer) enrichExchange(ctx context.Context, sessionID string, stored storedExchange,
 	exchange parsers.Exchange, richer bool) (int, int, error) {
 	provenance := exchange.Provenance
-	humanTimestamp := firstNonEmpty(stored.humanTimestamp, exchange.HumanTimestamp)
-	agentTimestamp := firstNonEmpty(stored.agentTimestamp, exchange.AgentTimestamp)
+	humanTimestamp := cmp.Or(stored.humanTimestamp, exchange.HumanTimestamp)
+	agentTimestamp := cmp.Or(stored.agentTimestamp, exchange.AgentTimestamp)
 	effectiveLatency := latencyBetween(humanTimestamp, agentTimestamp)
 	provenanceColumns := `
 		  model = COALESCE(model, ?),

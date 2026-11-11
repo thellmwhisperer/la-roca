@@ -1,6 +1,7 @@
 package parsers
 
 import (
+	"cmp"
 	"crypto/sha256"
 	"fmt"
 	"path/filepath"
@@ -34,7 +35,7 @@ func ParseHermesMemory(content []byte, meta FileMeta) (Records, error) {
 		declared := map[string]any{
 			"block_hash":          hash,
 			"aggregate_file_path": meta.Path,
-			"file_name":           firstNonEmpty(meta.FileName, filepath.Base(meta.Path)),
+			"file_name":           cmp.Or(meta.FileName, filepath.Base(meta.Path)),
 		}
 		parsed := memoryRecord("hermes", hermesMemoryLayer(block), block, blockMeta, declared)
 		parsed.Memories[0].Origin = "agent"

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -84,7 +85,7 @@ func TestOrphanTablesAreReportedAndDoNotBlock(t *testing.T) {
 	if report.Verdict != store.VerdictCurrent {
 		t.Fatalf("verdict = %q, want current: orphans do not block", report.Verdict)
 	}
-	if !contains(report.Orphans, "garden_notes") || !contains(report.Orphans, "messages") {
+	if !slices.Contains(report.Orphans, "garden_notes") || !slices.Contains(report.Orphans, "messages") {
 		t.Errorf("orphans = %v, want garden_notes and messages", report.Orphans)
 	}
 
@@ -502,15 +503,6 @@ func seedIdentity(t *testing.T, db *store.DB) {
 	t.Helper()
 	execute(t, db, `INSERT INTO memories (layer, content, origin)
 	                 VALUES ('project', 'anchor of adoption', 'agent')`)
-}
-
-func contains(list []string, value string) bool {
-	for _, v := range list {
-		if v == value {
-			return true
-		}
-	}
-	return false
 }
 
 func namesTheDifference(report store.Report, table, column string) bool {

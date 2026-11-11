@@ -409,10 +409,7 @@ func (s *Service) loadCurrentHandoffsWhere(ctx context.Context, failure, scopePr
 		WHERE candidate.layer = 'handoff'
 		  AND candidate.status = 'active'
 		  ` + scopePredicate + `
-		  AND NOT EXISTS (
-		      SELECT 1 FROM memories AS replacement
-		      WHERE replacement.supersedes = candidate.id
-		  )
+		  AND NOT EXISTS (SELECT 1 FROM memories AS replacement WHERE ` + retiresHandoff + `)
 		ORDER BY candidate.created_at DESC, candidate.id DESC`
 	rs, err := reader.QueryContext(ctx, query, args...)
 	if err != nil {

@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -16,9 +18,12 @@ import (
 func (m *world) hybridHome(phrase string) error {
 	session := filepath.Join(m.home, ".claude", "projects", "-unknown-absolute-project",
 		claudeAcceptanceSession+".jsonl")
-	body := fmt.Sprintf("{\"type\":\"user\",\"timestamp\":\"2026-08-01T10:00:10Z\",\"message\":{\"content\":\"where is the %s\"}}\n"+
-		"{\"type\":\"assistant\",\"timestamp\":\"2026-08-01T10:00:11Z\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"answer\"}]}}\n",
-		phrase)
+	var body string
+	for i, text := range []string{"opening exchange", "where is the " + phrase, "closing exchange"} {
+		body += fmt.Sprintf("{\"type\":\"user\",\"timestamp\":\"2026-08-01T10:00:%02dZ\",\"message\":{\"content\":%q}}\n"+
+			"{\"type\":\"assistant\",\"timestamp\":\"2026-08-01T10:00:%02dZ\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":%q}]}}\n",
+			i*2, text, i*2+1, "answer to "+text)
+	}
 	if err := writeFixture(session, body); err != nil {
 		return err
 	}
@@ -28,7 +33,7 @@ func (m *world) hybridHome(phrase string) error {
 	if m.last.code != 0 {
 		return fmt.Errorf("init exited %d: %s%s", m.last.code, m.last.stdout, m.last.stderr)
 	}
-	if _, err := m.runWith("roca exec", []string{"exec", "--json",
+	if _, err := m.runWith("roca exec", []string{"exec", "--json", "--timeout-ms", "5000",
 		"SELECT id FROM plugin_roca_corpus.exchanges WHERE human_text LIKE '%" + phrase + "%'"}); err != nil {
 		return err
 	}
@@ -104,6 +109,100 @@ func (m *world) exchangeHitWithConsensus() error {
 	}
 	if !slices.ContainsFunc(found, func(hit hybridHit) bool { return hit.Consensus }) {
 		return fmt.Errorf("no exchange %s hit with consensus:\n%s", m.exchangeID, m.last.stdout)
+	}
+	return nil
+}
+
+func (m *world) datedOrchardSessions() error {
+	return m.orchardSessions(false)
+}
+
+func (m *world) projectOrchardSessions() error {
+	return m.orchardSessions(true)
+}
+
+func (m *world) orchardSessions(byProject bool) error {
+	for i, day := range []string{"2026-10-01", "2026-10-20"} {
+		label, cwd := day, ""
+		directory := "-unknown-absolute-project"
+		if byProject {
+			label = []string{"alpha", "beta"}[i]
+			cwd = `,"cwd":"/workspace/` + label + `"`
+			directory = "-workspace-" + label
+		}
+		body := fmt.Sprintf(`{"type":"user"%s,"timestamp":"%sT00:00:00Z","message":{"content":"orchard %s"}}
+{"type":"assistant","timestamp":"%sT00:00:01Z","message":{"content":[{"type":"text","text":"answer"}]}}
+`, cwd, day, label, day)
+		name := strings.ReplaceAll(day, "-", "") + "-0000-0000-0000-000000000000.jsonl"
+		path := filepath.Join(m.home, ".claude", "projects", directory, name)
+		if err := writeFixture(path, body); err != nil {
+			return err
+		}
+	}
+	if _, err := m.runWith("roca ingest", []string{"ingest"}); err != nil {
+		return err
+	}
+	return m.itExitsWithCode(0)
+}
+
+func (m *world) sessionHelpCommand() string {
+	for _, line := range strings.Split(m.last.stdout, "\n") {
+		line = strings.TrimPrefix(line, "  - ")
+		if decoded, err := strconv.Unquote(line); err == nil {
+			line = decoded
+		}
+		match := regexp.MustCompile("`(roca exec [^`]+)` to read the whole session").FindStringSubmatch(line)
+		if len(match) == 2 {
+			return match[1]
+		}
+	}
+	return ""
+}
+
+func (m *world) sessionHelpReadsHit() error {
+	command := m.sessionHelpCommand()
+	for _, want := range []string{
+		"SELECT exchange_number, human_text, agent_text FROM plugin_roca_corpus.exchanges",
+		"WHERE session_id = (SELECT session_id FROM plugin_roca_corpus.exchanges WHERE id = '" + m.exchangeID + "')",
+		"ORDER BY exchange_number", "--max-chars 2000",
+	} {
+		if !strings.Contains(command, want) {
+			return fmt.Errorf("session help missing %q:\n%s", want, m.last.stdout)
+		}
+	}
+	return nil
+}
+
+func (m *world) oneSessionHelpForFirstExchange() error {
+	if count := strings.Count(m.last.stdout, "read the whole session"); count != 1 {
+		return fmt.Errorf("got %d whole-session help lines, want 1:\n%s", count, m.last.stdout)
+	}
+	first := regexp.MustCompile(`(?m)^  (\d+),corpus\.exchanges\.([^,]+),`).FindStringSubmatch(m.last.stdout)
+	if len(first) != 3 {
+		return fmt.Errorf("no exchange hit in output:\n%s", m.last.stdout)
+	}
+	if err := m.outputContains("read the whole session of hit " + first[1]); err != nil {
+		return err
+	}
+	m.exchangeID = first[2]
+	return m.sessionHelpReadsHit()
+}
+
+func (m *world) runSessionHelp() error {
+	return m.iRun(m.sessionHelpCommand())
+}
+
+func (m *world) threeSessionExchangesInOrder() error {
+	output := m.last.stdout
+	for _, text := range []string{"opening exchange", "where is the orchard", "closing exchange"} {
+		_, rest, found := strings.Cut(output, "answer to "+text)
+		if !found {
+			return fmt.Errorf("missing or out-of-order exchange %q:\n%s", text, m.last.stdout)
+		}
+		output = rest
+	}
+	if !strings.Contains(m.last.stdout, "rows[3]") {
+		return fmt.Errorf("expected exactly three rows:\n%s", m.last.stdout)
 	}
 	return nil
 }

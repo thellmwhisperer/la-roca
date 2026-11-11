@@ -24,6 +24,9 @@ func pillCommand(env *cliEnv) *cobra.Command {
 		Use:   "pill",
 		Short: "Load active pills for the current project",
 		Args:  cobra.NoArgs,
+		PreRunE: func(cmd *cobra.Command, _ []string) error {
+			return validateFlags(cmd.Flags(), "project")
+		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runPillList(cmd.Context(), env, project)
 		},
@@ -111,6 +114,9 @@ func handoffLatestCommand(env *cliEnv) *cobra.Command {
 		Use:   "latest",
 		Short: "Load active handoffs the project has not superseded",
 		Args:  cobra.NoArgs,
+		PreRunE: func(cmd *cobra.Command, _ []string) error {
+			return validateFlags(cmd.Flags(), "project", "limit")
+		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runLatestHandoffs(cmd.Context(), env, latestHandoffOptions{
 				project: project, limit: limit, allProjects: allProjects, since: since,
@@ -151,9 +157,6 @@ type latestHandoffOptions struct {
 }
 
 func runLatestHandoffs(ctx context.Context, env *cliEnv, opts latestHandoffOptions) error {
-	if opts.limit < 0 {
-		return fmt.Errorf("--limit must be zero or greater")
-	}
 	if opts.allProjects {
 		return runLatestHandoffsAllProjects(ctx, env, opts)
 	}

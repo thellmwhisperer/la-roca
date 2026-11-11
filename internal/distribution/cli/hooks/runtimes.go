@@ -2,10 +2,11 @@ package hooks
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/agentcfg"
@@ -68,12 +69,7 @@ var hookRuntimes = map[string]hookRuntime{
 }
 
 func RuntimeNames() []string {
-	names := make([]string, 0, len(hookRuntimes))
-	for name := range hookRuntimes {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
+	return slices.Sorted(maps.Keys(hookRuntimes))
 }
 
 func SupportedRuntime(name string) error {

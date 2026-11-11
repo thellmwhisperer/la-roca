@@ -1,6 +1,6 @@
 //go:build linux
 
-package vector
+package processidentity
 
 import (
 	"strings"

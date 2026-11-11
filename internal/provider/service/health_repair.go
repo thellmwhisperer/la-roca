@@ -4,7 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"sort"
+	"maps"
+	"slices"
 	"strings"
 )
 
@@ -35,17 +36,8 @@ var healthRepairs = map[string]func(*Service, context.Context) (HealthRepairResu
 	"physical_alias_layer_rows":      (*Service).repairPhysicalAliasLayerRows,
 }
 
-func healthRepairNames() []string {
-	names := make([]string, 0, len(healthRepairs))
-	for name := range healthRepairs {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
-}
-
 func unknownHealthRepair(name string) error {
-	return fmt.Errorf("unknown health repair %q; known: %s", name, strings.Join(healthRepairNames(), ", "))
+	return fmt.Errorf("unknown health repair %q; known: %s", name, strings.Join(slices.Sorted(maps.Keys(healthRepairs)), ", "))
 }
 
 // RepairHealth applies the scoped repair the named failing health check
