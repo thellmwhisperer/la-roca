@@ -358,22 +358,3 @@ func seed(t *testing.T, svc *service.Service, layer, content string) {
 		t.Fatalf("seed: %v", err)
 	}
 }
-
-func memoriesInTheDatabase(t *testing.T, svc *service.Service) int {
-	t.Helper()
-	var n int
-	if err := svc.DB().SQL().QueryRow(
-		"SELECT COUNT(*) FROM memories WHERE layer = 'feedback'").Scan(&n); err != nil {
-		t.Fatalf("COUNT: %v", err)
-	}
-	return n
-}
-
-func firstRowText(t *testing.T, res service.QueryResult) string {
-	t.Helper()
-	if len(res.Rows) == 0 {
-		t.Fatal("there are no rows")
-	}
-	text, _ := res.Rows[0]["text"].(string)
-	return text
-}

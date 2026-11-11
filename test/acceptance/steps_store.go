@@ -762,10 +762,6 @@ func (m *world) searchReturnsOtherMemory() error {
 	return m.firstResultContains(otherUniqueMemory)
 }
 
-func (m *world) outputIdentifiesOtherDatabase() error {
-	return m.firstSearchHitHasDatabase("core")
-}
-
 func (m *world) searchReturnsHomeMemory() error {
 	return m.outputContains(homeUniqueMemory)
 }

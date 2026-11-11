@@ -11,7 +11,6 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 	"github.com/thellmwhisperer/la-roca/internal/store"
-	"github.com/thellmwhisperer/la-roca/internal/store/search"
 	_ "modernc.org/sqlite"
 )
 
@@ -352,11 +351,6 @@ type hubFixture struct {
 	corePath  string
 }
 
-type hubMemory struct {
-	id      int64
-	content string
-}
-
 func newHubFixture(t *testing.T) hubFixture {
 	t.Helper()
 	directory := t.TempDir()
@@ -397,23 +391,6 @@ func seedLegacyCore(t *testing.T, fixture hubFixture, seed func(*store.DB)) {
 	if seed != nil {
 		seed(core)
 	}
-}
-
-func seedLegacyMemories(t *testing.T, fixture hubFixture, memories []hubMemory) {
-	t.Helper()
-	seedLegacyCore(t, fixture, func(core *store.DB) {
-		for _, memory := range memories {
-			if _, err := core.SQL().Exec(`INSERT INTO memories
-				(id, layer, content, metadata, origin, status, created_at)
-				VALUES (?, 'project', ?, '{}', 'agent', 'active', '2026-08-15T10:00:00Z')`,
-				memory.id, memory.content); err != nil {
-				t.Fatal(err)
-			}
-		}
-		if _, err := search.Index(t.Context(), core, nil); err != nil {
-			t.Fatal(err)
-		}
-	})
 }
 
 func executeHubSQL(t *testing.T, svc *Service, statement string) ExecResult {

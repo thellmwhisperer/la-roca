@@ -233,16 +233,6 @@ func (reader *firstReadHook) Read(buffer []byte) (int, error) {
 	return reader.reader.Read(buffer)
 }
 
-func countLinesWithPrefix(text, prefix string) int {
-	count := 0
-	for _, line := range strings.Split(text, "\n") {
-		if strings.HasPrefix(line, prefix) {
-			count++
-		}
-	}
-	return count
-}
-
 type chooserTestBackend struct{}
 
 func runExplicitNonTTYInit(t *testing.T, home string) (string, string) {
