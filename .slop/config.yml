@@ -2,9 +2,10 @@
 #
 # Two duplication scopes, measured independently so production code cannot
 # hide inside the test scope. Both sweep from the repository root because the
-# product's code lives in three roots (`cmd/`, `internal/`, `test/`) and a clone
-# copied from a command into a package is exactly the kind the gate exists to
-# catch: scoping per directory would make it invisible.
+# product's code lives in several roots (`cmd/`, `internal/`, `pkg/`, `plugins/`,
+# and for tests also `scripts/` and `test/`) and a clone copied from a command
+# into a package, or from the core into a plugin, is exactly the kind the gate
+# exists to catch: scoping per directory would make it invisible.
 #
 # `features/` is the frozen Gherkin contract and is not duplication input;
 # `bin/`, `dist/` and `.tmp/` are build output and gate caches. Embedded data
