@@ -1,6 +1,7 @@
 package parsers
 
 import (
+	"cmp"
 	"encoding/json"
 	"path/filepath"
 	"strings"
@@ -65,7 +66,7 @@ func ParseSubagent(content []byte, meta FileMeta) (Records, error) {
 
 	parentID := entries[0].SessionID
 	agentID := entries[0].AgentID
-	sessionID := firstNonEmpty(agentID, parentID)
+	sessionID := cmp.Or(agentID, parentID)
 	if sessionID == "" {
 		discards = append(discards, Discard{Record: entries[0].record, Reason: "subagent record declares no session identity"})
 		return Records{Discards: discards}, nil
@@ -73,7 +74,7 @@ func ParseSubagent(content []byte, meta FileMeta) (Records, error) {
 
 	session := Session{
 		ID:                           sessionID,
-		SourceAgent:                  firstNonEmpty(meta.SourceAgent, "claude-code"),
+		SourceAgent:                  cmp.Or(meta.SourceAgent, "claude-code"),
 		Project:                      meta.Project,
 		Metadata:                     map[string]any{"source_type": kind},
 		ExchangeNumbersAuthoritative: true,

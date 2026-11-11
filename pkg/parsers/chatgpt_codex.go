@@ -1,6 +1,7 @@
 package parsers
 
 import (
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -143,7 +144,7 @@ func parseChatGPTCodexConversation(payload chatGPTCodexConversation, record int,
 		"archived": payload.Archived,
 	})
 	return Records{Sessions: []Session{{
-		ID: payload.ID, SourceAgent: firstNonEmpty(meta.SourceAgent, "codex-cloud"),
+		ID: payload.ID, SourceAgent: cmp.Or(meta.SourceAgent, "codex-cloud"),
 		StartedAt: started, EndedAt: ended, DurationMinutes: minutesBetween(started, ended),
 		Title: strings.TrimSpace(payload.Title), Metadata: metadata,
 		ExchangeKeyScope: "codex_cloud", RecordTimestampOwners: true, Exchanges: exchanges,

@@ -1,6 +1,7 @@
 package parsers
 
 import (
+	"cmp"
 	"encoding/json"
 	"strconv"
 	"strings"
@@ -43,7 +44,7 @@ func readSessionMetadata(content []byte) sidecarView {
 		return sidecarView{}
 	}
 	return sidecarView{
-		sessionID:      firstNonEmpty(payload.CliSessionID, payload.SessionID),
+		sessionID:      cmp.Or(payload.CliSessionID, payload.SessionID),
 		title:          strings.TrimSpace(payload.Title),
 		initialMessage: payload.InitialMessage,
 	}
@@ -60,7 +61,7 @@ func ParseSessionMetadata(content []byte, meta FileMeta) (Records, error) {
 		return Records{Discards: []Discard{{Record: 1,
 			Reason: "invalid metadata JSON: " + err.Error(), Category: "invalid metadata JSON"}}}, nil
 	}
-	sessionID := firstNonEmpty(payload.CliSessionID, payload.SessionID)
+	sessionID := cmp.Or(payload.CliSessionID, payload.SessionID)
 	if sessionID == "" {
 		return Records{Discards: []Discard{{Record: 1,
 			Reason: "session metadata has no supported identity (cliSessionId or sessionId)"}}}, nil
@@ -69,7 +70,7 @@ func ParseSessionMetadata(content []byte, meta FileMeta) (Records, error) {
 	// `claude-cowork` is the legacy alias and it names the ENTRYPOINT only. The
 	// source agent is the roster name the scanner emits, so a file that declares
 	// the alias does not file the same source under a second identity.
-	sourceAgent := firstNonEmpty(meta.SourceAgent, "claude-desktop")
+	sourceAgent := cmp.Or(meta.SourceAgent, "claude-desktop")
 	entrypoint := "claude-desktop"
 	if sourceAgent == "cowork" || sourceAgent == "claude-cowork" {
 		sourceAgent = "cowork"
@@ -87,7 +88,7 @@ func ParseSessionMetadata(content []byte, meta FileMeta) (Records, error) {
 		Metadata: WithoutEmpty(map[string]any{
 			"entrypoint":            entrypoint,
 			"local_session_id":      payload.SessionID,
-			"cwd":                   firstNonEmpty(payload.Cwd, payload.OriginCwd),
+			"cwd":                   cmp.Or(payload.Cwd, payload.OriginCwd),
 			"model":                 payload.Model,
 			"permission_mode":       payload.PermissionMode,
 			"initial_message":       payload.InitialMessage,

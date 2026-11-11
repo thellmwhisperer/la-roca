@@ -111,7 +111,7 @@ func jsonRemoveCreated(r runtime, text string, entries, created []string) (strin
 	// Top-level serversKey still uses emptiness: that is the existing Claude,
 	// OpenCode and Pi contract. Nested parents prune only what this install
 	// recorded as created.
-	if len(r.parents) == 0 || containsString(created, serversPath) {
+	if len(r.parents) == 0 || slices.Contains(created, serversPath) {
 		text, err = cutJSONMemberAtPath(r, text, r.parents, r.serversKey)
 		if err != nil {
 			return "", err
@@ -121,7 +121,7 @@ func jsonRemoveCreated(r runtime, text string, entries, created []string) (strin
 		return text, nil
 	}
 	for i := len(r.parents) - 1; i >= 0; i-- {
-		if !containsString(created, strings.Join(r.parents[:i+1], ".")) {
+		if !slices.Contains(created, strings.Join(r.parents[:i+1], ".")) {
 			continue
 		}
 		view, root, err = rootObject(r, text)
@@ -221,10 +221,6 @@ func containerPaths(keys []string, prefix ...string) []string {
 		out = append(out, strings.Join(path, "."))
 	}
 	return out
-}
-
-func containsString(list []string, want string) bool {
-	return slices.Contains(list, want)
 }
 
 // jsonDecode reads the view and not the text: a JSONC comment would not survive

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -344,11 +345,11 @@ func TestSearchLongQuestionDoesNotPromoteGenericFTSNoise(t *testing.T) {
 	svc := seededHybridService(t, nil)
 	question := "what are the thoughts of the team about the way we should look at the huerto urbano of the day"
 	result := mustHybridSearch(t, svc, question, false)
-	if !containsTerm(result.Terms, "huerto") && !containsTerm(result.Terms, "urbano") {
+	if !slices.Contains(result.Terms, "huerto") && !slices.Contains(result.Terms, "urbano") {
 		t.Fatalf("rarity selection dropped the rare terms: %v", result.Terms)
 	}
-	if containsTerm(result.Terms, "the") || containsTerm(result.Terms, "of") ||
-		containsTerm(result.Terms, "about") {
+	if slices.Contains(result.Terms, "the") || slices.Contains(result.Terms, "of") ||
+		slices.Contains(result.Terms, "about") {
 		t.Fatalf("rarity selection kept generic words: %v", result.Terms)
 	}
 	if !hybridHitContains(result, "huerto urbano") {
@@ -483,7 +484,7 @@ func TestHybridGoldenAgainstReadOnlyLabCopies(t *testing.T) {
 
 func goldenSearchHit(hits []service.SearchHit, table string, ids []string) bool {
 	for _, hit := range hits {
-		if hit.Table == table && containsTerm(ids, hit.ID) {
+		if hit.Table == table && slices.Contains(ids, hit.ID) {
 			return true
 		}
 	}
@@ -492,7 +493,7 @@ func goldenSearchHit(hits []service.SearchHit, table string, ids []string) bool 
 
 func goldenVectorHit(hits []service.VectorHit, table string, ids []string) bool {
 	for _, hit := range hits {
-		if hit.Rank <= 10 && hit.Table == table && containsTerm(ids, hit.ID) {
+		if hit.Rank <= 10 && hit.Table == table && slices.Contains(ids, hit.ID) {
 			return true
 		}
 	}
@@ -635,13 +636,4 @@ func stableSearchView(t *testing.T, result service.SearchResult) string {
 		t.Fatal(err)
 	}
 	return string(body)
-}
-
-func containsTerm(terms []string, want string) bool {
-	for _, term := range terms {
-		if term == want {
-			return true
-		}
-	}
-	return false
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"maps"
 	"slices"
 )
 
@@ -193,8 +194,7 @@ func openCodeExtractedCoverage(ctx context.Context, db *sql.DB) (map[string]int,
 			WHERE s.session_id LIKE 'opencode:%'`,
 	}
 	counts := map[string]int{}
-	labels := mapsKeys(queries)
-	slices.Sort(labels)
+	labels := slices.Sorted(maps.Keys(queries))
 	for _, label := range labels {
 		var count int
 		if err := db.QueryRowContext(ctx, queries[label]).Scan(&count); err != nil {
@@ -203,12 +203,4 @@ func openCodeExtractedCoverage(ctx context.Context, db *sql.DB) (map[string]int,
 		counts[label] = count
 	}
 	return counts, nil
-}
-
-func mapsKeys[V any](values map[string]V) []string {
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	return keys
 }

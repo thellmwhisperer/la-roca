@@ -1,6 +1,7 @@
 package parsers
 
 import (
+	"cmp"
 	"encoding/json"
 	"net/url"
 	"path/filepath"
@@ -95,9 +96,9 @@ func ParseGrokSession(content []byte, meta FileMeta) (Records, error) {
 	pathSession, pathProject, workspace := grokPathIdentity(meta.Path)
 	sidecar := readGrokSummary(meta.Sidecar)
 	session := Session{
-		ID:          firstNonEmpty(pathSession, meta.SessionID),
-		SourceAgent: firstNonEmpty(meta.SourceAgent, "grok"),
-		Project:     firstNonEmpty(meta.Project, pathProject),
+		ID:          cmp.Or(pathSession, meta.SessionID),
+		SourceAgent: cmp.Or(meta.SourceAgent, "grok"),
+		Project:     cmp.Or(meta.Project, pathProject),
 		Title:       sidecar.Title,
 		Metadata:    WithoutEmpty(map[string]any{"cwd": workspace}),
 		Exchanges:   reader.exchanges,
@@ -128,7 +129,7 @@ func (r *grokReader) consume(record int, line grokUpdateLine) {
 		return
 	}
 	if line.Method != "session/update" {
-		r.unreadable(record, "unknown Grok update method: "+firstNonEmpty(line.Method, "unnamed"))
+		r.unreadable(record, "unknown Grok update method: "+cmp.Or(line.Method, "unnamed"))
 		return
 	}
 
@@ -153,7 +154,7 @@ func (r *grokReader) consume(record int, line grokUpdateLine) {
 			return
 		}
 		if block.Type != "text" {
-			r.exclude(record, "user attachment", firstNonEmpty(block.Type, block.MIMEType))
+			r.exclude(record, "user attachment", cmp.Or(block.Type, block.MIMEType))
 			return
 		}
 		r.current.humanText.WriteString(block.Text)
@@ -169,7 +170,7 @@ func (r *grokReader) consume(record int, line grokUpdateLine) {
 		r.claim(record, timestamp, func(turn *grokTurn) bool {
 			update := line.Params.Update
 			tool := &ToolUse{
-				Name:          firstNonEmpty(update.Meta.Tool.Name, update.Kind, update.Title),
+				Name:          cmp.Or(update.Meta.Tool.Name, update.Kind, update.Title),
 				ParamsSummary: Clip(rawText(update.RawInput), paramsBudget),
 			}
 			if grokFailedStatus(update.Status) {
@@ -185,7 +186,7 @@ func (r *grokReader) consume(record int, line grokUpdateLine) {
 	case "tool_call_update":
 		if r.current == nil {
 			r.unreadable(record, "grok tool update arrived before any user prompt: "+
-				firstNonEmpty(line.Params.Update.ToolCallID, "unnamed"))
+				cmp.Or(line.Params.Update.ToolCallID, "unnamed"))
 			return
 		}
 		r.current.agentTS = lastInstant(r.current.agentTS, timestamp)
@@ -205,7 +206,7 @@ func (r *grokReader) consume(record int, line grokUpdateLine) {
 		})
 	default:
 		r.unreadable(record, "unknown Grok content update: "+
-			firstNonEmpty(line.Params.Update.SessionUpdate, "unnamed"))
+			cmp.Or(line.Params.Update.SessionUpdate, "unnamed"))
 	}
 }
 
@@ -285,7 +286,7 @@ func (r *grokReader) writeGrokText(record int, kind string, raw json.RawMessage,
 		return false
 	}
 	if block.Type != "text" {
-		r.exclude(record, kind+" attachment", firstNonEmpty(block.Type, block.MIMEType))
+		r.exclude(record, kind+" attachment", cmp.Or(block.Type, block.MIMEType))
 		return false
 	}
 	into.WriteString(block.Text)
@@ -295,7 +296,7 @@ func (r *grokReader) writeGrokText(record int, kind string, raw json.RawMessage,
 func (r *grokReader) exclude(record int, kind, name string) {
 	r.discards = append(r.discards, Discard{
 		Record: record, ByDesign: true,
-		Reason:   "grok " + kind + " not ingested: " + firstNonEmpty(name, "unnamed"),
+		Reason:   "grok " + kind + " not ingested: " + cmp.Or(name, "unnamed"),
 		Category: "grok " + kind + " not ingested",
 	})
 }
@@ -430,17 +431,17 @@ func ParseGrokSessionMetadata(content []byte, meta FileMeta) (Records, error) {
 		return Records{Discards: []Discard{{Record: 1,
 			Reason: "invalid metadata JSON: " + err.Error(), Category: "invalid metadata JSON"}}}, nil
 	}
-	sessionID := firstNonEmpty(meta.SessionID, summary.Info.ID)
+	sessionID := cmp.Or(meta.SessionID, summary.Info.ID)
 	if sessionID == "" {
 		return Records{Discards: []Discard{{Record: 1,
 			Reason: "grok session metadata has no identity (info.id)"}}}, nil
 	}
 
 	started := validInstant(summary.CreatedAt)
-	ended := validInstant(firstNonEmpty(summary.LastActiveAt, summary.UpdatedAt))
+	ended := validInstant(cmp.Or(summary.LastActiveAt, summary.UpdatedAt))
 	session := Session{
 		ID:              sessionID,
-		SourceAgent:     firstNonEmpty(meta.SourceAgent, "grok"),
+		SourceAgent:     cmp.Or(meta.SourceAgent, "grok"),
 		Project:         meta.Project,
 		StartedAt:       started,
 		EndedAt:         ended,

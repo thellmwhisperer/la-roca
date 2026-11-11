@@ -1273,7 +1273,7 @@ func (m Manager) stage(candidate Candidate, preservedDatabases map[string]string
 		filepath.Join(staged, ChecksumsFilename), 0o600); err != nil {
 		return failed(err)
 	}
-	if err := verifyExactFiles(staged, mapKeys(candidate.Files), candidate.Files); err != nil {
+	if err := verifyExactFiles(staged, slices.Collect(maps.Keys(candidate.Files)), candidate.Files); err != nil {
 		return failed(fmt.Errorf("verify staged plugin: %w", err))
 	}
 	for name, source := range preservedDatabases {
@@ -1797,14 +1797,6 @@ func executableNames(name string) []string {
 		return []string{base + ".exe", base + ".com", base + ".bat", base + ".cmd"}
 	}
 	return []string{base}
-}
-
-func mapKeys(values map[string]string) []string {
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	return keys
 }
 
 func safeName(name string) bool {

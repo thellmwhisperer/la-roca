@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 )
 
@@ -115,7 +117,7 @@ func reconcileFrozenSources(ctx context.Context, destination *sql.DB,
 			report.DuplicatePhysicalRows))
 	}
 
-	databases := sortedInventoryKeys(expected)
+	databases := slices.Sorted(maps.Keys(expected))
 	for _, database := range databases {
 		for _, table := range archiveSourceTables {
 			want := expected[database].custody[table.sourceTable]
@@ -262,7 +264,7 @@ func readObservedInventories(ctx context.Context, destination *sql.DB,
 		}
 		retainedByTable[table.sourceTable] = retained
 	}
-	for _, database := range sortedInventoryKeys(expected) {
+	for _, database := range slices.Sorted(maps.Keys(expected)) {
 		inventory := newSourceInventory()
 		observed[database] = inventory
 		for _, table := range archiveSourceTables {
@@ -603,7 +605,7 @@ func compareRecordedSourceLabels(ctx context.Context, destination *sql.DB,
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	want := sortedInventoryKeys(expected)
+	want := slices.Sorted(maps.Keys(expected))
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		return fmt.Errorf("DATA-3 source set is %v, frozen verifier supplied %v", got, want)
 	}
@@ -666,15 +668,6 @@ func sessionAt(inventories map[string]*sourceInventory, database, sessionID stri
 		}
 	}
 	return &sessionInventory{}
-}
-
-func sortedInventoryKeys(inventories map[string]*sourceInventory) []string {
-	keys := make([]string, 0, len(inventories))
-	for key := range inventories {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 type sessionKey struct{ database, sessionID string }

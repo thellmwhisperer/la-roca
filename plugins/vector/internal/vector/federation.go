@@ -687,15 +687,6 @@ func (f Federation) vectorDatabaseForRoute(route vectorRoute) (vectorDatabase, b
 	return vectorDatabase{}, false
 }
 
-func containsString(values []string, candidate string) bool {
-	for _, value := range values {
-		if value == candidate {
-			return true
-		}
-	}
-	return false
-}
-
 func (f Federation) Ingest(ctx context.Context, sourceKind string) (FederationDelta, error) {
 	ctx, closeReader := withCoreReader(ctx)
 	defer closeReader()

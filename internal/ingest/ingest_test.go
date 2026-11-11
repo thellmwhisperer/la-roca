@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -115,7 +116,7 @@ func TestTheWholeMatrixIsIngested(t *testing.T) {
 			t.Errorf("a session is filed under %q, which is a path and not a project", project)
 		}
 	}
-	if !containsString(projects, "demo") {
+	if !slices.Contains(projects, "demo") {
 		t.Errorf("projects = %v, want demo among them", projects)
 	}
 
@@ -127,7 +128,7 @@ func TestTheWholeMatrixIsIngested(t *testing.T) {
 	// The unclosed Hermes session is read: its session row lands, and its lone
 	// human turn, which has no recorded answer, is deferred rather than stored
 	// as an answer that was never given.
-	if !containsString(queryColumn(t, db.SQL(), `SELECT session_id FROM sessions`), "h2") {
+	if !slices.Contains(queryColumn(t, db.SQL(), `SELECT session_id FROM sessions`), "h2") {
 		t.Error("the unclosed Hermes session was not read")
 	}
 	if result.ExchangesHeld != 1 {
@@ -291,7 +292,7 @@ func TestEveryPathOfEverySourceIsFingerprinted(t *testing.T) {
 		"cowork_audit", "grok_session", "grok_session_metadata", "hermes_database",
 		"opencode_database", "pi_session", "session_metadata", "subagent",
 	} {
-		if !containsString(kinds, kind) {
+		if !slices.Contains(kinds, kind) {
 			t.Errorf("the source kind %q has no state row: %v", kind, kinds)
 		}
 	}
@@ -738,15 +739,6 @@ func assertNoNewDuplicates(t *testing.T, db *sql.DB, baselineDupes int, baseline
 	if got := contentFingerprint(t, db); got != baselineFingerprint {
 		t.Errorf("after %s the corpus changed: a re-reach rewrote or duplicated data", phase)
 	}
-}
-
-func containsString(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
 }
 
 func warnsAbout(warnings []string, fragment string) bool {
