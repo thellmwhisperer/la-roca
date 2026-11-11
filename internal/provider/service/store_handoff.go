@@ -231,14 +231,6 @@ func repairHandoffHeads(ctx context.Context, db *sql.Tx, currentIDs []int64, kee
 }
 
 func retireHandoffHead(ctx context.Context, db *sql.Tx, id int64) error {
-	var n int
-	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM memories AS candidate
-		JOIN memories AS replacement ON `+retiresHandoff+` WHERE candidate.id = ?`, id).Scan(&n); err != nil {
-		return fmt.Errorf("check whether a handoff head is already retired: %w", err)
-	}
-	if n > 0 {
-		return nil
-	}
 	var project sql.NullString
 	if err := db.QueryRowContext(ctx,
 		`SELECT project FROM memories WHERE id = ?`, id).Scan(&project); err != nil {
