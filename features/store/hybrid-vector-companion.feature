@@ -22,6 +22,15 @@ Feature: Hybrid search finds the vector companion where roca vector does
     And the output does not contain "rerun the command"
     And the managed vector state directory exists after the local model download
 
+  Scenario: A vector sidecar whose dimensions cannot be read fails the ingest and names the cause
+    Given a home initialized with an agent session that mentions "harbor lantern"
+    And the real vector companion uses a local model download fixture
+    And vector is switched on under features
+    And the corpus vector sidecar records a dimensions value that is not a number
+    When I run 'roca vector ingest --delta'
+    Then the command exits with a code other than 0
+    And the output contains "is not a number"
+
   Scenario: Hybrid search uses the companion in ~/.local/bin when PATH does not hold it
     Given a home initialized with an agent session that mentions "harbor lantern"
     And vector is switched on under features
