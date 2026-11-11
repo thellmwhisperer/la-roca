@@ -3,6 +3,7 @@ package bundledplugin_test
 import (
 	"database/sql"
 	"errors"
+	"github.com/thellmwhisperer/la-roca/test/testfixture"
 	"path/filepath"
 	"testing"
 
@@ -62,7 +63,7 @@ func TestApplyingPluginSchemasTwicePreservesOldFrozenHomes(t *testing.T) {
 	} {
 		t.Run(fixture.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), fixture.filename)
-			db := openFixture(t, path)
+			db := testfixture.OpenSQLite(t, path)
 			if _, err := db.Exec(fixture.oldSchema); err != nil {
 				t.Fatal(err)
 			}
@@ -79,7 +80,7 @@ func TestApplyingPluginSchemasTwicePreservesOldFrozenHomes(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			db = openFixture(t, path)
+			db = testfixture.OpenSQLite(t, path)
 			defer db.Close()
 			assertQueryCount(t, db, fixture.count, 1)
 			if fixture.indexCount != "" {
@@ -143,15 +144,6 @@ func TestAnInterruptedUpgradeLeavesTheManifestOnTheVersionItsSchemaReached(t *te
 	if manifest.Version != "v-one" {
 		t.Fatalf("manifest version = %q, but its schema never reached that version", manifest.Version)
 	}
-}
-
-func openFixture(t *testing.T, path string) *sql.DB {
-	t.Helper()
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return db
 }
 
 func assertQueryCount(t *testing.T, db *sql.DB, query string, want int) {

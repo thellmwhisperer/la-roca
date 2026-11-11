@@ -17,7 +17,7 @@ scopes:
   # plugins/vector with code it copies from the core. Each copy given one owner
   # lowers this number; it never goes up.
   go_production:
-    active_clones_ceiling: 56
+    active_clones_ceiling: 54
 
   # The suites and the Gherkin harness. Most of what is left is the same fixture
   # assembled on either side of a package boundary, which Go cannot share without

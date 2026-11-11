@@ -1,8 +1,8 @@
 package service
 
 import (
-	"database/sql"
 	"fmt"
+	"github.com/thellmwhisperer/la-roca/test/testfixture"
 	"os"
 	"path/filepath"
 	"strings"
@@ -46,7 +46,7 @@ func TestCutoverSearchPreservesSelectedCoreSurfaces(t *testing.T) {
 	fixture := newHubFixture(t)
 	seedHubCoreMemory(t, fixture.plugins, 42, "Synthetic orchard memory")
 	seedHubCoreSession(t, fixture.plugins, "synthetic-search", "claude", "claude-code")
-	corpus := openSQLite(t, filepath.Join(fixture.plugins, rocacorpus.Name, rocacorpus.DatabaseFilename))
+	corpus := testfixture.OpenSQLite(t, filepath.Join(fixture.plugins, rocacorpus.Name, rocacorpus.DatabaseFilename))
 	defer corpus.Close()
 	for _, statement := range []string{
 		`UPDATE sessions SET title = 'Synthetic orchard session' WHERE session_id = 'synthetic-search'`,
@@ -118,7 +118,7 @@ func TestCutoverWritersRemainAuthoritativeInPlugins(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ops := openSQLite(t, filepath.Join(fixture.plugins, rocaops.Name, rocaops.DatabaseFilename))
+	ops := testfixture.OpenSQLite(t, filepath.Join(fixture.plugins, rocaops.Name, rocaops.DatabaseFilename))
 	defer ops.Close()
 	var content string
 	if err := ops.QueryRow(`SELECT content FROM memories WHERE id = ?`, stored.ID).Scan(&content); err != nil {
@@ -306,7 +306,7 @@ func TestCutoverReopenFailureRollsBackTheMarker(t *testing.T) {
 	fixture := newHubFixture(t)
 	seedHubCoreMemory(t, fixture.plugins, 15, "Synthetic reopen marker")
 	seedLegacyCore(t, fixture, nil)
-	ops := openSQLite(t, filepath.Join(fixture.plugins, rocaops.Name, rocaops.DatabaseFilename))
+	ops := testfixture.OpenSQLite(t, filepath.Join(fixture.plugins, rocaops.Name, rocaops.DatabaseFilename))
 	if _, err := ops.Exec(`DROP VIEW memory_compatibility`); err != nil {
 		t.Fatal(err)
 	}
@@ -421,7 +421,7 @@ func seedHubCoreMemory(t *testing.T, plugins string, legacyID int64, content str
 	if _, err := rocacorpus.Ensure(plugins, t.TempDir(), "v-test"); err != nil {
 		t.Fatal(err)
 	}
-	db := openSQLite(t, filepath.Join(plugins, rocaops.Name, rocaops.DatabaseFilename))
+	db := testfixture.OpenSQLite(t, filepath.Join(plugins, rocaops.Name, rocaops.DatabaseFilename))
 	defer db.Close()
 	digest := strings.Repeat("a", 64)
 	result, err := db.Exec(`INSERT INTO memory_records
@@ -453,7 +453,7 @@ func seedHubCoreMemory(t *testing.T, plugins string, legacyID int64, content str
 
 func seedHubCoreSession(t *testing.T, plugins, sessionID, agent, surface string) {
 	t.Helper()
-	db := openSQLite(t, filepath.Join(plugins, rocacorpus.Name, rocacorpus.DatabaseFilename))
+	db := testfixture.OpenSQLite(t, filepath.Join(plugins, rocacorpus.Name, rocacorpus.DatabaseFilename))
 	defer db.Close()
 	digest := strings.Repeat("b", 64)
 	batchID := "fixture-session-batch"
@@ -490,13 +490,4 @@ func seedHubCoreSession(t *testing.T, plugins, sessionID, agent, surface string)
 		        'session_versions', ?, ?, ?)`, sessionID, digest, digest, batchID); err != nil {
 		t.Fatal(err)
 	}
-}
-
-func openSQLite(t *testing.T, path string) *sql.DB {
-	t.Helper()
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return db
 }

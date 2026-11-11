@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/thellmwhisperer/la-roca-vector/internal/filelock"
 )
 
 const (
@@ -99,7 +101,7 @@ func (s *Store) Record(_ context.Context, record Record) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	path := filepath.Join(s.dir, Stream+"-"+record.Timestamp.Format(time.DateOnly)+".jsonl")
-	release, err := lockStream(filepath.Join(s.dir, Stream+".lock"))
+	release, err := filelock.Lock(filepath.Join(s.dir, Stream+".lock"))
 	if err != nil {
 		return fmt.Errorf("lock the engine log: %w", err)
 	}
