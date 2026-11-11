@@ -159,7 +159,6 @@ type Service struct {
 	gate        *sqlgate.Gate
 	gateFailure error
 
-	layoutMu       sync.Mutex
 	hubSearchMu    sync.Mutex
 	hubSearchReady bool
 	readLayout     ReadLayout

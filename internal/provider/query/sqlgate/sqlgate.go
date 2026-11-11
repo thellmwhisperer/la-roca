@@ -449,12 +449,6 @@ func IsRowCount(stmt string) bool {
 	return ok && strings.EqualFold(call.Name.Name, "count") && call.Star.IsValid()
 }
 
-// withoutSemicolon leaves the statement ready for a LIMIT to be appended behind
-// it without breaking it.
-func withoutSemicolon(stmt string) string {
-	return strings.TrimRight(strings.TrimSpace(stmt), "; \t\n")
-}
-
 // translate speaks the gate's vocabulary, not SQLite's: the operator reads this,
 // and "SQL logic error (1)" does not tell them what to fix.
 func translate(message string) string {
