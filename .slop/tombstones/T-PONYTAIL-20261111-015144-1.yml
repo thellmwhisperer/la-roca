@@ -1,0 +1,18 @@
+schema: 1
+id: T-PONYTAIL-20261111-015144-1
+status: accepted
+category: alien_code
+title: "Deleted the 2-line doc comment above Start. No lint rule requires it, it was only on the Linux build of Start, and the darwin and fallback builds had none; nothing replaces it."
+created_at: 2026-11-11
+incident:
+  pattern: "Deleted the 2-line doc comment above Start. No lint rule requires it, it was only on the Linux build of Start, and the darwin and fallback builds had none; nothing replaces it."
+  what_went_wrong: "A coding agent wrote it and the ponytail pass cut it before delivery."
+  root_cause: "The coding agent wrote more than the issue needed."
+  rule_established: "Cut by the ponytail pass; it does not come back."
+  evidence:
+    - family: documented_as_convention
+      example: "Deleted the 2-line doc comment above Start. No lint rule requires it, it was only on the Linux build of Start, and the darwin and fallback builds had none; nothing replaces it."
+      artifact: "pkg/processidentity/start_linux.go"
+match:
+  family: documented_as_convention
+  artifact: "pkg/processidentity/start_linux.go"
