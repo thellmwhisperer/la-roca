@@ -32,9 +32,9 @@ func TestStdlibHelpersRunUnderTheRealBinary(t *testing.T) {
 	copyFixture("glm-skill/skill.data", ".glm/skills/synthetic-compass/SKILL.md")
 	copyFixture("grok-memory/MEMORY.golden", ".grok/memory-v2/workspaces/cobalt-harbor/MEMORY.md")
 	copyFixture("hermes-memory/MEMORY.md.golden", ".hermes/memories/MEMORY.md")
-	copyFixture("cursor-store/store.db", ".cursor/chats/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/11111111-aaaa-4bbb-8ccc-222222222222/store.db")
+	copyFixture("cursor-store/store.db", ".cursor/chats/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/11111111-aaaa-3bbb-3ccc-222222222222/store.db")
 	// The sidecar names no update instant, so the session ends when its last exchange does.
-	write(".cursor/chats/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/11111111-aaaa-4bbb-8ccc-222222222222/meta.json",
+	write(".cursor/chats/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/11111111-aaaa-3bbb-3ccc-222222222222/meta.json",
 		`{"schemaVersion":1,"createdAtMs":1785589400000,"hasConversation":true,"title":"Synthetic harbor session","cwd":"/synthetic/harbor"}`)
 	copyFixture("cursor-database/state.vscdb", "Library/Application Support/Cursor/User/globalStorage/state.vscdb")
 
@@ -87,7 +87,7 @@ func TestStdlibHelpersRunUnderTheRealBinary(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exec: exit %d: %s", code, rows)
 	}
-	for _, want := range []string{"cursor:11111111-aaaa-4bbb-8ccc-222222222222", "cursor:11111111-2222-3333-4444-555555555555",
+	for _, want := range []string{"cursor:11111111-aaaa-3bbb-3ccc-222222222222", "cursor:11111111-2222-3333-4444-555555555555",
 		"fixture-qwen", "fixture-codex", "33333333-4444-5555-6666-777777777777"} {
 		if !strings.Contains(rows, want) {
 			t.Errorf("session %q was not ingested:\n%s", want, rows)
