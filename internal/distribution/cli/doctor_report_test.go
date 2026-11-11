@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"database/sql"
+	"github.com/thellmwhisperer/la-roca/test/testfixture"
 	"os"
 	"path/filepath"
 	"strings"
@@ -275,7 +276,7 @@ func setupIncompleteData4SupportHome(t *testing.T, home string) string {
 
 func recordData23SupportMigrations(t *testing.T, options datasplit.HubOptions, digest string) {
 	t.Helper()
-	corpus := openLayoutDatabase(t, options.CorpusDatabase)
+	corpus := testfixture.OpenSQLite(t, options.CorpusDatabase)
 	if _, err := corpus.Exec(`INSERT INTO session_versions
 		(version_digest, session_id, project, started_at)
 		VALUES (?, 'rollback-1', ?, '2026-02-01T00:00:00Z')`, digest, personalProject); err != nil {
@@ -292,7 +293,7 @@ func recordData23SupportMigrations(t *testing.T, options datasplit.HubOptions, d
 	if err := corpus.Close(); err != nil {
 		t.Fatal(err)
 	}
-	ops := openLayoutDatabase(t, options.OpsDatabase)
+	ops := testfixture.OpenSQLite(t, options.OpsDatabase)
 	recordVerifiedMigrations(t, ops, digest, map[string]string{
 		"data2-memory-custody": "memory_records",
 	})
@@ -308,7 +309,7 @@ func recordData4SupportMigrations(t *testing.T, options datasplit.HubOptions, di
 		options.OpsDatabase:    {"data4-legacy-records": "legacy_records"},
 		options.CorpusDatabase: {"data4-legacy-flow-patterns": "legacy_flow_patterns"},
 	} {
-		db := openLayoutDatabase(t, path)
+		db := testfixture.OpenSQLite(t, path)
 		recordVerifiedMigrations(t, db, digest, migrations)
 		if err := db.Close(); err != nil {
 			t.Fatal(err)
@@ -320,7 +321,7 @@ func setupFederationSupportSources(t *testing.T, home string) (string, datasplit
 	t.Helper()
 	dbPath := setupFreshSupportHome(t, home)
 	writeCutoverSupportConfig(t, home)
-	core := openLayoutDatabase(t, dbPath)
+	core := testfixture.OpenSQLite(t, dbPath)
 	if _, err := core.Exec(`
 		INSERT INTO sessions (session_id, project, started_at)
 		VALUES ('rollback-1', ?, '2026-02-01T00:00:00Z')`, personalProject); err != nil {
@@ -344,7 +345,7 @@ func setupFederationSupportSources(t *testing.T, home string) (string, datasplit
 		t.Fatal(err)
 	}
 	corpusPath := filepath.Join(home, ".roca", "plugins", rocacorpus.Name, rocacorpus.DatabaseFilename)
-	corpus := openLayoutDatabase(t, corpusPath)
+	corpus := testfixture.OpenSQLite(t, corpusPath)
 	if _, err := corpus.Exec(`
 		INSERT INTO sessions (session_id, project)
 		VALUES ('federated-1', ?)`, personalProject); err != nil {

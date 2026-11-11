@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"github.com/thellmwhisperer/la-roca/test/testfixture"
 	"net/url"
 	"path/filepath"
 	"strings"
@@ -33,7 +34,7 @@ func TestIngestKeepsSuccessWhenOnlyAReadFailed(t *testing.T) {
 func TestDirectIngestReportsAnIsolatedWriteFailureAndExitsNonZero(t *testing.T) {
 	home, claudeRoot, grokRoot, dbPath := initializedIngestCLI(t)
 	corpusPath := filepath.Join(home, ".roca", "plugins", rocacorpus.Name, rocacorpus.DatabaseFilename)
-	db := openLayoutDatabase(t, corpusPath)
+	db := testfixture.OpenSQLite(t, corpusPath)
 	defer db.Close()
 	if err := exactdedup.EnsureGuards(context.Background(), db); err != nil {
 		t.Fatal(err)
@@ -107,7 +108,7 @@ func TestDirectIngestKeepsAReadFailureNonFatal(t *testing.T) {
 	}
 
 	corpusPath := filepath.Join(home, ".roca", "plugins", rocacorpus.Name, rocacorpus.DatabaseFilename)
-	db := openLayoutDatabase(t, corpusPath)
+	db := testfixture.OpenSQLite(t, corpusPath)
 	defer db.Close()
 	var recorded int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM ingest_file_state WHERE last_error IS NOT NULL`).Scan(&recorded); err != nil {

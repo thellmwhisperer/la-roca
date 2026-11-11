@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"database/sql"
+	"github.com/thellmwhisperer/la-roca/test/testfixture"
 
 	"path/filepath"
 
@@ -41,16 +42,7 @@ func openRocaOps(t *testing.T, root string) *sql.DB {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return openSQLite(t, descriptor.Database)
-}
-
-func openSQLite(t *testing.T, path string) *sql.DB {
-	t.Helper()
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return db
+	return testfixture.OpenSQLite(t, descriptor.Database)
 }
 
 func scopedBundledPlugins(t *testing.T) (testPaths, string) {
