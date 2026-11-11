@@ -154,6 +154,13 @@ func planHandoffAutoSupersede(ctx context.Context, db memoryQuerier, physical st
 	}, nil
 }
 
+// retiresHandoff is the condition under which replacement retires the handoff
+// candidate: only a handoff of the same project, or the retirement marker
+// written for that project, does. Any other memory naming it leaves it current.
+const retiresHandoff = `replacement.supersedes = candidate.id
+	AND replacement.layer IN ('handoff', 'handoff-retirement')
+	AND replacement.project IS candidate.project`
+
 type currentHandoffHead struct {
 	id             int64
 	supersedes     any
@@ -168,10 +175,7 @@ func currentProjectHandoffs(ctx context.Context, db memoryQuerier, project strin
 		WHERE candidate.layer = 'handoff'
 		  AND candidate.status = 'active'
 		  AND candidate.project = ?
-		  AND NOT EXISTS (
-		      SELECT 1 FROM memories AS replacement
-		      WHERE replacement.supersedes = candidate.id
-		  )
+		  AND NOT EXISTS (SELECT 1 FROM memories AS replacement WHERE `+retiresHandoff+`)
 		`, project)
 	if err != nil {
 		return nil, fmt.Errorf("look for the current project handoffs: %w", err)
@@ -228,8 +232,8 @@ func repairHandoffHeads(ctx context.Context, db *sql.Tx, currentIDs []int64, kee
 
 func retireHandoffHead(ctx context.Context, db *sql.Tx, id int64) error {
 	var n int
-	if err := db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM memories WHERE supersedes = ?`, id).Scan(&n); err != nil {
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM memories AS candidate
+		JOIN memories AS replacement ON `+retiresHandoff+` WHERE candidate.id = ?`, id).Scan(&n); err != nil {
 		return fmt.Errorf("check whether a handoff head is already retired: %w", err)
 	}
 	if n > 0 {
