@@ -680,6 +680,14 @@ func ftsBranch(surface searchSurface, match string) string {
 	if columnsCovered([]string{surface.IDColumn, "supersedes"}, surface.Columns) {
 		current = fmt.Sprintf(" WHERE %s.%s NOT IN (SELECT %s FROM %s WHERE %s IS NOT NULL)",
 			alias, quoteIdent(surface.IDColumn), quoteIdent("supersedes"), source, quoteIdent("supersedes"))
+		// A memory-shaped row also stops answering once resolved or expired.
+		if slices.Contains(surface.Columns, "status") {
+			current += fmt.Sprintf(" AND %s.%s IS NOT 'resolved'", alias, quoteIdent("status"))
+		}
+		if slices.Contains(surface.Columns, "expires_at") {
+			current += fmt.Sprintf(" AND (%[1]s.%[2]s IS NULL OR julianday(%[1]s.%[2]s) > julianday('now'))",
+				alias, quoteIdent("expires_at"))
+		}
 	}
 	return fmt.Sprintf(
 		"SELECT %s AS surface, %s AS \"table\", CAST(%s.%s AS TEXT) AS id, %s AS snippet, f.rango AS rango "+
