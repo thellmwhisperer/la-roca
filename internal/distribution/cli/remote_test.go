@@ -520,23 +520,6 @@ func equalDurableRocks(left, right map[string]treeSnapshotEntry) bool {
 	return true
 }
 
-func equalTreeSnapshots(left, right map[string]treeSnapshotEntry) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for key, value := range left {
-		other, found := right[key]
-		if !found || value.mode != other.mode {
-			return false
-		}
-		if value.modTime != other.modTime ||
-			!slices.Equal(value.body, other.body) {
-			return false
-		}
-	}
-	return true
-}
-
 func mapKeys(values map[string]treeSnapshotEntry) []string {
 	keys := make([]string, 0, len(values))
 	for key := range values {
