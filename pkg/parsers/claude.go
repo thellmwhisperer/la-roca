@@ -509,12 +509,3 @@ func parseISO(value string) (time.Time, bool) {
 	}
 	return time.Time{}, false
 }
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-	return ""
-}
