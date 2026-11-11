@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/cucumber/godog"
-	_ "modernc.org/sqlite"
 )
 
 func registerVectorEnableAfterInitSteps(ctx *godog.ScenarioContext, m *world) {

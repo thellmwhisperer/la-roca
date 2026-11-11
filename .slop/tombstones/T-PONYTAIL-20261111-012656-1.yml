@@ -1,0 +1,18 @@
+schema: 1
+id: T-PONYTAIL-20261111-012656-1
+status: accepted
+category: alien_code
+title: "Removed the blank import `_ \"modernc.org/sqlite\"`. The same package and build tag already register the driver in steps.go, so the import added nothing. Nothing replaces it."
+created_at: 2026-11-11
+incident:
+  pattern: "Removed the blank import `_ \"modernc.org/sqlite\"`. The same package and build tag already register the driver in steps.go, so the import added nothing. Nothing replaces it."
+  what_went_wrong: "A coding agent wrote it and the ponytail pass cut it before delivery."
+  root_cause: "The coding agent wrote more than the issue needed."
+  rule_established: "Cut by the ponytail pass; it does not come back."
+  evidence:
+    - family: format_churn
+      example: "Removed the blank import `_ \"modernc.org/sqlite\"`. The same package and build tag already register the driver in steps.go, so the import added nothing. Nothing replaces it."
+      artifact: "test/acceptance/vector_enable_after_init_test.go"
+match:
+  family: format_churn
+  artifact: "test/acceptance/vector_enable_after_init_test.go"
