@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"github.com/thellmwhisperer/la-roca/test/testfixture"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -16,14 +17,14 @@ import (
 func TestCostHubFTS(t *testing.T) {
 	fixture := newHubFixture(t)
 	seedHubCoreMemory(t, fixture.plugins, 101, "Synthetic quartz memory")
-	ops := openSQLite(t, filepath.Join(fixture.plugins, rocaops.Name, rocaops.DatabaseFilename))
+	ops := testfixture.OpenSQLite(t, filepath.Join(fixture.plugins, rocaops.Name, rocaops.DatabaseFilename))
 	if _, err := ops.Exec(`INSERT INTO memories(layer, content, origin) VALUES ('project', 'quartz operational memory', 'agent')`); err != nil {
 		t.Fatal(err)
 	}
 	if err := ops.Close(); err != nil {
 		t.Fatal(err)
 	}
-	db := openSQLite(t, filepath.Join(fixture.plugins, rocacorpus.Name, rocacorpus.DatabaseFilename))
+	db := testfixture.OpenSQLite(t, filepath.Join(fixture.plugins, rocacorpus.Name, rocacorpus.DatabaseFilename))
 	_, err := db.Exec(`INSERT INTO sessions(session_id, source_agent, title) VALUES ('lab', 'fixture', 'quartz');
  WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<10000)
  INSERT INTO exchanges(session_id, exchange_number, human_text, agent_text)

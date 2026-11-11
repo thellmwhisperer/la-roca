@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"github.com/thellmwhisperer/la-roca/test/testfixture"
 	"net"
 	"os"
 	"path/filepath"
@@ -31,7 +32,7 @@ func TestResidentStartsAfterCutoverRollback(t *testing.T) {
 	if err := config.SetServingLayout(paths.Config, config.LayoutCutover); err != nil {
 		t.Fatal(err)
 	}
-	ops := openLayoutDatabase(t, filepath.Join(home, ".roca", "plugins", rocaops.Name, rocaops.DatabaseFilename))
+	ops := testfixture.OpenSQLite(t, filepath.Join(home, ".roca", "plugins", rocaops.Name, rocaops.DatabaseFilename))
 	if _, err := ops.Exec(`DROP VIEW memory_compatibility`); err != nil {
 		ops.Close()
 		t.Fatal(err)

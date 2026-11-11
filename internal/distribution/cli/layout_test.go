@@ -1,7 +1,7 @@
 package cli
 
 import (
-	"database/sql"
+	"github.com/thellmwhisperer/la-roca/test/testfixture"
 	"io"
 	"os"
 	"path/filepath"
@@ -58,15 +58,6 @@ func TestShadowCLIRequiresAnExplicitServingChoice(t *testing.T) {
 	}
 }
 
-func openLayoutDatabase(t *testing.T, path string) *sql.DB {
-	t.Helper()
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return db
-}
-
 func TestCutoverCLIRejectsUnfinishedDestinationCustody(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -93,7 +84,7 @@ func TestCutoverCLIRejectsUnfinishedDestinationCustody(t *testing.T) {
 		{rocacron.Name, rocacron.DatabaseFilename, "data4-legacy-run-logs"},
 	} {
 		t.Run(probe.plugin, func(t *testing.T) {
-			db := openLayoutDatabase(t, filepath.Join(home, ".roca", "plugins", probe.plugin, probe.database))
+			db := testfixture.OpenSQLite(t, filepath.Join(home, ".roca", "plugins", probe.plugin, probe.database))
 			defer db.Close()
 			if _, err := db.Exec(`UPDATE plugin_migrations SET migration_state = 'batch-in-progress' WHERE migration = ?`, probe.migration); err != nil {
 				t.Fatal(err)
@@ -125,7 +116,7 @@ func TestCutoverCLIRejectsUnfinishedDestinationCustody(t *testing.T) {
 
 func seedLayoutMemory(t *testing.T, path, content string) {
 	t.Helper()
-	core := openLayoutDatabase(t, path)
+	core := testfixture.OpenSQLite(t, path)
 	defer core.Close()
 	if _, err := core.Exec(data.Schema+`INSERT INTO memories(id, layer, content, origin) VALUES(29, 'project', ?, 'agent')`, content); err != nil {
 		t.Fatal(err)

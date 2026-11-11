@@ -1,6 +1,7 @@
 package rocaops
 
 import (
+	"github.com/thellmwhisperer/la-roca/test/testfixture"
 	"path/filepath"
 	"testing"
 
@@ -19,7 +20,7 @@ func TestAuditRemovalPreservesCustodyAndRetriesLedgerFailure(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			db := openCustodyDB(t, fixture.ops)
+			db := testfixture.OpenSQLite(t, fixture.ops)
 			defer db.Close()
 			exec := func(query string) {
 				t.Helper()

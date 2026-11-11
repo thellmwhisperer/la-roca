@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"github.com/thellmwhisperer/la-roca/test/testfixture"
 	"io"
 	"os"
 	"path/filepath"
@@ -188,13 +189,13 @@ func TestVectorReaderInterleavesCutoverCursorsAndRequests(t *testing.T) {
 	if _, err := os.Stat(setup.dbPath); !os.IsNotExist(err) {
 		t.Fatalf("cutover fixture touched the legacy database: %v", err)
 	}
-	ops := openLayoutDatabase(t, filepath.Join(home, ".roca", "plugins", rocaops.Name, rocaops.DatabaseFilename))
+	ops := testfixture.OpenSQLite(t, filepath.Join(home, ".roca", "plugins", rocaops.Name, rocaops.DatabaseFilename))
 	if _, err := ops.Exec("INSERT INTO memories(layer, content, origin) VALUES('discovery', 'synthetic neighbour', 'agent')"); err != nil {
 		ops.Close()
 		t.Fatal(err)
 	}
 	ops.Close()
-	db := openLayoutDatabase(t, filepath.Join(home, ".roca", "plugins", rocacorpus.Name, rocacorpus.DatabaseFilename))
+	db := testfixture.OpenSQLite(t, filepath.Join(home, ".roca", "plugins", rocacorpus.Name, rocacorpus.DatabaseFilename))
 	for _, statement := range []string{
 		`WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<1001)
    INSERT INTO sessions(session_id, title) SELECT CAST(x AS TEXT), 'synthetic session ' || x FROM n`,
