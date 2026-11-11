@@ -219,7 +219,9 @@ exchange hits add no further session lines.
 
 The FTS leg measures each token against the selected live indexes, removes
 zero-frequency and broadly common terms, and keeps a small rare-term set for
-BM25 ranking. The vector leg embeds the raw question, gathers the fused top
+BM25 ranking. On memory-shaped tables it answers only current rows: a row
+another row supersedes, a `resolved` row, or a row whose `expires_at` has
+passed does not come back. The vector leg embeds the raw question, gathers the fused top
 neighbors, applies a similarity floor, and deduplicates chunks by stable
 source. RRF then combines ranks without normalizing either leg's native scores.
 If the vector leg times out, the envelope names `degraded: vector_timeout`
