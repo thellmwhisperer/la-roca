@@ -1,6 +1,7 @@
 package parsers
 
 import (
+	"cmp"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
@@ -95,13 +96,13 @@ func cursorStoreRecords(db *sql.DB, meta FileMeta) (Records, error) {
 	ordered, messageDiscards := cursorStoreOrderedMessages(blobs, storeMeta.LatestRootBlobID)
 	discards := append(metaDiscards, sidecarDiscards...)
 	discards = append(discards, messageDiscards...)
-	source := firstNonEmpty(meta.SourceAgent, "cursor")
-	sessionID := firstNonEmpty(storeMeta.AgentID, cursorStorePathSession(meta.Path), meta.SessionID)
+	source := cmp.Or(meta.SourceAgent, "cursor")
+	sessionID := cmp.Or(storeMeta.AgentID, cursorStorePathSession(meta.Path), meta.SessionID)
 	session := Session{
 		ID:               "cursor:" + strings.TrimPrefix(sessionID, "cursor:"),
 		SourceAgent:      source,
-		Project:          firstNonEmpty(cursorProjectBase(sidecar.Cwd), meta.Project),
-		Title:            firstNonEmpty(strings.TrimSpace(storeMeta.Name), strings.TrimSpace(sidecar.Title)),
+		Project:          cmp.Or(cursorProjectBase(sidecar.Cwd), meta.Project),
+		Title:            cmp.Or(strings.TrimSpace(storeMeta.Name), strings.TrimSpace(sidecar.Title)),
 		StartedAt:        cursorStoreTimestamp(storeMeta.CreatedAt, sidecar.CreatedAtMs),
 		EndedAt:          cursorStoreTimestamp(sidecar.UpdatedAtMs, 0),
 		Snapshot:         true,
@@ -154,7 +155,7 @@ func cursorStoreRecords(db *sql.DB, meta FileMeta) (Records, error) {
 			}
 			closeCurrent()
 			turnNumber++
-			current = &cursorTurn{number: turnNumber, sourceID: firstNonEmpty(item.msg.ID, item.id),
+			current = &cursorTurn{number: turnNumber, sourceID: cmp.Or(item.msg.ID, item.id),
 				human: text, fingerprint: hashWriter{parts: [][]byte{append([]byte(nil), item.raw...)}}}
 		case "assistant":
 			if current == nil {
@@ -186,7 +187,7 @@ func cursorStoreRecords(db *sql.DB, meta FileMeta) (Records, error) {
 	closeCurrent()
 	PlaceThinking(session.Exchanges)
 	if session.EndedAt == "" && len(session.Exchanges) > 0 {
-		session.EndedAt = firstNonEmpty(session.Exchanges[len(session.Exchanges)-1].AgentTimestamp,
+		session.EndedAt = cmp.Or(session.Exchanges[len(session.Exchanges)-1].AgentTimestamp,
 			session.Exchanges[len(session.Exchanges)-1].HumanTimestamp)
 	}
 	if session.StartedAt != "" && session.EndedAt != "" {

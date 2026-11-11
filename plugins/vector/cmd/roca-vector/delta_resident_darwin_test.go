@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -34,7 +35,7 @@ func TestMain(m *testing.M) {
 }
 
 func runE2ECore(args []string) bool {
-	if !containsArgument(args, "_vector-reader") {
+	if !slices.Contains(args, "_vector-reader") {
 		return false
 	}
 	decoder, encoder := json.NewDecoder(os.Stdin), json.NewEncoder(os.Stdout)
@@ -134,15 +135,6 @@ func assertLastWriterBackend(t *testing.T, dataDir, wantBackend, wantReason stri
 	}
 	t.Logf("writer engine telemetry: backend=%s fallback_reason=%q",
 		last.Backend, last.Fallback)
-}
-
-func containsArgument(args []string, target string) bool {
-	for _, argument := range args {
-		if argument == target {
-			return true
-		}
-	}
-	return false
 }
 
 func TestDeltaIngestTerminatesWhileResidentHoldsAccelerator(t *testing.T) {

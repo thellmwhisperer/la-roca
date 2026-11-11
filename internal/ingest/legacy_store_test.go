@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -666,7 +667,7 @@ func TestLegacyStoreRootsAndDetection(t *testing.T) {
 		t.Errorf("env = %q", fromEnv.LegacyStoreDB)
 	}
 
-	if got := DetectAgents(roots); containsString(got, legacyStoreSource) {
+	if got := DetectAgents(roots); slices.Contains(got, legacyStoreSource) {
 		t.Errorf("absent legacy store was detected: %v", got)
 	}
 	if err := os.MkdirAll(filepath.Dir(want), 0o700); err != nil {
@@ -676,7 +677,7 @@ func TestLegacyStoreRootsAndDetection(t *testing.T) {
 		t.Fatal(err)
 	}
 	present := ResolveRoots(Environment{GOOS: "darwin", Home: home}, Settings{})
-	if got := DetectAgents(present); !containsString(got, legacyStoreSource) {
+	if got := DetectAgents(present); !slices.Contains(got, legacyStoreSource) {
 		t.Errorf("present legacy store not detected: %v", got)
 	}
 }

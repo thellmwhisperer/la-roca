@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -36,7 +37,7 @@ func (d DeclaredCorpus) supportsFrontier() bool {
 			return false
 		}
 		for _, col := range append(append([]string{}, table.TextColumns...), table.TimeColumns...) {
-			if !containsString(allowed, col) {
+			if !slices.Contains(allowed, col) {
 				return false
 			}
 		}

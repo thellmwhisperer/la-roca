@@ -1,6 +1,7 @@
 package parsers
 
 import (
+	"cmp"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -73,7 +74,7 @@ func parseCodexHistory(content []byte, meta FileMeta) Records {
 			at = len(records.Sessions)
 			byID[line.SessionID] = at
 			records.Sessions = append(records.Sessions, Session{
-				ID: line.SessionID, SourceAgent: firstNonEmpty(meta.SourceAgent, "codex"),
+				ID: line.SessionID, SourceAgent: cmp.Or(meta.SourceAgent, "codex"),
 				Project: meta.Project, Metadata: map[string]any{}, HistoryFallback: true,
 			})
 		}

@@ -1,6 +1,7 @@
 package ingest
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -216,9 +217,9 @@ func resolveOne(env Environment, settings Settings) Roots {
 		ClaudeProjects: pick(env, settings.ClaudeProjects, envClaudeProjects,
 			join(env, claude, "projects")),
 		ClaudeConfig: join(env, env.Home, ".claude.json"),
-		ClaudeDesktopSessions: expand(env, firstNonEmpty(settings.ClaudeDesktopSessions,
+		ClaudeDesktopSessions: expand(env, cmp.Or(settings.ClaudeDesktopSessions,
 			join(env, appSupport, "claude-code-sessions"))),
-		CoworkSessions: expand(env, firstNonEmpty(settings.CoworkSessions,
+		CoworkSessions: expand(env, cmp.Or(settings.CoworkSessions,
 			join(env, appSupport, "local-agent-mode-sessions"))),
 		CodexRoot: codexRoot,
 		CodexSessions: pick(env, settings.CodexSessions, envCodexSessions,
@@ -238,7 +239,7 @@ func resolveOne(env Environment, settings Settings) Roots {
 		HermesHome: hermesHome,
 		HermesDB: pick(env, settings.HermesDB, envHermesDB,
 			join(env, hermesHome, "state.db")),
-		LegacyStoreDB: expand(env, firstNonEmpty(settings.LegacyStoreDB,
+		LegacyStoreDB: expand(env, cmp.Or(settings.LegacyStoreDB,
 			env.get("LEGACY_STORE_DB_PATH"), env.get(retiredStoreDBEnv()),
 			join(env, env.Home, "."+retiredStoreHome(), "roca.db"))),
 		GrokSessions: pick(env, settings.GrokSessions, envGrokSessions,
@@ -337,7 +338,7 @@ func firstExportRecord(path string) map[string]json.RawMessage {
 // under is the directory `name` inside the base a platform variable declares, or
 // inside that platform's own convention when the machine declares nothing.
 func under(env Environment, variable, name string, convention ...string) string {
-	base := firstNonEmpty(env.get(variable),
+	base := cmp.Or(env.get(variable),
 		join(env, append([]string{env.Home}, convention...)...))
 	return join(env, base, name)
 }
@@ -379,7 +380,7 @@ func openCodeTelegramLogsDir(env Environment) string {
 
 // pick applies the three precedences to one path.
 func pick(env Environment, declared, variable, fallback string) string {
-	return expand(env, firstNonEmpty(declared, env.get(variable), fallback))
+	return expand(env, cmp.Or(declared, env.get(variable), fallback))
 }
 
 // join builds a path with the separator of the platform being resolved, which is
@@ -417,15 +418,6 @@ func expandAll(env Environment, paths []string) []string {
 		out = append(out, expand(env, path))
 	}
 	return out
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-	return ""
 }
 
 // The retired product home and its config keys are assembled so a private

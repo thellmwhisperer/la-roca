@@ -3,6 +3,7 @@ package cli
 import (
 	"database/sql"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -64,7 +65,7 @@ func TestHealthRemedyRoundTripClearsASeededLabHome(t *testing.T) {
 		if remedy == "" {
 			t.Fatalf("failing check %s has no remedy: %v", name, check)
 		}
-		if !containsRemedy(remedies, remedy) {
+		if !slices.Contains(remedies, remedy) {
 			t.Fatalf("printed remedies %v do not include %q", remedies, remedy)
 		}
 	}
@@ -153,15 +154,6 @@ func printedRemedies(output string) []string {
 		}
 	}
 	return remedies
-}
-
-func containsRemedy(remedies []string, want string) bool {
-	for _, remedy := range remedies {
-		if remedy == want {
-			return true
-		}
-	}
-	return false
 }
 
 // rocaArgs turns a printed command back into argv. Paths are shell quoted for

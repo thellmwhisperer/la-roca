@@ -1,6 +1,7 @@
 package parsers
 
 import (
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -342,7 +343,7 @@ func claudeWebUserMemory(content, project, path string, meta FileMeta, extra map
 	return Memory{
 		Layer: "user", Content: content, Origin: "cron", SourceAgent: "claude-web",
 		Project: project, Metadata: metadata, Source: "claude-web", FilePath: path,
-		CreatedAt: firstNonEmpty(created, updated),
+		CreatedAt: cmp.Or(created, updated),
 	}
 }
 
@@ -382,7 +383,7 @@ func ParseClaudeWebProject(content []byte, meta FileMeta) (Records, error) {
 	if uuid == "" {
 		return Records{Discards: []Discard{{Record: 1, Reason: "project has no uuid"}}}, nil
 	}
-	body := firstNonEmpty(strings.TrimSpace(payload.Description),
+	body := cmp.Or(strings.TrimSpace(payload.Description),
 		strings.TrimSpace(payload.PromptTemplate), strings.TrimSpace(payload.Name))
 	if body == "" {
 		return Records{Discards: []Discard{{Record: 1, Reason: "project has no text"}}}, nil
@@ -417,7 +418,7 @@ func ParseClaudeWebProject(content []byte, meta FileMeta) (Records, error) {
 	memories := []Memory{{
 		Layer: "project", Content: body, Origin: "cron", SourceAgent: "claude-web",
 		Project: uuid, Metadata: metadata, Source: "claude-web", FilePath: path,
-		CreatedAt: firstNonEmpty(created, updated),
+		CreatedAt: cmp.Or(created, updated),
 	}}
 	for i, doc := range payload.Docs {
 		text := strings.TrimSpace(doc.Content)
@@ -425,7 +426,7 @@ func ParseClaudeWebProject(content []byte, meta FileMeta) (Records, error) {
 			continue
 		}
 		docID := strings.TrimSpace(doc.UUID)
-		docPath := "project-doc:" + firstNonEmpty(docID, fmt.Sprintf("%s#%d", uuid, i+1))
+		docPath := "project-doc:" + cmp.Or(docID, fmt.Sprintf("%s#%d", uuid, i+1))
 		memories = append(memories, Memory{
 			Layer: "project", Content: text, Origin: "cron", SourceAgent: "claude-web",
 			Project: uuid, Source: "claude-web", FilePath: docPath,
@@ -437,7 +438,7 @@ func ParseClaudeWebProject(content []byte, meta FileMeta) (Records, error) {
 				"export_file_path": meta.Path,
 				"memory_kind":      "project_doc",
 				"uuid":             docID,
-				"filename":         firstNonEmpty(strings.TrimSpace(doc.Filename), strings.TrimSpace(doc.FileName)),
+				"filename":         cmp.Or(strings.TrimSpace(doc.Filename), strings.TrimSpace(doc.FileName)),
 				"created_at":       validInstant(doc.CreatedAt),
 				"project_uuid":     uuid,
 			}),
@@ -539,7 +540,7 @@ func firstJSONString(object map[string]json.RawMessage, keys ...string) string {
 }
 
 func claudeWebText(message claudeWebMessage) string {
-	return firstNonEmpty(strings.TrimSpace(message.Text), piContentText(message.Content))
+	return cmp.Or(strings.TrimSpace(message.Text), piContentText(message.Content))
 }
 
 func claudeWebExchangeMetadata(human, assistant claudeWebMessage) map[string]any {
@@ -560,7 +561,7 @@ func claudeWebExchangeMetadata(human, assistant claudeWebMessage) map[string]any
 func claudeWebFileNames(files []claudeWebFile) []string {
 	names := make([]string, 0, len(files))
 	for _, file := range files {
-		if name := firstNonEmpty(file.FileName, file.Filename, file.Name); name != "" {
+		if name := cmp.Or(file.FileName, file.Filename, file.Name); name != "" {
 			names = append(names, name)
 		}
 	}

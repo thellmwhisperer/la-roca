@@ -5,6 +5,7 @@
 package config
 
 import (
+	"cmp"
 	"fmt"
 	"path/filepath"
 )
@@ -54,7 +55,7 @@ const (
 // go. La Roca's home is always ~/.roca unless the operator names another
 // location explicitly.
 func Resolve(in Input) (Paths, error) {
-	if path := firstNonEmpty(in.Flag, in.Env); path != "" {
+	if path := cmp.Or(in.Flag, in.Env); path != "" {
 		abs, err := filepath.Abs(path)
 		if err != nil {
 			return Paths{}, fmt.Errorf("resolve the database path %q: %w", path, err)
@@ -101,13 +102,4 @@ func artifactRoot(dataDir, home string) string {
 		return dataDir
 	}
 	return filepath.Join(home, DirOwn)
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, v := range values {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
 }

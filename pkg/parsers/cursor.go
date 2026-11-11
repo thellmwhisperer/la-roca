@@ -2,6 +2,7 @@ package parsers
 
 import (
 	"bytes"
+	"cmp"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -305,13 +306,13 @@ func cursorStateRecords(db *sql.DB, meta FileMeta) (Records, error) {
 
 func cursorSession(composer cursorComposer, bubbles map[string]cursorJSONRow,
 	referenced map[string]bool, meta FileMeta) (Session, int, []Discard) {
-	source := firstNonEmpty(meta.SourceAgent, "cursor")
+	source := cmp.Or(meta.SourceAgent, "cursor")
 	session := Session{
 		ID:               "cursor:" + composer.ComposerID,
 		SourceAgent:      source,
 		StartedAt:        ISOFromEpochMS(float64(composer.CreatedAt)),
 		EndedAt:          ISOFromEpochMS(float64(composer.LastUpdatedAt)),
-		Title:            firstNonEmpty(strings.TrimSpace(composer.Name), strings.TrimSpace(composer.Subtitle)),
+		Title:            cmp.Or(strings.TrimSpace(composer.Name), strings.TrimSpace(composer.Subtitle)),
 		Snapshot:         true,
 		ExchangeKeyScope: cursorExchangeScope,
 		Metadata: WithoutEmpty(map[string]any{
@@ -433,7 +434,7 @@ func (t *cursorTurn) addAssistant(bubble cursorBubble, raw []byte) {
 		t.thinking = append(t.thinking, Thinking{Text: thought, WordCount: wordCount(thought)})
 	}
 	if name := strings.TrimSpace(bubble.ToolFormerData.Name); name != "" {
-		params := firstNonEmpty(strings.TrimSpace(bubble.ToolFormerData.Params),
+		params := cmp.Or(strings.TrimSpace(bubble.ToolFormerData.Params),
 			strings.TrimSpace(bubble.ToolFormerData.RawArgs))
 		hadError := strings.EqualFold(bubble.ToolFormerData.Status, "error") ||
 			strings.TrimSpace(bubble.ToolFormerData.Error) != ""

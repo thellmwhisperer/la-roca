@@ -12,10 +12,11 @@ package agentcfg
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	goruntime "runtime"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/thellmwhisperer/la-roca/internal/securefile"
@@ -152,12 +153,7 @@ var runtimes = map[string]runtime{
 // Runtimes are the supported runtimes, sorted, which is the order every message
 // to the operator lists them in.
 func Runtimes() []string {
-	names := make([]string, 0, len(runtimes))
-	for name := range runtimes {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
+	return slices.Sorted(maps.Keys(runtimes))
 }
 
 // Outcome is what one edit did. Changed false means the file already said what

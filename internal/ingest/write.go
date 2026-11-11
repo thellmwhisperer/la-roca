@@ -1,6 +1,7 @@
 package ingest
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -1403,8 +1404,8 @@ func exchangeProvenanceValues(provenance parsers.Provenance) []any {
 func (w *writer) enrichExchange(ctx context.Context, sessionID string, stored storedExchange,
 	exchange parsers.Exchange, richer bool) (int, int, error) {
 	provenance := exchange.Provenance
-	humanTimestamp := firstNonEmpty(stored.humanTimestamp, exchange.HumanTimestamp)
-	agentTimestamp := firstNonEmpty(stored.agentTimestamp, exchange.AgentTimestamp)
+	humanTimestamp := cmp.Or(stored.humanTimestamp, exchange.HumanTimestamp)
+	agentTimestamp := cmp.Or(stored.agentTimestamp, exchange.AgentTimestamp)
 	effectiveLatency := latencyBetween(humanTimestamp, agentTimestamp)
 	provenanceColumns := `
 		  model = COALESCE(model, ?),

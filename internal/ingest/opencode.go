@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -187,7 +188,7 @@ func openCodeSession(path string, source row, worktrees map[string]string,
 	session := parsers.Session{
 		ID:                     openCodeScope + ":" + native,
 		SourceAgent:            openCodeSourceAgent(source.text("agent")),
-		Project:                firstNonEmpty(baseName(worktree), baseName(source.text("directory"))),
+		Project:                cmp.Or(baseName(worktree), baseName(source.text("directory"))),
 		StartedAt:              isoFromMS(created),
 		EndedAt:                isoFromMS(updated),
 		SnapshotUpdatedAt:      isoFromMS(updated),

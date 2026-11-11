@@ -1,6 +1,7 @@
 package parsers
 
 import (
+	"cmp"
 	"encoding/json"
 	"regexp"
 	"strconv"
@@ -137,7 +138,7 @@ func ParseCodexSession(content []byte, meta FileMeta) (Records, error) {
 	reader := &codexReader{
 		session: Session{
 			ID:                    meta.SessionID,
-			SourceAgent:           firstNonEmpty(meta.SourceAgent, "codex"),
+			SourceAgent:           cmp.Or(meta.SourceAgent, "codex"),
 			Project:               meta.Project,
 			Metadata:              map[string]any{},
 			RecordTimestampOwners: true,
@@ -246,8 +247,8 @@ func (r *codexReader) read(content []byte) {
 		case "session_meta":
 			r.sessionMeta(payload)
 		case "turn_context":
-			r.model = firstNonEmpty(payload.Model, r.model)
-			r.effort = firstNonEmpty(payload.Effort, r.effort)
+			r.model = cmp.Or(payload.Model, r.model)
+			r.effort = cmp.Or(payload.Effort, r.effort)
 			putIfSet(r.session.Metadata, "model", r.model)
 			putIfSet(r.session.Metadata, "reasoning_effort", r.effort)
 		case "event_msg":
@@ -285,7 +286,7 @@ func (r *codexReader) legacyPrompt(raw string) bool {
 	}
 	r.legacy = append(r.legacy,
 		historyExchange(r.numberOffset+len(r.legacy)+1,
-			firstNonEmpty(line.SessionID, r.session.ID), line))
+			cmp.Or(line.SessionID, r.session.ID), line))
 	return true
 }
 
@@ -338,7 +339,7 @@ func (r *codexReader) event(record int, line codexLine, payload codexPayload) {
 		}
 		turn := *r.open
 		turn.closed = record
-		turn.agentText = firstNonEmpty(payload.LastAgentMessage, r.agentSaid)
+		turn.agentText = cmp.Or(payload.LastAgentMessage, r.agentSaid)
 		turn.agentTS = validInstant(line.Timestamp)
 		turn.turnID = payload.TurnID
 		r.turns = append(r.turns, turn)
@@ -407,7 +408,7 @@ func (r *codexReader) responseItem(record int, line codexLine, payload codexPayl
 	case "function_call", "custom_tool_call":
 		tool := &ToolUse{
 			Name:          payload.Name,
-			ParamsSummary: Clip(firstNonEmpty(rawText(payload.Arguments), payload.Input), paramsBudget),
+			ParamsSummary: Clip(cmp.Or(rawText(payload.Arguments), payload.Input), paramsBudget),
 			SourceID:      payload.CallID,
 		}
 		r.signals = append(r.signals, codexSignal{record: record, tool: tool})
@@ -480,7 +481,7 @@ func (r *codexReader) recover(record int, line codexLine, payload codexPayload) 
 func (r *codexReader) exclude(record int, kind, name string) {
 	r.discards = append(r.discards, Discard{
 		Record: record, ByDesign: true,
-		Reason:   "codex runtime " + kind + " not ingested: " + firstNonEmpty(name, "unnamed"),
+		Reason:   "codex runtime " + kind + " not ingested: " + cmp.Or(name, "unnamed"),
 		Category: "codex runtime " + kind + " not ingested",
 	})
 }
