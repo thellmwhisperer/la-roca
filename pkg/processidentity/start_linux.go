@@ -1,5 +1,8 @@
 //go:build linux
 
+// Package processidentity owns the process start identity that the core vector
+// guard and the vector plugin both compare to tell a live owner from a reused
+// pid. Guards persist the string, so its format must not change on any OS.
 package processidentity
 
 import (
