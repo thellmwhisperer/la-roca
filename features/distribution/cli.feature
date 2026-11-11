@@ -8,6 +8,9 @@ Feature: Distribution command line
   Scenario: Session commands reject an explicitly empty project
     Then handoff latest and pill reject blank project flags and default only when the flag is omitted
 
+  Scenario: Health refuses a negative sample size without running any check
+    Then health refuses a negative --max-rows naming the flag and keeps 0 and omitted working
+
   Scenario: Help lists every command with one honest line each
     When the operator asks for command-line help
     Then every public command appears once with an honest one-line summary

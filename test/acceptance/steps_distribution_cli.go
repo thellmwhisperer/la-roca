@@ -19,6 +19,7 @@ import (
 
 func registerDistributionCLISteps(ctx *godog.ScenarioContext, w *distributionWorld) {
 	ctx.Then(`^handoff latest and pill reject blank project flags and default only when the flag is omitted$`, w.sessionProjectFlagIsExplicit)
+	ctx.Then(`^health refuses a negative --max-rows naming the flag and keeps 0 and omitted working$`, w.healthMaxRowsIsNonNegative)
 	ctx.When(`^the operator asks playground without its plugin$`, func() error {
 		if err := w.prepare("missing-playground"); err != nil {
 			return err
@@ -89,6 +90,21 @@ func registerDistributionCLISteps(ctx *godog.ScenarioContext, w *distributionWor
 		w.declareOperatorVectorDelta)
 	ctx.Then(`^the nightly train reports 2 rides and names the operator declaration$`,
 		w.nightlyTrainReportsOperatorVectorDelta)
+}
+
+func (w *distributionWorld) healthMaxRowsIsNonNegative() error {
+	for _, args := range [][]string{{"health", "--max-rows", "-2"}, {"health", "--max-rows", "-2", "--json"}} {
+		run := w.run(args...)
+		if run.code <= 0 || run.stdout != "" || !strings.Contains(run.stderr, "--max-rows must be zero or greater") {
+			return fmt.Errorf("%q must refuse the negative sample size without running a check: %+v", args, run)
+		}
+	}
+	for _, args := range [][]string{{"health"}, {"health", "--max-rows", "0"}} {
+		if run := w.run(args...); run.code != 0 || !strings.HasPrefix(run.stdout, "health: ") {
+			return fmt.Errorf("%q must keep running the checks: %+v", args, run)
+		}
+	}
+	return nil
 }
 
 func (w *distributionWorld) sessionProjectFlagIsExplicit() error {
