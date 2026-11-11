@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 )
 
 func TestLockCreatesPrivateFileAndExcludesSecondHolder(t *testing.T) {
@@ -36,7 +37,7 @@ func TestLockCreatesPrivateFileAndExcludesSecondHolder(t *testing.T) {
 	case second := <-acquired:
 		_ = second()
 		t.Fatal("second Lock returned while the first still held the lock")
-	default:
+	case <-time.After(200 * time.Millisecond):
 	}
 
 	if err := release(); err != nil {
