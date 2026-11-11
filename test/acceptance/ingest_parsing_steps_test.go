@@ -5,7 +5,6 @@ package acceptance
 import (
 	"fmt"
 	"path/filepath"
-	"strings"
 
 	"github.com/cucumber/godog"
 )
@@ -233,13 +232,4 @@ func (w *ingestAcceptanceWorld) seedInstructionFiles() error {
 		}
 	}
 	return nil
-}
-
-func containsFold(values []string, want string) bool {
-	for _, value := range values {
-		if strings.EqualFold(value, want) {
-			return true
-		}
-	}
-	return false
 }
