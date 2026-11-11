@@ -92,6 +92,13 @@ Feature: The full installation cycle
     And no bundled plugin staging folders remain
 
   @fast @acceptance @plugin-staging
+  Scenario: A vector worker claim whose pid was reused does not block installation
+    Given a vector worker claim naming a live process with another start identity
+    When I run "roca _install-bundled-plugins --json"
+    Then the command exits with code 0
+    And the stale vector worker claim is gone
+
+  @fast @acceptance @plugin-staging
   Scenario: Plugin staging held by another process is preserved without waiting
     Given a bundled plugin staging folder locked by the test process
     When I install bundled plugins while the staging lock is held
