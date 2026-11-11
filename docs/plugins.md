@@ -828,13 +828,17 @@ DATA-2 also prepares a second, hidden memory route in that same custodial
 database. `memory_records` holds the multiset union of ops, core, and harvested
 corpus payloads: byte-equivalent identities from different sources share one
 record, while duplicates within a source and divergent payloads remain physical
-versions. Plugin-local custody memberships and `memory_compatibility` retain
-every legacy database label and ID. Its derived `memory_records_fts` is rebuilt
-and checked before the ledger becomes `verified`. These names stay outside
-prompts and the SQL gate during legacy serving, so the served `memories`/
-`memories_fts` route and source databases remain untouched until the atomic
-cutover. In cutover, the ops `core_memories` view exposes the migrated
-memories only core held, for SQL and the ops vector sidecar.
+versions. Where the ops database carries a unique exact-payload index
+(`idx_memory_records_exact_payload`) on `memory_records`, a memory that index
+refuses becomes one more membership of the record it matches, even when its
+canonical digest differs, instead of stopping the import. Plugin-local custody
+memberships and `memory_compatibility` retain every legacy database label and
+ID. Its derived `memory_records_fts` is rebuilt and checked before the ledger
+becomes `verified`. These names stay outside prompts and the SQL gate during
+legacy serving, so the served `memories`/`memories_fts` route and source
+databases remain untouched until the atomic cutover. In cutover, the ops
+`core_memories` view exposes the migrated memories only core held, for SQL and
+the ops vector sidecar.
 
 DATA-2 runs through the
 [explicit migration coordinator](operations.md#explicit-data-split-migration).
