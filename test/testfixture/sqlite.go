@@ -3,8 +3,6 @@ package testfixture
 import (
 	"database/sql"
 	"testing"
-
-	_ "modernc.org/sqlite"
 )
 
 // OpenSQLite opens the SQLite file at path and fails the test on error.
