@@ -527,6 +527,9 @@ func healthCommand(env *cliEnv) *cobra.Command {
 		Use:   "health",
 		Args:  cobra.NoArgs,
 		Short: "Non-destructive checks over live data",
+		PreRunE: func(cmd *cobra.Command, _ []string) error {
+			return validateFlags(cmd.Flags(), "max-rows")
+		},
 		RunE: env.serviceRunE(func(cmd *cobra.Command, _ []string, svc *service.Service) error {
 			report, err := svc.Health(cmd.Context(), req)
 			if err != nil {

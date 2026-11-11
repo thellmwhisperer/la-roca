@@ -4,6 +4,7 @@ package acceptance
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -51,6 +52,20 @@ func registerVectorEnableAfterInitSteps(ctx *godog.ScenarioContext, m *world) {
 			return fmt.Errorf("build the real vector companion: %w: %s", err, output)
 		}
 		return m.shortResidentSockets()
+	})
+	ctx.Given(`^the corpus vector sidecar records a dimensions value that is not a number$`, func() error {
+		path := filepath.Join(m.home, ".roca", "plugins", "roca-corpus", "roca-corpus.vector.db")
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			return err
+		}
+		db, err := sql.Open("sqlite", path)
+		if err != nil {
+			return err
+		}
+		defer db.Close()
+		_, err = db.Exec(`CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+			INSERT INTO meta(key,value) VALUES ('owner','roca-corpus/corpus'),('model','m'),('dimensions','eight')`)
+		return err
 	})
 	ctx.Then(`^the managed vector state directory exists after the local model download$`, func() error {
 		state := filepath.Join(m.home, ".roca", "plugins", "roca-vector", "state")
