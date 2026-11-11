@@ -40,7 +40,7 @@ scopes:
   # Everything the shipped binary is made of.
   go_production:
     scan_path: .
-    pattern: "{cmd,internal}/**/*.go"
+    pattern: "{cmd,internal,pkg,plugins}/**/*.go"
     ignore:
       - "**/*_test.go"
 
@@ -49,7 +49,7 @@ scopes:
   # subsidises the production one.
   go_tests:
     scan_path: .
-    pattern: "{cmd/**/*_test.go,internal/**/*_test.go,test/**/*.go}"
+    pattern: "{cmd/**/*_test.go,internal/**/*_test.go,pkg/**/*_test.go,plugins/**/*_test.go,scripts/**/*_test.go,test/**/*.go}"
 
 # Orphan scopes are repository surfaces, not language scans. A new public
 # surface starts as active debt until something outside itself consumes it;
