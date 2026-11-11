@@ -454,6 +454,11 @@ func (batch *Batch) QueryContext(ctx context.Context, query string, args ...any)
 	return batch.tx.QueryContext(ctx, query, args...)
 }
 
+// QueryRowContext reads one row through the batch transaction.
+func (batch *Batch) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
+	return batch.tx.QueryRowContext(ctx, query, args...)
+}
+
 func (batch *Batch) AddMembership(ctx context.Context, membership Membership) error {
 	if batch == nil || batch.done {
 		return fmt.Errorf("migration batch is closed")

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/migrationledger"
+	"github.com/thellmwhisperer/la-roca/internal/store/payloadhash"
 	_ "modernc.org/sqlite"
 )
 
@@ -774,4 +775,55 @@ func TestDATA2VerifiedCustodyRejectsMissingSnapshot(t *testing.T) {
 			}
 		})
 	}
+}
+
+// opsExactPayloadGuard is the unique index internal/store/exactdedup builds:
+// a payload hash over every column but the identity, digest and timestamp.
+var opsExactPayloadGuard = func() string {
+	var parts []string
+	for _, name := range strings.Fields(`provenance layer content metadata origin source_agent
+		source_model source_surface source_session source_sequence project status supersedes expires_at`) {
+		parts = append(parts, "typeof("+name+")",
+			"CASE WHEN typeof("+name+") = 'text' THEN CAST("+name+" AS BLOB) ELSE "+name+" END")
+	}
+	return "CREATE UNIQUE INDEX idx_memory_records_exact_payload ON memory_records(" +
+		payloadhash.SQLFunc + "(" + strings.Join(parts, ",") + "))"
+}()
+
+func TestDATA2ResumeAliasesAMemoryTheExactPayloadGuardRefuses(t *testing.T) {
+	fixture := newCustodyFixture(t)
+	insertFixtureMemories(t, fixture.core, false, []fixtureMemory{{id: 1, layer: "project",
+		content: "core alpha", metadata: `{}`, origin: "agent", status: "active", createdAt: "2026-08-01"}})
+	insertFixtureMemories(t, fixture.corpus, true, nil)
+	insertOpsMemories(t, fixture.ops, 1)
+	carryCustody(t, fixture)
+	db := openCustodyDB(t, fixture.ops)
+	defer db.Close()
+	// A plugin update reopens the verified migration; the new generation has no
+	// snapshot yet, and ops kept writing a memory whose digest differs only by
+	// created_at, which the guard does not cover.
+	for _, statement := range []string{opsExactPayloadGuard,
+		`INSERT INTO memories (layer, content, metadata, origin, status, created_at)
+			VALUES ('handoff', 'existing ops 0', '{}', 'agent', 'active', '2026-09-01 00:00:00')`,
+		`UPDATE plugin_migrations SET migration_state = 'prepared' WHERE migration = 'data2-memory-custody'`,
+	} {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.RemoveAll(fixture.snapshots); err != nil {
+		t.Fatal(err)
+	}
+	physical := 0
+	if err := db.QueryRow("SELECT COUNT(*) FROM memory_records").Scan(&physical); err != nil {
+		t.Fatal(err)
+	}
+
+	report := carryCustody(t, fixture)
+	if report.State != migrationledger.StateVerified || report.PhysicalRecords != physical {
+		t.Fatalf("resumed report = %+v, want verified over %d physical records", report, physical)
+	}
+	assertCustodyCount(t, db, `SELECT COUNT(DISTINCT destination_key) FROM custody_memberships
+		WHERE migration = 'data2-memory-custody' AND source_database = 'plugin:roca-ops'
+		AND source_key IN ('1', '2')`, 1)
 }

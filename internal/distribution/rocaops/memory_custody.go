@@ -684,21 +684,23 @@ func importMemoryBatch(ctx context.Context, batch *migrationledger.Batch,
 			return migrationledger.BatchCommit{}, err
 		}
 		if !found {
-			result, insertErr := batch.ExecContext(ctx, `INSERT INTO memory_records
-				(canonical_digest, provenance, layer, content, metadata, origin, source_agent,
-				 source_model, source_surface, source_session, source_sequence, project, status,
-				 supersedes, created_at, expires_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, row.digest, source,
+			values := []any{row.digest, source,
 				row.layer, row.content, nullableString(row.metadata), row.origin,
 				nullableString(row.sourceAgent), nullableString(row.sourceModel),
 				nullableString(row.sourceSurface), nullableString(row.sourceSession),
 				nullableInt(row.sourceSequence), nullableString(row.project), nullableString(row.status),
-				nullableInt(row.supersedes), nullableString(row.createdAt), nullableString(row.expiresAt))
+				nullableInt(row.supersedes), nullableString(row.createdAt), nullableString(row.expiresAt)}
+			result, insertErr := batch.ExecContext(ctx, `INSERT INTO memory_records
+				(`+memoryRecordColumns+`)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`, values...)
 			if insertErr != nil {
 				return migrationledger.BatchCommit{}, fmt.Errorf("store %s memory %d in ops custody: %w",
 					source, row.id, insertErr)
 			}
 			destination, err = result.LastInsertId()
+			if inserted, _ := result.RowsAffected(); inserted == 0 {
+				destination, err = exactPayloadDestination(ctx, batch, values)
+			}
 			if err != nil {
 				return migrationledger.BatchCommit{}, fmt.Errorf("read ops memory destination: %w", err)
 			}
@@ -756,6 +758,29 @@ func aliasDestination(ctx context.Context, batch *migrationledger.Batch,
 		return 0, false, fmt.Errorf("look for an exact cross-source memory: %w", err)
 	}
 	return 0, false, nil
+}
+
+const memoryRecordColumns = `canonical_digest, provenance, layer, content, metadata, origin,
+	source_agent, source_model, source_surface, source_session, source_sequence, project, status,
+	supersedes, created_at, expires_at`
+
+// exactPayloadDestination finds the record that refused an insert under the
+// unique exact-payload guard internal/store/exactdedup installs: the guard says
+// the incoming memory is that record's payload, so the memory becomes one more
+// membership of it. The guard's own expression is evaluated on both sides, so
+// whichever columns it covers decide the match. A missing guard leaves an empty
+// expression and the lookup fails with the guard error joined.
+func exactPayloadDestination(ctx context.Context, batch *migrationledger.Batch, values []any) (int64, error) {
+	var guard string
+	guardErr := batch.QueryRowContext(ctx, `SELECT sql FROM sqlite_master
+		WHERE type = 'index' AND name = 'idx_memory_records_exact_payload'`).Scan(&guard)
+	expression := strings.TrimSuffix(guard[strings.Index(guard, "(")+1:], ")")
+	var destination int64
+	lookupErr := batch.QueryRowContext(ctx, fmt.Sprintf(`WITH incoming(%s) AS (
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?))
+		SELECT id FROM memory_records WHERE %s = (SELECT %s FROM incoming)`,
+		memoryRecordColumns, expression, expression), values...).Scan(&destination)
+	return destination, errors.Join(guardErr, lookupErr)
 }
 
 // memoryBatchID is derived from the source keys the batch actually carries, so
@@ -863,8 +888,14 @@ func verifyMemoryCustody(ctx context.Context, ops *sql.DB,
 		{query: "SELECT COUNT(*) FROM memory_records", into: &physical},
 		{query: `SELECT COALESCE(SUM(maximum), 0) FROM (
 			SELECT canonical_digest, MAX(source_count) AS maximum FROM (
-				SELECT canonical_digest, source_database, COUNT(*) AS source_count
-				FROM custody_memberships WHERE migration = ?
+				SELECT canonical_digest, source_database,
+					COUNT(DISTINCT destination_key) AS source_count
+				FROM custody_memberships AS memberships WHERE migration = ?
+				-- An exact-payload alias lands on a record of another digest and
+				-- adds no physical row of its own.
+				AND NOT EXISTS (SELECT 1 FROM memory_records AS records
+					WHERE records.id = CAST(memberships.destination_key AS INTEGER)
+					AND records.canonical_digest <> memberships.canonical_digest)
 				GROUP BY canonical_digest, source_database)
 			GROUP BY canonical_digest)`, args: []any{memoryCustodyMigration}, into: &expectedPhysical},
 		{query: "SELECT COUNT(*) FROM memory_records_fts_docsize", into: &fts},
