@@ -94,6 +94,24 @@ func registerPluginStagingSteps(ctx *godog.ScenarioContext, m *world) {
 		}
 		return os.Chtimes(filepath.Join(root(), ".roca-corpus-bundle-one", ".held"), old, old)
 	})
+	claim := func() string { return filepath.Join(root(), "roca-vector", "state", ".worker") }
+	ctx.Given(`^a vector worker claim naming a live process with another start identity$`, func() error {
+		// The installed plugin directory is the bundle's own; a bare one is refused.
+		if err := m.mustRun("roca _install-bundled-plugins --json"); err != nil {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Dir(claim()), 0o700); err != nil {
+			return err
+		}
+		// The test process is alive; its start identity is never this string.
+		return os.WriteFile(claim(), []byte(fmt.Sprintf("%d run-reused-pid not-its-start-identity\n", os.Getpid())), 0o600)
+	})
+	ctx.Then(`^the stale vector worker claim is gone$`, func() error {
+		if _, err := os.Stat(claim()); !os.IsNotExist(err) {
+			return fmt.Errorf("stale worker claim remains: %v", err)
+		}
+		return nil
+	})
 	ctx.Given(`^a just-created "([^"]*)" staging folder without a lock$`, func(kind string) error {
 		fresh = filepath.Join(root(), ".roca-corpus-"+kind+"-fresh")
 		return os.MkdirAll(fresh, 0o700)
