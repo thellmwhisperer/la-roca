@@ -1,6 +1,6 @@
 //go:build darwin
 
-package vector
+package processidentity
 
 import (
 	"strconv"
@@ -8,7 +8,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func processStartIdentity(pid int) (string, error) {
+func Start(pid int) (string, error) {
 	info, err := unix.SysctlKinfoProc("kern.proc.pid", pid)
 	if err != nil {
 		return "", err

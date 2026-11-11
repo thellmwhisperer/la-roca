@@ -1,6 +1,6 @@
 //go:build linux
 
-package rocavector
+package processidentity
 
 import (
 	"bytes"
@@ -10,7 +10,9 @@ import (
 	"strings"
 )
 
-func processStartIdentity(pid int) (string, error) {
+// Start is the identity of the process pid since it started: it changes when the
+// pid is reused, so a guard can tell its live owner from a stranger.
+func Start(pid int) (string, error) {
 	stat, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
 	if err != nil {
 		return "", err
