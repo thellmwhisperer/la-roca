@@ -89,8 +89,8 @@ func printFederatedQuery(env *environment, query string, k int, started time.Tim
 	} else {
 		printResults(result.Results)
 	}
-	if rendered := toon.RenderHelp(help...); rendered != "" {
-		fmt.Println(rendered)
+	if len(help) > 0 {
+		fmt.Println(toon.RenderHelp(help...))
 	}
 	return nil
 }

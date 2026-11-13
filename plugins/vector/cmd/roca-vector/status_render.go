@@ -111,9 +111,9 @@ func renderVectorization(report vector.Vectorization, help []string) string {
 	out.WriteString(renderWorker(report.Worker))
 	out.WriteByte('\n')
 	out.WriteString(toonTable("databases", columns, rows))
-	if rendered := toon.RenderHelp(help...); rendered != "" {
+	if len(help) > 0 {
 		out.WriteByte('\n')
-		out.WriteString(rendered)
+		out.WriteString(toon.RenderHelp(help...))
 	}
 	return out.String()
 }

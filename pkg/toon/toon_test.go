@@ -51,8 +51,8 @@ func TestNeedsQuotesControlCharacter(t *testing.T) {
 }
 
 func TestRenderHelp(t *testing.T) {
-	if got := RenderHelp(); got != "" {
-		t.Fatalf("RenderHelp with no lines = %q, want empty", got)
+	if got := RenderHelp(); got != "help[0]:" {
+		t.Fatalf("RenderHelp with no lines = %q, want %q", got, "help[0]:")
 	}
 	got := RenderHelp("line one", "line two")
 	want := "help[2]:\n  - line one\n  - line two"

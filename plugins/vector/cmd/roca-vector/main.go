@@ -490,8 +490,8 @@ func queryCommand(env *environment) *cobra.Command {
 					"help":       help})
 			}
 			printResults(results)
-			if rendered := toon.RenderHelp(help...); rendered != "" {
-				fmt.Println(rendered)
+			if len(help) > 0 {
+				fmt.Println(toon.RenderHelp(help...))
 			}
 			return nil
 		},

@@ -166,7 +166,7 @@ func toonKey(key string) string { return toon.Key(key) }
 func quoteTOON(value string) string { return toon.Quote(value) }
 
 // RenderHelp paints the deterministic next-step lines that follow a row table.
-// Empty input paints nothing.
+// Callers print it only when they have lines.
 func RenderHelp(lines ...string) string { return toon.RenderHelp(lines...) }
 
 // QueryHelp builds the contextual help for a query result: the route to the

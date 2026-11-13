@@ -89,11 +89,8 @@ func Quote(value string) string {
 }
 
 // RenderHelp paints the deterministic next-step lines that follow a row table.
-// Empty input paints nothing.
+// Callers print it only when they have lines.
 func RenderHelp(lines ...string) string {
-	if len(lines) == 0 {
-		return ""
-	}
 	var out strings.Builder
 	fmt.Fprintf(&out, "help[%d]:", len(lines))
 	for _, line := range lines {
