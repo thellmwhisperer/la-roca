@@ -223,7 +223,7 @@ func TestCollapseHistoricalSiblingSessions(t *testing.T) {
 	if plain.code != 0 || !strings.Contains(plain.stdout, "applied") || counts() != wantCounts {
 		t.Fatalf("human apply plan = %+v", plain)
 	}
-	// All-empty groups have no non-empty survivor, so they remain intact.
+	// Identical all-empty groups keep their lowest session ID.
 	db = open()
 	add("k", "0", "2026-01-01", "all empty", 0)
 	add("k", "1", "2026-01-01", "all empty", 0)
@@ -231,8 +231,12 @@ func TestCollapseHistoricalSiblingSessions(t *testing.T) {
 	emptyCounts := counts()
 	withEmpty := readPlan(run(nil, "--apply"))
 	last := withEmpty.Groups[len(withEmpty.Groups)-1]
-	if last.Status != "empty" || len(last.Remove) != 0 || counts() != emptyCounts {
-		t.Fatalf("all-empty group changed: %+v", last)
+	wantEmptyCounts := emptyCounts
+	wantEmptyCounts[0]--
+	wantEmptyCounts[2]--
+	wantEmptyCounts[3]--
+	if last.Keep != id("k", "0") || last.Status != "collapse" || !reflect.DeepEqual(last.Remove, []string{id("k", "1")}) || counts() != wantEmptyCounts {
+		t.Fatalf("all-empty group collapse = %+v, counts %v", last, counts())
 	}
 	for _, args := range [][]string{
 		{filepath.Join(home, "missing.db")},

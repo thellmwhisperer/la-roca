@@ -44,8 +44,8 @@ func CollapseSessions(ctx context.Context, path string, apply bool) (SessionColl
 		_, err = tx.ExecContext(ctx, `CREATE TEMP TABLE sibling_plan AS
 		WITH siblings AS (
 		  SELECT substr(session_id, 1, 35) AS stem, started_at, title,
-		    MIN(CASE WHEN EXISTS (SELECT 1 FROM exchanges e WHERE e.session_id = s.session_id)
-		        THEN session_id END) AS keep_id
+		    COALESCE(MIN(CASE WHEN EXISTS (SELECT 1 FROM exchanges e WHERE e.session_id = s.session_id)
+		        THEN session_id END), MIN(session_id)) AS keep_id
 		  FROM sessions s WHERE length(session_id) = 36
 		  GROUP BY stem, started_at, title HAVING COUNT(*) > 1
 		), copies AS (
@@ -76,7 +76,7 @@ func CollapseSessions(ctx context.Context, path string, apply bool) (SessionColl
 		err = tx.QueryRowContext(ctx, `SELECT json_object('applied', json(CASE WHEN ? THEN 'true' ELSE 'false' END), 'groups', json_group_array(json(group_report)))
 		  FROM (SELECT json_object('stem', stem, 'started_at', started_at, 'title', title,
 		    'session_ids', json_group_array(session_id), 'keep', keep_id,
-		    'status', CASE WHEN differs THEN 'different' WHEN keep_id IS NULL THEN 'empty' ELSE 'collapse' END,
+		    'status', CASE WHEN differs THEN 'different' ELSE 'collapse' END,
 		    'remove', json_group_array(session_id) FILTER (WHERE NOT differs AND keep_id IS NOT NULL AND session_id <> keep_id),
 		    'exchanges_to_remove', SUM(CASE WHEN NOT differs AND session_id <> keep_id THEN turns ELSE 0 END)) AS group_report
 		  FROM (SELECT * FROM sibling_plan ORDER BY session_id)
