@@ -1,0 +1,18 @@
+schema: 1
+id: T-PONYTAIL-20261113-010749-1
+status: accepted
+category: alien_code
+title: "Deleted the hasColumn helper (one-line wrapper over table.availableColumns()[column] with two callers); both call sites now read table.availableColumns()[\"legacy_id\"] directly, as the issue explicitly offered."
+created_at: 2026-11-13
+incident:
+  pattern: "Deleted the hasColumn helper (one-line wrapper over table.availableColumns()[column] with two callers); both call sites now read table.availableColumns()[\"legacy_id\"] directly, as the issue explicitly offered."
+  what_went_wrong: "A coding agent wrote it and the ponytail pass cut it before delivery."
+  root_cause: "The coding agent wrote more than the issue needed."
+  rule_established: "Cut by the ponytail pass; it does not come back."
+  evidence:
+    - family: speculative_feature
+      example: "Deleted the hasColumn helper (one-line wrapper over table.availableColumns()[column] with two callers); both call sites now read table.availableColumns()[\"legacy_id\"] directly, as the issue explicitly offered.\nissue_sentence: DeclaredCorpus.hasColumn returns only bool and takes no context, or its two callers read table.availableColumns() directly; the two error branches are gone."
+      artifact: "plugins/vector/internal/vector/federation.go"
+match:
+  family: speculative_feature
+  artifact: "plugins/vector/internal/vector/federation.go"
