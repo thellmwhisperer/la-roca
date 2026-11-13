@@ -50,11 +50,15 @@ func TestServeRaisesAndReapsPluginCompanions(t *testing.T) {
 		if countDistinctFiles(t, filepath.Join(m.home, "holder"), filepath.Join(m.home, "standby")) != 2 {
 			t.Fatal("plugin single-flight did not leave one holder and one standby")
 		}
-		_ = serve.Close()
-		_ = second.Close()
+		if err := serve.Close(); err != nil {
+			t.Fatalf("close first session: %v", err)
+		}
+		if err := second.Close(); err != nil {
+			t.Fatalf("close second session: %v", err)
+		}
 		waitUntil(t, func() bool {
-			_, err := os.Stat(filepath.Join(m.home, "dead"))
-			return err == nil
+			raw, err := os.ReadFile(filepath.Join(m.home, "dead"))
+			return err == nil && strings.Count(string(raw), "gone\n") == 2
 		})
 	})
 
@@ -89,6 +93,28 @@ func companionLab(t *testing.T) *world {
 	if m.last.code != 0 {
 		t.Fatalf("init: code %d\n%s", m.last.code, m.last.stderr)
 	}
+	// Own the resident directly so cleanup can reap it after its sessions and
+	// their companions, before t.TempDir removes the home.
+	command := exec.Command(m.binaryPath(), "mcp", "serve", "--resident")
+	command.Env = m.environment()
+	command.Stderr = os.Stderr
+	if err := command.Start(); err != nil {
+		t.Fatalf("start companion resident: %v", err)
+	}
+	idle := func() bool {
+		status, err := acceptanceResidentStatus(socket)
+		// The status request itself is the only remaining client once all
+		// session handlers have returned from reaping their companions.
+		return err == nil && status.PID == command.Process.Pid && status.AttachedClients == 1
+	}
+	t.Cleanup(func() {
+		defer func() {
+			_ = command.Process.Kill()
+			_ = command.Wait()
+		}()
+		waitUntil(t, idle)
+	})
+	waitUntil(t, idle)
 	return m
 }
 
@@ -138,9 +164,9 @@ func writeCompanionPackage(t *testing.T, home, watch, out, lock string) string {
 		"if ! mkdir " + lock + " 2>/dev/null; then echo $$ > " + filepath.Join(home, "standby") +
 		"; trap 'echo gone >> " + filepath.Join(home, "dead") + "' EXIT; while IFS= read -r line; do :; done; exit 0; fi\n" +
 		"echo $$ > " + filepath.Join(home, "holder") + "\n" +
-		"( while :; do if [ -f \"$1/note.md\" ]; then cat \"$1/note.md\" > \"$2\"; fi; sleep 0.05; done ) &\n" +
+		"( trap 'exit 0' TERM; while :; do if [ -f \"$1/note.md\" ]; then cat \"$1/note.md\" > \"$2\"; fi; sleep 0.05; done ) &\n" +
 		"kid=$!\n" +
-		"trap 'kill $kid; rmdir " + lock + "; echo gone >> " + filepath.Join(home, "dead") + "' EXIT\n" +
+		"trap 'kill $kid; wait $kid; rmdir " + lock + "; echo gone >> " + filepath.Join(home, "dead") + "' EXIT\n" +
 		"while IFS= read -r line; do :; done\n"
 	writePackageFiles(t, source, script, `["`+watch+`", "`+out+`"]`)
 	return source
