@@ -108,10 +108,8 @@ func companionLab(t *testing.T) *world {
 		return err == nil && status.PID == command.Process.Pid && status.AttachedClients == 1
 	}
 	t.Cleanup(func() {
-		defer func() {
-			_ = command.Process.Kill()
-			_ = command.Wait()
-		}()
+		defer command.Wait()
+		defer command.Process.Kill()
 		waitUntil(t, idle)
 	})
 	waitUntil(t, idle)
