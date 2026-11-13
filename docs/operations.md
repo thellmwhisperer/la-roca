@@ -500,6 +500,24 @@ for SQLite reader traffic and operator-consented cleanup.
 
 ## Exact duplicate maintenance
 
+`roca dedup sessions [database]` repairs the historical sibling groups that
+`roca doctor` reports: 36-character IDs with the same first 35 characters,
+`started_at`, and title. It prints a dry-run plan per group, with `--json` for
+structured output. `--apply` performs the repair in one transaction and refuses
+read-only mode. Without a
+path it selects the installed corpus next to the selected `--db-path`.
+
+The repair keeps the lowest non-empty session ID when every non-empty copy
+has identical human and agent text at each turn number, including duplicate
+turn counts. It removes the other sessions and their exchanges, thinking
+blocks and tool uses, and redirects memory references to the survivor.
+Empty shells are removed only when a non-empty copy survives. A group with
+different non-empty copies is listed as `different` and stays entirely
+unchanged, including its empty shells. All-empty groups are listed as `empty`
+and remain intact. Each plan lists the IDs to remove and their exchange count.
+The archive and vector index are outside this repair; a later vector delta
+pass refreshes the index.
+
 `roca dedup [database ...]` is an explicit, exact-payload maintenance surface.
 With no path it targets only the federated `roca-corpus` and `roca-ops`
 databases. An explicitly named legacy `roca.db` may be inspected as read-only
