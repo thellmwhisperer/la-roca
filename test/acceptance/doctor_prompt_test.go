@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/BurntSushi/toml"
@@ -101,4 +102,22 @@ func doctorOnTerminal(t *testing.T, home, binary, typed string) (string, int) {
 		t.Fatalf("run doctor: %v", err)
 	}
 	return output.String(), 0
+}
+
+// openPTY returns a pseudo-terminal pair so the real binary sees a terminal
+// on stdin, the only condition under which it asks a [y/N] question.
+func openPTY() (master, slave *os.File, err error) {
+	master, err = os.OpenFile("/dev/ptmx", os.O_RDWR|syscall.O_NOCTTY, 0)
+	if err != nil {
+		return nil, nil, err
+	}
+	name, err := ptySlaveName(master)
+	if err == nil {
+		slave, err = os.OpenFile(name, os.O_RDWR|syscall.O_NOCTTY, 0)
+	}
+	if err != nil {
+		master.Close()
+		return nil, nil, err
+	}
+	return master, slave, nil
 }
