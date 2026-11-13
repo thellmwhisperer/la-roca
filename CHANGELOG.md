@@ -24,6 +24,43 @@ Most users need to do nothing: an already signed-in Codex or Claude CLI is detec
 
 The bootstrap JSON field `external_credential` is now named `command_transport`; it reports that the selected model runs through a local agent CLI without implying that La Roca owns authentication.
 
+## [1.95.0](https://github.com/thellmwhisperer/la-roca/compare/v1.94.2...v1.95.0) (2026-11-11)
+
+
+### Features
+
+* **cli:** add --project filter to roca query ([aef577c](https://github.com/thellmwhisperer/la-roca/commit/aef577c528ef31aaf951a61646194763b402c609))
+* **cli:** add --since date filter to roca query ([ef272b9](https://github.com/thellmwhisperer/la-roca/commit/ef272b9e533d2c2fd09ad8279e031c5309ef3f04))
+* **distribution:** offer a ready roca exec line to read a hit's whole session after roca query ([601c88d](https://github.com/thellmwhisperer/la-roca/commit/601c88ddd06f89ba488ae87a7ace446cf147acfc))
+* **provider:** refuse leading-wildcard LIKE on FTS-twinned columns in exec and suggest MATCH ([9f18b10](https://github.com/thellmwhisperer/la-roca/commit/9f18b1048fd62e91e986291e036ba6ddb8619321))
+
+
+### Bug Fixes
+
+* **cli:** one helper for flag checks, cobra.NoArgs everywhere, and the LIKE refusal as a timeout hint ([d14e451](https://github.com/thellmwhisperer/la-roca/commit/d14e4512b2992c099c97f3e7580086707cfd0ec7))
+* **cli:** refuse a negative --timeout-ms on exec ([b79f4aa](https://github.com/thellmwhisperer/la-roca/commit/b79f4aaaf399bf3aa58e7fac6e53f4f0b288b63b))
+* **cli:** refuse a negative health --max-rows before running any check ([0fbfa24](https://github.com/thellmwhisperer/la-roca/commit/0fbfa24b5eeeedb19fefc5cb4e28da64557f9d70))
+* **cli:** refuse a stray argument to roca version ([8bdd233](https://github.com/thellmwhisperer/la-roca/commit/8bdd23375038391535f1933cfb475f0db1f7f1da))
+* **cli:** refuse an empty --databases or --project on roca query ([7235b69](https://github.com/thellmwhisperer/la-roca/commit/7235b69a3ee2729795547c13c4b165210f2daae1))
+* **cli:** refuse negative --max-chars on exec and query ([a927382](https://github.com/thellmwhisperer/la-roca/commit/a9273824b1fb94e6885747d87099914ba81016cb))
+* **cli:** refuse negative --top in roca query ([eefb982](https://github.com/thellmwhisperer/la-roca/commit/eefb982f2a6c1a3d9a0ed3681b4e0020f2695b6c))
+* **cli:** reject an empty --project in handoff latest and pill ([467a019](https://github.com/thellmwhisperer/la-roca/commit/467a01966c6dbfb27089336f5d3be45b140690e9))
+* **cli:** stop exec, query, store and health help from printing a stale flag list ([87dd8bd](https://github.com/thellmwhisperer/la-roca/commit/87dd8bdb28cb06096ccbb08856119798d32200f8))
+* **distribution:** alias exact-payload duplicates when a resumed DATA-2 migrate imports ops memories ([8e81909](https://github.com/thellmwhisperer/la-roca/commit/8e8190951708f416f7542da0c75777ebbbdf3a71))
+* **distribution:** print one whole-session help line per query, not one per hit ([ef2bced](https://github.com/thellmwhisperer/la-roca/commit/ef2bced7092edec84c0c9499eccbdd2c9afc5ca6))
+* **distribution:** refuse stray positional arguments to roca doctor ([f44ec73](https://github.com/thellmwhisperer/la-roca/commit/f44ec733746e7f71fb1549378f67818e2b133857))
+* **provider:** match the schema qualifier in exec's leading-wildcard LIKE refusal ([07f44cb](https://github.com/thellmwhisperer/la-roca/commit/07f44cb5757abf335dd660189b3a535caf9c2f1d))
+* **provider:** refuse leading-wildcard LIKE written with ESCAPE or parenthesised operands ([dface1f](https://github.com/thellmwhisperer/la-roca/commit/dface1f2056924617da4ba16c8c2631ff781b39a))
+* **provider:** word search skips resolved and expired memories ([2de7f9d](https://github.com/thellmwhisperer/la-roca/commit/2de7f9dae7fd8ccfa733f34823d7082881cc616c))
+* **service:** only a same-project handoff retires a project's current handoff ([be926ca](https://github.com/thellmwhisperer/la-roca/commit/be926cac5709d38445143bf745ea66593d2caead))
+* **vector:** create missing managed state folder when vector is enabled after init ([8cb5cc6](https://github.com/thellmwhisperer/la-roca/commit/8cb5cc600eecdb0afe0499a7ac680eab8676973c))
+* **vector:** report failed index model reads instead of treating them as "not ready" ([194bf36](https://github.com/thellmwhisperer/la-roca/commit/194bf363971c14b7a8edb6b1efc8a1f23c6e5ef6))
+
+
+### Miscellaneous Chores
+
+* release 1.95.0 ([#686](https://github.com/thellmwhisperer/la-roca/issues/686)) ([6f20a25](https://github.com/thellmwhisperer/la-roca/commit/6f20a25ec273204131d85ffdb067ba47b2971938))
+
 ## [1.94.2](https://github.com/thellmwhisperer/la-roca/compare/v1.94.1...v1.94.2) (2026-11-04)
 
 
