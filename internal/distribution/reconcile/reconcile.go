@@ -150,12 +150,9 @@ func Run(context Context, registry []Entry, options Options) (Result, error) {
 			}
 			continue
 		}
-		accepted, err := askYesNo(reader, options.Out, entry.Proposal.Prompt)
+		accepted := askYesNo(reader, options.Out, entry.Proposal.Prompt)
 		if !options.ListAll {
 			stamps[entry.ID] = context.Version
-		}
-		if err != nil {
-			return result, err
 		}
 		if !accepted {
 			continue
@@ -235,14 +232,14 @@ func RemoveRetiredCredential(path string) error {
 	return nil
 }
 
-func askYesNo(reader *bufio.Reader, out io.Writer, prompt string) (bool, error) {
+func askYesNo(reader *bufio.Reader, out io.Writer, prompt string) bool {
 	fmt.Fprintf(out, "%s [y/N]: ", prompt)
 	line, err := reader.ReadString('\n')
 	answer := strings.ToLower(strings.TrimSpace(line))
 	if err != nil && answer == "" {
-		return false, nil
+		return false
 	}
-	return answer == "y" || answer == "yes", nil
+	return answer == "y" || answer == "yes"
 }
 
 func substituteInput(changes []config.Change, input string) []config.Change {
