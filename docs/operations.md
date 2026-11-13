@@ -562,12 +562,9 @@ MCP retries expand the system-stamped source agent to the aliases described
 under [Memory authorship](#memory-authorship). CLI retries match the stored
 agent exactly, so distinct harness names stay distinct authors.
 
-Historical sibling sessions are not exact duplicates: their 36-character IDs
-differ only in the last character, they share `started_at` and title, and their
-text can differ. `roca doctor` warns with the extra-row and group counts and
-prints a `roca exec` SELECT, carrying the diagnosed `--db-path`, that lists
-them. Doctor only reads and leaves them in place; which copy to keep is the
-operator's call.
+For historical sibling session cleanup, see the [`roca dedup sessions`
+procedure](#exact-duplicate-maintenance). `roca doctor` still reports sibling
+groups and lists a query for inspecting them.
 
 ## Data directory
 
