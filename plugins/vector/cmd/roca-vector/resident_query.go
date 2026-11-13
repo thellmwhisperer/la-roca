@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/thellmwhisperer/la-roca-vector/internal/vector"
+	"github.com/thellmwhisperer/la-roca/pkg/toon"
 	"github.com/thellmwhisperer/la-roca/pkg/vectorhelp"
 	"github.com/thellmwhisperer/la-roca/pkg/vectorresident"
 )
@@ -88,7 +89,7 @@ func printFederatedQuery(env *environment, query string, k int, started time.Tim
 	} else {
 		printResults(result.Results)
 	}
-	if rendered := renderHelp(help); rendered != "" {
+	if rendered := toon.RenderHelp(help...); rendered != "" {
 		fmt.Println(rendered)
 	}
 	return nil

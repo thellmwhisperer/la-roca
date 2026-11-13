@@ -180,7 +180,12 @@ func fullToonValue(value any) string {
 	}
 }
 
-func fullToonString(value string) string { return toon.String(value) }
+func fullToonString(value string) string {
+	if !toon.NeedsQuotes(value) {
+		return value
+	}
+	return toon.Quote(value)
+}
 
 func unsluggedLine(ids []int64) string {
 	var out strings.Builder

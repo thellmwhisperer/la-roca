@@ -19,6 +19,7 @@ import (
 	"github.com/thellmwhisperer/la-roca-vector/internal/model"
 	"github.com/thellmwhisperer/la-roca-vector/internal/telemetry"
 	"github.com/thellmwhisperer/la-roca-vector/internal/vector"
+	"github.com/thellmwhisperer/la-roca/pkg/toon"
 )
 
 // writerGPUEnv carries the operator lever into the detached worker, which is
@@ -489,7 +490,7 @@ func queryCommand(env *environment) *cobra.Command {
 					"help":       help})
 			}
 			printResults(results)
-			if rendered := renderHelp(help); rendered != "" {
+			if rendered := toon.RenderHelp(help...); rendered != "" {
 				fmt.Println(rendered)
 			}
 			return nil

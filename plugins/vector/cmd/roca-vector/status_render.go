@@ -111,7 +111,7 @@ func renderVectorization(report vector.Vectorization, help []string) string {
 	out.WriteString(renderWorker(report.Worker))
 	out.WriteByte('\n')
 	out.WriteString(toonTable("databases", columns, rows))
-	if rendered := renderHelp(help); rendered != "" {
+	if rendered := toon.RenderHelp(help...); rendered != "" {
 		out.WriteByte('\n')
 		out.WriteString(rendered)
 	}
@@ -191,8 +191,6 @@ func toonCell(value any) string {
 		return toon.String(fmt.Sprint(typed))
 	}
 }
-
-func renderHelp(lines []string) string { return toon.RenderHelp(lines...) }
 
 func printJSONTo(out io.Writer, value any) error {
 	encoder := json.NewEncoder(out)
