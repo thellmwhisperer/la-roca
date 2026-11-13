@@ -8,6 +8,9 @@ Feature: Distribution command line
   Scenario: Session commands reject an explicitly empty project
     Then handoff latest and pill reject blank project flags and default only when the flag is omitted
 
+  Scenario: Pills print control characters quoted and escaped, never raw
+    Then pill prints stored control characters escaped and no raw control byte
+
   Scenario: Health refuses a negative sample size without running any check
     Then health refuses a negative --max-rows naming the flag and keeps 0 and omitted working
 

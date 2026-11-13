@@ -19,6 +19,7 @@ import (
 
 func registerDistributionCLISteps(ctx *godog.ScenarioContext, w *distributionWorld) {
 	ctx.Then(`^handoff latest and pill reject blank project flags and default only when the flag is omitted$`, w.sessionProjectFlagIsExplicit)
+	ctx.Then(`^pill prints stored control characters escaped and no raw control byte$`, w.pillEscapesControlCharacters)
 	ctx.Then(`^health refuses a negative --max-rows naming the flag and keeps 0 and omitted working$`, w.healthMaxRowsIsNonNegative)
 	ctx.When(`^the operator asks playground without its plugin$`, func() error {
 		if err := w.prepare("missing-playground"); err != nil {
@@ -141,6 +142,40 @@ func (w *distributionWorld) sessionProjectFlagIsExplicit() error {
 		}
 	}
 	return errors.Join(failures...)
+}
+
+// pillEscapesControlCharacters stores pills holding control characters and
+// reads them back. TOON quotes such a value and escapes backslash, quote, \n,
+// \r and \t by name and every other byte below 0x20 as \uXXXX, so ESC never
+// reaches the terminal raw.
+func (w *distributionWorld) pillEscapesControlCharacters() error {
+	if err := w.prepare("pill-control"); err != nil {
+		return err
+	}
+	pills := map[string]string{
+		"every-escape": "a\\b\"c\td\re\nf\x1bg",
+		"only-esc":     "red\x1bend",
+	}
+	for slug, content := range pills {
+		run := w.run("store", "--layer", "pill", "--project", "control", "--content", content,
+			"--metadata", `{"pill_slug":"`+slug+`"}`, "--origin", "agent", "--agent", "codex", "--model", "gpt-6-astra")
+		if run.code != 0 {
+			return fmt.Errorf("store %s fixture: %+v", slug, run)
+		}
+	}
+	run := w.run("pill", "--project", "control")
+	if run.code != 0 {
+		return fmt.Errorf("pill: %+v", run)
+	}
+	for _, want := range []string{`"a\\b\"c\td\re\nf\u001bg"`, `"red\u001bend"`} {
+		if !strings.Contains(run.stdout, want) {
+			return fmt.Errorf("pill output lacks %s:\n%q", want, run.stdout)
+		}
+	}
+	if strings.ContainsAny(run.stdout, "\x1b\r\t") {
+		return fmt.Errorf("pill printed a raw control byte:\n%q", run.stdout)
+	}
+	return nil
 }
 
 func (w *distributionWorld) previewDefaultCronTrain() error {
