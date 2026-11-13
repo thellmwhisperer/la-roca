@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
+	"github.com/thellmwhisperer/la-roca/pkg/toon"
 )
 
 // Pills renders the pill roster with full content. It does not use RowOutput:
@@ -179,12 +180,7 @@ func fullToonValue(value any) string {
 	}
 }
 
-func fullToonString(value string) string {
-	if !toonNeedsQuotes(value) {
-		return value
-	}
-	return quoteTOON(value)
-}
+func fullToonString(value string) string { return toon.String(value) }
 
 func unsluggedLine(ids []int64) string {
 	var out strings.Builder

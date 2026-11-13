@@ -5,11 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/thellmwhisperer/la-roca-vector/internal/vector"
+	"github.com/thellmwhisperer/la-roca/pkg/toon"
 )
 
 func (env *environment) vectorizationStatus(ctx context.Context) (vector.Vectorization, error) {
@@ -182,59 +182,17 @@ func toonCell(value any) string {
 	}
 	switch typed := value.(type) {
 	case string:
-		return toonString(typed)
+		return toon.String(typed)
 	case int, int64, int32:
 		return fmt.Sprint(typed)
 	case bool:
 		return strconv.FormatBool(typed)
 	default:
-		return toonString(fmt.Sprint(typed))
+		return toon.String(fmt.Sprint(typed))
 	}
 }
 
-var toonNumber = regexp.MustCompile(`^[+-]?[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$`)
-
-func toonString(value string) string {
-	value = strings.Join(strings.Fields(value), " ")
-	if value == "" || value == "true" || value == "false" || value == "null" ||
-		strings.ContainsAny(value, ",:\"\\[]{}\n\r\t") || strings.Trim(value, " ") != value ||
-		strings.HasPrefix(value, "-") || strings.HasPrefix(value, "#") || toonNumber.MatchString(value) {
-		return quoteTOON(value)
-	}
-	return value
-}
-
-func quoteTOON(value string) string {
-	var out strings.Builder
-	out.WriteByte('"')
-	for _, r := range value {
-		switch r {
-		case '\\':
-			out.WriteString(`\\`)
-		case '"':
-			out.WriteString(`\"`)
-		case '\n':
-			out.WriteString(`\n`)
-		default:
-			out.WriteRune(r)
-		}
-	}
-	out.WriteByte('"')
-	return out.String()
-}
-
-func renderHelp(lines []string) string {
-	if len(lines) == 0 {
-		return ""
-	}
-	var out strings.Builder
-	fmt.Fprintf(&out, "help[%d]:", len(lines))
-	for _, line := range lines {
-		out.WriteString("\n  - ")
-		out.WriteString(toonString(line))
-	}
-	return out.String()
-}
+func renderHelp(lines []string) string { return toon.RenderHelp(lines...) }
 
 func printJSONTo(out io.Writer, value any) error {
 	encoder := json.NewEncoder(out)

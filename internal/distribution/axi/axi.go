@@ -22,13 +22,13 @@ package axi
 import (
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/thellmwhisperer/la-roca/internal/provider/query"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
+	"github.com/thellmwhisperer/la-roca/pkg/toon"
 )
 
 // FieldWidth is the fallback width for cells without a caller-controlled budget.
@@ -159,85 +159,15 @@ func toonInteger(n int64) string {
 	return text
 }
 
-func toonString(value string) string {
-	value = singleLine(value)
-	if !toonNeedsQuotes(value) {
-		return value
-	}
-	return quoteTOON(value)
-}
+func toonString(value string) string { return toon.String(value) }
 
-var toonNumber = regexp.MustCompile(`^[+-]?[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$`)
+func toonKey(key string) string { return toon.Key(key) }
 
-func toonNeedsQuotes(value string) bool {
-	if value == "" || value == "true" || value == "false" || value == "null" ||
-		strings.Trim(value, " \t") != value || strings.ContainsAny(value, ",:\"\\[]{}\n\r\t") ||
-		strings.HasPrefix(value, "-") || strings.HasPrefix(value, "#") {
-		return true
-	}
-	for _, r := range value {
-		if r < 0x20 {
-			return true
-		}
-	}
-	return toonNumber.MatchString(value)
-}
-
-func toonKey(key string) string {
-	if key == "" || !asciiLetter(key[0]) && key[0] != '_' {
-		return quoteTOON(key)
-	}
-	for i := 1; i < len(key); i++ {
-		if !asciiLetter(key[i]) && (key[i] < '0' || key[i] > '9') && key[i] != '_' && key[i] != '.' {
-			return quoteTOON(key)
-		}
-	}
-	return key
-}
-
-func asciiLetter(b byte) bool { return b >= 'A' && b <= 'Z' || b >= 'a' && b <= 'z' }
-
-func quoteTOON(value string) string {
-	var out strings.Builder
-	out.WriteByte('"')
-	for _, r := range value {
-		switch r {
-		case '\\':
-			out.WriteString(`\\`)
-		case '"':
-			out.WriteString(`\"`)
-		case '\n':
-			out.WriteString(`\n`)
-		case '\r':
-			out.WriteString(`\r`)
-		case '\t':
-			out.WriteString(`\t`)
-		default:
-			if r < 0x20 {
-				fmt.Fprintf(&out, `\u%04x`, r)
-			} else {
-				out.WriteRune(r)
-			}
-		}
-	}
-	out.WriteByte('"')
-	return out.String()
-}
+func quoteTOON(value string) string { return toon.Quote(value) }
 
 // RenderHelp paints the deterministic next-step lines that follow a row table.
 // Empty input paints nothing.
-func RenderHelp(lines ...string) string {
-	if len(lines) == 0 {
-		return ""
-	}
-	var out strings.Builder
-	fmt.Fprintf(&out, "help[%d]:", len(lines))
-	for _, line := range lines {
-		out.WriteString("\n  - ")
-		out.WriteString(toonString(line))
-	}
-	return out.String()
-}
+func RenderHelp(lines ...string) string { return toon.RenderHelp(lines...) }
 
 // QueryHelp builds the contextual help for a query result: the route to the
 // complete envelope, and when there are rows, the path from the compiled SQL to
