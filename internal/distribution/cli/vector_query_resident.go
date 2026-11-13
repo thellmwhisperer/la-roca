@@ -147,8 +147,8 @@ func printVectorQueryResult(env *cliEnv, inv vectorQueryInvocation, result feder
 	} else {
 		printVectorHits(env, result.Results)
 	}
-	if len(help) > 0 {
-		env.print("%s", renderHelp(help...))
+	if rendered := renderHelp(help...); rendered != "" {
+		env.print("%s", rendered)
 	}
 	return nil
 }
