@@ -280,12 +280,12 @@ func TestCollapseSiblingMemoriesAndIdRemaps(t *testing.T) {
 	}
 	var keptExchange, removedExchange, keptThinking, removedThinking, keptMemory, removedMemory int64
 	for query, dest := range map[string]*int64{
-		`SELECT id FROM exchanges WHERE session_id = '` + kept + `'`: &keptExchange,
-		`SELECT id FROM exchanges WHERE session_id = '` + removed + `'`: &removedExchange,
-		`SELECT id FROM thinking_blocks WHERE session_id = '` + kept + `'`: &keptThinking,
+		`SELECT id FROM exchanges WHERE session_id = '` + kept + `'`:          &keptExchange,
+		`SELECT id FROM exchanges WHERE session_id = '` + removed + `'`:       &removedExchange,
+		`SELECT id FROM thinking_blocks WHERE session_id = '` + kept + `'`:    &keptThinking,
 		`SELECT id FROM thinking_blocks WHERE session_id = '` + removed + `'`: &removedThinking,
-		`SELECT id FROM memories WHERE source_session = '` + kept + `'`: &keptMemory,
-		`SELECT id FROM memories WHERE source_session = '` + removed + `'`: &removedMemory,
+		`SELECT id FROM memories WHERE source_session = '` + kept + `'`:       &keptMemory,
+		`SELECT id FROM memories WHERE source_session = '` + removed + `'`:    &removedMemory,
 	} {
 		if err := db.QueryRow(query).Scan(dest); err != nil {
 			t.Fatal(err)
@@ -306,7 +306,7 @@ func TestCollapseSiblingMemoriesAndIdRemaps(t *testing.T) {
 	for statement, args := range map[string][]any{
 		`INSERT INTO session_id_remaps VALUES ('old-session', ?, 'run', 'sha', 'now')`: {removed},
 		`INSERT INTO exchange_id_remaps VALUES (9001, ?, 'run', 'sha', 'now')`:         {removedExchange},
-		`INSERT INTO thinking_block_id_remaps VALUES (9002, ?, 'run', 'sha', 'now')`:    {removedThinking},
+		`INSERT INTO thinking_block_id_remaps VALUES (9002, ?, 'run', 'sha', 'now')`:   {removedThinking},
 		`INSERT INTO memory_id_remaps VALUES (9003, ?, 'run', 'sha', 'then', 'now')`:   {removedMemory},
 	} {
 		if _, err := db.Exec(statement, args...); err != nil {
