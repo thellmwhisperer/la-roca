@@ -2,6 +2,7 @@ package rocacorpus
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/bundledplugin"
@@ -87,20 +88,115 @@ func CollapseSessions(ctx context.Context, path string, apply bool) (SessionColl
 		err = json.Unmarshal([]byte(report), &result)
 	}
 	if err == nil && apply {
-		// Preserve memories and their parent reference; only the redundant session
-		// and its harvested exchanges, thinking blocks and tool uses are removed.
-		_, err = tx.ExecContext(ctx, `UPDATE memories SET source_session =
-		  (SELECT keep_id FROM sibling_plan WHERE session_id = memories.source_session)
-		  WHERE source_session IN (`+removableSiblings+`);
-		  DELETE FROM thinking_blocks WHERE session_id IN (`+removableSiblings+`);
-		  DELETE FROM tool_uses WHERE session_id IN (`+removableSiblings+`);
-		  DELETE FROM exchanges WHERE session_id IN (`+removableSiblings+`);
-		  DELETE FROM sessions WHERE session_id IN (`+removableSiblings+`);`)
+		err = collapseSessionData(ctx, tx)
 	}
 	if err == nil {
 		err = tx.Commit()
 	}
 	return result, err
+}
+
+func collapseSessionData(ctx context.Context, tx *sql.Tx) error {
+	if _, err := tx.ExecContext(ctx, `CREATE TEMP TABLE session_collapse_map AS
+		SELECT session_id AS old_id, keep_id AS new_id FROM sibling_plan
+		WHERE NOT differs AND keep_id IS NOT NULL AND session_id <> keep_id;
+		CREATE TEMP TABLE exchange_collapse_map AS
+		WITH copies AS (
+		  SELECT e.id, e.session_id, p.keep_id, e.exchange_number, e.human_text, e.agent_text,
+		    ROW_NUMBER() OVER (PARTITION BY e.session_id, e.exchange_number, e.human_text, e.agent_text ORDER BY e.id) AS n
+		  FROM exchanges e JOIN sibling_plan p ON p.session_id = e.session_id
+		  WHERE NOT p.differs AND p.keep_id IS NOT NULL
+		)
+		SELECT removed.id AS old_id, kept.id AS new_id FROM copies removed JOIN copies kept
+		  ON kept.session_id = removed.keep_id AND kept.exchange_number IS removed.exchange_number
+		  AND kept.human_text IS removed.human_text AND kept.agent_text IS removed.agent_text AND kept.n = removed.n
+		WHERE removed.session_id <> removed.keep_id;
+		CREATE TEMP TABLE thinking_collapse_map AS
+		SELECT removed.id AS old_id, kept.id AS new_id FROM thinking_blocks removed
+		JOIN sibling_plan p ON p.session_id = removed.session_id
+		JOIN thinking_blocks kept ON kept.session_id = p.keep_id
+		  AND kept.exchange_number IS removed.exchange_number AND kept.full_text IS removed.full_text
+		WHERE NOT p.differs AND p.keep_id IS NOT NULL AND removed.session_id <> p.keep_id`); err != nil {
+		return err
+	}
+	for _, remap := range []struct{ table, mapping string }{
+		{"session_id_remaps", "session_collapse_map"},
+		{"exchange_id_remaps", "exchange_collapse_map"},
+		{"thinking_block_id_remaps", "thinking_collapse_map"},
+	} {
+		present, err := tableExists(tx, remap.table)
+		if err != nil {
+			return err
+		}
+		if present {
+			if _, err := tx.ExecContext(ctx, `UPDATE `+remap.table+` SET canonical_id =
+				(SELECT new_id FROM `+remap.mapping+` WHERE old_id = canonical_id)
+				WHERE canonical_id IN (SELECT old_id FROM `+remap.mapping+`)`); err != nil {
+				return err
+			}
+		}
+	}
+	if present, err := tableExists(tx, "memories"); err != nil {
+		return err
+	} else if present {
+		rows, err := tx.QueryContext(ctx, `PRAGMA table_info(memories)`)
+		if err != nil {
+			return err
+		}
+		var columns []string
+		for rows.Next() {
+			var cid, notnull, pk int
+			var name, typ string
+			var def any
+			if err := rows.Scan(&cid, &name, &typ, &notnull, &def, &pk); err != nil {
+				rows.Close()
+				return err
+			}
+			if name != "id" && name != "created_at" && name != "source_session" {
+				columns = append(columns, name)
+			}
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		conditions := ""
+		for _, column := range columns {
+			conditions += " AND duplicate." + column + " IS kept." + column
+		}
+		if _, err := tx.ExecContext(ctx, `CREATE TEMP TABLE memory_collapse_map AS
+			SELECT duplicate.id AS old_id, MIN(kept.id) AS new_id FROM memories duplicate
+			JOIN session_collapse_map sessions ON duplicate.source_session = sessions.old_id
+			JOIN memories kept ON kept.source_session = sessions.new_id`+conditions+`
+			GROUP BY duplicate.id`); err != nil {
+			return err
+		}
+		if present, err := tableExists(tx, "memory_id_remaps"); err != nil {
+			return err
+		} else if present {
+			if _, err := tx.ExecContext(ctx, `UPDATE memory_id_remaps SET canonical_id =
+				(SELECT new_id FROM memory_collapse_map WHERE old_id = canonical_id)
+				WHERE canonical_id IN (SELECT old_id FROM memory_collapse_map)`); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE memories SET supersedes =
+			(SELECT new_id FROM memory_collapse_map WHERE old_id = supersedes)
+			WHERE supersedes IN (SELECT old_id FROM memory_collapse_map);
+			DELETE FROM memories WHERE id IN (SELECT old_id FROM memory_collapse_map);
+			UPDATE memories SET source_session =
+			(SELECT new_id FROM session_collapse_map WHERE old_id = source_session)
+			WHERE source_session IN (SELECT old_id FROM session_collapse_map)`); err != nil {
+			return err
+		}
+	}
+	_, err := tx.ExecContext(ctx, `DELETE FROM thinking_blocks WHERE session_id IN (`+removableSiblings+`);
+		DELETE FROM tool_uses WHERE session_id IN (`+removableSiblings+`);
+		DELETE FROM exchanges WHERE session_id IN (`+removableSiblings+`);
+		DELETE FROM sessions WHERE session_id IN (`+removableSiblings+`);`)
+	return err
 }
 
 const removableSiblings = `SELECT session_id FROM sibling_plan

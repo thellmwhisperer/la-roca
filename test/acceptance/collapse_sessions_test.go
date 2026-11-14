@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -249,5 +250,112 @@ func TestCollapseHistoricalSiblingSessions(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, "missing.db")); !os.IsNotExist(err) {
 		t.Fatalf("refusal created a missing corpus: %v", err)
+	}
+}
+
+func TestCollapseSiblingMemoriesAndIdRemaps(t *testing.T) {
+	binary, err := rocaBinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	home, world := initializedDistributionHome(t, "roca-sibling-remaps-", binary)
+	corpus := filepath.Join(home, ".roca", "plugins", "roca-corpus", "roca-corpus.db")
+	kept, removed := strings.Repeat("m", 35)+"0", strings.Repeat("m", 35)+"1"
+	db, err := bundledplugin.OpenDatabase(corpus, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`INSERT INTO sessions(session_id, started_at, title, metadata) VALUES ('` + kept + `', '2026-01-01', 'remaps', '{"copy":0}'), ('` + removed + `', '2026-01-01', 'remaps', '{"copy":1}')`,
+		`INSERT INTO exchanges(session_id, exchange_number, human_text, agent_text) VALUES ('` + kept + `', 1, 'same', 'answer'), ('` + removed + `', 1, 'same', 'answer')`,
+		`INSERT INTO thinking_blocks(session_id, exchange_number, full_text) VALUES ('` + kept + `', 1, 'thought'), ('` + removed + `', 1, 'thought')`,
+	} {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec(`INSERT INTO memories(layer, content, origin, source_session) VALUES
+		('fact', 'same memory', 'agent', ?), ('fact', 'same memory', 'agent', ?)`, kept, removed); err != nil {
+		t.Fatal(err)
+	}
+	var keptExchange, removedExchange, keptThinking, removedThinking, keptMemory, removedMemory int64
+	for query, dest := range map[string]*int64{
+		`SELECT id FROM exchanges WHERE session_id = '` + kept + `'`: &keptExchange,
+		`SELECT id FROM exchanges WHERE session_id = '` + removed + `'`: &removedExchange,
+		`SELECT id FROM thinking_blocks WHERE session_id = '` + kept + `'`: &keptThinking,
+		`SELECT id FROM thinking_blocks WHERE session_id = '` + removed + `'`: &removedThinking,
+		`SELECT id FROM memories WHERE source_session = '` + kept + `'`: &keptMemory,
+		`SELECT id FROM memories WHERE source_session = '` + removed + `'`: &removedMemory,
+	} {
+		if err := db.QueryRow(query).Scan(dest); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, statement := range []string{
+		`CREATE TABLE dedup_runs(run_id TEXT PRIMARY KEY, manifest_sha256 TEXT NOT NULL, started_at TEXT NOT NULL, committed_at TEXT)`,
+		`INSERT INTO dedup_runs VALUES ('run', 'sha', 'now', 'now')`,
+		`CREATE TABLE session_id_remaps(old_id TEXT PRIMARY KEY, canonical_id TEXT NOT NULL REFERENCES sessions(session_id), dedup_run_id TEXT NOT NULL REFERENCES dedup_runs(run_id), payload_sha256 TEXT NOT NULL, mapped_at TEXT NOT NULL DEFAULT (datetime('now')))`,
+		`CREATE TABLE exchange_id_remaps(old_id INTEGER PRIMARY KEY, canonical_id INTEGER NOT NULL REFERENCES exchanges(id), dedup_run_id TEXT NOT NULL REFERENCES dedup_runs(run_id), payload_sha256 TEXT NOT NULL, mapped_at TEXT NOT NULL DEFAULT (datetime('now')))`,
+		`CREATE TABLE thinking_block_id_remaps(old_id INTEGER PRIMARY KEY, canonical_id INTEGER NOT NULL REFERENCES thinking_blocks(id), dedup_run_id TEXT NOT NULL REFERENCES dedup_runs(run_id), payload_sha256 TEXT NOT NULL, mapped_at TEXT NOT NULL DEFAULT (datetime('now')))`,
+		`CREATE TABLE memory_id_remaps(old_id INTEGER PRIMARY KEY, canonical_id INTEGER NOT NULL REFERENCES memories(id), dedup_run_id TEXT NOT NULL REFERENCES dedup_runs(run_id), payload_sha256 TEXT NOT NULL, old_created_at TEXT NOT NULL, mapped_at TEXT NOT NULL DEFAULT (datetime('now')))`,
+	} {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for statement, args := range map[string][]any{
+		`INSERT INTO session_id_remaps VALUES ('old-session', ?, 'run', 'sha', 'now')`: {removed},
+		`INSERT INTO exchange_id_remaps VALUES (9001, ?, 'run', 'sha', 'now')`:         {removedExchange},
+		`INSERT INTO thinking_block_id_remaps VALUES (9002, ?, 'run', 'sha', 'now')`:    {removedThinking},
+		`INSERT INTO memory_id_remaps VALUES (9003, ?, 'run', 'sha', 'then', 'now')`:   {removedMemory},
+	} {
+		if _, err := db.Exec(statement, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	result := world.runAt(home, binary, "dedup", "sessions", "--apply")
+	if result.code != 0 {
+		t.Fatalf("collapse: %+v", result)
+	}
+	db, err = bundledplugin.OpenDatabase(corpus, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var memories int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM memories WHERE source_session = ?`, kept).Scan(&memories); err != nil || memories != 1 {
+		t.Fatalf("kept memories = %d, want one: %v", memories, err)
+	}
+	checks := []struct {
+		query string
+		want  any
+	}{
+		{`SELECT canonical_id FROM session_id_remaps WHERE old_id = 'old-session'`, kept},
+		{`SELECT canonical_id FROM exchange_id_remaps WHERE old_id = 9001`, keptExchange},
+		{`SELECT canonical_id FROM thinking_block_id_remaps WHERE old_id = 9002`, keptThinking},
+		{`SELECT canonical_id FROM memory_id_remaps WHERE old_id = 9003`, keptMemory},
+	}
+	for _, check := range checks {
+		var got any
+		if err := db.QueryRow(check.query).Scan(&got); err != nil || fmt.Sprint(got) != fmt.Sprint(check.want) {
+			t.Fatalf("%s = %v, want %v: %v", check.query, got, check.want, err)
+		}
+	}
+	rows, err := db.Query(`PRAGMA foreign_key_check`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	if rows.Next() {
+		var table string
+		var rowid, parent any
+		var fk int
+		if err := rows.Scan(&table, &rowid, &parent, &fk); err != nil {
+			t.Fatal(err)
+		}
+		t.Fatalf("foreign key violation: %s row %v references %v (fk %d)", table, rowid, parent, fk)
 	}
 }
