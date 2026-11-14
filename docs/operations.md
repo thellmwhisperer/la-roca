@@ -500,6 +500,30 @@ for SQLite reader traffic and operator-consented cleanup.
 
 ## Exact duplicate maintenance
 
+`roca dedup sessions [database]` repairs the historical sibling groups that
+`roca doctor` reports: 36-character IDs with the same first 35 characters,
+`started_at`, and title. It prints a dry-run plan per group, with `--json` for
+structured output. `--apply` performs the repair in one transaction and refuses
+read-only mode. Without a
+path it selects the installed corpus next to the selected `--db-path`.
+
+The repair keeps the lowest non-empty session ID when every non-empty copy
+has identical human and agent text at each turn number, including duplicate
+turn counts. It removes the other sessions and their exchanges, thinking
+blocks and tool uses. In the same transaction, existing session, exchange and
+thinking-block remaps that point to removed rows are redirected to the kept
+rows. Memory references move to the surviving session; if that would make a
+memory an exact duplicate of one already there, the existing memory stays and
+the duplicate is removed. Existing remaps to that duplicate memory point to
+the kept memory.
+Empty shells are removed when another copy survives. An all-empty group keeps
+its lowest session ID and removes the other shells. A group with different
+non-empty copies is listed as `different` and stays entirely unchanged,
+including its empty shells. Each plan lists the IDs to remove and their
+exchange count.
+The archive and vector index are outside this repair; a later vector delta
+pass refreshes the index.
+
 `roca dedup [database ...]` is an explicit, exact-payload maintenance surface.
 With no path it targets only the federated `roca-corpus` and `roca-ops`
 databases. An explicitly named legacy `roca.db` may be inspected as read-only
@@ -543,12 +567,9 @@ MCP retries expand the system-stamped source agent to the aliases described
 under [Memory authorship](#memory-authorship). CLI retries match the stored
 agent exactly, so distinct harness names stay distinct authors.
 
-Historical sibling sessions are not exact duplicates: their 36-character IDs
-differ only in the last character, they share `started_at` and title, and their
-text can differ. `roca doctor` warns with the extra-row and group counts and
-prints a `roca exec` SELECT, carrying the diagnosed `--db-path`, that lists
-them. Doctor only reads and leaves them in place; which copy to keep is the
-operator's call.
+For historical sibling session cleanup, see the [`roca dedup sessions`
+procedure](#exact-duplicate-maintenance). `roca doctor` still reports sibling
+groups and lists a query for inspecting them.
 
 ## Data directory
 

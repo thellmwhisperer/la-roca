@@ -1001,6 +1001,51 @@ func dedupCommand(env *cliEnv) *cobra.Command {
 	cmd.Flags().StringVar(&backup, "backup", "", "verified pre-apply VACUUM INTO database")
 	cmd.Flags().StringVar(&backupOut, "backup-out", "", "create and verify a dry-run VACUUM INTO backup")
 	cmd.Flags().StringVar(&runID, "run-id", "", "durable audit identity for apply")
+	sessions := collapseSessionsCommand(env)
+	sessions.PreRun = cmd.PreRun
+	cmd.AddCommand(sessions)
+	return cmd
+}
+
+func collapseSessionsCommand(env *cliEnv) *cobra.Command {
+	var apply bool
+	cmd := &cobra.Command{
+		Use:   "sessions [database]",
+		Short: "Collapse historical sibling sessions with identical exchanges",
+		Long: "Print a plan per sibling group without changing the corpus. " +
+			"Use --apply to remove empty shells and identical copies. " +
+			"Groups with different non-empty copies stay untouched and are listed as different.",
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if apply && (env.forceReadOnly || config.ReadOnly(os.Getenv(config.EnvReadOnly))) {
+				return fmt.Errorf("dedup sessions refuses to write in read-only mode")
+			}
+			target, err := compactTarget(env, args)
+			if err == nil && apply {
+				_, err = os.Stat(target)
+			}
+			var report rocacorpus.SessionCollapseReport
+			if err == nil {
+				report, err = rocacorpus.CollapseSessions(cmd.Context(), target, apply)
+			}
+			if err == nil {
+				if env.json {
+					return env.printJSON(report)
+				}
+				mode := "dry-run"
+				if report.Applied {
+					mode = "applied"
+				}
+				env.print("dedup sessions: %s", mode)
+				for _, group := range report.Groups {
+					env.print("%s: %s; copies %v; keep %s; remove %v; exchanges to remove %d",
+						group.Stem, group.Status, group.IDs, group.Keep, group.Remove, group.Exchanges)
+				}
+			}
+			return err
+		},
+	}
+	cmd.Flags().BoolVar(&apply, "apply", false, "remove the listed copies in one transaction")
 	return cmd
 }
 
