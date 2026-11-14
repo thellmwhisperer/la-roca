@@ -510,7 +510,12 @@ path it selects the installed corpus next to the selected `--db-path`.
 The repair keeps the lowest non-empty session ID when every non-empty copy
 has identical human and agent text at each turn number, including duplicate
 turn counts. It removes the other sessions and their exchanges, thinking
-blocks and tool uses, and redirects memory references to the survivor.
+blocks and tool uses. In the same transaction, existing session, exchange and
+thinking-block remaps that point to removed rows are redirected to the kept
+rows. Memory references move to the surviving session; if that would make a
+memory an exact duplicate of one already there, the existing memory stays and
+the duplicate is removed. Existing remaps to that duplicate memory point to
+the kept memory.
 Empty shells are removed when another copy survives. An all-empty group keeps
 its lowest session ID and removes the other shells. A group with different
 non-empty copies is listed as `different` and stays entirely unchanged,
