@@ -96,8 +96,8 @@ func CollapseSessions(ctx context.Context, path string, apply bool) (SessionColl
 	return result, err
 }
 
-func collapseSessionData(ctx context.Context, tx *sql.Tx) error {
-	if _, err := tx.ExecContext(ctx, `CREATE TEMP TABLE session_collapse_map AS
+func collapseSessionData(ctx context.Context, tx *sql.Tx) (err error) {
+	_, err = tx.ExecContext(ctx, `CREATE TEMP TABLE session_collapse_map AS
 		SELECT session_id AS old_id, keep_id AS new_id FROM sibling_plan
 		WHERE NOT differs AND keep_id IS NOT NULL AND session_id <> keep_id;
 		CREATE TEMP TABLE exchange_collapse_map AS
@@ -116,86 +116,64 @@ func collapseSessionData(ctx context.Context, tx *sql.Tx) error {
 		JOIN sibling_plan p ON p.session_id = removed.session_id
 		JOIN thinking_blocks kept ON kept.session_id = p.keep_id
 		  AND kept.exchange_number IS removed.exchange_number AND kept.full_text IS removed.full_text
-		WHERE NOT p.differs AND p.keep_id IS NOT NULL AND removed.session_id <> p.keep_id`); err != nil {
-		return err
-	}
+		WHERE NOT p.differs AND p.keep_id IS NOT NULL AND removed.session_id <> p.keep_id`)
 	for _, remap := range []struct{ table, mapping string }{
 		{"session_id_remaps", "session_collapse_map"},
 		{"exchange_id_remaps", "exchange_collapse_map"},
 		{"thinking_block_id_remaps", "thinking_collapse_map"},
 	} {
-		present, err := tableExists(tx, remap.table)
-		if err != nil {
-			return err
-		}
-		if present {
-			if _, err := tx.ExecContext(ctx, `UPDATE `+remap.table+` SET canonical_id =
+		if err == nil {
+			var present bool
+			present, err = tableExists(tx, remap.table)
+			if err == nil && present {
+				_, err = tx.ExecContext(ctx, `UPDATE `+remap.table+` SET canonical_id =
 				(SELECT new_id FROM `+remap.mapping+` WHERE old_id = canonical_id)
-				WHERE canonical_id IN (SELECT old_id FROM `+remap.mapping+`)`); err != nil {
-				return err
+				WHERE canonical_id IN (SELECT old_id FROM `+remap.mapping+`)`)
 			}
 		}
 	}
-	if present, err := tableExists(tx, "memories"); err != nil {
-		return err
-	} else if present {
-		rows, err := tx.QueryContext(ctx, `PRAGMA table_info(memories)`)
-		if err != nil {
-			return err
-		}
-		var columns []string
-		for rows.Next() {
-			var cid, notnull, pk int
-			var name, typ string
-			var def any
-			if err := rows.Scan(&cid, &name, &typ, &notnull, &def, &pk); err != nil {
-				rows.Close()
-				return err
-			}
-			if name != "id" && name != "created_at" && name != "source_session" {
-				columns = append(columns, name)
-			}
-		}
-		if err := rows.Close(); err != nil {
-			return err
-		}
-		if err := rows.Err(); err != nil {
-			return err
-		}
-		conditions := ""
-		for _, column := range columns {
-			conditions += " AND duplicate." + column + " IS kept." + column
-		}
-		if _, err := tx.ExecContext(ctx, `CREATE TEMP TABLE memory_collapse_map AS
+	var memoriesPresent bool
+	if err == nil {
+		memoriesPresent, err = tableExists(tx, "memories")
+	}
+	if err == nil && memoriesPresent {
+		var conditions string
+		err = tx.QueryRowContext(ctx, `SELECT COALESCE(group_concat(
+			' AND duplicate."' || name || '" IS kept."' || name || '"', ''), '')
+			FROM pragma_table_info('memories')
+			WHERE name NOT IN ('id', 'created_at', 'source_session')`).Scan(&conditions)
+		if err == nil {
+			_, err = tx.ExecContext(ctx, `CREATE TEMP TABLE memory_collapse_map AS
 			SELECT duplicate.id AS old_id, MIN(kept.id) AS new_id FROM memories duplicate
 			JOIN session_collapse_map sessions ON duplicate.source_session = sessions.old_id
 			JOIN memories kept ON kept.source_session = sessions.new_id`+conditions+`
-			GROUP BY duplicate.id`); err != nil {
-			return err
+			GROUP BY duplicate.id`)
 		}
-		if present, err := tableExists(tx, "memory_id_remaps"); err != nil {
-			return err
-		} else if present {
-			if _, err := tx.ExecContext(ctx, `UPDATE memory_id_remaps SET canonical_id =
+		var remapsPresent bool
+		if err == nil {
+			remapsPresent, err = tableExists(tx, "memory_id_remaps")
+		}
+		if err == nil && remapsPresent {
+			_, err = tx.ExecContext(ctx, `UPDATE memory_id_remaps SET canonical_id =
 				(SELECT new_id FROM memory_collapse_map WHERE old_id = canonical_id)
-				WHERE canonical_id IN (SELECT old_id FROM memory_collapse_map)`); err != nil {
-				return err
-			}
+				WHERE canonical_id IN (SELECT old_id FROM memory_collapse_map)`)
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE memories SET supersedes =
+		if err == nil {
+			_, err = tx.ExecContext(ctx, `UPDATE memories SET supersedes =
 			(SELECT new_id FROM memory_collapse_map WHERE old_id = supersedes)
 			WHERE supersedes IN (SELECT old_id FROM memory_collapse_map);
 			DELETE FROM memories WHERE id IN (SELECT old_id FROM memory_collapse_map);
 			UPDATE memories SET source_session =
 			(SELECT new_id FROM session_collapse_map WHERE old_id = source_session)
-			WHERE source_session IN (SELECT old_id FROM session_collapse_map)`); err != nil {
-			return err
+			WHERE source_session IN (SELECT old_id FROM session_collapse_map)`)
 		}
 	}
-	_, err := tx.ExecContext(ctx, `DELETE FROM thinking_blocks WHERE session_id IN (`+removableSiblings+`);
-		DELETE FROM tool_uses WHERE session_id IN (`+removableSiblings+`);
-		DELETE FROM exchanges WHERE session_id IN (`+removableSiblings+`);
-		DELETE FROM sessions WHERE session_id IN (`+removableSiblings+`);`)
+	if err == nil {
+		_, err = tx.ExecContext(ctx, `DELETE FROM thinking_blocks WHERE session_id IN (`+removableSiblings+`);
+			DELETE FROM tool_uses WHERE session_id IN (`+removableSiblings+`);
+			DELETE FROM exchanges WHERE session_id IN (`+removableSiblings+`);
+			DELETE FROM sessions WHERE session_id IN (`+removableSiblings+`);`)
+	}
 	return err
 }
 
