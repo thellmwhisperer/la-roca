@@ -20,17 +20,25 @@ func acceptanceResident() (string, func(), error) {
 		return "", nil, err
 	}
 	return socket, func() {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-		defer cancel()
-		raw, err := resident.Call(ctx, resident.Options{Socket: socket}, "status", nil)
-		var status resident.Status
-		if err == nil && json.Unmarshal(raw, &status) == nil && status.PID > 0 {
+		status, err := acceptanceResidentStatus(socket)
+		if err == nil && status.PID > 0 {
 			if process, err := os.FindProcess(status.PID); err == nil {
 				_ = process.Kill()
 			}
 		}
 		_ = os.RemoveAll(dir)
 	}, nil
+}
+
+func acceptanceResidentStatus(socket string) (resident.Status, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	raw, err := resident.Call(ctx, resident.Options{Socket: socket}, "status", nil)
+	var status resident.Status
+	if err == nil {
+		err = json.Unmarshal(raw, &status)
+	}
+	return status, err
 }
 
 // shortSocket is a fresh private directory and the path of name inside it,

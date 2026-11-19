@@ -7,26 +7,23 @@ import (
 
 func TestQueryExecutionBudgetDistinguishesDefaultDisabledAndConfigured(t *testing.T) {
 	for _, testCase := range []struct {
-		name    string
-		opts    Options
-		budget  time.Duration
-		enabled bool
+		name   string
+		opts   Options
+		budget time.Duration
 	}{
-		{name: "absent uses default", budget: DefaultQueryTimeout, enabled: true},
+		{name: "absent uses default", budget: DefaultQueryTimeout},
 		{name: "explicit zero uses default", opts: Options{QueryTimeoutSet: true},
-			budget: DefaultQueryTimeout, enabled: true},
+			budget: DefaultQueryTimeout},
 		{name: "a bound no statement could meet falls back to default",
 			opts:   Options{QueryTimeout: -5 * time.Second, QueryTimeoutSet: true},
-			budget: DefaultQueryTimeout, enabled: true},
+			budget: DefaultQueryTimeout},
 		{name: "configured", opts: Options{QueryTimeout: 2750 * time.Millisecond, QueryTimeoutSet: true},
-			budget: 2750 * time.Millisecond, enabled: true},
+			budget: 2750 * time.Millisecond},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			svc := Service{opts: testCase.opts}
-			budget, enabled := svc.queryExecutionBudget()
-			if budget != testCase.budget || enabled != testCase.enabled {
-				t.Fatalf("budget = %s, enabled = %v; want %s, %v",
-					budget, enabled, testCase.budget, testCase.enabled)
+			if budget := svc.queryExecutionBudget(); budget != testCase.budget {
+				t.Fatalf("budget = %s; want %s", budget, testCase.budget)
 			}
 		})
 	}

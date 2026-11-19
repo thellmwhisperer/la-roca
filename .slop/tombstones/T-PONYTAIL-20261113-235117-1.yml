@@ -1,0 +1,18 @@
+schema: 1
+id: T-PONYTAIL-20261113-235117-1
+status: accepted
+category: alien_code
+title: "Sustituida la función anónima diferida por dos defer directos; conserva Kill antes de Wait y elimina 2 líneas."
+created_at: 2026-11-13
+incident:
+  pattern: "Sustituida la función anónima diferida por dos defer directos; conserva Kill antes de Wait y elimina 2 líneas."
+  what_went_wrong: "A coding agent wrote it and the ponytail pass cut it before delivery."
+  root_cause: "The coding agent wrote more than the issue needed."
+  rule_established: "Cut by the ponytail pass; it does not come back."
+  evidence:
+    - family: speculative_hardening
+      example: "Sustituida la función anónima diferida por dos defer directos; conserva Kill antes de Wait y elimina 2 líneas.\nissue_sentence: The subtest waits until every process it started has exited before its temp folder is removed, or it proves that no process writes after the subtest returns."
+      artifact: "test/acceptance/companion_test.go"
+match:
+  family: speculative_hardening
+  artifact: "test/acceptance/companion_test.go"

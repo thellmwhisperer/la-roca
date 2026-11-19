@@ -30,6 +30,19 @@ func TestPillsRendersFullContentWithoutTheTableClip(t *testing.T) {
 	}
 }
 
+func TestPillsPreservesWhitespace(t *testing.T) {
+	got := axi.Pills(service.PillList{
+		Project: " demo  project ",
+		Pills: []service.MemoryRecord{{
+			ID: 7, Content: "  a  b\n\tc\r\n  ",
+		}},
+	})
+	want := "project: \" demo  project \"\npills[1]{id,created_at,content}:\n  \"7\",\"\",\"  a  b\\n\\tc\\r\\n  \"\n"
+	if !strings.HasPrefix(got, want) {
+		t.Fatalf("pill whitespace changed: got %q, want prefix %q", got, want)
+	}
+}
+
 func TestHandoffsRendersFullContentWithoutTheTableClip(t *testing.T) {
 	body := "session close " + strings.Repeat("y", 200)
 	got := axi.Handoffs(service.HandoffList{

@@ -30,3 +30,11 @@ auto_fix:
   review: 0  # the reviewer only reports; the agent that launched ATM answers every finding (the maintainer, 5-oct-2026)
 ci:
   rerun_transient: 1  # a check GitHub cancels without a verdict is re-run once before anyone is asked
+commit:
+  fix_message: "gate({{.Step}}): {{.Summary}}"  # the gate's fix commits are named gate(step)
+# The PR body is the repo's template plus one risk line and the gate's signature: no raw test
+# logs, so no local paths or ids for scripts/public-text.py or the lab's gh to refuse.
+pr:
+  template: .github/pull_request_template.md
+  publish_intent: false
+  appendix: minimal

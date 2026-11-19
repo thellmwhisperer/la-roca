@@ -1256,11 +1256,7 @@ func (d DeclaredCorpus) ResolveSource(ctx context.Context, kind string, where lo
 	}
 	idPredicate := fmt.Sprintf("CAST(%s AS TEXT)=%s", quoteIdentifier(table.IDColumn), sqlLiteral(where.SourceID))
 	if d.Database.Plugin == "roca-ops" && table.Name == "memories" && table.IDColumn == "id" {
-		hasLegacy, err := d.hasColumn(ctx, table, "legacy_id")
-		if err != nil {
-			return "", err
-		}
-		if hasLegacy {
+		if table.availableColumns()["legacy_id"] {
 			idPredicate = "(" + idPredicate + " OR CAST(\"legacy_id\" AS TEXT)=" + sqlLiteral(where.SourceID) + ")"
 		}
 		canonicalIDs, err := d.opsCanonicalMap([]string{where.SourceID})
@@ -1342,11 +1338,7 @@ func (d DeclaredCorpus) ResolveSources(ctx context.Context,
 		inList := strings.Join(literals, ",")
 		branches = append(branches, d.sourceLookupBranches(table, inList, quoteIdentifier(table.IDColumn))...)
 		if d.Database.Plugin == "roca-ops" && table.Name == "memories" && table.IDColumn == "id" {
-			hasLegacy, err := d.hasColumn(ctx, table, "legacy_id")
-			if err != nil {
-				return nil, err
-			}
-			if hasLegacy {
+			if table.availableColumns()["legacy_id"] {
 				branches = append(branches, d.sourceLookupBranches(table, inList, `"legacy_id"`)...)
 			}
 		}
@@ -1412,10 +1404,6 @@ func (d DeclaredCorpus) sourceLookupBranches(table vectorTable, inList, idColumn
 			idColumn, inList))
 	}
 	return branches
-}
-
-func (d DeclaredCorpus) hasColumn(_ context.Context, table vectorTable, column string) (bool, error) {
-	return table.availableColumns()[column], nil
 }
 
 func (d DeclaredCorpus) opsDatabaseFile() string {

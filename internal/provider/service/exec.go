@@ -551,11 +551,11 @@ func (s *Service) execute(ctx context.Context, stmt, term string, maxChars int) 
 // the one that was asked for. Zero, a negative value, or an absent setting all
 // use DefaultQueryTimeout. Exec is always bounded: a bad SELECT cannot hold
 // the database past the limit.
-func (s *Service) queryExecutionBudget() (time.Duration, bool) {
+func (s *Service) queryExecutionBudget() time.Duration {
 	if s.opts.QueryTimeout > 0 {
-		return s.opts.QueryTimeout, true
+		return s.opts.QueryTimeout
 	}
-	return DefaultQueryTimeout, true
+	return DefaultQueryTimeout
 }
 
 func (s *Service) boundedExecTimeout(budget execBudget) time.Duration {
@@ -565,8 +565,7 @@ func (s *Service) boundedExecTimeout(budget execBudget) time.Duration {
 		}
 		return DefaultQueryTimeout
 	}
-	timeout, _ := s.queryExecutionBudget()
-	return timeout
+	return s.queryExecutionBudget()
 }
 
 func executionError(parent, queryCtx context.Context, timeout time.Duration, err error) error {
